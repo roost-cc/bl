@@ -17,6 +17,7 @@ import { createHash } from 'crypto';
 import { existsSync, readFileSync } from 'fs';
 import { appendSection, gateLine, restoreChange, updateChange } from './change-doc.js';
 import { parsePluginList, warn } from './config.js';
+import { codeSpan, escalationText, fenced } from './escalation.js';
 import { appendSectionLine, checkCriteria, extractSection, replaceSection } from './feature.js';
 import { updateSpecFile } from './spec-file.js';
 import { loadFlow } from './flow.js';
@@ -33,20 +34,8 @@ export function tail(text, n = GATE_TAIL_LINES) {
   return lines.slice(Math.max(0, lines.length - n)).join('\n');
 }
 
-/** A fence longer than any backtick run in `text`, so the text cannot close it. */
-export function fenced(text, lang = 'text') {
-  const s = String(text ?? '');
-  const longest = Math.max(2, ...(s.match(/`+/g) ?? []).map((m) => m.length));
-  const f = '`'.repeat(longest + 1);
-  return `${f}${lang}\n${s}\n${f}`;
-}
-
-/** `text` as an inline code span, its fence longer than any backtick run inside. */
-export function codeSpan(text) {
-  const s = String(text ?? '');
-  const fence = '`'.repeat(Math.max(0, ...(s.match(/`+/g) ?? []).map((m) => m.length)) + 1);
-  return fence.length > 1 ? `${fence} ${s} ${fence}` : `${fence}${s}${fence}`;
-}
+// They moved to `escalation.js` (S-897); their importers keep this path.
+export { codeSpan, fenced };
 
 /**
  * `command` with `vars` filled in, or the error an unresolved one is. One pass
@@ -226,32 +215,36 @@ export function scriptedEscalation(id, r, rerun) {
   const what = exited ? `exited ${r.exit}` : r.error;
   return {
     reason: `${id}: its scripted command failed: ${what}`,
-    details: [
-      `**The rule at stake:** a scripted story is finished by its command alone, so a failed command stops the run and no agent is sent to repair it.`,
-      '',
-      `**How it works:**`,
-      '',
-      "1. bl runs the command the story names in `plugins-implement`, in the story's worktree.",
-      '2. With exit 0 it commits what changed; with anything else it stops here.',
-      '',
-      `**The problem:** ${r.command ? `${codeSpan(r.command)} ` : ''}${exited ? `exited ${r.exit}` : `did not finish: ${r.error}`}. Nothing was committed, and the worktree stays as the command left it.`,
-      '',
-      "**Why the agents can't fix it:** the story was written so that no agent spends tokens on it, and whether the command or its input is wrong is yours to judge.",
-      '',
-      '**The decision:**',
-      '',
-      `- A. Fix the cause (recommended): correct the command, the plugin or the repo, remove anything the failed run left in the worktree, set this section to "None.", then \`${rerun}\`.`,
-      `- B. Make it an agent's story: remove \`plugins-implement\` from ${id}, set this section to "None.", then \`${rerun}\`. That spends tokens, and the agent starts with this output.`,
-      '',
-      'Fix the cause (A), or hand the story to an agent (B)?',
-      '',
-      '**Details:**',
-      '',
-      ...(r.plugin ? [`- Plugin: ${r.plugin}`] : []),
-      ...(r.exit != null ? [`- Exit code: ${r.exit}`] : []),
-      ...(r.error ? [`- Error: ${r.error}`] : []),
-      ...(r.tail ? ['- Output tail:', '', fenced(r.tail)] : []),
-    ].join('\n'),
+    details: escalationText({
+      rule: 'a scripted story is finished by its command alone, so a failed command stops the run and no agent is sent to repair it.',
+      how: [
+        "bl runs the command the story names in `plugins-implement`, in the story's worktree.",
+        'With exit 0 it commits what changed; with anything else it stops here.',
+      ],
+      problem: `${r.command ? `${codeSpan(r.command)} ` : ''}${exited ? `exited ${r.exit}` : `did not finish: ${r.error}`}. Nothing was committed, and the worktree stays as the command left it.`,
+      why: 'the story was written so that no agent spends tokens on it, and whether the command or its input is wrong is yours to judge.',
+      decisions: [
+        {
+          options: [
+            {
+              letter: 'A',
+              text: `Fix the cause (recommended): correct the command, the plugin or the repo, remove anything the failed run left in the worktree, set this section to "None.", then \`${rerun}\`.`,
+            },
+            {
+              letter: 'B',
+              text: `Make it an agent's story: remove \`plugins-implement\` from ${id}, set this section to "None.", then \`${rerun}\`. That spends tokens, and the agent starts with this output.`,
+            },
+          ],
+          question: 'Fix the cause (A), or hand the story to an agent (B)?',
+        },
+      ],
+      details: [
+        ...(r.plugin ? [`- Plugin: ${r.plugin}`] : []),
+        ...(r.exit != null ? [`- Exit code: ${r.exit}`] : []),
+        ...(r.error ? [`- Error: ${r.error}`] : []),
+        ...(r.tail ? ['- Output tail:', '', fenced(r.tail)] : []),
+      ],
+    }),
   };
 }
 
