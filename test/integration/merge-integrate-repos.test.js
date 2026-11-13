@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { unlinkSync, writeFileSync } from 'fs';
+import { mkdirSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { integrateUnit } from '../../src/feature-run.js';
 import {
@@ -35,6 +35,46 @@ const REJECTED = [
   "error: failed to push some refs to 'origin'",
   '',
 ].join('\n');
+
+test("a bl merge push the gate refuses on lint escalates with the gate record's step and log (S-897)", async () => {
+  const fx = fixture();
+  try {
+    landOnMain(fx, 'other.txt', 'other\n', 'main edits');
+    const ctx = featureCtx(fx);
+    const { runner } = stubRunner('true');
+    const shell = runner.shell;
+    runner.shell = (cmd, cwd, o) => {
+      if (cmd !== 'git push origin HEAD') return shell(cmd, cwd, o);
+      // What `ci gate` leaves when its lint step fails in the pre-push hook.
+      const checks = join(g(cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'), 'ci-cd', 'checks');
+      const commit = g(cwd, 'rev-parse', 'HEAD');
+      mkdirSync(checks, { recursive: true });
+      const record = {
+        commit,
+        by: 'gate',
+        verdict: 'fail',
+        steps: ['lint'],
+        started: new Date().toISOString(),
+        exit_code: 1,
+        error: null,
+        vulns: null,
+      };
+      writeFileSync(join(checks, `${commit}.json`), JSON.stringify(record));
+      writeFileSync(join(checks, `${commit}.log`), "src/a.js\n  3:1  error  Error: 'x' is not defined\n");
+      return { status: 1, output: "ci-cd: gate failed on 'lint' (1)\n" };
+    };
+    const res = await integrateUnit({ ...ctx, runner });
+    assert.equal(res.ok, false);
+    assert.match(res.reason, /^code: git push origin HEAD failed after a green gate/);
+    for (const heading of ['**The rule at stake:**', '**How it works:**', '**The problem:**', '**The decision:**'])
+      assert.ok(res.reason.includes(heading), `has ${heading}\n${res.reason}`);
+    assert.ok(res.reason.includes('The gate stopped at `lint`, exit 1'), res.reason);
+    assert.ok(res.reason.includes("Error: 'x' is not defined"), res.reason);
+    assert.ok(res.reason.includes('then `bl merge F-1`'), res.reason);
+  } finally {
+    fx.cleanup();
+  }
+});
 
 test('integration_resolution_tracks_changes_in_current_merged_and_conflicted_repos: every repo a session commits in is reviewed, pushed or rolled back', async () => {
   const cases = [

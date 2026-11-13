@@ -124,6 +124,7 @@ import { takeUnitLocks } from './unit-lock.js';
 import { commitPaths, dirtySnapshot } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
 import { failureExcerpt, NO_MARKERS } from './test-excerpt.js';
+import { gateRecord, pushEscalation } from './push-gate.js';
 import * as processScope from './process-scope.js';
 import { regenerateConflicts, regeneratePlugins } from './regenerate.js';
 import { REVIEW, loadFlow } from './flow.js';
@@ -2664,13 +2665,14 @@ function outputParts(output, lines) {
 const PUSH_TAIL_LINES = 10;
 
 /**
- * The reason text of a failed `git push`: the failure excerpt of its output
- * (a pre-push gate's failed test and error, S-1499), then its last lines.
- * With no failure marker (a rejected push), the last lines alone.
+ * The output of a failed `git push`, or of the gate's log (S-897): the
+ * failure excerpt (a pre-push gate's failed test and error, S-1499), then its
+ * last `lines` lines. With no failure marker (a rejected push), the last
+ * lines alone.
  */
-function pushFailure(output) {
-  const { excerpt, tail: last } = outputParts(output, PUSH_TAIL_LINES);
-  return outputSections(excerpt === NO_MARKERS ? null : excerpt, last, PUSH_TAIL_LINES).join('\n\n');
+export function pushFailure(output, lines = PUSH_TAIL_LINES) {
+  const { excerpt, tail: last } = outputParts(output, lines);
+  return outputSections(excerpt === NO_MARKERS ? null : excerpt, last, lines).join('\n\n');
 }
 
 /**
@@ -3543,28 +3545,45 @@ async function testGateWithFix(ctx) {
 
 /**
  * Push the branch and confirm `origin/<branch>` contains HEAD. Returns null
- * when it does, else the reason. Run before every review pass and before a
- * clean finish, so a commit made after the last push (a fix-tests commit, a
- * fix round that did not push) never goes unreviewed or unpublished.
+ * when it does, else `{ note, details }`: the run log's line, and the
+ * escalation (`pushEscalation()`, S-897) from the gate's check record. Run
+ * before every review pass and before a clean finish, so a commit made after
+ * the last push (a fix-tests commit, a fix round that did not push) never
+ * goes unreviewed or unpublished.
  */
 function pushBranch(ctx, step) {
   const { runner, prep } = ctx;
+  const next = `set this section to "None.", then \`${ctx.resumeHint ?? `bl run ${ctx.feature.id} --resume`}\``;
   for (const t of publishTargets(ctx)) {
     const lead = t.repo === prepRepo(ctx);
+    const pushStartedAt = runnerNow(runner).getTime();
     const push = runner.shell(`git push -u origin ${prep.branchName}`, t.worktreePath);
-    let reason = null;
+    let failed = null;
     if (push.status !== 0) {
-      reason = `git push failed:\n\n${pushFailure(push.output)}`;
+      failed = {
+        note: 'git push failed',
+        push,
+        gate: gateRecord({ runner, worktreePath: t.worktreePath, pushStartedAt }),
+      };
     } else {
       const ahead = runner.shell(`git rev-list --count origin/${prep.branchName}..HEAD`, t.worktreePath);
       if (ahead.status !== 0 || ahead.output.trim() !== '0') {
-        reason = `origin/${prep.branchName} does not contain HEAD after the push (${ahead.status !== 0 ? `rev-list exited ${ahead.status}` : `${ahead.output.trim() || '?'} commit(s) ahead`})`;
+        const note = `origin/${prep.branchName} does not contain HEAD after the push (${ahead.status !== 0 ? `rev-list exited ${ahead.status}` : `${ahead.output.trim() || '?'} commit(s) ahead`})`;
+        failed = { note, push: { status: 0, output: note }, gate: { none: 'the push exited 0' } };
       }
     }
-    if (reason) {
-      if (!lead) reason = `${t.repo}: ${reason}`;
-      record(ctx, { step, ok: false, note: reason.split('\n')[0] });
-      return reason;
+    if (failed) {
+      const note = lead ? failed.note : `${t.repo}: ${failed.note}`;
+      record(ctx, { step, ok: false, note });
+      const details = pushEscalation({
+        repo: t.repo,
+        branch: prep.branchName,
+        worktreePath: t.worktreePath,
+        push: failed.push,
+        gate: failed.gate,
+        next,
+      });
+      return { note, details };
     }
   }
   return null;
@@ -3751,7 +3770,7 @@ async function openPullRequest(ctx, t = gateTargets(ctx)[0]) {
 /** `clean` only with the branch published and a PR (or the no-forge opt-out). */
 async function finishClean(ctx) {
   const pushErr = pushBranch(ctx, 'stop');
-  if (pushErr) return finish(ctx, 'escalated', 'the reviewed branch could not be published', pushErr);
+  if (pushErr) return finish(ctx, 'escalated', 'the reviewed branch could not be published', pushErr.details);
   const others = await openOtherPullRequests(ctx);
   if (others.error) return finish(ctx, 'escalated', 'no pull request could be opened', others.error);
   if (!ctx.state.pr?.number && !ctx.state.prOptOut) {
@@ -4573,11 +4592,20 @@ function pushIntegrated(ctx, repos) {
         : runner.shell(`git merge-base --is-ancestor HEAD ${published}`, r.worktreePath).status === 0
     )
       continue;
+    const pushStartedAt = runnerNow(runner).getTime();
     const push = runner.shell('git push origin HEAD', r.worktreePath);
     if (push.status !== 0) {
+      const escalation = pushEscalation({
+        repo: r.repoName,
+        branch: ctx.prep.branchName,
+        worktreePath: r.worktreePath,
+        push,
+        gate: gateRecord({ runner, worktreePath: r.worktreePath, pushStartedAt }),
+        next: `\`bl merge ${unit.id}\``,
+      });
       return {
         ok: false,
-        reason: `${r.repoName}: git push origin HEAD failed after a green gate (the merge is kept on the branch; rerun \`bl merge ${unit.id}\`):\n\n${pushFailure(push.output)}`,
+        reason: `${r.repoName}: git push origin HEAD failed after a green gate (the merge is kept on the branch; rerun \`bl merge ${unit.id}\`):\n\n${escalation}`,
         repos,
       };
     }
@@ -5207,7 +5235,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   // 4. Push + one PR.
   setStep(ctx, 'pr');
   const pushErr = pushBranch(ctx, 'pr');
-  if (pushErr) return finish(ctx, 'escalated', 'push failed', pushErr);
+  if (pushErr) return finish(ctx, 'escalated', 'push failed', pushErr.details);
   const opened = await openPullRequest(ctx);
   if (opened.error) return finish(ctx, 'escalated', 'no pull request could be opened', opened.error);
   state.pr = opened.pr ?? null;
@@ -5268,7 +5296,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
       // item left, which one more fix would have closed.
       const closing = review.reviewed >= maxRounds;
       const pushErr = pushBranch(ctx, reReview ? 're-review' : 'review');
-      if (pushErr) return finish(ctx, 'escalated', 'push before review failed', pushErr);
+      if (pushErr) return finish(ctx, 'escalated', 'push before review failed', pushErr.details);
       const others = await openOtherPullRequests(ctx);
       if (others.error) return finish(ctx, 'escalated', 'no pull request could be opened', others.error);
       const result = await reviewRound(ctx, { reReview, closing });

@@ -1966,11 +1966,34 @@ noise, and on F-4 the error that mattered sat far above it. The fix-tests
 prompt gets `{{testLogPath}}`, `{{testExcerpt}}` and `{{testTail}}`, and is told
 to read the log rather than rerun the suite. A second failed attempt escalates
 as `test gate failed twice` with the command, the log path, the excerpt and
-the tail, in that order. A failed `git push` (`pushBranch()` in `bl run`,
-`pushIntegrated()` in `bl merge`) gives its reason the same two sections
-through `pushFailure()`: the excerpt of the push output, left out when no
-marker matches, then the last 10 lines. The pre-push gate prints its failed
-test far above its summary (S-1499).
+the tail, in that order.
+
+A failed `git push` (`pushBranch()` in `bl run`, `pushIntegrated()` in
+`bl merge`) escalates in the `_escalation.md` shape (S-897), which
+`pushEscalation()` in `push-gate.js` builds with `escalationText()`
+(`escalation.js`). The reason line stays first. bl takes the cause from the
+check record that ci-cd's `ci gate` writes when it fails (S-1556):
+`<git-common-dir>/ci-cd/checks/<commit>.json`, read by `gateRecord()` only
+when `by` is `gate`, `verdict` is `fail` and `started` is not before the push
+began. bl never reruns the gate and never parses the hook's output. The kinds:
+
+- `error` set: the step could not run; the one option is to do what the
+  error names.
+- The last step is `vulns`: each blocking finding as `findingsTable()` renders
+  it, per lock file, in a block for what the branch brings in (`new`) and one
+  for what `main` has too (`overdue`), each with its own options. When ci-cd
+  could not compare with `main` (`base.compared` is `false`), every finding
+  counts as new.
+- Any other step: the excerpt and last 30 lines of the record's
+  `<commit>.log`, and a note that bl did not check whether `main` fails the
+  step too.
+- No fresh record (none, `by` is `check`, an older `started`, a malformed
+  record), and an `origin/<branch>` that lacks HEAD after the push: the push
+  output through `pushFailure()` under Details (its excerpt, left out when no
+  marker matches, then the last 10 lines; the pre-push gate prints its failed
+  test far above its summary, S-1499), and no guess at the cause.
+
+No option bypasses the gate (`--no-verify`).
 
 The fix-tests session returns an outcome object (`schemas/fix-tests.json`,
 F-68 D2): `outcome` is one of three values, and `reason` is required for each.
@@ -2083,9 +2106,13 @@ Where the text comes from:
 - fix-tests returns `unrelated` with a short reason, so its explanation
   goes to `<scratch>/escalation.md`, which the loop copies in (see **The test
   gate**).
-- Escalations the loop raises on its own (a gate that failed twice, a push or
-  forge failure, a round-cap or verdict mismatch) are mechanical: a one-line
-  reason and the raw details. When the latest Review Log session has open
+- Escalations the loop raises on its own (a gate that failed twice, a forge
+  failure, a round-cap or verdict mismatch) are mechanical: a one-line reason
+  and the raw details. A failed push and a failed scripted story are the
+  exceptions: under the reason line they use the `_escalation.md` shape,
+  rendered by `escalationText()` (`escalation.js`); a push's comes from the
+  gate's check record, with the push output as the fallback (see **The test
+  gate**). When the latest Review Log session has open
   items, the details list each one whole as `- [ ] <claim>`: the item's lines
   joined, cut before its ` — Repro:` or `Class:` tail, rewrapped at 100
   columns (`openItemsSummary()`). The repro, test and class stay in the
