@@ -99,8 +99,7 @@ instead and name the repo (see **Writing an escalation**).
 
 8. Format the files you changed (see **Format and lint** below).
 
-Write file paths in backticks (`src/x.js`). The scheduler reads a path you name in the plan or
-the Deferred section only when it is in backticks.
+{{executionInputs}}
 
 {{sessionStack}}
 

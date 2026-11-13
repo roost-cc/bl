@@ -91,12 +91,11 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
      instead of repeating it.
    - Write each plan step as `<step> → verify: <check>`, where the check is the test, command
      or observation that shows the step worked.
-   - Write every file path in the plan in backticks (`src/x.js`). When several targets run at
-     once, `bl run` reads these paths to hold back a target that touches the same file as
-     another. `bl run` does not see a path that is not in backticks.
+   - Follow **Execution plan inputs** below for the plan's file paths and the dependencies
+     between stories.
    - Give the plan a `### Sources of truth` part: for each concept the story touches, where it
      is defined and how the code reaches it. The story reads these paths and does not change
-     them, so `bl run` does not hold a target back for them.
+     them.
    - Give each story an effort level by **Effort level** below: put `"effort": "<level>"` on its
      spec entry, and write the `**Effort:** <level>: <reason>` line as the first line of its
      Implementation Plan.
@@ -192,6 +191,8 @@ separate deliverables. Your job is to make the feature ready for that. It needs 
 {{simplicityGuide}}
 
 {{effortGuide}}
+
+{{executionInputs}}
 
 {{sideChangeGuide}}
 

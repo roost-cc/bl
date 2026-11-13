@@ -23,17 +23,14 @@ Backlog repo : {{backlogDir}}
 4. Make the **## Implementation Plan** concrete and actionable. Write each
    step as `<step> → verify: <check>`, where the check is the test, command or
    observation that shows the step worked. The plan should include:
-   - The specific files or components to change, each path in backticks (`src/x.js`). When
-     several targets run at once, `bl run` reads the backticked paths to hold back a target that
-     touches the same file as another. `bl run` does not see a path that is not in backticks.
+   - The specific files or components to change (see **Execution plan inputs** below).
    - The new tests to add.
    - The edge cases to handle.
    - Any architectural changes that the story needs.
    - The behaviour the story shares with existing code, and whether it gets a
      shared abstraction (see **Simple, surgical changes** below).
    - A `### Sources of truth` part: for each concept the story touches, where it is defined and
-     how the code reaches it. The story reads these paths and does not change them, so `bl run`
-     does not hold a target back for them.
+     how the code reaches it. The story reads these paths and does not change them.
 
 5. Update the story frontmatter:
    - Check that `component:` names the code boundary of the main work. The story's repo is that
@@ -88,6 +85,8 @@ Backlog repo : {{backlogDir}}
 {{simplicityGuide}}
 
 {{effortGuide}}
+
+{{executionInputs}}
 
 {{validateBeforeSync}}
 
