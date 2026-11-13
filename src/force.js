@@ -41,7 +41,7 @@ Options:
 The operator's way out of a stuck state (F-119 D2). bl force prints what the
 move skips: that flow.json has no transition for it, each hold in
 blockers.json on the status, and each failing "when" guard of the verbs that
-have the transition. It then asks for the line "force <id> to <status>"; any
+have the transition, on the verb's row or on its branch to the status. It then asks for the line "force <id> to <status>"; any
 other input, an empty line or the end of input changes nothing and exits 1.
 On the exact line it records the status in the unit's transition log as
 "by: force" and commits the unit file ("chore: force <id> to <status>"). A
@@ -59,9 +59,11 @@ already or that its type lacks.`;
  * table has no transition from the unit's status to `to`, each hold in
  * `blockers.json` that keeps the unit (or a feature's stories) out of `to`
  * (`heldAt`), and each `when` guard that does not hold, of each verb that has
- * the transition. Empty when the move skips nothing.
+ * the transition: the row's, and the branch's that goes to `to` (when no
+ * branch to `to` has all its guards hold). Empty when the move skips nothing.
  * @param {{ backlogRoot: string }} config
- * @param {{ id: string, kind?: string, status: string, indexPath: string }} unit
+ * @param {{ id: string, kind?: string, status: string, indexPath: string, round?: number,
+ *   reviewRoundsMax?: number }} unit
  * @param {string} to
  * @returns {string[]}
  */
@@ -79,10 +81,21 @@ export function skipsOf(config, unit, to) {
   const skips = [];
   if (verbs.length === 0) skips.push(`flow.json has no ${kind} transition from ${unit.status} to ${to}`);
   for (const { line } of heldAt(config, unit.id, to)) skips.push(`hold: ${line}`);
-  const ctx = { config, id: unit.id, indexPath: unit.indexPath };
+  // The round guard (`round_within_cap`) reads the unit's round and cap, as the review loop does.
+  const ctx = { config, id: unit.id, indexPath: unit.indexPath, round: unit.round, maxRounds: unit.reviewRoundsMax };
   for (const verb of verbs) {
-    for (const when of failingGuards(flow, flow.verbOf(kind, verb).when, ctx)) {
+    const row = flow.verbOf(kind, verb);
+    for (const when of failingGuards(flow, row.when, ctx)) {
       skips.push(`guard: ${guardRefusal(unit.id, verb, when)}`);
+    }
+    // A branch to `to` is taken only when its own guards hold (`branchOf`);
+    // the edge into the verb's `during` takes no branch.
+    const failing = (to === row.during ? [] : [...row.success, ...row.failure])
+      .filter((b) => b.to === to)
+      .map((b) => failingGuards(flow, b.when, ctx));
+    if (failing.length > 0 && failing.every((list) => list.length > 0)) {
+      for (const when of new Set(failing.flat()))
+        skips.push(`guard: ${guardRefusal(unit.id, `${verb} → ${to}`, when)}`);
     }
   }
   return skips;

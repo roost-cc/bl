@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { parseFrontmatter } from '../../src/config.js';
 import { loadFlow } from '../../src/flow.js';
 import { main as forceMain } from '../../src/force.js';
@@ -19,7 +19,7 @@ import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import { git, headFiles, initGitBacklog } from '../helpers/git-backlog.js';
 import { holdLock } from '../helpers/hold-lock.js';
 import { TTY, bl } from '../helpers/rank-fixture.js';
-import { mkTempBacklog } from '../helpers/tempdir.js';
+import { FLOW_TEMPLATE, mkTempBacklog } from '../helpers/tempdir.js';
 
 const T0 = '2026-11-01T00:00:00Z';
 const T1 = '2026-11-02T00:00:00Z';
@@ -99,6 +99,50 @@ test('bl force lists each skip: no transition, a hold on the status, a failing g
   r = force(dir, ['F-1', 'refined'], '\n');
   assert.match(r.stderr, /- nothing: flow\.json has the transition, and no hold or guard refuses it/);
   assert.match(r.stderr, /Type "force F-1 to refined" to force it; anything else cancels: /);
+});
+
+test('force_lists_failing_branch_guards: a branch to the status whose guard fails, on success and on failure', () => {
+  const at = (n) => `2026-11-0${n}T00:00:00Z`;
+  const reviewed = (rounds) => {
+    const log = [
+      { at: at(1), to: 'draft', by: 'new' },
+      { at: at(2), to: 'in_progress', by: 'force' },
+      { at: at(3), to: 'in_review', by: 'force' },
+    ];
+    for (let i = 1; i < rounds; i++) {
+      log.push({ at: at(3), to: 'fixing', by: 'force' }, { at: at(3), to: 'in_review', by: 'force' });
+    }
+    return log;
+  };
+  const story = (id, rounds) => ({
+    id,
+    component: 'C01',
+    title: id,
+    added: '2026-11-01',
+    transitions: reviewed(rounds),
+  });
+  // A guarded success branch too: review goes to ready_for_merge only within the cap, else to escalated.
+  const flow = JSON.parse(readFileSync(join(dirname(FLOW_TEMPLATE), 'flow.json'), 'utf8'));
+  flow.types.story.verbs.review.success = [{ when: ['round_within_cap'], to: 'ready_for_merge' }, { to: 'escalated' }];
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Work' }],
+    // The default cap is 2 rounds: S-5 is past it, S-6 within it.
+    stories: [story('S-5', 3), story('S-6', 1)],
+    flow,
+  });
+  initGitBacklog(dir);
+  for (const [id, to, guarded] of [
+    ['S-5', 'fixing', true],
+    ['S-5', 'ready_for_merge', true],
+    ['S-5', 'escalated', false],
+    ['S-6', 'fixing', false],
+    ['S-6', 'ready_for_merge', false],
+  ]) {
+    const r = force(dir, [id, to], '\n');
+    assert.doesNotMatch(r.stderr, /has no story transition/, `${id} → ${to}`);
+    const line = `- guard: ${id}: review → ${to} needs round_within_cap, and it does not hold`;
+    assert.equal(r.stderr.includes(line), guarded, `${id} → ${to}: ${r.stderr}`);
+  }
 });
 
 test('the typed confirmation writes one entry by: force, removes completed: and commits the unit file', () => {

@@ -4359,7 +4359,9 @@ bl force F-3 refined          # a feature past its refinement session, then bl a
    holds the unit and names that process. A lock whose process has exited is free.
 3. It prints what the move skips (`skipsOf`): that `flow.json` has no transition from the
    unit's status to the new one, each hold in `blockers.json` on the new status (`heldAt`),
-   and each failing `when` guard of the verbs that have the transition (`failingGuards`).
+   and each failing `when` guard of the verbs that have the transition (`failingGuards`): on
+   the verb's row, and on its branches to the new status when none of them has all its guards
+   hold. The guards read the unit's round and round cap, as the review loop does.
 4. It reads one line. Only the exact line `force <id> to <status>` writes the entry
    `by: force` (`transition`) and commits the unit file as `chore: force <id> to <status>`.
    Any other input, an empty line or the end of input changes nothing and exits 1.
