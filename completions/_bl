@@ -56,6 +56,16 @@ _roost_feature_ids() {
     | sort -t- -k2 -n
 }
 
+_roost_batch_ids() {
+  local root bldir
+  root="$(_roost_repo_root)"
+  bldir="$(_roost_backlog_dir "$root")"
+  [[ -d "$bldir/batches" ]] || return
+  find "$bldir/batches" -maxdepth 1 -type d -name 'B*' 2>/dev/null \
+    | sed -nE 's|^.*/B([0-9]+)-[^/]+$|B-\1|p' \
+    | sort -t- -k2 -n
+}
+
 # Collect theme ids (slugs) from themes/ directory names
 _roost_theme_ids() {
   local root bldir
@@ -102,6 +112,7 @@ _bl() {
     'pr:Alias for review'
     'edit:Open a story file in $EDITOR'
     'view:Open a read-only copy of a story file in $EDITOR'
+    'change:Show a story'"'"'s, feature'"'"'s or batch'"'"'s change document; --open: its open review items'
     'list:List backlog stories'
     'ls:Alias for list'
     'tree:Show dependency trees'
@@ -168,6 +179,13 @@ _bl() {
       local -a stories
       stories=( ${(f)"$(_roost_story_ids)"} )
       _arguments -s '1:story id:(${stories})'
+      ;;
+    change)
+      local -a ids
+      ids=( ${(f)"$(_roost_story_ids)"} ${(f)"$(_roost_feature_ids)"} ${(f)"$(_roost_batch_ids)"} )
+      _arguments -s \
+        '--open[Print the open items of the latest review session]' \
+        '1:story, feature or batch id:(${ids})'
       ;;
     review|pr)
       local -a stories

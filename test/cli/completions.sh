@@ -36,6 +36,7 @@ mkdir -p "$REPO/backlog/features"/{F1-good,Foops,F2bad,F7,F3-,.completed/F4-arch
 touch "$REPO/backlog/features/F9-file"
 mkdir -p "$REPO/backlog/components"/{C1-good,Coops,C2bad,C7,C3-}
 mkdir -p "$REPO/backlog/stories"/{S1-good,Soops,S2bad,S7,S3-}
+mkdir -p "$REPO/backlog/batches"/{B1-good,Boops,B2bad,B7,B3-}
 for b in s1-good side-bl-verbs s2bad s3-; do
   git -C "$REPO" worktree add -q -b "$b" "$TMP/wt-$b" >/dev/null 2>&1
 done
@@ -43,7 +44,7 @@ done
 # Only empty-slug names (`F1-`, `C1-`, `S1-`, branch `s1-`): every
 # collector must yield nothing.
 SLUGLESS="$TMP/slugless"
-mkdir -p "$SLUGLESS/backlog/features/F1-" "$SLUGLESS/backlog/components/C1-" "$SLUGLESS/backlog/stories/S1-"
+mkdir -p "$SLUGLESS/backlog/features/F1-" "$SLUGLESS/backlog/components/C1-" "$SLUGLESS/backlog/stories/S1-" "$SLUGLESS/backlog/batches/B1-"
 git -C "$SLUGLESS" init -q
 git -C "$SLUGLESS" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
 git -C "$SLUGLESS" worktree add -q -b s1- "$TMP/wt-slugless" >/dev/null 2>&1
@@ -75,6 +76,7 @@ COLLECTORS=(
   "_roost_feature_ids F-1"
   "_roost_story_ids S-1"
   "_roost_component_ids C1"
+  "_roost_batch_ids B-1"
   "_roost_worktree_story_ids S-1"
 )
 
@@ -126,7 +128,12 @@ for file in "$COMPLETIONS/_bl" "$COMPLETIONS/backlog.zsh"; do
   if grep -q "'watch:" "$file"; then pass; else fail "$(basename "$file") lists the watch verb"; fi
   if grep -q "'force:" "$file"; then pass; else fail "$(basename "$file") lists the force verb"; fi
   if grep -q "'flow:" "$file"; then pass; else fail "$(basename "$file") lists the flow verb"; fi
+  if grep -q "'change:" "$file"; then pass; else fail "$(basename "$file") lists the change verb"; fi
+  if grep -q -- "'--open\[Print the open items" "$file"; then pass; else fail "$(basename "$file") completes bl change --open"; fi
 done
+assert_eq "bl chan<TAB> completes to change" "change" "$(complete_verb chan)"
+assert_eq "bl change completes story, feature and batch ids" "S-1 F-1 B-1" "$(complete_bash change "")"
+assert_eq "bl change completes its flags" "--open --help" "$(complete_bash change "-")"
 assert_eq "bl forc<TAB> completes to force" "force" "$(complete_verb forc)"
 assert_eq "bl force completes story and feature ids" "S-1 F-1" "$(complete_bash force "")"
 assert_eq "bl flo<TAB> completes to flow" "flow" "$(complete_verb flo)"

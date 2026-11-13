@@ -113,6 +113,30 @@ export function resolutionCommit(item) {
 }
 
 /**
+ * A session body cut at each `**…**` category heading, in order. `heading` is
+ * the heading text as written, `category` its key (`'nits'` for **Nits** or
+ * **Nit**, else the heading lower-cased); both are null for the text before
+ * any heading.
+ *
+ * @param {string} sessionBody
+ * @returns {{ heading: string|null, category: string|null, text: string }[]}
+ */
+function sessionSections(sessionBody) {
+  const sections = [{ heading: null, category: null, lines: [] }];
+  for (const line of sessionBody.split('\n')) {
+    const m = line.match(HEADING_RE);
+    if (!m) {
+      sections.at(-1).lines.push(line);
+      continue;
+    }
+    const heading = m[1].trim();
+    const category = /^nits?$/i.test(heading) ? 'nits' : heading.toLowerCase();
+    sections.push({ heading, category, lines: [] });
+  }
+  return sections.map(({ heading, category, lines }) => ({ heading, category, text: lines.join('\n') }));
+}
+
+/**
  * Count the open boxes of one session body. `unchecked` counts every open
  * box; `blocking` leaves out those under **Nits** — nits never gate a merge
  * (the verifier renders `[safe]` nits as open boxes on a session it signs off
@@ -121,22 +145,32 @@ export function resolutionCommit(item) {
  * **Should fix** and a **Nits** (or **Nit**) heading.
  */
 function countOpenBoxes(sessionBody) {
-  let category = null;
   const counts = { unchecked: 0, blocking: 0, must: 0, should: 0, nits: 0 };
-  for (const line of sessionBody.split('\n')) {
-    const heading = line.match(HEADING_RE);
-    if (heading) {
-      category = /^nits?$/i.test(heading[1].trim()) ? 'nits' : heading[1].trim().toLowerCase();
-      continue;
-    }
-    if (!CHECKBOX_RE.test(line)) continue;
-    counts.unchecked += 1;
-    if (category !== 'nits') counts.blocking += 1;
-    if (category === 'must fix') counts.must += 1;
-    else if (category === 'should fix') counts.should += 1;
-    else if (category === 'nits') counts.nits += 1;
+  for (const { category, text } of sessionSections(sessionBody)) {
+    const n = text.split('\n').filter((line) => CHECKBOX_RE.test(line)).length;
+    counts.unchecked += n;
+    if (category !== 'nits') counts.blocking += n;
+    if (category === 'must fix') counts.must += n;
+    else if (category === 'should fix') counts.should += n;
+    else if (category === 'nits') counts.nits += n;
   }
   return counts;
+}
+
+/**
+ * The latest (first) `### Session` block of a review-log slice: its date, its
+ * PR number and its body, or null when there is none.
+ *
+ * @param {string|null} log
+ * @returns {{ date: string|null, prNumber: string|null, body: string }|null}
+ */
+function latestSession(log) {
+  if (!log) return null;
+  const headingRe =
+    /^###[ \t]+Session[ \t]+(\S+)(?:[ \t]+\(PR[ \t]+#?(\d+)[^)\n]*\))?[^\n]*\n([\s\S]*?)(?=^###[ \t]+Session\b|$(?![\s\S]))/m;
+  const m = log.replace(/\r\n/g, '\n').match(headingRe);
+  if (!m) return null;
+  return { date: m[1].trim() || null, prNumber: m[2] ?? null, body: m[3] ?? '' };
 }
 
 /**
@@ -148,15 +182,28 @@ function countOpenBoxes(sessionBody) {
  * @returns {{ date: string|null, prNumber: string|null, unchecked: number, blocking: number, must: number, should: number, nits: number }|null}
  */
 export function parseLatestSession(log) {
-  if (!log) return null;
-  const headingRe =
-    /^###[ \t]+Session[ \t]+(\S+)(?:[ \t]+\(PR[ \t]+#?(\d+)[^)\n]*\))?[^\n]*\n([\s\S]*?)(?=^###[ \t]+Session\b|$(?![\s\S]))/m;
-  const m = log.replace(/\r\n/g, '\n').match(headingRe);
-  if (!m) return null;
-  const date = m[1].trim() || null;
-  const prNumber = m[2] ?? null;
-  const sessionBody = m[3] ?? '';
-  return { date, prNumber, ...countOpenBoxes(sessionBody) };
+  const session = latestSession(log);
+  if (!session) return null;
+  return { date: session.date, prNumber: session.prNumber, ...countOpenBoxes(session.body) };
+}
+
+/**
+ * The open items of the latest `### Session` of a review-log slice, grouped
+ * under their category heading in the order the session lists them, with the
+ * counts of `parseLatestSession`. A section with no open item is left out;
+ * `heading` is null for the items before any heading. Null when there is no
+ * session.
+ *
+ * @param {string|null} log
+ * @returns {(NonNullable<ReturnType<typeof parseLatestSession>> & { sections: { heading: string|null, items: ReturnType<typeof openCheckboxItems> }[] })|null}
+ */
+export function latestSessionOpenItems(log) {
+  const session = latestSession(log);
+  if (!session) return null;
+  const sections = sessionSections(session.body)
+    .map(({ heading, text }) => ({ heading, items: openCheckboxItems(text) }))
+    .filter((s) => s.items.length > 0);
+  return { ...parseLatestSession(log), sections };
 }
 
 /**
@@ -184,7 +231,7 @@ export function summarizeLatestReviewSession(body) {
 }
 
 /** `1 nit`, `2 nits`. */
-function plural(n, word) {
+export function plural(n, word) {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
@@ -237,6 +284,32 @@ export function featureReviewGate(status, body) {
   const review = summarizeLatestReviewSession(body);
   const blocked = REVIEW.blocked.includes(status) || (review?.blocking ?? 0) > 0;
   return { blocked, review };
+}
+
+/** The command that lists the open items of a unit's latest review session (S-1157). */
+export const openItemsCommand = (id) => `bl change ${id} --open`;
+
+/**
+ * The refusal of `bl merge` and `bl done` when `featureReviewGate` blocks:
+ * the review state, then the next step before `action`. The next step is
+ * `bl review` for `in_review` and for `ready_for_merge` with an open Must or
+ * Should box (`flow.json`'s `implement` row does not start from
+ * `ready_for_merge`), else `bl implement`.
+ *
+ * @param {{ id: string, state: string|null|undefined, round: number, review: ReturnType<typeof parseLatestSession>,
+ *           position: string|null|undefined, action: string }} p
+ * @returns {string}
+ */
+export function reviewBlockedMessage({ id, state, round, review, position, action }) {
+  const blocking = review?.blocking ?? 0;
+  const listed = blocking > 0 ? `, listed by ${openItemsCommand(id)}` : '';
+  const next = [REVIEW.open, REVIEW.clean].includes(position)
+    ? `Review it (bl review ${id})`
+    : `Address the review feedback (bl implement ${id})`;
+  return (
+    `${id} has unresolved review state (${state}, round ${round}, latest session ${review?.date ?? 'unknown'},` +
+    ` ${blocking} unchecked Must/Should${listed}).\n${next} before ${action}.`
+  );
 }
 
 /**

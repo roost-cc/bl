@@ -59,6 +59,8 @@ Per-command stdout contracts:
 | `bl log`             | log lines                                                 |
 | `bl agents`          | AGENTS.md, writing and collaboration rules, dictionaries  |
 | `bl view`            | the rendered page when redirected; else nothing (editor)  |
+| `bl change`          | the document when redirected; else nothing (editor)       |
+| `bl change --open`   | the open items of the latest review session               |
 | `bl edit`            | nothing (opens editor)                                    |
 | `bl init`            | nothing (status → stderr)                                 |
 | `bl sync`            | nothing                                                   |
@@ -4428,6 +4430,42 @@ Both exit with the editor's status: 127 when it cannot be launched, 128 + n when
 signal n kills it. When `bl view` cannot make its copy it shows the page instead
 (printed when it fits the terminal, else `$PAGER` → `less` → `more`) and exits
 with the pager's status the same way.
+
+### `bl change`
+
+Show a unit's change document (S-1157). It takes a story, a feature or a story batch, and
+it only shows; it never edits:
+
+```bash
+bl change S-1156              # read-only copy of the current change document, as bl view opens a page
+bl change F-79 > change.md    # stdout not a terminal: the document, printed byte for byte
+bl change S-1156 --open       # the open items of the latest review session
+```
+
+The document is the unit's current one (`currentChange`): the highest-numbered open
+`change-<n>.md`, else the highest-numbered. A story in a feature or a story batch (its
+`feature:` or `batch:` is set) writes its change to that unit's document, so `bl change S-n`
+shows that unit's document and says so on stderr first:
+`S-n is in F-m: showing F-m's change document`. `bl change` and `bl view` share one viewer
+(`showReadOnly`, `src/view.js`): the same editor order, temp copy and pager fallback.
+
+`--open` prints, with no editor, the open (unchecked) items of the latest `### Session` of
+`## Review Log`, grouped under their category heading, each with its continuation lines:
+
+```text
+S-1156 · latest session 2026-10-29 (PR #51): 1 Must/Should, 0 nits open
+
+**Must fix**
+
+- [ ] race in close
+  repro: run close twice
+```
+
+The items and counts come from `latestSessionOpenItems` (`src/review-log.js`), the parse
+`bl status` and the merge gate count with. With no session it prints
+`<id> · no review session yet`. `bl status` ends its `review:` line with
+`(bl change <id> --open)` when the latest session has an open item, and the review refusal
+of `bl merge` and `bl done` (`reviewBlockedMessage`) names it after the Must/Should count.
 
 ### `bl done`
 

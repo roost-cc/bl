@@ -27,7 +27,7 @@ import {
 import { findStoryDir } from './story.js';
 import { collectStoryTokens, applyTokensToFrontmatter } from './tokens.js';
 import { updateSpecFile } from './spec-file.js';
-import { featureReviewGate } from './review-log.js';
+import { featureReviewGate, reviewBlockedMessage } from './review-log.js';
 import { unitChange } from './change-doc.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { commitAndRecord, reportBacklogCommit, exitOnSyncError } from './sync.js';
@@ -205,17 +205,15 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
   const { position } = reviewOf('story', fm, change.change);
   const { blocked, review: reviewSummary } = featureReviewGate(position, change.changeBody);
   if (blocked) {
-    const date = reviewSummary?.date ?? 'unknown date';
-    const unchecked = reviewSummary?.blocking ?? 0;
-    const next =
-      position === 'in_review'
-        ? `Review it (bl review ${parsed.id})`
-        : `Address the review feedback (bl implement ${parsed.id})`;
     console.error(
-      `Story ${parsed.id} has unresolved review state` +
-        ` (${position ?? current}, round ${roundOf('story', fm, change.change)}, latest session ${date},` +
-        ` ${unchecked} unchecked Must/Should).` +
-        `\n${next} before marking done.`,
+      reviewBlockedMessage({
+        id: parsed.id,
+        state: position ?? current,
+        round: roundOf('story', fm, change.change),
+        review: reviewSummary,
+        position,
+        action: 'marking done',
+      }),
     );
     process.exit(1);
   }

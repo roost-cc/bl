@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {
   changeNextVerb,
   extractReviewLog,
+  latestSessionOpenItems,
   parseLatestSession,
+  reviewBlockedMessage,
   summarizeLatestReviewSession,
   openCheckboxItems,
   resolutionCommit,
@@ -391,4 +393,81 @@ test('resolutionCommit: the first commit a → continuation line names, never on
     const [item] = openCheckboxItems(md);
     assert.equal(resolutionCommit(item), sha, md);
   }
+});
+
+const OPEN_ITEMS_LOG = `### Session 2026-10-29 (PR #51; reviewed by codex)
+
+- [ ] before any heading
+
+**Must fix**
+
+- [ ] race in close
+      repro: run close twice
+      test: groups.int.test.js
+- [x] fixed already
+      → abc1234
+
+**Should fix**
+
+None.
+
+**Nits**
+
+- [ ] rename x
+- [X] spacing
+
+### Session 2026-10-20 (PR #50)
+
+**Must fix**
+
+- [ ] older item
+`;
+
+test('latestSessionOpenItems: open items of the latest session under their heading, continuation lines kept (S-1157)', () => {
+  const s = latestSessionOpenItems(OPEN_ITEMS_LOG);
+  assert.deepEqual(s.sections, [
+    { heading: null, items: [{ text: 'before any heading', lines: [] }] },
+    {
+      heading: 'Must fix',
+      items: [{ text: 'race in close', lines: ['repro: run close twice', 'test: groups.int.test.js'] }],
+    },
+    { heading: 'Nits', items: [{ text: 'rename x', lines: [] }] },
+  ]);
+  assert.equal(s.date, '2026-10-29');
+  assert.equal(s.prNumber, '51');
+  // The counts are parseLatestSession's, from the same parse.
+  const { sections, ...counts } = s;
+  assert.deepEqual(counts, parseLatestSession(OPEN_ITEMS_LOG));
+  assert.equal(s.blocking, 2);
+  assert.equal(s.nits, 1);
+  assert.ok(!JSON.stringify(sections).includes('older item'), 'only the latest session is read');
+  assert.ok(!JSON.stringify(sections).includes('abc1234'), 'a checked item and its lines are left out');
+});
+
+test('latestSessionOpenItems: null with no session; no sections when every box is checked (S-1157)', () => {
+  assert.equal(latestSessionOpenItems(''), null);
+  assert.equal(latestSessionOpenItems('No reviews yet.\n'), null);
+  const s = latestSessionOpenItems('### Session 2026-11-01\n\n**Must fix**\n\n- [x] done\n');
+  assert.deepEqual(s.sections, []);
+  assert.equal(s.unchecked, 0);
+  assert.equal(s.prNumber, null);
+});
+
+test('reviewBlockedMessage: names bl change --open when a Must/Should is open, and the next verb by position (S-1157)', () => {
+  const review = { date: '2026-10-29', blocking: 1 };
+  assert.equal(
+    reviewBlockedMessage({ id: 'S-1', state: 'fixing', round: 2, review, position: 'fixing', action: 'marking done' }),
+    'S-1 has unresolved review state (fixing, round 2, latest session 2026-10-29, 1 unchecked Must/Should, listed by bl change S-1 --open).\nAddress the review feedback (bl implement S-1) before marking done.',
+  );
+  assert.equal(
+    reviewBlockedMessage({
+      id: 'F-1',
+      state: 'running',
+      round: 1,
+      review: null,
+      position: 'in_review',
+      action: 'merging',
+    }),
+    'F-1 has unresolved review state (running, round 1, latest session unknown, 0 unchecked Must/Should).\nReview it (bl review F-1) before merging.',
+  );
 });
