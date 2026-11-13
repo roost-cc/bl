@@ -6,6 +6,8 @@ import { serializeFrontmatter } from '../../src/config.js';
 import { settleFailedWrite, settlePending, settleRecord, writeRecord } from '../../src/feature-links.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { writeBlockersLocked } from '../helpers/covering-lock.js';
+import { FEATURES_DIR } from '../../src/feature.js';
+import { BATCHES_DIR } from '../../src/batch.js';
 import { withLock } from '../../src/lock.js';
 
 /** `settleRecord` as `settlePending` runs it: under the backlog lock. */
@@ -210,6 +212,28 @@ test('settleFailedWrite names what is left for each settle outcome', async () =>
     assert.equal(out.kept, kept, `${name}: kept`);
     assert.match(out.message, message, name);
     assert.deepEqual(out.left, left, `${name}: left`);
+  }
+});
+
+// Review 2026-11-13 (round 2), Should 3: a record names its unit's directory
+// under the directory its kind's module defines, and no other.
+test('feature_links_dirs_are_the_unit_dirs', () => {
+  const cases = [
+    // [unit, the membership key, its kind's directory, the other kind's]
+    ['F-1', 'feature', FEATURES_DIR, BATCHES_DIR],
+    ['B-1', 'batch', BATCHES_DIR, FEATURES_DIR],
+  ];
+  for (const [unit, key, dir, other] of cases) {
+    const root = mkTempDir('bl-links-dirs-');
+    mkdirSync(join(root, 'stories/S1-one'), { recursive: true });
+    writeFileSync(join(root, 'stories/S1-one/index.md'), '---\nstory_id: S-1\n---\n');
+    const record = (d) => ({
+      [key]: unit,
+      dir: `${d}/${unit[0]}1-t`,
+      stories: [{ id: 'S-1', path: 'stories/S1-one/index.md', before: '' }],
+    });
+    assert.ok(existsSync(writeRecord(root, record(dir))), `${unit}: ${dir}`);
+    assert.throws(() => writeRecord(root, record(other)), /is not a path the record may name/, `${unit}: ${other}`);
   }
 });
 

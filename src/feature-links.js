@@ -37,6 +37,8 @@ import { RUN_DIR } from './run-lock.js';
 import { atomicWriteFile, removeBacklogPath } from './atomic-write.js';
 import { withSpecLock } from './spec-file.js';
 import { RUN_EDGE, readBlockers } from './blockers.js';
+import { FEATURES_DIR } from './feature.js';
+import { BATCHES_DIR } from './batch.js';
 
 const SUFFIX = '.links.json';
 
@@ -56,8 +58,8 @@ export function failPoint(position) {
  * that writes it. `bl batch` writes a `B-<n>` record (F-125 D1).
  */
 const KINDS = {
-  F: { key: 'feature', dir: 'features', command: 'bl new --feature' },
-  B: { key: 'batch', dir: 'batches', command: 'bl batch' },
+  F: { key: 'feature', dir: FEATURES_DIR, command: 'bl new --feature' },
+  B: { key: 'batch', dir: BATCHES_DIR, command: 'bl batch' },
 };
 
 /** The kind of the unit id `unit` (`KINDS`), null when it is neither. */
