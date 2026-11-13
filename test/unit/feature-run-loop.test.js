@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { parseFrontmatter, runForgeOp } from '../../src/config.js';
 import {
@@ -571,6 +571,23 @@ test("a session's plan.yaml edit that bl cannot read escalates with readPlan's m
     } finally {
       cleanup();
     }
+  }
+});
+
+// Review 2026-11-13, nit: the "delete it" hint goes only with a plan bl could not read.
+test('--resume names no file to delete when writing a new plan fails', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  const unitDir = dirname(feature.indexPath);
+  try {
+    chmodSync(unitDir, 0o555);
+    const runner = fakeRunner({ dir, feature });
+    const state = await runFeature({ feature, config, prep, runner, opts: { resume: true, maxRounds: 2 } });
+    assert.equal(state.refused, true);
+    assert.match(state.lastError, /EACCES/);
+    assert.doesNotMatch(state.lastError, /delete it/);
+  } finally {
+    chmodSync(unitDir, 0o755);
+    cleanup();
   }
 });
 

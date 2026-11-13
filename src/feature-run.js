@@ -457,7 +457,12 @@ async function setupPlan(ctx, resume) {
   const { feature, config, prep } = ctx;
   const dir = dirname(feature.indexPath);
   const stories = prep.ordered ?? [];
-  const stored = resume ? readPlan(dir, feature.id) : null;
+  let stored = null;
+  try {
+    if (resume) stored = readPlan(dir, feature.id);
+  } catch (e) {
+    throw new Error(`${e.message} — fix it, or delete it to compute a new plan`, { cause: e });
+  }
   const plan = stored
     ? replan(stored, stories, readEdges(config), { why: `the stories of ${feature.id} changed between runs` })
     : newPlan(feature.id, stories, readEdges(config));
@@ -5087,7 +5092,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
   try {
     if (await setupPlan(ctx, opts.resume)) started.push(planRelPath(ctx));
   } catch (e) {
-    return refuse(runner, feature, `${e.message}${opts.resume ? ' — fix it, or delete it to compute a new plan' : ''}`);
+    return refuse(runner, feature, e.message);
   }
   // A unit with no log gets the one its status and change document give
   // (F-69 D4) before the run records a hop: the document as it is now, since
