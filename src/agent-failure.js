@@ -8,6 +8,8 @@
  * command, a billing page) come from the adapter's `remediation()`.
  */
 
+import { configurationLabel } from './config.js';
+
 /**
  * `value` (an ISO string, a Date or epoch milliseconds) as local wall-clock
  * time for the operator: "2026-10-13 18:11 America/Los_Angeles".
@@ -61,9 +63,9 @@ export function classifyCause({ out, reading }) {
   return { cause: 'unknown', line: 'unknown', until: null };
 }
 
-/** `agent model`, or `agent (agent default)` when the configuration names no model. */
-export function configurationName({ agent, model }) {
-  return `${agent} ${model ?? '(agent default)'}`;
+/** `configurationLabel`'s name, with `(agent default)` when the configuration names no model. */
+function configurationName(c) {
+  return `${configurationLabel(c)}${c.model == null ? ' (agent default)' : ''}`;
 }
 
 /** The line of one configuration, then its reading's window lines, indented. */
