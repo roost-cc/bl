@@ -3951,18 +3951,18 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
   `missingkey=error` against `Selected` (the selected row's id) and `Yanked` (the yanked unit's
   id, only while one is yanked). An element without `{{ }}` renders as itself.
 
-  | Row                                     | Actions (key: command)                                                                                                                                |
-  | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `runs`, live (`running`)                | `s`: `bl stop <id>`, with `stops`                                                                                                                     |
-  | `runs`, not live                        | `r`: `bl run <id>` in window `<id> run`, with `--resume` when `stopped`, `stale`, `escalated` or `failed` (`RESUMED_STATUSES`)                        |
-  | `runs`, every row                       | then `o`: `bl view <id>` (window `<id> view`); `p`: the pull request's URL, when the run has one                                                      |
-  | escalation                              | `e`: `bl status <unit>` in window `<unit> status` (it prints to stdout, which the note line does not show); `o`: `bl view <unit>`                     |
-  | task                                    | `d`: `bl task done <T-n>`, input `note`; `o`: `bl view <T-n>`                                                                                         |
-  | change                                  | `m`: `bl merge <unit>`, or `r`: `bl run <unit>` in window `<unit> run`, by `changeNextVerb`; `o`: `bl view <unit>`                                    |
-  | ranked unit (`ranked`, `staged.ranked`) | `p`: `bl rank {{.Yanked}} --after {{.Selected}}`; `P`: `bl rank {{.Yanked}} --before {{.Selected}}`; `x`: `bl rank {{.Selected}} --remove` (F-113 D7) |
-  | unit of `next`, every one               | `o`: `bl view <id>`                                                                                                                                   |
-  | `next.actions`                          | `C`: `bl rank --commit`; `R`: `bl rank --reset`, while a staged copy exists                                                                           |
-  | runner, update; every row               | last, `g`: `bl agent` in window `agent`                                                                                                               |
+  | Row                                     | Actions (key: command)                                                                                                                                                 |
+  | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `runs`, live (`running`)                | `s`: `bl stop <id>`, with `stops`                                                                                                                                      |
+  | `runs`, not live                        | `r`: `bl run <id>` in window `<id> run`, with `--resume` when `stopped`, `stale`, `escalated` or `failed` (`RESUMED_STATUSES`)                                         |
+  | `runs`, every row                       | then `o`: `bl view <id>` (window `<id> view`); `p`: the pull request's URL, when the run has one                                                                       |
+  | escalation                              | `e`: `bl status <unit>` in window `<unit> status` (it prints to stdout, which the note line does not show); `o`: `bl view <unit>`                                      |
+  | task                                    | `d`: `bl task done <T-n>`, input `note`; `o`: `bl view <T-n>`                                                                                                          |
+  | change                                  | `m`: `bl merge <unit>`, `v`: `bl review <unit>` in window `<unit> review`, or `r`: `bl run <unit>` in window `<unit> run`, by the item's `verb`; `o`: `bl view <unit>` |
+  | ranked unit (`ranked`, `staged.ranked`) | `p`: `bl rank {{.Yanked}} --after {{.Selected}}`; `P`: `bl rank {{.Yanked}} --before {{.Selected}}`; `x`: `bl rank {{.Selected}} --remove` (F-113 D7)                  |
+  | unit of `next`, every one               | `o`: `bl view <id>`                                                                                                                                                    |
+  | `next.actions`                          | `C`: `bl rank --commit`; `R`: `bl rank --reset`, while a staged copy exists                                                                                            |
+  | runner, update; every row               | last, `g`: `bl agent` in window `agent`                                                                                                                                |
 
 - Each run state is read on its own. A file that cannot be read (not JSON, not a run state, or
   gone since the listing; a read can race `saveRunState`, which truncates the file first) keeps
@@ -5600,12 +5600,15 @@ is read once in its main checkout (`git for-each-ref refs/heads`), and `git rev-
 main..<branch>` runs only for a branch that exists. A story with a `feature:` is left out (it
 merges with its feature), and so is a change document with no branch, a branch that is gone or
 level with `main`, and a done, superseded or merged unit. The next verb is `changeNextVerb`
-(`src/change-doc.js`), the rule `bl review`'s summary line uses. A repo git cannot read is a
+(`src/review-log.js`), the rule `bl review`'s summary line and `bl top`'s change actions use:
+`merge` when the unit is `ready_for_merge` and passes the merge gate's review rule
+(`featureReviewGate`, read from the latest Review Log session), `review` when it is
+`ready_for_merge` and that rule blocks, else `run`. A repo git cannot read is a
 warning on stderr; the other items are still listed.
 
 ```bash
 bl inbox                          # the groups, each item with its id, unit, first line and next:
-bl inbox --json                   # [{ kind, id, unit, line, holds?, next, path }]
+bl inbox --json                   # [{ kind, id, unit, line, holds?, status?, verb?, next, path }]; status and verb on a change item
 bl inbox done T-7                 # refuses: "T-7 is a task: close it with bl task done T-7 [note]"
 ```
 

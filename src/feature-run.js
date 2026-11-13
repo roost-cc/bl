@@ -99,6 +99,7 @@ import {
 } from './scripted.js';
 import {
   CHECKED_BOX_RE,
+  changeNextVerb,
   parseLatestSession,
   extractReviewLog,
   featureReviewGate,
@@ -109,7 +110,6 @@ import {
 } from './review-log.js';
 import {
   appendSection,
-  changeNextVerb,
   changePath,
   currentChange,
   ensureChange,
@@ -5139,11 +5139,9 @@ export function reviewEnd({ id, unitRelPath, maxRounds, review, body, state, esc
   if (outcome == null) {
     return { outcome: `no verdict recorded (${position ?? 'never reviewed'})`, cap: '', next: null };
   }
-  if (changeNextVerb(position) === 'merge') {
-    // Open Must/Should boxes block the merge gate: a review checks them again.
-    const next = (session?.blocking ?? 0) > 0 ? `bl review ${id}` : `bl merge ${id}`;
-    return { outcome, cap: '', next };
-  }
+  // At ready_for_merge: `bl merge`, or `bl review` while an open Must/Should box blocks the merge gate.
+  const verb = changeNextVerb(position, body ?? '');
+  if (verb !== 'run') return { outcome, cap: '', next: `bl ${verb} ${id}` };
   const standing = roundCapStanding(state, review, maxRounds);
   if (standing === 'below') return { outcome, cap: '', next: `bl run ${id} --resume` };
   if (standing === 'closing') {

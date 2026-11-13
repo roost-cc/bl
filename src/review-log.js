@@ -238,3 +238,19 @@ export function featureReviewGate(status, body) {
   const blocked = REVIEW.blocked.includes(status) || (review?.blocking ?? 0) > 0;
   return { blocked, review };
 }
+
+/**
+ * The verb that moves an open change on (`bl review`'s end line, `bl inbox`'s change items,
+ * `bl top`'s change actions): `merge` when the unit is `ready_for_merge` and passes the merge
+ * gate's review rule (`featureReviewGate`); `review` when it is `ready_for_merge` and the
+ * latest Review Log session in `body` has an open Must fix or Should fix box (the `implement`
+ * row of `flow.json` does not start from `ready_for_merge`); else `run`.
+ *
+ * @param {string|null|undefined} status  the unit's status, or its review position
+ * @param {string} body  the change document's body
+ * @returns {'merge'|'review'|'run'}
+ */
+export function changeNextVerb(status, body) {
+  if (status !== REVIEW.clean) return 'run';
+  return featureReviewGate(status, body).blocked ? 'review' : 'merge';
+}

@@ -19,7 +19,6 @@ import { RUN_DIR, loadRunState, planSteps } from './feature-run.js';
 import { loadBacklog } from './backlog-graph.js';
 import { runHolder, runStatus } from './run-lock.js';
 import { collectInbox } from './inbox.js';
-import { changeNextVerb } from './change-doc.js';
 import { nextPlan } from './next.js';
 import { STAGED_CONFLICT, StagedConflictError, marks, orderOf, readStaged } from './priority.js';
 import { parseFilter } from './filter.js';
@@ -274,10 +273,19 @@ const STAGED_ACTIONS = [
  * The actions of an inbox item (D7): an escalation is read with `bl status`
  * (in a tmux window: it prints the escalation to stdout, which the note line
  * does not show), a task closed with `bl task done`, and a change answered
- * by the verb of its `next:` (`changeNextVerb`). An item of a work unit also
- * opens its page (a task its own); the runner line and an update item have
- * only `bl agent`.
+ * by the verb `bl inbox` gave it (`item.verb`, from `changeNextVerb`): `m`
+ * merge, `v` review, else `r` run. An item of a work unit also opens its
+ * page (a task its own); the runner line and an update item have only `bl
+ * agent`.
  */
+function changeAction(verb, unit) {
+  if (verb === 'merge') return action('m', 'merge it', 'merge', ['bl', 'merge', unit]);
+  if (verb === 'review') {
+    return action('v', 'review it', 'review', ['bl', 'review', unit], { window: `${unit} review` });
+  }
+  return action('r', 'run it', 'run', ['bl', 'run', unit], { window: `${unit} run` });
+}
+
 export function itemActions(item) {
   const { kind, id, unit } = item;
   const out = [];
@@ -292,12 +300,7 @@ export function itemActions(item) {
       viewAction(id, 'open the task page'),
     );
   } else if (kind === 'change') {
-    out.push(
-      changeNextVerb(item.status) === 'merge'
-        ? action('m', 'merge it', 'merge', ['bl', 'merge', unit])
-        : action('r', 'run it', 'run', ['bl', 'run', unit], { window: `${unit} run` }),
-      viewAction(unit),
-    );
+    out.push(changeAction(item.verb, unit), viewAction(unit));
   }
   return [...out, agentAction()];
 }

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  changeNextVerb,
   extractReviewLog,
   parseLatestSession,
   summarizeLatestReviewSession,
@@ -236,6 +237,21 @@ test('summarizeLatestReviewSession on a nits-only session reports nothing blocki
   );
   assert.equal(r.unchecked, 1);
   assert.equal(r.blocking, 0);
+});
+
+test("changeNextVerb: merge only for ready_for_merge that passes the merge gate's review rule", () => {
+  const log = (must, should, nits) =>
+    `## Review Log\n\n### Session 2026-11-13 (PR #7)\n\n**Must fix**\n\n${must}\n\n**Should fix**\n\n${should}\n\n**Nits**\n\n${nits}\n`;
+  const cases = [
+    ['ready_for_merge', '# x\n', 'merge'],
+    ['ready_for_merge', log('- [ ] broken', 'None.', 'None.'), 'review'],
+    ['ready_for_merge', log('None.', '- [ ] shaky', 'None.'), 'review'],
+    ['ready_for_merge', log('None.', 'None.', '- [ ] rename x'), 'merge'],
+    ['fixing', log('- [ ] broken', 'None.', 'None.'), 'run'],
+    ['in_review', '', 'run'],
+    [null, '', 'run'],
+  ];
+  for (const [status, body, want] of cases) assert.equal(changeNextVerb(status, body), want, `${status}: ${body}`);
 });
 
 test('parseLatestSession handles a non-(PR #N) suffix in the heading', () => {
