@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { stringify as stringifyYaml } from 'yaml';
 import { loadConfig } from '../../src/config.js';
 import { readAllStories } from '../../src/story.js';
 import {
@@ -482,6 +483,20 @@ test('readPlan and writePlan throw on a plan that does not match, naming the fil
     );
     writeFileSync(path, '');
     assert.throws(() => readPlan(unitDir), { message: `${path}: the file holds no plan` });
+  });
+});
+
+test('readPlan and writePlan refuse an order that leaves out or adds a story, so no story is skipped', async () => {
+  await withUnitDir(async (root, unitDir) => {
+    const path = planPath(unitDir);
+    await assert.rejects(writePlan(root, unitDir, { ...DESIGN_EXAMPLE, order: ['S-1', 'S-3'] }), {
+      message: `${path}: order must name each story of stories once; it leaves out S-2`,
+    });
+    assert.equal(existsSync(path), false, 'nothing written');
+    writeFileSync(path, stringifyYaml({ ...DESIGN_EXAMPLE, order: ['S-1', 'S-3', 'S-2', 'S-9'] }));
+    assert.throws(() => readPlan(unitDir), {
+      message: `${path}: order must name each story of stories once; it adds S-9`,
+    });
   });
 });
 

@@ -433,11 +433,24 @@ export function replan(plan, stories, edges, { taken = [], why, at = new Date().
   return { ...plan, ...next, changes: [...plan.changes, { at, by: 'bl', what, why }] };
 }
 
-/** `plan` when it matches `schemas/plan.json`; else an error that names `path` and the field. */
+/**
+ * `plan` when it matches `schemas/plan.json` and its `order` names each of
+ * its `stories` (the run implements only the stories in `order`); else an
+ * error that names `path` and the field.
+ */
 function checkedPlan(path, plan) {
   if (plan == null) throw new Error(`${path}: the file holds no plan`);
   const { structuredError } = validateOutcome(loadSchema('plan'), plan);
   if (structuredError) throw new Error(`${path}: ${structuredError}`);
+  const missing = plan.stories.filter((id) => !plan.order.includes(id));
+  const extra = plan.order.filter((id) => !plan.stories.includes(id));
+  if (missing.length > 0 || extra.length > 0) {
+    const parts = [
+      missing.length > 0 && `leaves out ${missing.join(', ')}`,
+      extra.length > 0 && `adds ${extra.join(', ')}`,
+    ];
+    throw new Error(`${path}: order must name each story of stories once; it ${parts.filter(Boolean).join(' and ')}`);
+  }
   return plan;
 }
 
