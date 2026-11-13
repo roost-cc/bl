@@ -497,18 +497,6 @@ export function appendSection(body, name, text) {
 }
 
 /**
- * The verb that moves an open change on: `merge` once its unit is
- * `ready_for_merge` (F-69 D5), else `run` (`bl review`'s summary line, `bl
- * inbox`'s change items). `status` is the unit's, with its review position
- * (`statusOf` with its change document). `reviewEnd` refines it by the session counts:
- * `ready_for_merge` with an open Must fix/Should fix box gives `bl review`,
- * not `bl merge`.
- */
-export function changeNextVerb(status) {
-  return status === 'ready_for_merge' ? 'merge' : 'run';
-}
-
-/**
  * What the rest of bl reads off a unit's current change: `repo`'s branch, PR
  * and URL (a story passes its one repo; a feature none, so its first
  * `repos:` entry, the lead repo's, F-52 D3), and the body the Review Log

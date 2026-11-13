@@ -396,6 +396,11 @@ for (const c of [
     assert.equal(exit, 1, stderr);
     assert.match(stderr, /The review round did not finish\.\n/);
     assert.match(stderr, c.error);
+    // cmdReview prints the failure's details (S-1140), with no step that clears ## Escalation.
+    assert.match(stderr, /\nStep: review round \d+ verifier, failed at /);
+    assert.match(stderr, /\nCause: unknown — not a capacity refusal bl recognised\n/);
+    assert.match(stderr, /\n1\. Run `bl capacity`[^\n]*\n2\. Fix what that shows\.\n3\. Run `bl review S-99`\.\n/);
+    assert.doesNotMatch(stderr, /Clear `## Escalation`/);
     assert.doesNotMatch(stderr, /done:/);
     assert.doesNotMatch(stderr, /^Next:/m);
     const { fm } = parseChange(readFileSync(changeOf(storyPath), 'utf8'));

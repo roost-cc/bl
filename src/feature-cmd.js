@@ -88,7 +88,7 @@ import { integrateForMerge } from './merge-integrate.js';
 import { prepareStoryRun, otherWorktreesLine, implementNextSteps } from './workon.js';
 import { reviewSkipped } from './scripted.js';
 import { chooseSyncRunner, cleanupOneRepo, commitFmShape, runBacklogSync, unionLandedCommits } from './cleanup.js';
-import { reviewOutcome, summarizeLatestReviewSession } from './review-log.js';
+import { openItemsCommand, reviewOutcome, summarizeLatestReviewSession } from './review-log.js';
 import {
   runStatePath,
   ensureRunDir,
@@ -916,7 +916,8 @@ function printUnitHead(unit, repos, kind) {
       : outcome != null
         ? `round ${rounds} done: ${outcome}`
         : `round ${rounds}, ${position}`;
-  console.log(`review: ${state}${review ? `, latest session ${review.date}` : ''}`);
+  const hint = review?.unchecked > 0 ? ` (${openItemsCommand(unit.id)})` : '';
+  console.log(`review: ${state}${review ? `, latest session ${review.date}` : ''}${hint}`);
   const log = logOf(kind, unit.fm, unit.change ?? null);
   if (log.length > 0) {
     const shown = log.slice(-STATUS_TRANSITIONS);
@@ -1606,6 +1607,7 @@ async function reviewUnitPRs(
   else info(`\nReview round ${result.round} done: ${end.outcome}.${end.cap}`);
   if (end?.next) info(`Next: ${end.next}`);
   if (result.error) console.error(`bl review: ${result.error}`);
+  if (result.details) console.error(`\n${result.details}`);
   const ok = !result.error && !result.escalated && result.verdict;
   process.exit(ok ? 0 : 1);
 }

@@ -488,6 +488,30 @@ test('both review passes ask for an origin tag and the verifier routes pre-exist
   }
 });
 
+test('the reviewers and the verifier share one origin rule, in which introduced wins', () => {
+  const { dir, cleanup } = mkTempBacklog();
+  try {
+    const config = loadConfig({ backlogRoot: dir });
+    // The prompts wrap lines; compare with runs of white space folded to one space.
+    const render = (name) => loadPrompt(name, CASES[name], { agent: 'codex', config }).replace(/\s+/g, ' ');
+    for (const name of ['review-correctness', 'review-failure-paths', 'review-verify']) {
+      const text = render(name);
+      assert.ok(text.includes('Write `Origin: pre-existing` only when neither case applies.'), name);
+      assert.ok(
+        text.includes(
+          '`introduced` wins: a defect in lines the branch added or changed is `introduced`, even if `main` shows the same behavior.',
+        ),
+        name,
+      );
+    }
+    const verify = render('review-verify');
+    assert.ok(verify.includes('Route each instance of a class by its own origin.'));
+    assert.ok(verify.includes("If one item's instances have different origins, split it:"));
+  } finally {
+    cleanup();
+  }
+});
+
 test('the class contract runs through reviewer, verifier, fixer, and fix self-review', () => {
   const { dir, cleanup } = mkTempBacklog();
   try {

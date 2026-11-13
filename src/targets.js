@@ -43,7 +43,7 @@ export function refusalFor(verb, { kind, id, record }) {
     if (verb === 'run' || verb === 'implement') {
       return `${id} is a component. Make the stories you want into a feature (\`bl new --feature --title … S-1 S-2\`) or a batch (\`bl batch S-1 S-2 --title …\`)`;
     }
-    if (verb === 'review' || verb === 'merge' || verb === 'approve') {
+    if (verb === 'review' || verb === 'merge' || verb === 'approve' || verb === 'change') {
       // A batch is built approved (F-125 D1), so bl approve does not take one.
       return `${id} is a component; bl ${verb} takes a story${verb === 'approve' ? ' or a feature' : ', a feature or a batch'}.`;
     }

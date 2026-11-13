@@ -59,6 +59,8 @@ Per-command stdout contracts:
 | `bl log`             | log lines                                                 |
 | `bl agents`          | AGENTS.md, writing and collaboration rules, dictionaries  |
 | `bl view`            | the rendered page when redirected; else nothing (editor)  |
+| `bl change`          | the document when redirected; else nothing (editor)       |
+| `bl change --open`   | the open items of the latest review session               |
 | `bl edit`            | nothing (opens editor)                                    |
 | `bl init`            | nothing (status → stderr)                                 |
 | `bl sync`            | nothing                                                   |
@@ -1896,12 +1898,10 @@ awaits a timer in slices of at most a second until it (Ctrl+C ends the wait at o
 the top, asking capacity afresh — so a refusal never spends a nudge retry, a
 fix-tests rerun or a review round, and a refused spawn gets no step record of
 its own. A step waits at most once: exhausted again, with no reset time on any
-configuration (a spend cap, a capacity refusal), or with the earliest reset
+refusal (a spend cap, a capacity refusal), or with the earliest reset
 past the cap, it escalates as `agent unavailable: <message>` (one
 configuration) or `agent unavailable: every <role> configuration is out (<list>)`,
-the details listing every configuration with its kind, message, scope and
-reset time in local time, and the command to resume with (`bl run <id>
---resume`, or `bl review <id>` for a review pass). `bl status <id>` shows a
+followed by ` — <cause line>`. `bl status <id>` shows a
 run that is waiting as `waiting until <local time> — <message>`, and each
 out-list entry still in force as `out: <configuration> until <local time> —
 <kind>: <message>`. An interactive run (`--interactive`, or a role with no
@@ -1909,6 +1909,78 @@ headless entry under `bl review` and `bl merge`) does not walk: each step
 attaches to its role's first configuration (the review role's first one that
 did not implement). `bl run` refuses at start when a role has no headless
 entry.
+
+#### What a failed headless step's escalation says (S-1140)
+
+`describeFailure` (`src/agent-failure.js`, pure, no agent names) writes the
+details of every escalation for a failed headless step: `agent unavailable`
+(`waitOrEscalate`), a review round aborted by a failed pass or verifier (the
+loop, `bl review`, and the review of a merge resolution), a failed merge
+resolution session, and a failed fix self-review session. The details have
+four parts, in this order:
+
+1. **The step line:** `Step: <step>, failed at <local time>.` The step is in
+   the operator's words (`stepLabel`): `implement S-n`, `fix-tests`,
+   `self-review`, `fix round N`, `fix self-review round N`, `review round N
+<pass>` (`correctness`, `failure-paths` or `verifier`), `merge resolution`.
+   The time is the runner's clock.
+2. **The configurations:** `Configurations (backlog.json "<agent|review_agent>",
+in priority order):`, one bullet each: `<agent> <model>` (`<agent> (agent
+default)` when `model` is null) with its out-list kind, message, scope and
+   reset time, or `not tried`, `excluded` (F-64 D4) or `no headless mode`.
+   Under each refused one, a capacity reading taken at escalation time
+   (`readCapacity`, an `account` reading asked once per agent): for an
+   `unknown` or `unavailable` reading, `capacity: <state> — <message>`; then
+   one line per window the adapter reports (`<name>: <n>% left, resets <local
+time>` or `no reset time`). An adapter that reports
+   no windows gets no window lines. A session that failed with no refusal
+   (`sessionFailure`) shows its configuration and `Error: <sessionError>`,
+   and no reading is taken.
+3. **The cause line:** `Cause: <cause>`, exactly one, the first that any
+   refused configuration has (`classifyCause`). A reading outranks a
+   `session` or `weekly` refusal: a reading `available` is never a used-up
+   window.
+   - `spend cap reached`: refusal `kind: spend`, or a reading `unavailable`
+     that says so (`spend: true`, which the Codex adapter sets);
+   - `quota window used up until <local time>`, or `quota window used up, no
+reset time` (with the windows at 0%): a reading `unavailable` with a window
+     at 0% or a reset time, or
+     refusal `kind` `session` or `weekly` with no reading or an `unknown` one;
+     the reset is the reading's `until` when it holds a time, else the
+     refusal's; with several, the earliest reset, and one with no reset time
+     last;
+   - `provider overloaded, your quota is fine`: refusal `kind: capacity` and
+     a reading `available`; `provider overloaded; quota could not be read`
+     when the reading is `unknown`;
+   - `unknown`: anything else, a reading `unavailable` that is neither (a
+     local server that refused the connection) among them. A session failure with no refusal is always
+     `unknown — not a capacity refusal bl recognised`.
+4. **The steps:** `Next steps:`, numbered in execution order. Each list ends
+   with "Clear `## Escalation` to `None.`." and then the resume command
+   (`ctx.resumeHint`, else `bl run <id> --resume`). A `bl review` round that a
+   failed session aborts writes no `## Escalation` (the run stops as
+   `failed`), so its list has no clear step (`failsWithoutEscalation`). The
+   steps before those depend on the cause:
+   - overloaded: wait about 30 minutes, then `bl capacity`;
+   - window: wait until the reset, then `bl capacity` (when the reset has
+     passed, check with `bl capacity`; with no reset time, `bl capacity`
+     alone);
+   - spend: raise the limit or buy credits on the adapter's `billingUrl`, then
+     `bl capacity`;
+   - unknown: `bl capacity` and the adapter's `checkCommand`, then fix what
+     that shows.
+
+   An `Alternative:` line follows for overloaded (another configuration in
+   the role's list), window (a configuration of another agent) and an
+   excluded implementer (a `review_agent` configuration that did not
+   implement this run).
+
+The adapter's `remediation()` gives `{ checkCommand, billingUrl }`. Where one
+is null, the step names "the agent's own usage page". The reason line, and so
+`lastError` and `bl status`'s `run:` line, ends with ` — <cause line>`. An
+abort with no failed session (a lock held, a snapshot failed) keeps its text.
+Inside `bl merge`'s integration the escalation also carries the integration's
+own `Next:` paragraph, and the resume command is `bl merge <id>`.
 
 ### The repo guard
 
@@ -1966,11 +2038,39 @@ noise, and on F-4 the error that mattered sat far above it. The fix-tests
 prompt gets `{{testLogPath}}`, `{{testExcerpt}}` and `{{testTail}}`, and is told
 to read the log rather than rerun the suite. A second failed attempt escalates
 as `test gate failed twice` with the command, the log path, the excerpt and
-the tail, in that order. A failed `git push` (`pushBranch()` in `bl run`,
-`pushIntegrated()` in `bl merge`) gives its reason the same two sections
-through `pushFailure()`: the excerpt of the push output, left out when no
-marker matches, then the last 10 lines. The pre-push gate prints its failed
-test far above its summary (S-1499).
+the tail, in that order.
+
+A failed `git push` (`pushBranch()` in `bl run`, `pushIntegrated()` in
+`bl merge`) escalates in the `_escalation.md` shape (S-897), which
+`pushEscalation()` in `push-gate.js` builds with `escalationText()`
+(`escalation.js`). The reason line stays first. bl takes the cause from the
+check record that ci-cd's `ci gate` writes when it fails (S-1556):
+`<git-common-dir>/ci-cd/checks/<commit>.json`, read by `gateRecord()` only
+when `by` is `gate`, `verdict` is `fail` and `started` is not before the push
+began. bl never reruns the gate and never parses the hook's output. The kinds:
+
+- `error` set: the step could not run; the one option is to do what the
+  error names.
+- The last step is `vulns`: each blocking finding as `findingsTable()` renders
+  it, per lock file, in a block for what the branch brings in (`new`) and one
+  for what `main` has too (`overdue`), each with its own options. When ci-cd
+  could not compare with `main` (`base.compared` is `false`), every finding
+  counts as new.
+- Any other step: the excerpt and last 30 lines of the record's
+  `<commit>.log`, and a note that bl did not check whether `main` fails the
+  step too.
+- No usable record (none, `by` is `check`, an older `started`, a malformed
+  record, an `exit_code` that is not an integer of 1 or more, no step and no
+  `error` text, or a `vulns` report `checkReport()` refuses or that has no
+  blocking finding), and an
+  `origin/<branch>` that lacks HEAD after the push: the problem line names
+  what `gateRecord()` found and why, and the push output goes through
+  `pushFailure()` under Details (its excerpt, left out when no marker
+  matches, then the last 10 lines; the pre-push gate prints its failed test
+  far above its summary, S-1499). bl does not guess at the cause. So every
+  record `gateRecord()` returns leads to at least one decision.
+
+No option bypasses the gate (`--no-verify`).
 
 The fix-tests session returns an outcome object (`schemas/fix-tests.json`,
 F-68 D2): `outcome` is one of three values, and `reason` is required for each.
@@ -2083,9 +2183,13 @@ Where the text comes from:
 - fix-tests returns `unrelated` with a short reason, so its explanation
   goes to `<scratch>/escalation.md`, which the loop copies in (see **The test
   gate**).
-- Escalations the loop raises on its own (a gate that failed twice, a push or
-  forge failure, a round-cap or verdict mismatch) are mechanical: a one-line
-  reason and the raw details. When the latest Review Log session has open
+- Escalations the loop raises on its own (a gate that failed twice, a forge
+  failure, a round-cap or verdict mismatch) are mechanical: a one-line reason
+  and the raw details. A failed push and a failed scripted story are the
+  exceptions: under the reason line they use the `_escalation.md` shape,
+  rendered by `escalationText()` (`escalation.js`); a push's comes from the
+  gate's check record, with the push output as the fallback (see **The test
+  gate**). When the latest Review Log session has open
   items, the details list each one whole as `- [ ] <claim>`: the item's lines
   joined, cut before its ` — Repro:` or `Class:` tail, rewrapped at 100
   columns (`openItemsSummary()`). The repro, test and class stay in the
@@ -2144,11 +2248,15 @@ holding. Instances in code the branch did not change go to `## Deferred`.
 ### Finding origin and test-container cleanup
 
 Both review passes tag every finding `Origin: introduced` (in lines the branch
-changed against main, or a pre-existing defect the branch newly makes
-reachable) or `Origin: pre-existing`. The verifier checks the tags, puts only
-`introduced` findings into the session, and writes `pre-existing` ones to the
-feature's `## Deferred` list, so a round-cap escalation can only concern code
-the feature introduced.
+added or changed against main, or a pre-existing defect the branch newly makes
+reachable or worse) or `Origin: pre-existing` (neither). `introduced` wins: a
+defect in lines the branch changed is `introduced`, even if main shows the same
+behavior (S-1442). The rule lives in one fragment, `prompts/_origin-rule.md`,
+which both passes and the verifier render. The verifier checks the tags and
+routes each instance of a class by its own origin. It puts only `introduced`
+findings into the session, and writes `pre-existing` ones to the feature's
+`## Deferred` list, so a round-cap escalation can only concern code the feature
+introduced.
 
 Around every headless session and every test-gate run, the loop lists
 containers before and after and removes the new ones that carry no
@@ -2605,6 +2713,10 @@ Rules:
 - Items are checkbox bullets. The implementing agent flips `- [ ]` →
   `- [x]` in place and appends a short `→ <resolution>` note (typically
   a commit SHA and a few words; for deferred items, a deferral reason).
+  bl reads only the box: an unticked item stays open whatever its note says.
+  An escalation's open-items list (`openItemsSummary()`) flags an unticked
+  item whose `→` continuation line names a commit (`resolutionCommit()`) as a
+  possible missed tick. The flag is only a hint (S-1292).
 - The implementing agent makes **one commit** to the backlog repo per
   review session, after the final item is checked. bl then records
   `in_review` by `fix` from the fix outcome. Commit message:
@@ -3498,7 +3610,7 @@ with a 20-second deadline and stops app-server on every path;
 `rateLimitsByLimitId` (else `rateLimits`) gives its `primary` and
 `secondary` windows ("codex 5h", "codex 7d"). A window with nothing left, or
 `spendControlReached`, makes every Codex model `unavailable` until the latest
-such reset (none for a spend cap). A timeout, an exit, a JSON-RPC error or an
+such reset (none for a spend cap, which also sets `spend: true`). A timeout, an exit, a JSON-RPC error or an
 answer with no windows is `unknown`, with the reason.
 
 Claude's reading comes from Claude Code's OAuth usage endpoint,
@@ -3861,18 +3973,18 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
   `missingkey=error` against `Selected` (the selected row's id) and `Yanked` (the yanked unit's
   id, only while one is yanked). An element without `{{ }}` renders as itself.
 
-  | Row                                     | Actions (key: command)                                                                                                                                |
-  | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `runs`, live (`running`)                | `s`: `bl stop <id>`, with `stops`                                                                                                                     |
-  | `runs`, not live                        | `r`: `bl run <id>` in window `<id> run`, with `--resume` when `stopped`, `stale`, `escalated` or `failed` (`RESUMED_STATUSES`)                        |
-  | `runs`, every row                       | then `o`: `bl view <id>` (window `<id> view`); `p`: the pull request's URL, when the run has one                                                      |
-  | escalation                              | `e`: `bl status <unit>` in window `<unit> status` (it prints to stdout, which the note line does not show); `o`: `bl view <unit>`                     |
-  | task                                    | `d`: `bl task done <T-n>`, input `note`; `o`: `bl view <T-n>`                                                                                         |
-  | change                                  | `m`: `bl merge <unit>`, or `r`: `bl run <unit>` in window `<unit> run`, by `changeNextVerb`; `o`: `bl view <unit>`                                    |
-  | ranked unit (`ranked`, `staged.ranked`) | `p`: `bl rank {{.Yanked}} --after {{.Selected}}`; `P`: `bl rank {{.Yanked}} --before {{.Selected}}`; `x`: `bl rank {{.Selected}} --remove` (F-113 D7) |
-  | unit of `next`, every one               | `o`: `bl view <id>`                                                                                                                                   |
-  | `next.actions`                          | `C`: `bl rank --commit`; `R`: `bl rank --reset`, while a staged copy exists                                                                           |
-  | runner, update; every row               | last, `g`: `bl agent` in window `agent`                                                                                                               |
+  | Row                                     | Actions (key: command)                                                                                                                                                 |
+  | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `runs`, live (`running`)                | `s`: `bl stop <id>`, with `stops`                                                                                                                                      |
+  | `runs`, not live                        | `r`: `bl run <id>` in window `<id> run`, with `--resume` when `stopped`, `stale`, `escalated` or `failed` (`RESUMED_STATUSES`)                                         |
+  | `runs`, every row                       | then `o`: `bl view <id>` (window `<id> view`); `p`: the pull request's URL, when the run has one                                                                       |
+  | escalation                              | `e`: `bl status <unit>` in window `<unit> status` (it prints to stdout, which the note line does not show); `o`: `bl view <unit>`                                      |
+  | task                                    | `d`: `bl task done <T-n>`, input `note`; `o`: `bl view <T-n>`                                                                                                          |
+  | change                                  | `m`: `bl merge <unit>`, `v`: `bl review <unit>` in window `<unit> review`, or `r`: `bl run <unit>` in window `<unit> run`, by the item's `verb`; `o`: `bl view <unit>` |
+  | ranked unit (`ranked`, `staged.ranked`) | `p`: `bl rank {{.Yanked}} --after {{.Selected}}`; `P`: `bl rank {{.Yanked}} --before {{.Selected}}`; `x`: `bl rank {{.Selected}} --remove` (F-113 D7)                  |
+  | unit of `next`, every one               | `o`: `bl view <id>`                                                                                                                                                    |
+  | `next.actions`                          | `C`: `bl rank --commit`; `R`: `bl rank --reset`, while a staged copy exists                                                                                            |
+  | runner, update; every row               | last, `g`: `bl agent` in window `agent`                                                                                                                                |
 
 - Each run state is read on its own. A file that cannot be read (not JSON, not a run state, or
   gone since the listing; a read can race `saveRunState`, which truncates the file first) keeps
@@ -4338,6 +4450,42 @@ Both exit with the editor's status: 127 when it cannot be launched, 128 + n when
 signal n kills it. When `bl view` cannot make its copy it shows the page instead
 (printed when it fits the terminal, else `$PAGER` → `less` → `more`) and exits
 with the pager's status the same way.
+
+### `bl change`
+
+Show a unit's change document (S-1157). It takes a story, a feature or a story batch, and
+it only shows; it never edits:
+
+```bash
+bl change S-1156              # read-only copy of the current change document, as bl view opens a page
+bl change F-79 > change.md    # stdout not a terminal: the document, printed byte for byte
+bl change S-1156 --open       # the open items of the latest review session
+```
+
+The document is the unit's current one (`currentChange`): the highest-numbered open
+`change-<n>.md`, else the highest-numbered. A story in a feature or a story batch (its
+`feature:` or `batch:` is set) writes its change to that unit's document, so `bl change S-n`
+shows that unit's document and says so on stderr first:
+`S-n is in F-m: showing F-m's change document`. `bl change` and `bl view` share one viewer
+(`showReadOnly`, `src/view.js`): the same editor order, temp copy and pager fallback.
+
+`--open` prints, with no editor, the open (unchecked) items of the latest `### Session` of
+`## Review Log`, grouped under their category heading, each with its continuation lines:
+
+```text
+S-1156 · latest session 2026-10-29 (PR #51): 1 Must/Should, 0 nits open
+
+**Must fix**
+
+- [ ] race in close
+  repro: run close twice
+```
+
+The items and counts come from `latestSessionOpenItems` (`src/review-log.js`), the parse
+`bl status` and the merge gate count with. With no session it prints
+`<id> · no review session yet`. `bl status` ends its `review:` line with
+`(bl change <id> --open)` when the latest session has an open item, and the review refusal
+of `bl merge` and `bl done` (`reviewBlockedMessage`) names it after the Must/Should count.
 
 ### `bl done`
 
@@ -5510,12 +5658,15 @@ is read once in its main checkout (`git for-each-ref refs/heads`), and `git rev-
 main..<branch>` runs only for a branch that exists. A story with a `feature:` is left out (it
 merges with its feature), and so is a change document with no branch, a branch that is gone or
 level with `main`, and a done, superseded or merged unit. The next verb is `changeNextVerb`
-(`src/change-doc.js`), the rule `bl review`'s summary line uses. A repo git cannot read is a
+(`src/review-log.js`), the rule `bl review`'s summary line and `bl top`'s change actions use:
+`merge` when the unit is `ready_for_merge` and passes the merge gate's review rule
+(`featureReviewGate`, read from the latest Review Log session), `review` when it is
+`ready_for_merge` and that rule blocks, else `run`. A repo git cannot read is a
 warning on stderr; the other items are still listed.
 
 ```bash
 bl inbox                          # the groups, each item with its id, unit, first line and next:
-bl inbox --json                   # [{ kind, id, unit, line, holds?, next, path }]
+bl inbox --json                   # [{ kind, id, unit, line, holds?, status?, verb?, next, path }]; status and verb on a change item
 bl inbox done T-7                 # refuses: "T-7 is a task: close it with bl task done T-7 [note]"
 ```
 
@@ -5765,6 +5916,7 @@ included via `{{slot}}` injection, not loaded as top-level prompts:
 | `_simplicity.md`                 | `{{simplicityGuide}}`: build what the criteria ask, abstractions follow shared behaviour, every changed line traces to the story or a named finding. Wherever `{{selfConsistencyGuide}}` is.                                             |
 | `_effort.md`                     | `{{effortGuide}}`: the effort-level rubric (F-85 D6); the refiner picks the lowest level that fits and writes the `**Effort:**` line. `refine`, `re-refine` and `feature-refine`.                                                        |
 | `_execution-inputs.md`           | `{{executionInputs}}`: the planning rules that feed the execution plan (F-125 D3): changed files in backticks, dependencies as edges, the plan wins during a run. Every refine prompt, `feature-story`, `story-run` and `merge-resolve`. |
+| `_origin-rule.md`                | `{{originRule}}`: the finding-origin rule; `introduced` wins when the branch added or changed the lines, even if main shows the same behavior (S-1442). `review-correctness`, `review-failure-paths` and `review-verify`.                |
 | `_plain-writing.md`              | `{{writingGuide}}`: about 80% of ASD-STE100, so the operator or the next agent reads the text right once. Every top-level prompt; `bl agents` prints it after this reference.                                                            |
 | `_collaboration.md`              | `{{collaborationGuide}}`: the nine rules for a discussion with the operator (F-97). `agent`, the refines and `_pre-task-discussion`; `bl agents` prints it after the writing guide.                                                      |
 | `_dictionaries.md`               | `{{dictionaryGuide}}` in `_plain-writing.md`, under "Give each thing one name": names each listed dictionary (`renderDictionaryGuide`); "" when none are listed or there is no config.                                                   |

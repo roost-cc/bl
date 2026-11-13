@@ -664,7 +664,8 @@ const isObject = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
  * `resetsAt` from epoch seconds), named "<bucket> <length>" ("codex 5h"). A
  * window with nothing left, or a bucket with `spendControlReached`, makes
  * the account `unavailable` until the latest such window's reset (null for
- * a spend cap, or a used-up window naming no reset). `scope` is always
+ * a spend cap, or a used-up window naming no reset); a spend cap also sets
+ * `spend: true`. `scope` is always
  * `account`: Codex keeps one quota for every model (F-64 Premise). A result
  * with no bucket or no window is `unknown`.
  *
@@ -710,6 +711,7 @@ export function codexCapacity(result) {
       scope: 'account',
       until: null,
       windows,
+      spend: true,
       message: `spend cap reached (${spent.join(', ')})`,
     };
   }

@@ -12,8 +12,10 @@
  *               with no `feature:`, whose current change document is open
  *               and names a branch with commits ahead of `main` in its
  *               repo's main checkout; id `S-<n>:change`, answered by
- *               `bl run S-<n>`, or `bl merge S-<n>` once the unit is
- *               `ready_for_merge`; grouped by the unit's status (its
+ *               the verb of `changeNextVerb` (`review-log.js`): `bl run
+ *               S-<n>`, `bl merge S-<n>` once the unit is `ready_for_merge`
+ *               and passes the merge gate's review rule, or `bl review
+ *               S-<n>` while it does not; grouped by the unit's status (its
  *               transition log's, F-69 D5), `ready_for_merge` as the
  *               merge gate
  *   update      a red update in the update job's latest heartbeat (F-80
@@ -34,10 +36,14 @@ import { dirname, relative } from 'path';
 // and the merge's last step would fail. `updateSettings` came with F-80, so
 // it is read from the namespace: a pre-F-80 config.js leaves it undefined,
 // which collectInbox reports as a warning. `gitOut` came with F-124 and is
-// read from the namespace of child.js for the same reason.
+// read from the namespace of child.js for the same reason. `changeNextVerb`
+// moved to review-log.js with S-1385 and is read from its namespace: a
+// pre-S-1385 review-log.js leaves it undefined, and the change item then
+// falls back to `run`.
 import * as child from './child.js';
 import * as configModule from './config.js';
-import { changeNextVerb, currentChange, isOpenChange } from './change-doc.js';
+import * as reviewLog from './review-log.js';
+import { currentChange, isOpenChange } from './change-doc.js';
 import { extractSection, sectionHasContent } from './feature.js';
 import { loadBacklog } from './backlog-graph.js';
 import { loadFlow } from './flow.js';
@@ -308,13 +314,15 @@ function changeItems(config, units, warnings, flow) {
       ahead.length === 1
         ? `${ahead[0].n} commit(s) on ${ahead[0].branch}`
         : ahead.map((a) => `${a.repo} ${a.n} commit(s) on ${a.branch}`).join(', ');
+    const verb = reviewLog.changeNextVerb?.(u.status, doc.body) ?? 'run';
     items.push({
       kind: 'change',
       id: `${u.id}:change`,
       unit: u.id,
       line: `${ahead.map((a) => a.repo).join(', ')}: ${u.title} · ${counts}, not merged`,
       status: u.status,
-      next: `bl ${changeNextVerb(u.status)} ${u.id}`,
+      verb,
+      next: `bl ${verb} ${u.id}`,
       path: relative(config.backlogRoot, cur.path),
     });
   }
@@ -340,7 +348,7 @@ function byUnitNewest(a, b) {
  * @param {object} config
  * @param {{ now?: number }} [opts]  the clock the heartbeat's age is read by
  * @returns {{ items: Array<{ kind: string, id: string, unit: string,
- *   line: string, holds?: string[], status?: string, next: string, path: string }>,
+ *   line: string, holds?: string[], status?: string, verb?: string, next: string, path: string }>,
  *   warnings: string[] }}
  */
 export function collectInbox(config, { now = Date.now() } = {}) {
@@ -501,7 +509,9 @@ Everything waiting on you, read from the backlog: open escalations
 in blockers.json make now; closed with bl task done T-7 [note]), unmerged work
 (S-<n>:change: an open feature, or a story with no feature:, whose open
 change document names a branch with commits ahead of main; answered by
-bl run, or bl merge once the review is addressed), and the red updates of
+bl run; by bl merge once the unit is ready_for_merge and its latest Review
+Log session has no open Must fix or Should fix box; by bl review while it
+has one), and the red updates of
 the update job's latest heartbeat (<repo>:<branch>, with the notes link and
 the gate log). One runner: line says when that heartbeat is more than ${STALE_RUN_HOURS} h
 old or records a failure. bl reads the heartbeat with git from the clone of

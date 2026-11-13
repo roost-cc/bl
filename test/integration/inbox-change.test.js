@@ -40,14 +40,14 @@ function gitRepo(path, branches = {}) {
   }
 }
 
-/** A `change.md` in a unit's directory, naming `repos` (`[{ repo, branch }]`). */
-function writeChangeDoc(unitDir, id, repos, fm = {}) {
+/** A `change.md` in a unit's directory, naming `repos` (`[{ repo, branch }]`), with `body`. */
+function writeChangeDoc(unitDir, id, repos, fm = {}, body = `\n# ${id}\n\n## Description\n`) {
   writeFileSync(
     join(unitDir, 'change.md'),
     serializeChange({
       fm: { change_of: id, status: 'open', ...fm },
       repos: repos.map((r) => ({ repo: r.repo, branch: r.branch, pr: '', url: '', merged: '' })),
-      body: `\n# ${id}\n\n## Description\n`,
+      body,
     }),
   );
 }
@@ -118,6 +118,7 @@ test('collectInbox: change lists a standalone story and a feature with unmerged 
         unit: 'F-70',
         line: 'tools, web: Sweep · tools 2 commit(s) on f70-sweep, web 1 commit(s) on f70-sweep, not merged',
         status: 'in_progress',
+        verb: 'run',
         next: 'bl run F-70',
         path: 'features/F70/change.md',
       },
@@ -127,6 +128,7 @@ test('collectInbox: change lists a standalone story and a feature with unmerged 
         unit: 'S-60',
         line: 'tools: Side fix · 1 commit(s) on s60-side, not merged',
         status: 'in_progress',
+        verb: 'run',
         next: 'bl run S-60',
         path: 'stories/S60/change.md',
       },
@@ -171,7 +173,37 @@ test('collectInbox: a change whose unit is ready_for_merge is the merge gate, an
     });
     assert.equal(parseFrontmatter(readFileSync(index, 'utf8')).fm.transitions, undefined, 'no log');
     const item = changes(collectInbox(t.config()).items).find((e) => e.id === 'S-60:change');
-    assert.deepEqual([item.status, item.next], ['ready_for_merge', 'bl merge S-60']);
+    assert.deepEqual([item.status, item.verb, item.next], ['ready_for_merge', 'merge', 'bl merge S-60']);
+  } finally {
+    t.cleanup();
+  }
+});
+
+test('collectInbox: a ready_for_merge change with an open Must fix box is answered by bl review (S-1385)', () => {
+  const t = setupChanges();
+  try {
+    const index = join(t.story('S-60'), 'index.md');
+    const { fm, body } = parseFrontmatter(readFileSync(index, 'utf8'));
+    delete fm.status;
+    fm.transitions = ['draft:new', 'in_progress:implement', 'in_review:run', 'ready_for_merge:review'].map((s) => {
+      const [to, by] = s.split(':');
+      return { at: '2026-11-01T00:00:00Z', to, by };
+    });
+    writeFileSync(index, serializeFrontmatter(fm) + body);
+    writeChangeDoc(
+      t.story('S-60'),
+      'S-60',
+      [{ repo: 'tools', branch: 's60-side' }],
+      {},
+      '\n# S-60\n\n## Description\n\n## Review Log\n\n### Session 2026-11-13 (PR #7)\n\n**Must fix**\n\n- [ ] broken\n',
+    );
+    const item = changes(collectInbox(t.config()).items).find((e) => e.id === 'S-60:change');
+    assert.deepEqual([item.status, item.verb, item.next], ['ready_for_merge', 'review', 'bl review S-60']);
+    const human = runBl(['inbox'], { cwd: t.dir });
+    assert.match(human.stdout, /next: bl review S-60$/m);
+    const done = runBl(['inbox', 'done', 'S-60:change'], { cwd: t.dir });
+    assert.equal(done.status, 1);
+    assert.match(done.stderr, /answer it with bl review S-60$/m);
   } finally {
     t.cleanup();
   }

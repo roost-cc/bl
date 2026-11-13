@@ -10,8 +10,9 @@
  *   file (`showText`).
  * - `rm`: removing the copy's `bl-view-*` temp directory throws.
  *
- * Only `bl view` processes are touched, and for `tty` the other verbs that
- * page through `showText` (`list`, `grep`, `tree`, `agents`).
+ * Only `bl view` and `bl change` processes are touched (they share the viewer,
+ * `showReadOnly`), and for `tty` the other verbs that page through `showText`
+ * (`list`, `grep`, `tree`, `agents`).
  */
 
 import fs from 'fs';
@@ -22,7 +23,7 @@ const faults = new Set(
     .split(',')
     .filter(Boolean),
 );
-const view = process.argv[2] === 'view';
+const view = ['view', 'change'].includes(process.argv[2]);
 const pages = view || ['list', 'grep', 'tree', 'agents'].includes(process.argv[2]);
 
 if (pages && faults.has('tty')) {

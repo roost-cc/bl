@@ -112,7 +112,7 @@ test('an open Must or Should refuses both kinds with the same message', () => {
     assert.equal(s.findings[0].gate, 'review');
     assert.equal(
       messages(u.story, s)[0],
-      '<id> has unresolved review state (ready_for_merge, round 1, latest session 2026-10-20, 1 unchecked Must/Should).\nAddress the review feedback (bl implement <id>) before merging.',
+      '<id> has unresolved review state (ready_for_merge, round 1, latest session 2026-10-20, 1 unchecked Must/Should, listed by bl change <id> --open).\nReview it (bl review <id>) before merging.',
     );
     assert.equal(s.preflightCalls.length, 0, 'no preflight on a refused unit');
   }

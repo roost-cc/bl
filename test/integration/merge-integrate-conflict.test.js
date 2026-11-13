@@ -136,6 +136,34 @@ test('an agent that leaves the merge unfinished is aborted and escalated, and ma
   }
 });
 
+test('a resolution session that fails with no refusal escalates with the step, configuration, error and steps (S-1140)', async () => {
+  const fx = fixture();
+  try {
+    landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
+    const { config, unit, prep } = featureCtx(fx);
+    const { runner } = scriptedRunner({
+      test: 'true',
+      resolve: () => ({ ...RESOLVED, ok: false, isError: true, error: 'provider crashed' }),
+    });
+    const res = await integrateUnit({ unit, config, prep, runner });
+    assert.equal(res.escalated, true);
+    assert.match(
+      res.reason,
+      /the resolution agent did not resolve it — unknown — not a capacity refusal bl recognised$/,
+    );
+    const esc = escalation(featureFile(fx));
+    assert.match(esc, /- the session failed: provider crashed/);
+    assert.match(esc, /\nStep: merge resolution, failed at /);
+    assert.match(esc, /\n\nError: provider crashed\n/);
+    assert.match(
+      esc,
+      /\n1\. Run `bl capacity`[^\n]*\n2\. Fix what that shows\.\n3\. [^\n]*\n4\. Run `bl merge F-1`\.$/,
+    );
+  } finally {
+    fx.cleanup();
+  }
+});
+
 // Review 2026-11-13, Should 1: the resolution agent may change plan.yaml
 // (_execution-inputs.md); a change bl cannot read fails the resolution checks.
 test('a resolution agent that leaves a plan.yaml bl cannot read is rolled back and escalated with the message', async () => {
@@ -308,6 +336,41 @@ test('a re-review that ends addressed but writes an escalation rolls back and sa
       /^merge with main: the review of the resolution ended addressed, but an escalation was written during it/,
     );
     assert.match(esc, /Written during the merge:\n\nThe resolution drops a call\./);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('merge-integrate-conflict: a resolution review aborted by a failed session escalates with the describeFailure text', async () => {
+  // S-1140 criterion 1: the step, the configuration, the cause line and the steps.
+  const fx = fixture();
+  try {
+    landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
+    const { config, unit, prep } = featureCtx(fx);
+    const wt = fx.wts['f1-feat'];
+    const before = g(wt, 'rev-parse', 'HEAD');
+    const { runner } = scriptedRunner({ test: 'true', resolve: resolveBoth });
+    const session = runner.session;
+    runner.session = (opts) =>
+      opts.promptName === 'review-failure-paths'
+        ? { ...session(opts), ok: false, isError: true, error: 'provider crashed' }
+        : session(opts);
+    const res = await integrateUnit({ unit, config, prep, runner });
+    assert.equal(res.escalated, true);
+    assert.match(
+      res.reason,
+      /^merge with main: the review of the resolution was aborted before a verdict: .* — unknown — not a capacity refusal bl recognised$/,
+    );
+    assert.equal(g(wt, 'rev-parse', 'HEAD'), before, 'the resolution is rolled back');
+    const esc = escalation(featureFile(fx));
+    assert.match(esc, /\nStep: review round \d+ failure-paths, failed at /);
+    assert.match(esc, /\nConfigurations \(backlog\.json "review_agent", in priority order\):\n/);
+    assert.match(esc, /\n\nError: provider crashed\n/);
+    assert.match(esc, /\nCause: unknown — not a capacity refusal bl recognised\n/);
+    assert.match(
+      esc,
+      /\n1\. Run `bl capacity`[^\n]*\n2\. Fix what that shows\.\n3\. Clear `## Escalation` to `None\.`\.\n4\. Run `bl merge F-1`\.$/,
+    );
   } finally {
     fx.cleanup();
   }

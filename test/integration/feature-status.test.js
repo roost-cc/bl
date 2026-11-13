@@ -70,7 +70,10 @@ test('bl status prints the log, stories in dependency order plus review and bloc
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /status: fixing/);
     assert.match(r.stdout, /branch: f1-feat/);
-    assert.match(r.stdout, /review: round 1\/2 done: 1 open item \(1 Must fix\), latest session 2026-09-20\n/);
+    assert.match(
+      r.stdout,
+      /review: round 1\/2 done: 1 open item \(1 Must fix\), latest session 2026-09-20 \(bl change F-1 --open\)\n/,
+    );
     assert.ok(
       r.stdout.includes(
         [
@@ -598,7 +601,7 @@ test("bl status prints each repo's branch, PR, URL and merge state from the chan
     assert.equal(r.status, 0, r.stderr);
     assert.match(
       r.stdout,
-      /branch: f1-feat {3}pr: #9 {3}points: 0\nreview: round 1\/2 done: 1 open item \(1 Must fix\), latest session 2026-10-18\n/,
+      /branch: f1-feat {3}pr: #9 {3}points: 0\nreview: round 1\/2 done: 1 open item \(1 Must fix\), latest session 2026-10-18 \(bl change F-1 --open\)\n/,
       'the open change is current',
     );
     assert.match(
@@ -634,19 +637,26 @@ test('bl status words the review line by outcome; a feature with no log reads it
       assert.equal(r.status, 0, r.stderr);
       return r.stdout.match(/^review: .*$/m)[0];
     };
+    // An open box in the latest session names the command that lists it (S-1157).
+    const open = ' (bl change F-1 --open)';
     // Fixed after round 1: round 2 is in review, with no verdict yet.
-    assert.equal(statusWith('fixed', 1), 'review: round 2/2, in_review, latest session 2026-11-09');
+    assert.equal(statusWith('fixed', 1), `review: round 2/2, in_review, latest session 2026-11-09${open}`);
     assert.equal(
       statusWith('addressed', 2),
-      'review: round 2/2 done: nothing left to fix (1 open nit left), latest session 2026-11-09',
+      `review: round 2/2 done: nothing left to fix (1 open nit left), latest session 2026-11-09${open}`,
     );
     // An open Must fix box at ready_for_merge: never "nothing left to fix".
     assert.equal(
       statusWith('addressed', 1, log.replace('[x] done', '[ ] open')),
-      'review: round 1/2 done: ready_for_merge, but the latest Review Log session has 1 open Must fix/Should fix item, latest session 2026-11-09',
+      `review: round 1/2 done: ready_for_merge, but the latest Review Log session has 1 open Must fix/Should fix item, latest session 2026-11-09${open}`,
     );
     assert.equal(statusWith('', 0, ''), 'review: none (round 0/2)');
-    assert.equal(statusWith('', 0), 'review: none (round 0/2), latest session 2026-11-09');
+    assert.equal(statusWith('', 0), `review: none (round 0/2), latest session 2026-11-09${open}`);
+    // Nothing open: no hint.
+    assert.equal(
+      statusWith('addressed', 2, log.replace('[ ] tidy', '[x] tidy')),
+      'review: round 2/2 done: nothing left to fix, latest session 2026-11-09',
+    );
   } finally {
     cleanup();
   }

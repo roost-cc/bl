@@ -8,6 +8,7 @@ import { extractSection } from '../../src/feature.js';
 import { syncUpdates } from '../../src/updates.js';
 import { reportPath } from '../../src/updates-run.js';
 import { approveUpdate, dropUpdate, renderStatus, statusUpdates } from '../../src/updates-answer.js';
+import { checkReport } from '../../src/ci-cd.js';
 import {
   closeReason,
   fixTitle,
@@ -255,7 +256,10 @@ const inconsistentFindings = [
   ['existing and blocking without overdue', [finding({ blocking: true })], 1],
   ['new at fail_on, not blocking', [finding({ status: 'new' })]],
   ['overdue below fail_on', [finding({ fix_state: 'overdue', at_fail_on: false, severity: 'low' })]],
-  ...['ready', 'young', 'overdue'].map((fix_state) => [`${fix_state} with no fix`, [finding({ fix_state, fixed: [] })]]),
+  ...['ready', 'young', 'overdue'].map((fix_state) => [
+    `${fix_state} with no fix`,
+    [finding({ fix_state, fixed: [] })],
+  ]),
 ];
 
 test('scanRepo-rejects-invalid-findings: only a report a finished scan can write is taken', () => {
@@ -326,6 +330,26 @@ test('scanRepo-rejects-invalid-findings: only a report a finished scan can write
     [{ status: 'findings', findings: [finding({ severity: 'critical' })] }, 0],
   ];
   for (const [body, status] of valid) assert.ok(scan(body, status).report, JSON.stringify(body));
+});
+
+test("checkReport: a gate's report may leave fix_state out, an --ages report may not (S-897)", () => {
+  const f = finding({ status: 'new', blocking: true });
+  delete f.fix_state;
+  const r = report([f]);
+  assert.equal(checkReport(r, 1, { ages: false }), null);
+  assert.match(checkReport(r, 1, { ages: true }), /invalid report \(finding 0 is malformed\)/);
+  assert.match(checkReport(report([finding({ fix_state: 'bogus' })]), 0, { ages: false }), /malformed/);
+  assert.match(checkReport({ ...r, schema: 'x' }, 1, { ages: false }), /unknown report schema x/);
+  assert.match(checkReport({ ...r, status: 'error', error: 'boom' }, 1, { ages: false }), /scan error: boom/);
+});
+
+test('checkReport: an exit other than 0 or 1 is refused, below 0 too', () => {
+  const clean = { schema: 'ci-cd-vulns/v1', status: 'clean', fail_on: 'high', findings: [] };
+  for (const exit of [-1, 2, null, 1.5]) {
+    for (const ages of [false, true])
+      assert.equal(checkReport(clean, exit, { ages }), `exit ${exit}`, `${exit} ${ages}`);
+  }
+  assert.equal(checkReport(clean, 0, { ages: false }), null);
 });
 
 test('reject-inconsistent-finding-flags-in-both-consumers: a contradiction closes no story', async () => {

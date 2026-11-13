@@ -23,7 +23,7 @@ import { mkTempDir } from '../helpers/tempdir.js';
 import { holderOf } from '../../src/kernel-lock.js';
 import { stopRequestDir, stopRequests, writeStopRequest } from '../../src/run-lock.js';
 import { unitLockPath } from '../../src/unit-lock.js';
-import { cmdStatusStory } from '../../src/feature-cmd.js';
+import { cmdStatus, cmdStatusStory } from '../../src/feature-cmd.js';
 import { accumulateTokensOnFile } from '../../src/tokens.js';
 import {
   PENDING_END,
@@ -260,7 +260,7 @@ test('a Codex usage limit with no reset time on the verifier under bl review esc
     });
     const result = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
     assert.equal(result.escalated, true);
-    assert.equal(result.error, `agent unavailable: ${S865_LIMIT}`);
+    assert.equal(result.error, `agent unavailable: ${S865_LIMIT} — unknown`);
     assert.equal(result.round, 0, 'the round was not spent');
     assert.equal(runner.calls.filter((c) => c.type === 'session').length, 3, 'nothing ran after the refusal');
     assert.equal(runner.calls.filter((c) => c.type === 'sleep').length, 0);
@@ -272,10 +272,13 @@ test('a Codex usage limit with no reset time on the verifier under bl review esc
     assert.match(esc, /^\nagent unavailable: You've hit your usage limit\./);
     assert.match(
       esc,
-      /The review:verify session found every review configuration out: no configuration names a reset time\./,
+      /The review:verify session found every review configuration out: no refusal names a reset time\./,
     );
-    assert.ok(esc.includes(`- codex: other — ${S865_LIMIT} (every codex configuration; no reset time)`), esc);
-    assert.match(esc, /then run `bl review F-1`\./);
+    assert.ok(
+      esc.includes(`- codex (agent default): other — ${S865_LIMIT} (every codex configuration; no reset time)`),
+      esc,
+    );
+    assert.match(esc, /\n\d\. Run `bl review F-1`\.\n/);
     assert.deepEqual(lastTitle(runner), {
       feature: 'F-1',
       story: '',
@@ -310,13 +313,17 @@ test('a usage limit with no reset time escalates at once as agent unavailable', 
     assert.match(esc, /^\nagent unavailable: You've hit your monthly spend limit/);
     assert.match(
       esc,
-      /The implement session found every implementing configuration out: no configuration names a reset time\./,
+      /The implement session found every implementing configuration out: no refusal names a reset time\./,
     );
     assert.match(
       esc,
-      /Configurations \(backlog\.json "agent", in priority order\):\n\n- claude: spend — You've hit your monthly spend limit.* \(this configuration; no reset time\)\n/,
+      /Configurations \(backlog\.json "agent", in priority order\):\n\n- claude \(agent default\): spend — You've hit your monthly spend limit.* \(this configuration; no reset time\)\n/,
     );
-    assert.match(esc, /Raise the limit, then run `bl run F-1 --resume`\./);
+    assert.match(esc, /\nCause: spend cap reached\n/);
+    assert.match(
+      esc,
+      /\n1\. Raise the spend limit or buy credits on claude's own usage page\.\n2\. Run `bl capacity`[^\n]*\n3\. Clear `## Escalation` to `None\.`\.\n4\. Run `bl run F-1 --resume`\.\n/,
+    );
     assert.ok(runner.calls.some((c) => c.type === 'notify' && c.label === 'F-1 escalated'));
     assert.equal(loadRunState(config, 'F-1').status, 'escalated', 'saved before the error unwound');
     assert.ok(!runner.calls.some((c) => c.type === 'forge'), 'no PR');
@@ -344,7 +351,7 @@ test('a reset time further away than run.limit_wait_max_hours escalates instead 
     const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
     assert.ok(esc.includes(`the earliest reset, ${localTime(until)}, is past the limit_wait_max_hours cap of 1.`), esc);
     assert.ok(esc.includes(`(this configuration; until ${localTime(until)})`), esc);
-    assert.match(esc, /Raise the limit \(or wait for the reset\), then run `bl run F-1 --resume`\./);
+    assert.match(esc, /\n4\. Run `bl run F-1 --resume`\.\n/);
   } finally {
     cleanup();
   }
@@ -1235,7 +1242,10 @@ test('every configuration out with no reachable reset escalates listing each con
     const until = runner.clock() + 121 * 60_000;
     const result = await reviewFeature({ feature, config, prep, runner, pr: { number: '7', url: 'u' }, maxRounds: 2 });
     assert.equal(result.escalated, true);
-    assert.equal(result.error, 'agent unavailable: every review configuration is out (codex gpt-6-sol, claude sonnet)');
+    assert.equal(
+      result.error,
+      'agent unavailable: every review configuration is out (codex gpt-6-sol, claude sonnet) — spend cap reached',
+    );
     assert.equal(runner.calls.filter((c) => c.type === 'sleep').length, 0);
     const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
     assert.ok(
@@ -1249,7 +1259,141 @@ test('every configuration out with no reachable reset escalates listing each con
       esc.includes(`- claude sonnet: spend — ${F41_LIMIT} (this configuration; until ${localTime(until)})`),
       esc,
     );
-    assert.match(esc, /Raise the limit \(or wait for the reset\), then run `bl review F-1`\./);
+    assert.match(esc, /\n4\. Run `bl review F-1`\.\n/);
+  } finally {
+    cleanup();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// What an agent-unavailable escalation says (S-1140): the step, each
+// configuration with a fresh capacity reading, one cause line, ordered steps.
+// ---------------------------------------------------------------------------
+
+/** A capacity reading of `windows` (`[name, percent, resetsAt]`), as an adapter's windowsCapacity gives it. */
+const readingOf = (state, until, windows) => ({
+  state,
+  scope: 'account',
+  until,
+  windows: windows.map(([name, remainingPercent, resetsAt]) => ({ name, remainingPercent, resetsAt })),
+  message: state === 'unavailable' ? 'no quota left' : '',
+});
+
+test('a capacity refusal escalates with the step, the configuration, each window, the overloaded cause and ordered steps', async () => {
+  const { dir, cleanup, config, feature, prep } = setup({}, { agent: [{ agent: 'codex', model: 'gpt-6-sol' }] });
+  try {
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: { limit: (o) => (o.promptName === 'feature-story' ? capacityRefusal() : null) },
+    });
+    const fiveH = new Date(runner.clock() + 2 * 3_600_000);
+    const sevenD = new Date(runner.clock() + 3 * 86_400_000);
+    let reads = 0;
+    runner.capacity = () => {
+      reads += 1;
+      return readingOf('available', null, [
+        ['5h', 40, fiveH],
+        ['7d', 75, sevenD],
+      ]);
+    };
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'escalated');
+    assert.equal(state.lastError, `agent unavailable: ${CAPACITY} — provider overloaded, your quota is fine`);
+    assert.equal(reads, 2, 'one read before the spawn, one fresh read at escalation time');
+    const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
+    assert.ok(esc.includes(`\nStep: implement S-1, failed at ${localTime(runner.clock())}.\n`), esc);
+    assert.ok(
+      esc.includes(
+        `\n- codex gpt-6-sol: capacity — ${CAPACITY} (this configuration; no reset time)\n` +
+          `  - 5h: 40% left, resets ${localTime(fiveH)}\n` +
+          `  - 7d: 75% left, resets ${localTime(sevenD)}\n`,
+      ),
+      esc,
+    );
+    assert.equal(esc.match(/\nCause: /g).length, 1, 'exactly one cause line');
+    assert.ok(esc.includes('\nCause: provider overloaded, your quota is fine\n'), esc);
+    assert.match(
+      esc,
+      /\n1\. Wait about 30 minutes[^\n]*\n2\. Run `bl capacity`[^\n]*\n3\. Clear `## Escalation` to `None\.`\.\n4\. Run `bl run F-1 --resume`\.\n\nAlternative: add another configuration to "agent" in backlog\.json\./,
+    );
+    // bl status prints the cause with the run line, and the out-list below it.
+    const status = captureLog(() => cmdStatus({}, config, feature));
+    assert.match(
+      status,
+      /\nrun: escalated at step implement — agent unavailable: .* — provider overloaded, your quota is fine \(/,
+    );
+    const out = status.indexOf(`\n  out: codex gpt-6-sol for the rest of the run — capacity: ${CAPACITY}\n`);
+    assert.ok(
+      out > status.indexOf('\nrun: escalated at step implement — '),
+      `the cause line, then the out-list\n${status}`,
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('a used-up window past limit_wait_max_hours escalates with its reset and the window at 0%', async () => {
+  const { dir, cleanup, config, feature, prep } = setup(
+    {},
+    { agent: [{ agent: 'codex', model: 'gpt-6-sol' }], run: { limit_wait_max_hours: 1 } },
+  );
+  try {
+    const runner = fakeRunner({ dir, feature });
+    const reset = new Date(runner.clock() + 3 * 3_600_000);
+    runner.capacity = () =>
+      readingOf('unavailable', reset, [
+        ['5h', 0, reset],
+        ['7d', 30, new Date(runner.clock() + 86_400_000)],
+      ]);
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'escalated');
+    const cause = `quota window used up until ${localTime(reset)} (5h at 0%)`;
+    assert.ok(state.lastError.endsWith(` — ${cause}`), state.lastError);
+    assert.equal(runner.calls.filter((c) => c.type === 'session').length, 0, 'nothing spawned');
+    const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
+    assert.ok(esc.includes(`\n  - 5h: 0% left, resets ${localTime(reset)}\n`), esc);
+    assert.ok(esc.includes(`\nCause: ${cause}\n`), esc);
+    assert.ok(
+      esc.includes(
+        `\n1. Wait until the reset, ${localTime(reset)}.\n2. Run \`bl capacity\`` +
+          " to read the configuration's quota windows again.\n3. Clear `## Escalation` to `None.`.\n4. Run `bl run F-1 --resume`.\n",
+      ),
+      esc,
+    );
+    assert.match(esc, /\nAlternative: add a configuration of another agent to "agent" in backlog\.json\./);
+  } finally {
+    cleanup();
+  }
+});
+
+test('an account-wide reading is taken once at escalation for two configurations of the same agent', async () => {
+  const { dir, cleanup, config, feature, prep } = setup(
+    {},
+    {
+      agent: [
+        { agent: 'codex', model: 'gpt-6-sol' },
+        { agent: 'codex', model: 'gpt-6-astra' },
+      ],
+    },
+  );
+  try {
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: { limit: (o) => (o.promptName === 'feature-story' ? capacityRefusal() : null) },
+    });
+    const asked = [];
+    runner.capacity = (agent, model) => {
+      asked.push(model);
+      return readingOf('available', null, [['5h', 40, null]]);
+    };
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'escalated');
+    assert.deepEqual(asked, ['gpt-6-sol', 'gpt-6-sol'], 'once in the walk, once at escalation');
+    const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
+    assert.equal(esc.match(/\n {2}- 5h: 40% left, no reset time\n/g).length, 2, 'both configurations show it');
+    assert.ok(esc.includes('\nCause: provider overloaded, your quota is fine\n'), esc);
   } finally {
     cleanup();
   }
@@ -1432,9 +1576,9 @@ test("bl review: an unavailable agent on a review pass escalates, names bl revie
     const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
     assert.match(
       esc,
-      /The review:correctness session found every review configuration out: no configuration names a reset time\./,
+      /The review:correctness session found every review configuration out: no refusal names a reset time\./,
     );
-    assert.match(esc, /then run `bl review F-1`\./);
+    assert.match(esc, /\n4\. Run `bl review F-1`\.\n/);
   } finally {
     cleanup();
   }
@@ -1644,7 +1788,7 @@ test('a review list left empty by exclusion escalates as agent unavailable, nami
       esc,
       /- claude opus: excluded — it ran implement(, [a-z-]+)* in this run, and the reviewer is never the implementer/,
     );
-    assert.match(esc, /Add a "review_agent" configuration that did not implement this run/);
+    assert.match(esc, /\nAlternative: add a "review_agent" configuration that did not implement this run\./);
   } finally {
     cleanup();
   }

@@ -1,10 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  changeNextVerb,
   extractReviewLog,
+  latestSessionOpenItems,
   parseLatestSession,
+  reviewBlockedMessage,
   summarizeLatestReviewSession,
   openCheckboxItems,
+  resolutionCommit,
   reviewOutcome,
   sessionDates,
   CHECKBOX_RE,
@@ -237,6 +241,21 @@ test('summarizeLatestReviewSession on a nits-only session reports nothing blocki
   assert.equal(r.blocking, 0);
 });
 
+test("changeNextVerb: merge only for ready_for_merge that passes the merge gate's review rule", () => {
+  const log = (must, should, nits) =>
+    `## Review Log\n\n### Session 2026-11-13 (PR #7)\n\n**Must fix**\n\n${must}\n\n**Should fix**\n\n${should}\n\n**Nits**\n\n${nits}\n`;
+  const cases = [
+    ['ready_for_merge', '# x\n', 'merge'],
+    ['ready_for_merge', log('- [ ] broken', 'None.', 'None.'), 'review'],
+    ['ready_for_merge', log('None.', '- [ ] shaky', 'None.'), 'review'],
+    ['ready_for_merge', log('None.', 'None.', '- [ ] rename x'), 'merge'],
+    ['fixing', log('- [ ] broken', 'None.', 'None.'), 'run'],
+    ['in_review', '', 'run'],
+    [null, '', 'run'],
+  ];
+  for (const [status, body, want] of cases) assert.equal(changeNextVerb(status, body), want, `${status}: ${body}`);
+});
+
 test('parseLatestSession handles a non-(PR #N) suffix in the heading', () => {
   const log = `### Session 2026-05-11 (followup)
 
@@ -356,4 +375,99 @@ test('openCheckboxItems ends an item at a blank line, a heading, a plain bullet 
   ]);
   assert.deepEqual(openCheckboxItems(''), []);
   assert.deepEqual(openCheckboxItems('**Must fix**\nNone.\n'), []);
+});
+
+test('resolutionCommit: the first commit a → continuation line names, never one in the claim', () => {
+  const cases = [
+    ['- [ ] guard misses pathspecs\n      → c531dab. fixed every instance', 'c531dab'],
+    ['- [ ] guard misses pathspecs\n      → fixed in 3a1f9bc — every caller', '3a1f9bc'],
+    ['- [ ] guard misses pathspecs\n      → bl `3a1f9bc`. fixed', '3a1f9bc'],
+    ['- [ ] guard misses pathspecs\n      Class: guard\n      → c531dab. fixed', 'c531dab'],
+    ['- [ ] guard misses pathspecs\n      → c531dab. fixed\n      → 3a1f9bc. again', 'c531dab'],
+    ['- [ ] a nit\n      → dropped (nit)', null],
+    ['- [ ] too big\n      → deferred to S-471 for later', null],
+    ['- [ ] no note at all\n      wraps here', null],
+    ['- [ ] claim says → abc1234 already', null],
+  ];
+  for (const [md, sha] of cases) {
+    const [item] = openCheckboxItems(md);
+    assert.equal(resolutionCommit(item), sha, md);
+  }
+});
+
+const OPEN_ITEMS_LOG = `### Session 2026-10-29 (PR #51; reviewed by codex)
+
+- [ ] before any heading
+
+**Must fix**
+
+- [ ] race in close
+      repro: run close twice
+      test: groups.int.test.js
+- [x] fixed already
+      → abc1234
+
+**Should fix**
+
+None.
+
+**Nits**
+
+- [ ] rename x
+- [X] spacing
+
+### Session 2026-10-20 (PR #50)
+
+**Must fix**
+
+- [ ] older item
+`;
+
+test('latestSessionOpenItems: open items of the latest session under their heading, continuation lines kept (S-1157)', () => {
+  const s = latestSessionOpenItems(OPEN_ITEMS_LOG);
+  assert.deepEqual(s.sections, [
+    { heading: null, items: [{ text: 'before any heading', lines: [] }] },
+    {
+      heading: 'Must fix',
+      items: [{ text: 'race in close', lines: ['repro: run close twice', 'test: groups.int.test.js'] }],
+    },
+    { heading: 'Nits', items: [{ text: 'rename x', lines: [] }] },
+  ]);
+  assert.equal(s.date, '2026-10-29');
+  assert.equal(s.prNumber, '51');
+  // The counts are parseLatestSession's, from the same parse.
+  const { sections, ...counts } = s;
+  assert.deepEqual(counts, parseLatestSession(OPEN_ITEMS_LOG));
+  assert.equal(s.blocking, 2);
+  assert.equal(s.nits, 1);
+  assert.ok(!JSON.stringify(sections).includes('older item'), 'only the latest session is read');
+  assert.ok(!JSON.stringify(sections).includes('abc1234'), 'a checked item and its lines are left out');
+});
+
+test('latestSessionOpenItems: null with no session; no sections when every box is checked (S-1157)', () => {
+  assert.equal(latestSessionOpenItems(''), null);
+  assert.equal(latestSessionOpenItems('No reviews yet.\n'), null);
+  const s = latestSessionOpenItems('### Session 2026-11-01\n\n**Must fix**\n\n- [x] done\n');
+  assert.deepEqual(s.sections, []);
+  assert.equal(s.unchecked, 0);
+  assert.equal(s.prNumber, null);
+});
+
+test('reviewBlockedMessage: names bl change --open when a Must/Should is open, and the next verb by position (S-1157)', () => {
+  const review = { date: '2026-10-29', blocking: 1 };
+  assert.equal(
+    reviewBlockedMessage({ id: 'S-1', state: 'fixing', round: 2, review, position: 'fixing', action: 'marking done' }),
+    'S-1 has unresolved review state (fixing, round 2, latest session 2026-10-29, 1 unchecked Must/Should, listed by bl change S-1 --open).\nAddress the review feedback (bl implement S-1) before marking done.',
+  );
+  assert.equal(
+    reviewBlockedMessage({
+      id: 'F-1',
+      state: 'running',
+      round: 1,
+      review: null,
+      position: 'in_review',
+      action: 'merging',
+    }),
+    'F-1 has unresolved review state (running, round 1, latest session unknown, 0 unchecked Must/Should).\nReview it (bl review F-1) before merging.',
+  );
 });

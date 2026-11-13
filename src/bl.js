@@ -95,6 +95,9 @@ Commands:
   edit       Open a story, component, feature or task file in ${editor}
   view       Open a read-only copy of a story, component, feature or task
                file in ${editor}; the copy is discarded on exit
+  change     Open a read-only copy of a story's, feature's or batch's change
+               document in ${editor}, as view does
+               --open         Print the open items of the latest review session
   which      Print the path to a story, component, feature or task file
   grep       Search story contents, show matches as a table
   list       List backlog stories (-a for all), with a Theme column
@@ -368,6 +371,10 @@ async function run() {
     case 'view':
     case 'show': {
       const { main } = await import('./view.js');
+      return main(subArgv);
+    }
+    case 'change': {
+      const { main } = await import('./change-cmd.js');
       return main(subArgv);
     }
     case 'which': {

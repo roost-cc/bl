@@ -802,13 +802,18 @@ test('actions (S-1336): each inbox item kind gets the verbs of F-87 D7, then bl 
     'o: bl view T-52 (T-52 view)',
     'g: bl agent (agent)',
   ]);
-  // A change's verb is changeNextVerb's: merge once ready_for_merge, else run.
-  assert.deepEqual(item('change', 'F-81:change', 'F-81', { status: 'ready_for_merge' }).map(shown), [
+  // A change's action is the verb bl inbox gave it (changeNextVerb): merge, review or run.
+  assert.deepEqual(item('change', 'F-81:change', 'F-81', { verb: 'merge' }).map(shown), [
     'm: bl merge F-81',
     'o: bl view F-81 (F-81 view)',
     'g: bl agent (agent)',
   ]);
-  assert.deepEqual(item('change', 'S-1330:change', 'S-1330', { status: 'in_review' }).map(shown), [
+  assert.deepEqual(item('change', 'S-1331:change', 'S-1331', { verb: 'review' }).map(shown), [
+    'v: bl review S-1331 (S-1331 review)',
+    'o: bl view S-1331 (S-1331 view)',
+    'g: bl agent (agent)',
+  ]);
+  assert.deepEqual(item('change', 'S-1330:change', 'S-1330', { verb: 'run' }).map(shown), [
     'r: bl run S-1330 (S-1330 run)',
     'o: bl view S-1330 (S-1330 view)',
     'g: bl agent (agent)',
@@ -998,9 +1003,7 @@ test('actions (F-127 D5): every action has a short label for the key bar', () =>
   const pr = { number: '15', url: 'https://example.invalid/pull/15' };
   const all = [
     ...['escalation', 'task', 'runner', 'update'].flatMap((kind) => itemActions({ kind, id: 'X', unit: 'F-1' })),
-    ...['ready_for_merge', 'in_review'].flatMap((status) =>
-      itemActions({ kind: 'change', id: 'X', unit: 'F-1', status }),
-    ),
+    ...['merge', 'review', 'run'].flatMap((verb) => itemActions({ kind: 'change', id: 'X', unit: 'F-1', verb })),
     ...runActions({ id: 'S-1', status: 'running', pr, stoppable: true }),
     ...runActions({ id: 'S-1', status: 'stopped', pr }),
     ...runActions({ id: 'S-1', status: 'clean', pr }),
@@ -1018,6 +1021,7 @@ test('actions (F-127 D5): every action has a short label for the key bar', () =>
     'p PR',
     'g agent',
     'm merge',
+    'v review',
     'd done',
     'p put',
     'x unrank',

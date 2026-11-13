@@ -165,6 +165,9 @@ export async function getDeniedTools(mode, { backlogRoot, config } = {}) {
  * (F-85 D6) that every refine prompt carries, so the refiner sets `effort:`.
  * `executionInputs` is the planning rules that feed the execution plan
  * (F-125 D3), carried by every refine, implementing and resolving prompt.
+ * `originRule` is the finding-origin rule (S-1442) that `review-correctness`,
+ * `review-failure-paths` and `review-verify` share: a defect in lines the
+ * branch added or changed is `introduced`, even if main shows the same behavior.
  * `refineOutcome` is the story refine's closing **Outcome** section (F-68
  * D1): the object to write to `{{outcomePath}}` as the session's last act.
  * The batch refine passes its sub-agents `_refine-outcome-subagent` in its
@@ -195,6 +198,7 @@ const PROMPT_PARTIALS = {
   simplicityGuide: '_simplicity',
   effortGuide: '_effort',
   executionInputs: '_execution-inputs',
+  originRule: '_origin-rule',
 };
 
 /** The heading `_collaboration.md` opens with: a prompt that has it carries the rules. */

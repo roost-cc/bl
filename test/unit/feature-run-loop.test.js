@@ -1497,12 +1497,95 @@ test('a failed push escalates with the failed test and its error, then the last 
       const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
       assert.equal(state.status, 'escalated', name);
       const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
-      assert.match(esc.trim(), /^push failed\n\ngit push failed:/, name);
+      // S-897: with no gate record, the escalation shape holds the push output.
+      assert.match(esc.trim(), /^push failed\n\n\*\*The rule at stake:\*\*/, name);
+      assertHeadings(esc, name);
+      assert.ok(esc.includes('bl found no gate record of this push that it can read the cause from: '), name);
       for (const s of c.has) assert.ok(esc.includes(s), `${name}: has ${s}\n${esc}`);
       for (const s of c.lacks) assert.ok(!esc.includes(s), `${name}: lacks ${s}\n${esc}`);
     } finally {
       cleanup();
     }
+  }
+});
+
+/** The six bold headings of `_escalation.md`, in order. */
+function assertHeadings(text, name) {
+  const headings = [
+    '**The rule at stake:**',
+    '**How it works:**',
+    '**The problem:**',
+    "**Why the agents can't fix it:**",
+    '**The decision:**',
+    '**Details:**',
+  ];
+  const at = headings.map((h) => text.indexOf(h));
+  assert.ok(
+    at.every((i, k) => i >= 0 && (k === 0 || i > at[k - 1])),
+    `${name}: six headings in order\n${text}`,
+  );
+}
+
+test("a push the gate refuses on vulns escalates with the gate record's findings (S-897)", async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const common = mkTempDir('bl-push-gate-common-');
+    const checks = join(common, 'ci-cd', 'checks');
+    mkdirSync(checks, { recursive: true });
+    const finding = {
+      lockfile: 'package-lock.json',
+      package: 'lodash',
+      version: '4.17.20',
+      ecosystem: 'npm',
+      ids: ['GHSA-aaaa'],
+      severity: 'high',
+      status: 'new',
+      at_fail_on: true,
+      blocking: true,
+      fixed: ['4.17.21'],
+    };
+    writeFileSync(
+      join(checks, 'sha0.json'),
+      JSON.stringify({
+        commit: 'sha0',
+        by: 'gate',
+        verdict: 'fail',
+        steps: ['lint', 'vulns'],
+        started: '2026-10-14T00:00:00.000Z',
+        exit_code: 1,
+        error: null,
+        vulns: {
+          schema: 'ci-cd-vulns/v1',
+          status: 'findings',
+          fail_on: 'high',
+          base: { compared: true, reason: null },
+          findings: [finding],
+        },
+      }),
+    );
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        shell: (cmd) => {
+          if (cmd.startsWith('git push')) return { status: 1, output: "error: failed to push some refs to 'origin'\n" };
+          if (cmd.startsWith('git rev-parse --path-format=absolute --git-common-dir'))
+            return { status: 0, output: `${common}\n` };
+          return null;
+        },
+      },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'escalated');
+    const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation');
+    assert.match(esc.trim(), /^push failed\n\n/);
+    assertHeadings(esc, 'vulns');
+    assert.ok(esc.includes('The gate stopped at `vulns`, exit 1'), esc);
+    assert.match(esc, /\| lodash\s+\| 4\.17\.20\s+\| GHSA-aaaa\s+\| high\s+\| 4\.17\.21\s+\|/);
+    assert.ok(esc.includes('- A. Upgrade on this branch (recommended)'), esc);
+    assert.ok(!esc.includes('--no-verify'), esc);
+  } finally {
+    cleanup();
   }
 });
 

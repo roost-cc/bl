@@ -62,6 +62,17 @@ _roost_feature_ids() {
     | sort -t- -k2 -n
 }
 
+# Collect story batch IDs (B-1, B-2, ...) from batches/ directory names
+_roost_batch_ids() {
+  local root bldir
+  root="$(_roost_repo_root)"
+  bldir="$(_roost_backlog_dir "$root")"
+  [[ -d "$bldir/batches" ]] || return
+  find "$bldir/batches" -maxdepth 1 -type d -name 'B*' 2>/dev/null \
+    | sed -nE 's|^.*/B([0-9]+)-[^/]+$|B-\1|p' \
+    | sort -t- -k2 -n
+}
+
 # Collect theme ids (slugs) from themes/ directory names
 _roost_theme_ids() {
   local root bldir
@@ -112,7 +123,7 @@ _roost_bl() {
 
   # First arg: subcommand
   if [[ ${COMP_CWORD} -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W "init new side attach batch move next-id run implement approve status refine review pr edit view show which grep list ls tree history report next rank what-next done force flow inbox block task sync s merge log allow agents capacity top watch stop help" -- "$cur") )
+    COMPREPLY=( $(compgen -W "init new side attach batch move next-id run implement approve status refine review pr edit view show change which grep list ls tree history report next rank what-next done force flow inbox block task sync s merge log allow agents capacity top watch stop help" -- "$cur") )
     return
   fi
 
@@ -136,6 +147,13 @@ _roost_bl() {
       ;;
     view)
       COMPREPLY=( $(compgen -W "$(_roost_story_ids)" -- "$cur") )
+      ;;
+    change)
+      if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "--open --help" -- "$cur") )
+      else
+        COMPREPLY=( $(compgen -W "$(_roost_story_ids) $(_roost_feature_ids) $(_roost_batch_ids)" -- "$cur") )
+      fi
       ;;
     review|pr)
       COMPREPLY=( $(compgen -W "$(_roost_worktree_story_ids)" -- "$cur") )
