@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { holderOf } from '../../src/kernel-lock.js';
 import { LOCK_FILE } from '../../src/lock.js';
-import { spawnSyncFiles } from '../../src/child-stdio.js';
+import { runAfterExitOnSignal } from '../helpers/exit-on-signal-script.js';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { parseFrontmatter, serializeFrontmatter, worktreeRoot } from '../../src/config.js';
@@ -2813,11 +2813,9 @@ const INTERRUPTED_STEPS = [
 
 function runInterrupted(c, abortFails) {
   const url = (p) => JSON.stringify(new URL(p, import.meta.url).href);
-  const script = [
-    `import { exitOnSignal } from ${url('../../src/signal-exit.js')};`,
+  return runAfterExitOnSignal([
     `import { runChild } from ${url('../../src/child.js')};`,
     `import { BRANCHES, fakeRunner, mkReport, run, setup } from ${url('../helpers/updates-run-fixture.js')};`,
-    'exitOnSignal();',
     `const t = await setup(mkReport({ 'roost-cc/bl': [BRANCHES.vitest] }));`,
     `process.on('exit', () => t.cleanup());`,
     'const runner = fakeRunner({ gate: [0] });',
@@ -2835,12 +2833,7 @@ function runInterrupted(c, abortFails) {
     '  return fake(args, cwd);',
     '};',
     'await run(t, runner);',
-    `console.log('after');`,
-  ].join('\n');
-  return spawnSyncFiles(process.execPath, ['--input-type=module', '-e', script], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  ]);
 }
 
 for (const c of INTERRUPTED_STEPS) {

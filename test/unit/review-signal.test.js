@@ -14,13 +14,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { HEADLESS_ENV } from '../../src/agents/provider.js';
 import { bobPushes, g, REAL_GIT, twoClones } from '../helpers/backlog-commit-fixture.js';
+import { runAfterExitOnSignal } from '../helpers/exit-on-signal-script.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
 const REVIEW = new URL('../../src/review.js', import.meta.url).href;
-const SIGNAL_EXIT = new URL('../../src/signal-exit.js', import.meta.url).href;
 
 const shimDir = mkTempDir('bl-review-signal-shim-');
 writeFileSync(
@@ -46,20 +45,15 @@ test('SIGINT that ends the merge with main in syncBranchWithMain: the merge is a
     bobPushes(bob, { 'a.md': 'bob\n' });
     const head = g(alice, 'rev-parse', 'HEAD');
 
-    const script = [
-      `import { syncBranchWithMain } from ${JSON.stringify(REVIEW)};`,
-      `import { exitOnSignal } from ${JSON.stringify(SIGNAL_EXIT)};`,
-      'exitOnSignal();',
-      `console.log(JSON.stringify(syncBranchWithMain(${JSON.stringify(alice)})));`,
-      `console.log('after');`,
-    ].join('\n');
     const env = { ...process.env, PATH: `${shimDir}:${process.env.PATH}` };
     delete env[HEADLESS_ENV];
-    const r = spawnSyncFiles(process.execPath, ['--input-type=module', '-e', script], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env,
-    });
+    const r = runAfterExitOnSignal(
+      [
+        `import { syncBranchWithMain } from ${JSON.stringify(REVIEW)};`,
+        `console.log(JSON.stringify(syncBranchWithMain(${JSON.stringify(alice)})));`,
+      ],
+      { env },
+    );
 
     const why = `status ${r.status} signal ${r.signal}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`;
     assert.equal(r.status, 130, why);
