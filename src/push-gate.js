@@ -57,8 +57,10 @@ export function gateRecord({ runner, worktreePath, pushStartedAt }) {
   }
   const { by, verdict, started, steps, exit_code: exit, error, vulns } = record;
   if (by !== 'gate') {
-    const last = Array.isArray(steps) && steps.length ? `, last step ${steps.at(-1)}` : '';
-    return none(`the check record was written by ${by ?? 'check'} (verdict ${verdict}${last}), not by the gate`);
+    const named = Array.isArray(steps) ? steps.filter((s) => typeof s === 'string') : [];
+    const last = named.length ? `, last step ${named.at(-1)}` : '';
+    const said = verdict == null ? 'no verdict' : `verdict ${verdict}`;
+    return none(`the check record was written by ${by ?? 'check'} (${said}${last}), not by the gate`);
   }
   if (verdict !== 'fail') return none(`the check record's verdict is ${verdict}, not fail`);
   const at = typeof started === 'string' ? Date.parse(started) : NaN;

@@ -109,6 +109,11 @@ test("gateRecord reads a fresh gate record and refuses one that is not this push
     'not an object': ['[]', /not a JSON object/],
     'written by check': [gateRun({ by: 'check' }), /written by check \(verdict fail, last step test\)/],
     'no by (an old check record)': [gateRun({ by: undefined }), /written by check/],
+    'by check, no verdict': [gateRun({ by: 'check', verdict: undefined, steps: [] }), /by check \(no verdict\), not/],
+    'by check, a step that is not text': [
+      gateRun({ by: 'check', steps: ['lint', { a: 1 }] }),
+      /by check \(verdict fail, last step lint\), not/,
+    ],
     'a pass': [gateRun({ verdict: 'pass', exit_code: null }), /verdict is pass/],
     'started before the push': [gateRun({ started: '2026-11-13T09:59:59.000Z' }), /before this push/],
     'started is not a time': [gateRun({ started: 'soon' }), /not a time/],
