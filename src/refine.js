@@ -32,6 +32,7 @@ import { enterVerb, logOf, requireBranch, startOf, transition } from './transiti
 import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
 import { sessionEffort } from './effort.js';
 import { takeUnitLocksOrExit } from './unit-lock.js';
+import { snapshot } from './atomic-write.js';
 
 /**
  * Resolve refine targets from positional args. Component IDs expand to their
@@ -205,6 +206,8 @@ export async function applyRefineStatus(backlogRoot, { id, kind, indexPath }, re
  * a lock another process holds refuses the refine with exit 1, before it
  * writes anything. Then it records the `refine` verb's `during` on each unit
  * (`enterVerb`, F-119 R1), so an outcome with no status leaves the unit there.
+ * When one of those writes fails, it puts every unit back (`snapshot`) and
+ * starts no session.
  * The commit holds only the paths under the units'
  * directories (`scope()`, read at the end, so a story the session made for
  * the feature is in it, D3); bl names each other changed path.
@@ -224,13 +227,19 @@ export async function refineAndCommit(units, opts, message, apply) {
   try {
     const before = dirtySnapshot(opts.backlogRoot);
     // The refine verb's `during` (`in_refinement`, F-119 R1), in the session's
-    // commit; nothing on a unit there already or a row with no `during`.
+    // commit; nothing on a unit there already or a row with no `during`. All
+    // or nothing: a failed write puts back each unit an earlier one moved.
+    const undo = snapshot(
+      opts.backlogRoot,
+      units.map((u) => u.indexPath),
+      ' that started the refinement session',
+    );
     let entered = true;
     try {
       for (const u of units) await enterVerb(opts.backlogRoot, u, 'refine');
     } catch (e) {
       entered = false;
-      console.error(`Error: cannot record the refinement session's start: ${e.message}`);
+      console.error(`Error: cannot record the refinement session's start: ${undo(e).message}`);
     }
     const { status, structured, structuredError } = entered
       ? await launchSession({ ...opts, units, returnOnExit: true })
@@ -244,9 +253,10 @@ export async function refineAndCommit(units, opts, message, apply) {
         console.error(`Error: cannot set the status from the refine outcome: ${e.message}`);
       }
     } else {
+      // A started session left each unit at the refine verb's `during`.
+      const where = entered ? 'each unit stays at the status the session started it in' : 'every status is unchanged';
       console.error(
-        `No refine outcome (${structuredError}); every status is unchanged.\n` +
-          `  Run \`bl refine ${ids.join(' ')}\` again to set it.`,
+        `No refine outcome (${structuredError}); ${where}.\n` + `  Run \`bl refine ${ids.join(' ')}\` again to set it.`,
       );
     }
     const failed = await commitChangedSince(opts.backlogRoot, before, message, {

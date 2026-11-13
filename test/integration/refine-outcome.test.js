@@ -9,9 +9,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { parseFrontmatter } from '../../src/config.js';
+import { specLockPath } from '../../src/spec-file.js';
 import { outcomePath } from '../../src/outcome.js';
 import { refineBatchId } from '../../src/refine.js';
 import { git, statusLines } from '../helpers/git-backlog.js';
@@ -61,7 +62,10 @@ test('no outcome file leaves the status alone, prints the fault, and the session
   const r = refine(dir, ['S-1'], { write: [S1] });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(statusOf(dir, S1), 'in_refinement');
-  assert.match(r.stderr, /No refine outcome \(no outcome file at .*S-1\.json\); every status is unchanged/);
+  assert.match(
+    r.stderr,
+    /No refine outcome \(no outcome file at .*S-1\.json\); each unit stays at the status the session started it in/,
+  );
   assert.match(r.stderr, /Run `bl refine S-1` again/);
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: refine S-1');
   assert.deepEqual(statusLines(dir), []);
@@ -126,6 +130,33 @@ test('the batch sets each story from its entry, and prints the reason for the ot
   assert.match(r.stderr, /S-2 is not refined; its status is unchanged: too large/);
   assert.equal(git(dir, 'log', '-1', '--format=%s'), 'chore: refine S-1, S-2');
   assert.deepEqual(statusLines(dir), []);
+});
+
+test('refine_second_start_write_failure_keeps_all_units_at_their_previous_status: no session, no commit (F-119 R1)', async () => {
+  const dir = await gitBacklog();
+  const head = git(dir, 'rev-parse', 'HEAD');
+  // S-2's spec lock cannot be taken (a directory at its path), so S-2's start
+  // write fails after S-1's has succeeded.
+  const blocked = specLockPath(join(dir, S2));
+  mkdirSync(blocked);
+  let r;
+  try {
+    r = refine(dir, ['S-1', 'S-2'], {
+      outcome: json({ summary: 'Both.', stories: { 'S-1': { refined: true }, 'S-2': { refined: true } } }),
+      outcomeUnit: refineBatchId(['S-1', 'S-2']),
+    });
+  } finally {
+    rmSync(blocked, { recursive: true, force: true });
+  }
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /cannot record the refinement session's start: .*cannot take the spec lock/);
+  assert.match(r.stderr, /No refine outcome \(the session did not start\); every status is unchanged/);
+  for (const rel of [S1, S2]) {
+    assert.equal(statusOf(dir, rel), 'draft', rel);
+    assert.deepEqual(logAfter(dir, rel, 1), [], `${rel}: no in_refinement entry`);
+  }
+  assert.deepEqual(statusLines(dir), [], 'nothing left to commit');
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head, 'no commit');
 });
 
 test('the batch leaves a story the outcome does not name, and says so', async () => {
