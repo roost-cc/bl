@@ -13,10 +13,8 @@ Stories in this batch:
 
 1. {{readTool}} each story file: its Summary, Acceptance Criteria and Implementation Plan. Read
    the code the plans name where you need it to see what a story changes.
-2. Make sure each story lists its files by the planning rules below. If a plan names a file it
-   changes without backticks, or leaves out a file it plainly changes, correct the
-   Implementation Plan. A path that the story reads and does not change goes under
-   `### Sources of truth`.
+2. Make sure each story lists its files by the planning rules below (**Execution plan
+   inputs**). Where a plan does not, correct its Implementation Plan.
 3. Find each logical dependency between two of the stories: one story needs what another one
    builds (a function, a schema, a key, a contract between repos). For each one, add an order
    edge, the dependency first:
@@ -25,8 +23,7 @@ Stories in this batch:
    bl block add <S-first> --gate order --unit <S-then> --until implemented
    ```
 
-   `bl block add` checks the edge and commits `blockers.json` itself. A file that two stories
-   both change is not a dependency: `bl run` finds file overlap itself.
+   `bl block add` checks the edge and commits `blockers.json` itself.
 
 4. Validate the stories you changed with `bl validate`, and correct what it reports on them.
 
