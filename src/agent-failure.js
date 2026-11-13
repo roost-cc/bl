@@ -144,8 +144,8 @@ export function describeFailure({
       if (found.length === 0) continue;
       // The window that comes back first is the one worth waiting for; one
       // with no reset time comes last.
-      const reset = (x) => x.until ?? Infinity;
-      chosen = cause === 'window' ? found.reduce((a, b) => (reset(b) < reset(a) ? b : a)) : found[0];
+      const resetMs = (x) => x.until ?? Infinity;
+      chosen = cause === 'window' ? found.reduce((a, b) => (resetMs(b) < resetMs(a) ? b : a)) : found[0];
       break;
     }
   }
