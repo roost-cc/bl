@@ -48,6 +48,8 @@ function backlog() {
     feature: join(dir, 'features', 'F1-feat', 'index.md'),
     change: put('features/F1-feat/change.md'),
     change2: put('stories/S1-one/change-2.md'),
+    batch: put('batches/B1-fixes/index.md', '---\nbatch_id: B-1\ntitle: Fixes\n---\n'),
+    batchChange: put('batches/B1-fixes/change.md'),
     tools: put('allowed-tools.json', '{}\n'),
   };
 }
@@ -63,6 +65,8 @@ test('lockFor gives each path of the Design table its covering lock', () => {
     ['an existing feature index.md', b.feature, spec(b.feature)],
     ['an existing change.md', b.change, spec(b.change)],
     ['an existing change-<n>.md', b.change2, spec(b.change2)],
+    ['an existing story batch index.md', b.batch, spec(b.batch)],
+    ["an existing story batch's change.md", b.batchChange, spec(b.batchChange)],
     ['an existing allowed-tools.json', b.tools, spec(b.tools)],
     ['a story index.md not there yet', join(b.dir, 'stories', 'S9-new', 'index.md'), backlogLock],
     ['a change document not there yet', join(b.dir, 'features', 'F1-feat', 'change-3.md'), backlogLock],
