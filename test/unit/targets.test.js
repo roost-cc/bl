@@ -111,14 +111,15 @@ test('run and implement refuse a component, pointing at bl new --feature; done r
       const { targets, errors } = resolveTargets(['C01'], config, verb);
       assert.deepEqual(targets, []);
       assert.deepEqual(errors, [
-        'C01 is a component. Make the stories you want into a feature: `bl new --feature --title … S-1 S-2`',
+        'C01 is a component. Make the stories you want into a feature (`bl new --feature --title … S-1 S-2`) or a batch (`bl batch S-1 S-2 --title …`)',
       ]);
     }
-    for (const verb of ['review', 'merge', 'approve']) {
-      assert.match(
-        resolveTargets(['C01'], config, verb).errors[0],
-        new RegExp(`C01 is a component; bl ${verb} takes a story or a feature`),
-      );
+    for (const [verb, takes] of [
+      ['review', 'a story, a feature or a batch'],
+      ['merge', 'a story, a feature or a batch'],
+      ['approve', 'a story or a feature'],
+    ]) {
+      assert.equal(resolveTargets(['C01'], config, verb).errors[0], `C01 is a component; bl ${verb} takes ${takes}.`);
     }
     assert.deepEqual(resolveTargets(['C01'], config, 'done').errors, [
       'C01 is a component: a code boundary with no status, so it is never done.',

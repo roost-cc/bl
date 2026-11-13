@@ -117,7 +117,7 @@ assert_contains "refine S-5 → story refine" "S-5 is done; refine starts from d
 for verb in run implement; do
   blrun "$verb" C00
   assert_exit "$verb C00" 1 "$RC"
-  assert_contains "$verb C00 refuses a component" 'C00 is a component. Make the stories you want into a feature: `bl new --feature --title … S-1 S-2`' "$ERR"
+  assert_contains "$verb C00 refuses a component" 'C00 is a component. Make the stories you want into a feature (`bl new --feature --title … S-1 S-2`) or a batch (`bl batch S-1 S-2 --title …`)' "$ERR"
 done
 for verb in run implement review merge; do
   blrun "$verb" S-2
