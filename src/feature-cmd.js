@@ -1747,26 +1747,23 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
  * The merge order of the feature's stored execution plan (`plan.yaml`,
  * F-125 D2) in `mergeOrder`'s shape, with `stored: true`; null when there is
  * no plan, or its `merge_order` is null (the merge edges formed a cycle at
- * run start, and `mergeOrder` names it). A plan that cannot be read, or whose
- * `merge_order` does not name exactly the feature's repos `names`, stops the
- * merge before any repo is touched.
+ * run start, and `mergeOrder` names it). A plan that `readPlan` refuses
+ * (another unit's, a field that does not agree with the others, or `repos`
+ * that are not the feature's repos `names`) stops the merge before any repo
+ * is touched.
  */
 function storedMergeOrder(config, feature, names) {
   const rel = relative(config.backlogRoot, planPath(feature.featureDir));
   let order;
   try {
-    order = readPlan(feature.featureDir)?.merge_order;
+    order = readPlan(feature.featureDir, feature.id, { repos: names })?.merge_order;
   } catch (e) {
-    console.error(`${unitLabel(feature)} ${feature.id}: ${e.message}`);
-    process.exit(1);
-  }
-  if (!order) return null;
-  if (order.length !== names.length || !names.every((n) => order.includes(n))) {
     console.error(
-      `${unitLabel(feature)} ${feature.id}: merge_order in ${rel} (${order.join(', ')}) does not name its repos (${names.join(', ')}). Correct it, with a changes entry that says why, or delete ${rel} to merge in the merge edges' order.`,
+      `${unitLabel(feature)} ${feature.id}: ${e.message}. Correct it, with a changes entry that says why, or delete ${rel} to merge in the merge edges' order.`,
     );
     process.exit(1);
   }
+  if (!order) return null;
   return { order, edges: [], cycle: null, stored: true };
 }
 

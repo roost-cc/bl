@@ -101,7 +101,7 @@ test('a story run: implement, gate, self-review, one PR titled S-n: <title>, rev
     assert.ok(existsSync(runStatePath(config, 'S-5')), 'run state keyed by the story id');
     assert.match(backlogGit(config.backlogRoot, 'log', '--format=%s'), /S-5 run started on s5-loose/);
     // A loose story's run computes and stores its plan too (F-125 A5).
-    assert.deepEqual(readPlan(dirname(unit.indexPath)).order, ['S-5']);
+    assert.deepEqual(readPlan(dirname(unit.indexPath), unit.id).order, ['S-5']);
     assert.match(
       backlogGit(config.backlogRoot, 'log', '--name-only', '--format=', '--grep=run started'),
       /^stories\/S5-loose\/plan\.yaml$/m,

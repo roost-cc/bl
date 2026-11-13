@@ -430,7 +430,7 @@ test('a fresh run writes plan.yaml before the first implement step, commits it a
       feature,
       behaviour: {
         story: (o) => {
-          planAtFirstSession ??= readPlan(dirname(feature.indexPath));
+          planAtFirstSession ??= readPlan(dirname(feature.indexPath), feature.id);
           checkAll(o.vars.storyAbsPath);
         },
       },
@@ -472,7 +472,7 @@ test('--resume with no plan.yaml computes and writes one', async () => {
   try {
     const runner = fakeRunner({ dir, feature });
     await runFeature({ feature, config, prep, runner, opts: { resume: true, maxRounds: 2 } });
-    assert.deepEqual(readPlan(dirname(feature.indexPath)).order, ['S-1', 'S-2']);
+    assert.deepEqual(readPlan(dirname(feature.indexPath), feature.id).order, ['S-1', 'S-2']);
     assert.deepEqual(implemented(runner), ['S-1', 'S-2']);
   } finally {
     cleanup();
@@ -492,6 +492,36 @@ test('--resume refuses a plan.yaml that does not match its schema, naming the fi
     assert.deepEqual(implemented(runner), []);
   } finally {
     cleanup();
+  }
+});
+
+// Review 2026-11-13, Must 3. The merge half is in feature-merge-repos.test.js.
+test('stored_plan_rejects_another_work_unit_for_resume_and_merge (resume)', async () => {
+  const cases = [
+    ['another unit', { unit: 'F-2' }, /plan\.yaml: unit is F-2, not F-1: it is the plan of another work unit/],
+    [
+      'groups leave out a story',
+      { groups: [['S-1']] },
+      /plan\.yaml: groups must name each story of stories once; it leaves out S-2/,
+    ],
+    [
+      'a dependency outside stories',
+      { dependencies: { 'S-2': ['S-9'] } },
+      /plan\.yaml: dependencies must name only stories of stories; it names S-9/,
+    ],
+  ];
+  for (const [name, change, message] of cases) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      writeFileSync(planPath(dirname(feature.indexPath)), stringifyYaml({ ...storedPlan(['S-1', 'S-2']), ...change }));
+      const runner = fakeRunner({ dir, feature });
+      const state = await runFeature({ feature, config, prep, runner, opts: { resume: true, maxRounds: 2 } });
+      assert.equal(state.refused, true, name);
+      assert.match(state.lastError, message, name);
+      assert.deepEqual(implemented(runner), [], `${name}: nothing implemented`);
+    } finally {
+      cleanup();
+    }
   }
 });
 

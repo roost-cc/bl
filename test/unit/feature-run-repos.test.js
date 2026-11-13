@@ -1125,7 +1125,7 @@ test('late_stories_follow_dependency_order: an existing story not taken yet wait
       const order = [...new Set(runner.calls.filter((x) => x.prompt === 'feature-story').map((x) => x.story))];
       assert.deepEqual(order, ['S-1', 'S-4', 'S-2'], component);
       // The stored plan says the same (F-125 D2).
-      const plan = readPlan(dirname(feature.indexPath));
+      const plan = readPlan(dirname(feature.indexPath), feature.id);
       assert.deepEqual(plan.order, ['S-1', 'S-4', 'S-2'], component);
       assert.deepEqual(plan.dependencies['S-2'], ['S-4'], component);
     } finally {
@@ -1146,7 +1146,7 @@ test('a story added during the run joins plan.yaml after the stories taken, with
     };
     const runner = sideShell(fakeRunner({ dir, feature, behaviour }));
     await runFeature({ feature, config, prep, runner, opts: { maxRounds: 3 } });
-    const plan = readPlan(dirname(feature.indexPath));
+    const plan = readPlan(dirname(feature.indexPath), feature.id);
     assert.deepEqual(plan.stories, ['S-1', 'S-3']);
     assert.deepEqual(plan.order, ['S-1', 'S-3']);
     assert.deepEqual(plan.repos, ['demo-repo', 'repo-b']);
@@ -1176,14 +1176,14 @@ test("a story added during the run keeps a session's own changes entry in plan.y
         checkAll(o.vars.storyAbsPath);
         if (o.vars.storyId !== 'S-1') return;
         // The session records a change of its own, then adds a story.
-        const stored = readPlan(planDir);
+        const stored = readPlan(planDir, feature.id);
         writeFileSync(join(planDir, 'plan.yaml'), stringifyYaml({ ...stored, changes: [agentChange] }));
         addSide();
       },
     };
     const runner = sideShell(fakeRunner({ dir, feature, behaviour }));
     await runFeature({ feature, config, prep, runner, opts: { maxRounds: 3 } });
-    const plan = readPlan(planDir);
+    const plan = readPlan(planDir, feature.id);
     assert.deepEqual(plan.changes[0], agentChange);
     assert.deepEqual(
       plan.changes.map((c) => c.by),

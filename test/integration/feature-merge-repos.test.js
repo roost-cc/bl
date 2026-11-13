@@ -274,8 +274,8 @@ test('bl merge F-n refuses a cycle of merge edges before it touches any repo, na
   }
 });
 
-/** F-1's stored plan (F-125 D2) over stories S-1..S-<n> in `repos`, with `merge_order`, committed. */
-function storePlan(dir, g, repos, mergeOrder) {
+/** F-1's stored plan (F-125 D2) over stories S-1..S-<n> in `repos`, with `merge_order` and `change`, committed. */
+function storePlan(dir, g, repos, mergeOrder, change = {}) {
   const stories = repos.map((_, i) => `S-${i + 1}`);
   const plan = {
     schema: 'bl-plan/v1',
@@ -288,6 +288,7 @@ function storePlan(dir, g, repos, mergeOrder) {
     repos,
     merge_order: mergeOrder,
     changes: [],
+    ...change,
   };
   writeFileSync(join(dir, 'features', 'F1-feat', 'plan.yaml'), stringifyYaml(plan));
   g(dir, 'add', '.');
@@ -322,11 +323,43 @@ test("bl merge F-n refuses a plan.yaml whose merge_order does not name the featu
     assert.equal(r.status, 1);
     assert.match(
       r.stderr,
-      /F-1: merge_order in features\/F1-feat\/plan\.yaml \(bl\) does not name its repos \(bl, ci-cd\)/,
+      /F-1: .*features\/F1-feat\/plan\.yaml: merge_order must name each repo of repos once; it leaves out ci-cd\. Correct it/,
     );
     for (const n of ['bl', 'ci-cd']) assert.equal(g(built[n].repo, 'rev-parse', 'main'), before[n], `${n} not merged`);
   } finally {
     cleanup();
+  }
+});
+
+// Review 2026-11-13, Must 3. The resume half is in feature-run-loop.test.js.
+test('stored_plan_rejects_another_work_unit_for_resume_and_merge (merge)', async () => {
+  const cases = [
+    [
+      'another unit',
+      ['bl', 'ci-cd'],
+      { unit: 'F-2' },
+      /plan\.yaml: unit is F-2, not F-1: it is the plan of another work unit/,
+    ],
+    [
+      "repos that are not the feature's",
+      ['bl'],
+      {},
+      /plan\.yaml: repos must name each of the unit's repos \(bl, ci-cd\) once; it leaves out ci-cd/,
+    ],
+  ];
+  for (const [name, repos, change, message] of cases) {
+    const { dir, cleanup, env, g, built } = await mergeFixture(['bl', 'ci-cd']);
+    try {
+      storePlan(dir, g, repos, repos, change);
+      const before = Object.fromEntries(['bl', 'ci-cd'].map((n) => [n, g(built[n].repo, 'rev-parse', 'main')]));
+      const r = runBl(['merge', 'F-1'], { cwd: dir, env });
+      assert.equal(r.status, 1, name);
+      assert.match(r.stderr, message, name);
+      for (const n of ['bl', 'ci-cd'])
+        assert.equal(g(built[n].repo, 'rev-parse', 'main'), before[n], `${name}: ${n} not merged`);
+    } finally {
+      cleanup();
+    }
   }
 });
 

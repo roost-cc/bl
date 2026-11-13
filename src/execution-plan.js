@@ -434,33 +434,73 @@ export function replan(plan, stories, edges, { taken = [], why, at = new Date().
 }
 
 /**
- * `plan` when it matches `schemas/plan.json` and its `order` names each of
- * its `stories` (the run implements only the stories in `order`); else an
- * error that names `path` and the field.
+ * Why `list`, the plan field `name`, does not name each of `want` once
+ * (`what`, in the message), or null when it does.
+ * @param {string} name
+ * @param {string[]} list
+ * @param {string[]} want
+ * @param {string} what
  */
-function checkedPlan(path, plan) {
+function notEachOnce(name, list, want, what) {
+  const unique = (xs) => [...new Set(xs)];
+  const missing = want.filter((x) => !list.includes(x));
+  const extra = unique(list.filter((x) => !want.includes(x)));
+  const twice = unique(list.filter((x, i) => want.includes(x) && list.indexOf(x) !== i));
+  const parts = [
+    missing.length > 0 && `leaves out ${missing.join(', ')}`,
+    extra.length > 0 && `adds ${extra.join(', ')}`,
+    twice.length > 0 && `names ${twice.join(', ')} twice`,
+  ].filter(Boolean);
+  return parts.length > 0 ? `${name} must name each ${what} once; it ${parts.join(' and ')}` : null;
+}
+
+/**
+ * `plan` when it matches `schemas/plan.json` and every field agrees with
+ * the others; else an error that names `path` and the field. It checks:
+ * `unit` is `unit`, the work unit whose directory holds the file; `order`
+ * and the `groups` together name each of `stories` once (the run implements
+ * only the stories in `order`); `dependencies` names only stories of
+ * `stories`; `merge_order`, when not null, names each repo of `repos` once;
+ * and with `expected.repos` (the unit's repos now), `repos` names each of
+ * those once. A dependency cycle is allowed: `order` breaks it.
+ * @param {string} path
+ * @param {object} plan
+ * @param {string} unit
+ * @param {{ repos?: string[] }} [expected]
+ */
+function checkedPlan(path, plan, unit, { repos } = {}) {
   if (plan == null) throw new Error(`${path}: the file holds no plan`);
   const { structuredError } = validateOutcome(loadSchema('plan'), plan);
   if (structuredError) throw new Error(`${path}: ${structuredError}`);
-  const missing = plan.stories.filter((id) => !plan.order.includes(id));
-  const extra = plan.order.filter((id) => !plan.stories.includes(id));
-  if (missing.length > 0 || extra.length > 0) {
-    const parts = [
-      missing.length > 0 && `leaves out ${missing.join(', ')}`,
-      extra.length > 0 && `adds ${extra.join(', ')}`,
-    ];
-    throw new Error(`${path}: order must name each story of stories once; it ${parts.filter(Boolean).join(' and ')}`);
-  }
+  const fail = (why) => {
+    throw new Error(`${path}: ${why}`);
+  };
+  if (plan.unit !== unit) fail(`unit is ${plan.unit}, not ${unit}: it is the plan of another work unit`);
+  const named = Object.entries(plan.dependencies).flatMap(([id, deps]) => [id, ...deps]);
+  const strangers = [...new Set(named.filter((id) => !plan.stories.includes(id)))];
+  const problem =
+    notEachOnce('order', plan.order, plan.stories, 'story of stories') ??
+    notEachOnce('groups', plan.groups.flat(), plan.stories, 'story of stories') ??
+    (strangers.length > 0
+      ? `dependencies must name only stories of stories; it names ${strangers.join(', ')}`
+      : null) ??
+    (plan.merge_order && notEachOnce('merge_order', plan.merge_order, plan.repos, 'repo of repos')) ??
+    (repos && notEachOnce('repos', plan.repos, repos, `of the unit's repos (${repos.join(', ')})`));
+  if (problem) fail(problem);
   return plan;
 }
 
 /**
- * The plan stored in `unitDir`, or null when it has none. Throws, naming
- * the file and the field, when the file is not YAML or does not match
- * `schemas/plan.json`.
+ * The plan stored in `unitDir`, the directory of the work unit `unit`, or
+ * null when it has none. Throws, naming the file and the field, when the
+ * file is not YAML, does not match `schemas/plan.json`, or a field does not
+ * agree with the others or with `unit` (`checkedPlan`). With `repos`, the
+ * unit's repos now, its `repos` must name each of them once (`bl merge`).
  * @param {string} unitDir
+ * @param {string} unit
+ * @param {{ repos?: string[] }} [expected]
  */
-export function readPlan(unitDir) {
+export function readPlan(unitDir, unit, expected = {}) {
   const path = planPath(unitDir);
   if (!existsSync(path)) return null;
   let plan;
@@ -469,7 +509,7 @@ export function readPlan(unitDir) {
   } catch (e) {
     throw new Error(`${path}: not YAML: ${e.message}`, { cause: e });
   }
-  return checkedPlan(path, plan);
+  return checkedPlan(path, plan, unit, expected);
 }
 
 /**
@@ -482,7 +522,7 @@ export function readPlan(unitDir) {
  */
 export async function writePlan(backlogRoot, unitDir, plan) {
   const path = planPath(unitDir);
-  const text = stringifyYaml(checkedPlan(path, plan));
+  const text = stringifyYaml(checkedPlan(path, plan, plan?.unit));
   await withCoveringLock(backlogRoot, path, (target) => atomicWriteFile(backlogRoot, target, text));
   return path;
 }

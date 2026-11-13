@@ -420,7 +420,8 @@ function planRelPath(ctx) {
  */
 function runPlan(ctx) {
   ctx.plan ??=
-    readPlan(dirname(ctx.feature.indexPath)) ?? newPlan(ctx.feature.id, ctx.prep.ordered ?? [], readEdges(ctx.config));
+    readPlan(dirname(ctx.feature.indexPath), ctx.feature.id) ??
+    newPlan(ctx.feature.id, ctx.prep.ordered ?? [], readEdges(ctx.config));
   return ctx.plan;
 }
 
@@ -448,7 +449,7 @@ async function setupPlan(ctx, resume) {
   const { feature, config, prep } = ctx;
   const dir = dirname(feature.indexPath);
   const stories = prep.ordered ?? [];
-  const stored = resume ? readPlan(dir) : null;
+  const stored = resume ? readPlan(dir, feature.id) : null;
   const plan = stored
     ? replan(stored, stories, readEdges(config), { why: `the stories of ${feature.id} changed between runs` })
     : newPlan(feature.id, stories, readEdges(config));
@@ -2799,7 +2800,7 @@ async function refreshRepos(ctx) {
     try {
       // The stored plan, not the one read at run start: a session may have
       // changed it, and its `changes` entries stay (F-125 D2).
-      const plan = readPlan(dirname(feature.indexPath)) ?? runPlan(ctx);
+      const plan = readPlan(dirname(feature.indexPath), feature.id) ?? runPlan(ctx);
       ctx.plan = replan(plan, held, scope.edges, {
         taken: prep.ordered.filter((s) => ctx.implemented.has(s.id)).map((s) => s.id),
         why: `a session added ${ids} to ${feature.id} during the run`,

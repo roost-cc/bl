@@ -455,11 +455,11 @@ test('schemas/plan.json accepts the Design 2 example and a null merge_order, and
 
 test('writePlan then readPlan gives the same object; readPlan of a unit with no plan is null', async () => {
   await withUnitDir(async (root, unitDir) => {
-    assert.equal(readPlan(unitDir), null);
+    assert.equal(readPlan(unitDir, 'F-125'), null);
     const path = await writePlan(root, unitDir, DESIGN_EXAMPLE);
     assert.equal(path, planPath(unitDir));
     assert.equal(path, join(unitDir, 'plan.yaml'));
-    assert.deepEqual(readPlan(unitDir), DESIGN_EXAMPLE);
+    assert.deepEqual(readPlan(unitDir, 'F-125'), DESIGN_EXAMPLE);
   });
 });
 
@@ -473,16 +473,16 @@ test('readPlan and writePlan throw on a plan that does not match, naming the fil
     assert.equal(existsSync(path), false, 'nothing written');
     writeFileSync(path, 'schema: bl-plan/v1\nunit: F-125\n');
     assert.throws(
-      () => readPlan(unitDir),
+      () => readPlan(unitDir, 'F-125'),
       (e) => e.message.startsWith(`${path}: schema violation at $/computed_at: `),
     );
     writeFileSync(path, 'order: [S-1\n');
     assert.throws(
-      () => readPlan(unitDir),
+      () => readPlan(unitDir, 'F-125'),
       (e) => e.message.startsWith(`${path}: not YAML: `),
     );
     writeFileSync(path, '');
-    assert.throws(() => readPlan(unitDir), { message: `${path}: the file holds no plan` });
+    assert.throws(() => readPlan(unitDir, 'F-125'), { message: `${path}: the file holds no plan` });
   });
 });
 
@@ -494,9 +494,87 @@ test('readPlan and writePlan refuse an order that leaves out or adds a story, so
     });
     assert.equal(existsSync(path), false, 'nothing written');
     writeFileSync(path, stringifyYaml({ ...DESIGN_EXAMPLE, order: ['S-1', 'S-3', 'S-2', 'S-9'] }));
-    assert.throws(() => readPlan(unitDir), {
+    assert.throws(() => readPlan(unitDir, 'F-125'), {
       message: `${path}: order must name each story of stories once; it adds S-9`,
     });
+  });
+});
+
+// Review 2026-11-13, Must 3: the whole file is checked at the boundary, not
+// only `order`. DESIGN_EXAMPLE: stories S-1..S-3, repos [bl], unit F-125.
+test('readPlan and writePlan refuse groups, dependencies, merge_order, repos or a unit that do not agree', async () => {
+  const cases = [
+    // [name, change to DESIGN_EXAMPLE, readPlan's expected repos, the message after the path]
+    [
+      'groups leave out a story',
+      { groups: [['S-1', 'S-3']] },
+      undefined,
+      'groups must name each story of stories once; it leaves out S-2',
+    ],
+    [
+      'groups add a story and leave out others',
+      { groups: [['S-1', 'S-5']] },
+      undefined,
+      'groups must name each story of stories once; it leaves out S-2, S-3 and adds S-5',
+    ],
+    [
+      'groups name a story twice',
+      {
+        groups: [
+          ['S-1', 'S-3'],
+          ['S-2', 'S-1'],
+        ],
+      },
+      undefined,
+      'groups must name each story of stories once; it names S-1 twice',
+    ],
+    [
+      'dependencies key and values outside stories',
+      { dependencies: { 'S-9': ['S-7'], 'S-1': ['S-2'], 'S-2': ['S-1'] } },
+      undefined,
+      'dependencies must name only stories of stories; it names S-9, S-7',
+    ],
+    [
+      'a dependency value outside stories',
+      { dependencies: { 'S-2': ['S-8'] } },
+      undefined,
+      'dependencies must name only stories of stories; it names S-8',
+    ],
+    [
+      'merge_order leaves out a repo',
+      { repos: ['bl', 'app'], merge_order: ['bl'] },
+      undefined,
+      'merge_order must name each repo of repos once; it leaves out app',
+    ],
+    [
+      'merge_order adds a repo',
+      { merge_order: ['bl', 'app'] },
+      undefined,
+      'merge_order must name each repo of repos once; it adds app',
+    ],
+    [
+      "repos are not the unit's repos",
+      {},
+      ['bl', 'app'],
+      "repos must name each of the unit's repos (bl, app) once; it leaves out app",
+    ],
+    ['another unit', { unit: 'F-2' }, undefined, 'unit is F-2, not F-125: it is the plan of another work unit'],
+  ];
+  await withUnitDir(async (root, unitDir) => {
+    const path = planPath(unitDir);
+    for (const [name, change, repos, message] of cases) {
+      const plan = { ...DESIGN_EXAMPLE, ...change };
+      writeFileSync(path, stringifyYaml(plan));
+      assert.throws(() => readPlan(unitDir, 'F-125', { repos }), { message: `${path}: ${message}` }, name);
+      // writePlan checks the unit against the plan itself, and has no expected repos.
+      if (change.unit || repos) continue;
+      rmSync(path);
+      await assert.rejects(writePlan(root, unitDir, plan), { message: `${path}: ${message}` }, `${name}: writePlan`);
+      assert.equal(existsSync(path), false, `${name}: nothing written`);
+    }
+    // A cycle between two stories is allowed: order breaks it. The unit's repos in another order are its repos.
+    writeFileSync(path, stringifyYaml({ ...DESIGN_EXAMPLE, dependencies: { 'S-1': ['S-2'], 'S-2': ['S-1'] } }));
+    assert.equal(readPlan(unitDir, 'F-125', { repos: ['bl'] }).unit, 'F-125');
   });
 });
 

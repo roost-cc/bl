@@ -111,7 +111,7 @@ test('bl run B-n: the batch goes through runFeature, each story on story-run.md 
     assert.equal(self.vars.unitKind, 'batch');
 
     // One plan and one change document, in the batch directory.
-    const plan = readPlan(dirname(batch.indexPath));
+    const plan = readPlan(dirname(batch.indexPath), batch.id);
     assert.equal(plan.unit, 'B-1');
     assert.deepEqual(plan.order, ['S-1', 'S-2']);
     assert.deepEqual(plan.repos, ['demo-repo', 'other']);
