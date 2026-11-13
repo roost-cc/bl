@@ -42,6 +42,7 @@ import {
   resolvePlugins,
   worktreePathFor,
   runForgeOp,
+  findChange,
   normalizeId,
   shellQuote,
   info,
@@ -946,10 +947,13 @@ async function mergeBranch(ctx, s, { repoPath, branch, remoteHead, finalSha }) {
   }
   // The ready op and the push run in one `undoable`: if an interrupt ends
   // either, local main is reset before the raise, and main is not pushed.
+  // An interrupted push may have landed before its child exited: then
+  // origin's main is local HEAD, and local main stays with it.
   const pushed = undoable(() => {
     const readyError = branch ? markReady(ctx, s, repoPath) : null;
     const pushMain = interruptKept() ? null : g(['push', 'origin', 'main']);
-    const back = pushMain?.status === 0 ? null : rollback(g, ['reset', '--hard', before.stdout.trim()]);
+    const landed = pushMain?.status === 0 || (pushMain !== null && interruptKept() && mainOnOrigin(g));
+    const back = landed ? null : rollback(g, ['reset', '--hard', before.stdout.trim()]);
     return { readyError, pushMain, left: back && `${back}: local main of ${repoPath} still holds the unpushed merge` };
   });
   const { readyError } = pushed;
@@ -973,6 +977,13 @@ async function mergeBranch(ctx, s, { repoPath, branch, remoteHead, finalSha }) {
     deleteError: del.status === 0 ? null : firstLine(del.stderr) || `exit ${del.status}`,
     readyError,
   };
+}
+
+/** Whether origin's main is at local HEAD. */
+function mainOnOrigin(g) {
+  const head = g(['rev-parse', 'HEAD']).stdout.trim();
+  const remote = g(['ls-remote', 'origin', 'refs/heads/main']);
+  return remote.status === 0 && head !== '' && remote.stdout.split('\t')[0].trim() === head;
 }
 
 /**
@@ -1248,7 +1259,8 @@ async function dropStory(ctx, s) {
   // The write, the close and the restore hold the story's spec lock, so the
   // snapshot a failed close puts back is the story's bytes (F-67 D6). The
   // close and the restore run in one `undoable`: a close that an interrupt
-  // ended still puts the request back before the raise.
+  // ended still puts the request back before the raise, unless the forge
+  // shows the PR closed.
   return withSpecLock(s.indexPath, () => {
     const text = readFileSync(s.indexPath, 'utf8');
     updateSpecFileHeld(ctx.config.backlogRoot, s.indexPath, (fm, body) => {
@@ -1275,7 +1287,10 @@ async function dropStory(ctx, s) {
         : res.status !== 0
           ? `closing PR #${pr} failed: ${firstLine(res.stderr) || firstLine(res.stdout) || `exit ${res.status}`}`
           : null;
-      if (!failed) {
+      // An interrupt that ended the close leaves its result unknown: the
+      // forge may have closed the PR before the child exited. A PR that the
+      // forge no longer shows open stays dropped.
+      if (!failed || (interruptKept() && !prMayBeOpen(ctx, s, pr))) {
         return {
           kind: 'dropped',
           reason,
@@ -1294,6 +1309,19 @@ async function dropStory(ctx, s) {
     });
     return outcome;
   });
+}
+
+/**
+ * Whether the forge may still show PR `pr` of story `s` open: true unless
+ * `change.find` lists the story's branch with no open PR of that number.
+ */
+function prMayBeOpen(ctx, s, pr) {
+  const found = findChange(s.fm.update_branch, {
+    config: ctx.config,
+    repoPath: s.repo.repoPath,
+    runOp: ctx.runner.forge,
+  });
+  return !found.ok || found.prs.some((p) => String(p.number) === pr && p.state === 'OPEN');
 }
 
 /** Write an outcome to its story file; returns true when the file changed. */
