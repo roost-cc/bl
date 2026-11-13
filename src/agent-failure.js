@@ -38,21 +38,28 @@ const usedUp = (reading) => (reading?.windows ?? []).filter((w) => w.remainingPe
  * `spend`, `window`, `overloaded` or `unknown`; `line` is the operator's
  * words; `until` is the reset (epoch ms) of a used-up window, else null.
  *
+ * The reading outranks the refusal: a reading `available` is never a used-up
+ * window, and a reading `unavailable` is one, with or without a reset time.
+ * A `session` or `weekly` refusal is a used-up window only when no reading
+ * says otherwise (none, or `unknown`).
+ *
  * @param {{ out: { kind: string, until: string|null } | null,
  *   reading: { state: string, until: Date|string|null, windows?: object[], message?: string } | null }} c
  */
 export function classifyCause({ out, reading }) {
   const kind = out?.kind ?? null;
+  const state = reading?.state ?? null;
   const zero = usedUp(reading);
-  if (kind === 'spend' || (reading?.state === 'unavailable' && reading.until == null && zero.length === 0)) {
+  if (kind === 'spend' || (state === 'unavailable' && reading.until == null && zero.length === 0)) {
     return { cause: 'spend', line: 'spend cap reached', until: null };
   }
-  const readUntil = reading?.state === 'unavailable' ? timeMs(reading.until) : NaN;
-  const outUntil = kind === 'session' || kind === 'weekly' ? timeMs(out.until) : NaN;
-  const until = Number.isFinite(readUntil) ? readUntil : outUntil;
-  if (Number.isFinite(until)) {
+  const refusedWindow = (kind === 'session' || kind === 'weekly') && state !== 'available';
+  if (state === 'unavailable' || refusedWindow) {
+    const ms = timeMs(state === 'unavailable' ? reading.until : out.until);
+    const until = Number.isFinite(ms) ? ms : null;
     const names = zero.length ? ` (${zero.join(', ')} at 0%)` : '';
-    return { cause: 'window', line: `quota window used up until ${localTime(until)}${names}`, until };
+    const when = until == null ? ', no reset time' : ` until ${localTime(until)}`;
+    return { cause: 'window', line: `quota window used up${when}${names}`, until };
   }
   if (kind === 'capacity' && reading?.state === 'available') {
     return { cause: 'overloaded', line: 'provider overloaded, your quota is fine', until: null };
@@ -68,7 +75,11 @@ function configurationName(c) {
   return `${configurationLabel(c)}${c.model == null ? ' (agent default)' : ''}`;
 }
 
-/** The line of one configuration, then its reading's window lines, indented. */
+/**
+ * The line of one configuration, then its reading, indented: an `unknown` or
+ * `unavailable` reading's message (the evidence for a spend cause), then the
+ * window lines.
+ */
 function configurationLines(c) {
   const name = configurationName(c);
   if (c.excluded)
@@ -81,9 +92,11 @@ function configurationLines(c) {
     : `- ${name}: ${c.out.kind} — ${c.out.message} (${c.out.scope === 'account' ? `every ${c.out.agent} configuration` : 'this configuration'}; ${c.out.until == null ? 'no reset time' : `until ${localTime(c.out.until)}`})`;
   const r = c.reading;
   if (!r) return [head];
-  if (r.state === 'unknown') return [head, `  - capacity: unknown — ${r.message || 'no reason given'}`];
+  const said = `  - capacity: ${r.state} — ${r.message || 'no reason given'}`;
+  if (r.state === 'unknown') return [head, said];
   return [
     head,
+    ...(r.state === 'unavailable' ? [said] : []),
     ...(r.windows ?? []).map(
       (w) =>
         `  - ${w.name}: ${w.remainingPercent}% left, ${w.resetsAt == null ? 'no reset time' : `resets ${localTime(w.resetsAt)}`}`,
@@ -119,8 +132,10 @@ export function describeFailure({ step, failedAt, roleKey, resumeHint, configura
     for (const cause of CAUSE_ORDER) {
       const found = classified.filter((x) => x.cause === cause);
       if (found.length === 0) continue;
-      // The window that comes back first is the one worth waiting for.
-      chosen = cause === 'window' ? found.reduce((a, b) => (b.until < a.until ? b : a)) : found[0];
+      // The window that comes back first is the one worth waiting for; one
+      // with no reset time comes last.
+      const reset = (x) => x.until ?? Infinity;
+      chosen = cause === 'window' ? found.reduce((a, b) => (reset(b) < reset(a) ? b : a)) : found[0];
       break;
     }
   }
@@ -135,10 +150,9 @@ export function describeFailure({ step, failedAt, roleKey, resumeHint, configura
   if (cause === 'overloaded')
     first = ['Wait about 30 minutes: the provider is overloaded, and it usually recovers.', capacity];
   else if (cause === 'window') {
-    const passed = chosen.until <= new Date(failedAt).getTime();
-    first = passed
-      ? ['The reset has passed; check with `bl capacity`.']
-      : [`Wait until the reset, ${localTime(chosen.until)}.`, capacity];
+    if (chosen.until == null) first = [capacity];
+    else if (chosen.until <= new Date(failedAt).getTime()) first = ['The reset has passed; check with `bl capacity`.'];
+    else first = [`Wait until the reset, ${localTime(chosen.until)}.`, capacity];
   } else if (cause === 'spend') first = [`Raise the spend limit or buy credits on ${usagePage(who)}.`, capacity];
   else
     first = [

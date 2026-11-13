@@ -56,7 +56,122 @@ test('classifyCause: each cause, in its order', () => {
   );
 });
 
+test('classifyCause: a window at 0% with no reset time is a used-up window', () => {
+  // Invariant: the cause is a used-up window whenever the reading shows a
+  // window at 0%, and never when the reading is `available`.
+  const noReset = `quota window used up, no reset time`;
+  const cases = [
+    [
+      'reading at 0%, no until',
+      { out: out('quota'), reading: reading('unavailable', { windows: [win('5h', 0, null)] }) },
+      `${noReset} (5h at 0%)`,
+    ],
+    [
+      'every used-up window without a reset',
+      { out: out('session'), reading: reading('unavailable', { windows: [win('5h', 0, null), win('7d', 0, null)] }) },
+      `${noReset} (5h, 7d at 0%)`,
+    ],
+    [
+      'a capacity refusal, reading at 0%',
+      { out: out('capacity'), reading: reading('unavailable', { windows: [win('5h', 0, null)] }) },
+      `${noReset} (5h at 0%)`,
+    ],
+    ['a session refusal, no reading, no reset', { out: out('session'), reading: null }, noReset],
+    [
+      'a session refusal with a reset, reading available',
+      { out: out('session', RESET.toISOString()), reading: reading('available', { windows: [win('5h', 80)] }) },
+      'unknown',
+    ],
+    [
+      'a weekly refusal with a reset, reading available',
+      { out: out('weekly', RESET.toISOString()), reading: reading('available', { windows: [win('7d', 5)] }) },
+      'unknown',
+    ],
+    [
+      'a session refusal, reading unavailable with no window at 0% and no until',
+      { out: out('session'), reading: reading('unavailable', { message: 'spend cap reached (credits)' }) },
+      'spend cap reached',
+    ],
+  ];
+  for (const [name, input, line] of cases) {
+    const { cause, line: got } = classifyCause(input);
+    assert.equal(got, line, name);
+    if (input.reading?.windows?.some((w) => w.remainingPercent <= 0)) assert.equal(cause, 'window', name);
+    if (input.reading?.state === 'available') assert.notEqual(cause, 'window', name);
+  }
+});
+
 const base = { step: 'implement S-1', failedAt: NOW, roleKey: 'agent', resumeHint: 'bl run F-1 --resume' };
+
+test('describeFailure: an available reading with no window at 0% is not a used-up window', () => {
+  const { cause, causeLine, text } = describeFailure({
+    ...base,
+    configurations: [
+      {
+        agent: 'a',
+        model: 'm',
+        out: out('session', RESET.toISOString()),
+        reading: reading('available', { windows: [win('5h', 80)] }),
+      },
+    ],
+  });
+  assert.equal(cause, 'unknown');
+  assert.equal(causeLine, 'unknown');
+  assert.ok(text.includes(`\n  - 5h: 80% left, resets ${localTime(RESET)}\n`), text);
+  const s = steps(text);
+  assert.match(s[0], /^Run `bl capacity`/);
+  assert.equal(s.at(-1), 'Run `bl run F-1 --resume`.');
+});
+
+test('describeFailure: a window at 0% with no reset time says to read capacity again, not to wait', () => {
+  const { cause, causeLine, text } = describeFailure({
+    ...base,
+    configurations: [
+      {
+        agent: 'a',
+        model: 'm',
+        out: out('quota'),
+        reading: reading('unavailable', { windows: [win('5h', 0, null)], message: 'no quota left in 5h' }),
+      },
+    ],
+  });
+  assert.equal(cause, 'window');
+  assert.equal(causeLine, 'quota window used up, no reset time (5h at 0%)');
+  assert.ok(text.includes('\n  - capacity: unavailable — no quota left in 5h\n  - 5h: 0% left, no reset time\n'), text);
+  assert.deepEqual(steps(text), [
+    "Run `bl capacity` to read the configuration's quota windows again.",
+    'Clear `## Escalation` to `None.`.',
+    'Run `bl run F-1 --resume`.',
+  ]);
+  assert.ok(!/Wait until/.test(text), text);
+});
+
+test('describeFailure: a used-up window with a reset is chosen before one without', () => {
+  const { causeLine } = describeFailure({
+    ...base,
+    configurations: [
+      { agent: 'a', model: 'm', out: out('quota'), reading: reading('unavailable', { windows: [win('5h', 0, null)] }) },
+      { agent: 'b', model: 'n', out: out('quota'), reading: reading('unavailable', { until: RESET }) },
+    ],
+  });
+  assert.equal(causeLine, `quota window used up until ${localTime(RESET)}`);
+});
+
+test('describeFailure: a spend cause from a reading shows the reading that says so', () => {
+  const { cause, text } = describeFailure({
+    ...base,
+    configurations: [
+      {
+        agent: 'a',
+        model: 'm',
+        out: out('session'),
+        reading: reading('unavailable', { message: 'spend cap reached (credits)' }),
+      },
+    ],
+  });
+  assert.equal(cause, 'spend');
+  assert.ok(text.includes('\n  - capacity: unavailable — spend cap reached (credits)\n'), text);
+});
 
 /** The numbered steps of `text`, without their numbers, checked to run 1, 2, 3, … */
 function steps(text) {

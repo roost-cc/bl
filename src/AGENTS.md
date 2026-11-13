@@ -1929,19 +1929,22 @@ in priority order):`, one bullet each: `<agent> <model>` (`<agent> (agent
 default)` when `model` is null) with its out-list kind, message, scope and
    reset time, or `not tried`, `excluded` (F-64 D4) or `no headless mode`.
    Under each refused one, a capacity reading taken at escalation time
-   (`readCapacity`, an `account` reading asked once per agent): one line per
-   window the adapter reports (`<name>: <n>% left, resets <local time>` or `no
-reset time`), or `capacity: unknown — <message>`. An adapter that reports
+   (`readCapacity`, an `account` reading asked once per agent): for an
+   `unknown` or `unavailable` reading, `capacity: <state> — <message>`; then
+   one line per window the adapter reports (`<name>: <n>% left, resets <local
+time>` or `no reset time`). An adapter that reports
    no windows gets no window lines. A session that failed with no refusal
    (`sessionFailure`) shows its configuration and `Error: <sessionError>`,
    and no reading is taken.
 3. **The cause line:** `Cause: <cause>`, exactly one, the first that any
-   refused configuration has (`classifyCause`):
+   refused configuration has (`classifyCause`). The reading outranks the
+   refusal: a reading `available` is never a used-up window.
    - `spend cap reached`: refusal `kind: spend`, or a reading `unavailable`
      with no `until` and no window at 0%;
-   - `quota window used up until <local time>` (with the windows at 0%):
-     refusal `kind` `session` or `weekly` with a reset, or a reading
-     `unavailable` with an `until`; with several, the earliest reset;
+   - `quota window used up until <local time>`, or `quota window used up, no
+reset time` (with the windows at 0%): any other reading `unavailable`, or
+     refusal `kind` `session` or `weekly` with no reading or an `unknown` one;
+     with several, the earliest reset, and one with no reset time last;
    - `provider overloaded, your quota is fine`: refusal `kind: capacity` and
      a reading `available`; `provider overloaded; quota could not be read`
      when the reading is `unknown`;
@@ -1952,8 +1955,9 @@ reset time`), or `capacity: unknown — <message>`. An adapter that reports
    (`ctx.resumeHint`, else `bl run <id> --resume`). The steps before those
    two depend on the cause:
    - overloaded: wait about 30 minutes, then `bl capacity`;
-   - window: wait until the reset (or, when it has passed, check with `bl
-capacity`), then `bl capacity`;
+   - window: wait until the reset, then `bl capacity` (when the reset has
+     passed, check with `bl capacity`; with no reset time, `bl capacity`
+     alone);
    - spend: raise the limit or buy credits on the adapter's `billingUrl`, then
      `bl capacity`;
    - unknown: `bl capacity` and the adapter's `checkCommand`, then fix what
