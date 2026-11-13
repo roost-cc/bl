@@ -50,6 +50,7 @@ import {
 import { tmpdir } from 'os';
 import { join, relative, dirname } from 'path';
 import { spawnSync } from 'child_process';
+import { isDeepStrictEqual } from 'util';
 import { runCommandLine } from './child.js';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -121,7 +122,7 @@ import {
 import { otherHolder } from './kernel-lock.js';
 import { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock, stopRequests } from './run-lock.js';
 import { takeUnitLocks } from './unit-lock.js';
-import { commitPaths } from './backlog-commit.js';
+import { commitPaths, dirtySnapshot } from './backlog-commit.js';
 import { withMainSyncLock, MAIN_REFSPEC } from './main-sync.js';
 import { failureExcerpt, NO_MARKERS } from './test-excerpt.js';
 import * as processScope from './process-scope.js';
@@ -425,15 +426,22 @@ function runPlan(ctx) {
   return ctx.plan;
 }
 
-/** `prep.ordered` in the plan's work order, each story as `stories` has it. */
+/**
+ * `prep.ordered`: the stories the run has taken first, in the order it took
+ * them, then the others in the plan's work order, each as `stories` has it.
+ * In place, and the taken stories first, because the implement loop's index
+ * points into this array: a story the plan moves before that index is not
+ * skipped.
+ */
 function followPlan(ctx, stories) {
   const byId = new Map(stories.map((s) => [s.id, s]));
-  const ordered = runPlan(ctx)
-    .order.map((id) => byId.get(id))
-    .filter(Boolean);
   ctx.prep.ordered ??= [];
-  // In place: the implement loop's index points into this array.
-  ctx.prep.ordered.splice(0, ctx.prep.ordered.length, ...ordered);
+  const taken = ctx.prep.ordered.filter((s) => ctx.implemented.has(s.id));
+  const rest = runPlan(ctx)
+    .order.filter((id) => !ctx.implemented.has(id))
+    .map((id) => byId.get(id))
+    .filter(Boolean);
+  ctx.prep.ordered.splice(0, ctx.prep.ordered.length, ...taken, ...rest);
 }
 
 /**
@@ -2742,25 +2750,70 @@ function withCurrentEffort(backlogRoot, s) {
 }
 
 /**
+ * After a session, the run follows the stored `plan.yaml` (F-125 D2), which
+ * the session may have changed (`_execution-inputs.md` tells it to when the
+ * plan proves wrong), with `stories` the unit's stories now. A story in
+ * `added` joins the stored plan (`replan`: after the stories the run has
+ * taken, the others in the stored order, with a `changes` entry by `bl`), on
+ * `edges`, and bl writes the plan; a missing file gets the run's plan back.
+ * `prep.ordered` follows the plan, and an uncommitted `plan.yaml` is
+ * committed. A stored plan that `readPlan` refuses escalates with its
+ * message. Returns the final state when the run stopped, else null.
+ */
+async function followStoredPlan(ctx, stories, { added = [], edges = [] } = {}) {
+  const { feature, config, prep } = ctx;
+  const dir = dirname(feature.indexPath);
+  const ids = added.map((s) => s.id).join(', ');
+  const before = ctx.plan;
+  try {
+    const stored = readPlan(dir, feature.id);
+    const plan = stored ?? runPlan(ctx);
+    ctx.plan =
+      added.length === 0
+        ? plan
+        : replan(plan, stories, edges, {
+            taken: prep.ordered.filter((s) => ctx.implemented.has(s.id)).map((s) => s.id),
+            why: `a session added ${ids} to ${feature.id} during the run`,
+          });
+    if (ctx.plan !== stored) await writePlan(config.backlogRoot, dir, ctx.plan);
+  } catch (e) {
+    const reason = ids
+      ? `${ids} could not join the execution plan`
+      : `the execution plan cannot be read after a session`;
+    return finish(
+      ctx,
+      'escalated',
+      `${reason}: ${e.message}`,
+      `Correct ${planRelPath(ctx)} (\`schemas/plan.json\` gives its shape), with a \`changes\` entry that says why, or delete it to compute a new plan; then \`bl run ${feature.id} --resume\`.`,
+    );
+  }
+  followPlan(ctx, stories);
+  // Committed when the session or bl changed it and it is not committed yet.
+  if (!isDeepStrictEqual(before, ctx.plan) && dirtySnapshot(config.backlogRoot)?.has(planRelPath(ctx))) {
+    const message = ids ? `chore: ${feature.id} plan adds ${ids}` : `chore: ${feature.id} plan as a session changed it`;
+    await commitUnitPaths(ctx, 'plan', [planRelPath(ctx)], message);
+  }
+  return null;
+}
+
+/**
  * Re-read the feature's stories after an agent session (F-48 D3): the
  * session may have added one (`bl side`), possibly in a repo the run did not
- * prepare. A new story joins the execution plan after the stories the run
- * has taken, and those not taken yet are put in dependency order again
- * (`replan`, on the current `readEdges`, with a `changes` entry by `bl`).
- * The plan is written and committed, and `prep.ordered` follows its order,
- * so the implement loop reaches each story after its prerequisites and the
- * repo guard knows its component. A new repo's worktree
+ * prepare. The run follows the stored plan, and a new story joins it
+ * (`followStoredPlan`), so the implement loop reaches each story after its
+ * prerequisites and the repo guard knows its component. A new repo's worktree
  * on the branch (`bl side` prepares it with the story) joins
  * `prep.otherWorktrees` and the change document's `repos:`, so from then on
  * the gate, the repo guard, the push, the PR step, the review and the
  * `{{otherWorktrees}}` prompt variable cover it. The lead repo and its
  * worktree never change. A new repo with no worktree on the branch
  * escalates, naming the story and the repo. A story run has one repo and
- * skips this. Returns the final state when the run stopped, else null.
+ * only follows the stored plan. Returns the final state when the run
+ * stopped, else null.
  */
 async function refreshRepos(ctx) {
   const { feature, config, prep } = ctx;
-  if (isStory(feature)) return null;
+  if (isStory(feature)) return followStoredPlan(ctx, prep.ordered ?? []);
   const scope = refreshedStories(ctx);
   if (scope.error) {
     return finish(
@@ -2791,28 +2844,11 @@ async function refreshRepos(ctx) {
     }
     repos.push({ repoName: name, worktreePath, story: story.id });
   }
+  const current = new Map(stories.map((s) => [s.id, s]));
+  const held = [...prep.ordered, ...added].map((s) => (ctx.implemented.has(s.id) ? s : (current.get(s.id) ?? s)));
+  const stopped = await followStoredPlan(ctx, held, { added, edges: scope.edges });
+  if (stopped) return stopped;
   if (added.length === 0 && repos.length === 0) return null;
-  if (added.length > 0) {
-    const current = new Map(stories.map((s) => [s.id, s]));
-    const held = [...prep.ordered, ...added].map((s) => (ctx.implemented.has(s.id) ? s : (current.get(s.id) ?? s)));
-    const ids = added.map((s) => s.id).join(', ');
-    let changed;
-    try {
-      // The stored plan, not the one read at run start: a session may have
-      // changed it, and its `changes` entries stay (F-125 D2).
-      const plan = readPlan(dirname(feature.indexPath), feature.id) ?? runPlan(ctx);
-      ctx.plan = replan(plan, held, scope.edges, {
-        taken: prep.ordered.filter((s) => ctx.implemented.has(s.id)).map((s) => s.id),
-        why: `a session added ${ids} to ${feature.id} during the run`,
-      });
-      changed = ctx.plan !== plan;
-      if (changed) await writePlan(config.backlogRoot, dirname(feature.indexPath), ctx.plan);
-    } catch (e) {
-      return finish(ctx, 'escalated', `${ids} could not join the execution plan: ${e.message}`);
-    }
-    followPlan(ctx, held);
-    if (changed) await commitUnitPaths(ctx, 'repos', [planRelPath(ctx)], `chore: ${feature.id} plan adds ${ids}`);
-  }
   if (repos.length > 0) {
     prep.otherWorktrees.push(...repos.map(({ repoName, worktreePath }) => ({ repoName, worktreePath })));
     prep.baseVars = { ...prep.baseVars, otherWorktrees: otherWorktreesLine(prep.otherWorktrees) };

@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { parseFrontmatter, runForgeOp } from '../../src/config.js';
-import { extractSection, replaceSection, resolveFeaturePluginsReport } from '../../src/feature.js';
+import {
+  extractSection,
+  replaceSection,
+  resolveFeaturePluginsReport,
+  resolveFeatureStories,
+} from '../../src/feature.js';
 import {
   runFeature,
   planSteps,
@@ -492,6 +497,80 @@ test('--resume refuses a plan.yaml that does not match its schema, naming the fi
     assert.deepEqual(implemented(runner), []);
   } finally {
     cleanup();
+  }
+});
+
+// Review 2026-11-13, Must 4 and Should 1: a session's edit to plan.yaml is
+// followed by the next story and committed. The case where the session also
+// adds a story is in feature-run-repos.test.js (its fixture gives a story a repo).
+test('run_follows_plan_edit_between_story_sessions', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    // S-3, a copy of S-2 in F-1: S-2 and S-3 both wait for S-1 only.
+    const s2 = prep.ordered.find((s) => s.id === 'S-2');
+    const s3 = join(dir, 'stories', 'S3-third', 'index.md');
+    mkdirSync(dirname(s3), { recursive: true });
+    writeFileSync(s3, readFileSync(s2.indexPath, 'utf8').replaceAll('S-2', 'S-3').replaceAll('Second', 'Third'));
+    prep.ordered = resolveFeatureStories(feature, config).stories;
+    initGitBacklog(dir);
+    const unitDir = dirname(feature.indexPath);
+    const edit = { at: '2026-11-13T00:00:00Z', by: 'implement', what: 'S-3 before S-2', why: 'the work needs it' };
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        story: (o) => {
+          checkAll(o.vars.storyAbsPath);
+          if (o.vars.storyId !== 'S-1') return;
+          const plan = readPlan(unitDir, 'F-1');
+          const edited = { ...plan, order: ['S-1', 'S-3', 'S-2'], groups: [['S-1'], ['S-3', 'S-2']] };
+          writeFileSync(planPath(unitDir), stringifyYaml({ ...edited, changes: [edit] }));
+        },
+      },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean', state.lastError);
+    assert.deepEqual(implemented(runner), ['S-1', 'S-3', 'S-2']);
+    const plan = readPlan(unitDir, 'F-1');
+    assert.deepEqual(plan.order, ['S-1', 'S-3', 'S-2']);
+    assert.deepEqual(plan.changes, [edit], "the session's changes entry stays");
+    assert.match(git(dir, 'log', '--format=%s'), /^chore: F-1 plan as a session changed it$/m);
+    assert.equal(git(dir, 'status', '--porcelain', '--', 'features/F1-feat/plan.yaml'), '', 'committed');
+  } finally {
+    cleanup();
+  }
+});
+
+// Review 2026-11-13, Should 1: an edit bl cannot read stops the run at once, with the message.
+test("a session's plan.yaml edit that bl cannot read escalates with readPlan's message", async () => {
+  const cases = [
+    ['not YAML', 'order: [S-1\n', /the execution plan cannot be read after a session: .*plan\.yaml: not YAML: /],
+    ['order leaves out a story', null, /plan\.yaml: order must name each story of stories once; it leaves out S-2/],
+  ];
+  for (const [name, text, message] of cases) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      initGitBacklog(dir);
+      const unitDir = dirname(feature.indexPath);
+      const runner = fakeRunner({
+        dir,
+        feature,
+        behaviour: {
+          story: (o) => {
+            checkAll(o.vars.storyAbsPath);
+            if (o.vars.storyId !== 'S-1') return;
+            const bad = text ?? stringifyYaml({ ...readPlan(unitDir, 'F-1'), order: ['S-1'] });
+            writeFileSync(planPath(unitDir), bad);
+          },
+        },
+      });
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'escalated', name);
+      assert.match(state.lastError, message, name);
+      assert.deepEqual(implemented(runner), ['S-1'], `${name}: S-2 not started`);
+    } finally {
+      cleanup();
+    }
   }
 });
 

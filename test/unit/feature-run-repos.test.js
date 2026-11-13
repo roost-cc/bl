@@ -1165,6 +1165,50 @@ test('a story added during the run joins plan.yaml after the stories taken, with
   }
 });
 
+// Review 2026-11-13, Must 4: the S-1 session edits the order and adds S-3;
+// the next stories follow the edited order, and S-3 comes after them.
+test('run_follows_plan_edit_between_story_sessions (a story added)', async () => {
+  const { dir, cleanup, config, feature, prep, addSide, sideShell } = setupSide();
+  try {
+    // F-1 starts with S-1, S-2 and S-4, which wait for nothing.
+    for (const [id, slug] of [
+      ['S-2', 'second'],
+      ['S-4', 'fourth'],
+    ]) {
+      mkdirSync(join(dir, 'stories', `${id.replace('-', '')}-${slug}`));
+      writeFileSync(
+        join(dir, 'stories', `${id.replace('-', '')}-${slug}`, 'index.md'),
+        serializeFrontmatter({ story_id: id, title: slug, component: 'C00', feature: 'F-1', points: '1' }) + AC_BODY,
+      );
+    }
+    prep.ordered = resolveFeatureStories(feature, config, readAllStories(config)).stories;
+    initGitBacklog(dir);
+    const planDir = dirname(feature.indexPath);
+    const behaviour = {
+      story: (o) => {
+        checkAll(o.vars.storyAbsPath);
+        if (o.vars.storyId !== 'S-1') return;
+        const plan = readPlan(planDir, feature.id);
+        writeFileSync(
+          join(planDir, 'plan.yaml'),
+          stringifyYaml({ ...plan, order: ['S-1', 'S-4', 'S-2'], groups: [['S-1'], ['S-4'], ['S-2']] }),
+        );
+        addSide();
+      },
+    };
+    const runner = sideShell(fakeRunner({ dir, feature, behaviour }));
+    await runFeature({ feature, config, prep, runner, opts: { maxRounds: 3 } });
+    const order = [...new Set(runner.calls.filter((x) => x.prompt === 'feature-story').map((x) => x.story))];
+    // S-3's criteria are checked already, so it gets no session.
+    assert.deepEqual(order, ['S-1', 'S-4', 'S-2']);
+    assert.deepEqual(readPlan(planDir, feature.id).order, ['S-1', 'S-4', 'S-2', 'S-3']);
+    assert.match(git(dir, 'log', '--format=%s'), /^chore: F-1 plan adds S-3$/m);
+    assert.equal(git(dir, 'status', '--porcelain', '--', 'features/F1-feat/plan.yaml'), '', 'committed');
+  } finally {
+    cleanup();
+  }
+});
+
 test("a story added during the run keeps a session's own changes entry in plan.yaml", async () => {
   const { dir, cleanup, config, feature, prep, addSide, sideShell } = setupSide();
   try {

@@ -324,6 +324,41 @@ function parallelGroups(order, dependencies, files) {
 }
 
 /**
+ * `stories` in the order of `kept` (a stored plan's `order`), and each story
+ * not in `kept` after the stories it waits for and before the stories that
+ * wait for it. Only a dependency that has a story not in `kept` at one end
+ * moves a story: two kept stories keep the stored order, which wins during a
+ * run (F-125 D2). With no `kept` it is `orderStoriesByDeps`' order. A cycle
+ * leaves the rest in that order.
+ * @template {{ id: string }} S
+ * @param {S[]} stories
+ * @param {string[]} kept
+ * @param {Map<string, string[]>} dependencies  `listedDependencies`'
+ * @param {import("./blockers.js").Edge[]} edges
+ * @returns {S[]}
+ */
+function keptOrder(stories, kept, dependencies, edges) {
+  const fresh = orderStoriesByDeps(
+    stories.filter((s) => !kept.includes(s.id)),
+    edges,
+  );
+  if (kept.length === 0) return fresh;
+  const isNew = new Set(fresh.map((s) => s.id));
+  const queue = [...kept.map((id) => stories.find((s) => s.id === id)).filter(Boolean), ...fresh];
+  const waits = (s) => dependencies.get(s.id).filter((d) => isNew.has(d) || isNew.has(s.id));
+  const out = [];
+  while (queue.length > 0) {
+    const i = queue.findIndex((s) => waits(s).every((d) => !queue.some((q) => q.id === d)));
+    if (i === -1) {
+      out.push(...queue);
+      break;
+    }
+    out.push(...queue.splice(i, 1));
+  }
+  return out;
+}
+
+/**
  * The execution plan of a list of stories (F-125 D2). Pure apart from
  * reading each story's file for its plan paths (`planFiles`).
  *
@@ -333,24 +368,26 @@ function parallelGroups(order, dependencies, files) {
  *
  * `taken` are the ids of stories a run has already taken (`replan`): they
  * keep that order at the front, and the other stories follow in dependency
- * order.
+ * order, or in the order `kept` gives (`keptOrder`).
  *
  * @param {Array<{ id: string, unitRepo?: string, indexPath: string, feature?: string, batch?: string }>} stories
  *   `readAllStories` records
  * @param {import("./blockers.js").Edge[]} edges  `readEdges`'s, or the graph's `edges`
- * @param {{ taken?: string[] }} [options]
+ * @param {{ taken?: string[], kept?: string[] }} [options]
  * @returns {{ stories: string[], dependencies: Record<string, string[]>, order: string[],
  *   groups: string[][], repos: string[], merge_order: string[] | null,
  *   merge_cycle: import("./blockers.js").Edge[] | null }}
  */
-export function computePlan(stories, edges, { taken = [] } = {}) {
+export function computePlan(stories, edges, { taken = [], kept = [] } = {}) {
   const ids = stories.map((s) => s.id);
   const dependencies = listedDependencies(ids, edges);
   const first = taken.map((id) => stories.find((s) => s.id === id)).filter(Boolean);
   const ordered = [
     ...first,
-    ...orderStoriesByDeps(
+    ...keptOrder(
       stories.filter((s) => !first.includes(s)),
+      kept,
+      dependencies,
       edges,
     ),
   ];
@@ -412,10 +449,12 @@ export function newPlan(unitId, stories, edges, at = new Date().toISOString()) {
 
 /**
  * `plan` for the stories `stories`, when they are not the plan's stories:
- * computed again with the `taken` stories first in their order (a story
- * added during a run goes after the stories the run has taken), and one
- * `changes` entry by `bl` that names the stories added and removed and
- * says `why`. With the same stories it returns `plan` unchanged.
+ * computed again with the `taken` stories first in their order, the other
+ * stories in the plan's `order` (an agent may have changed it), and a story
+ * added after the stories the run has taken, placed by its dependencies
+ * (`keptOrder`). The plan's `repos` and `merge_order` stay when the repos
+ * are the same. One `changes` entry by `bl` names the stories added and
+ * removed and says `why`. With the same stories it returns `plan` unchanged.
  * @param {object} plan  a stored plan (`readPlan`, `newPlan`)
  * @param {Parameters<typeof computePlan>[0]} stories
  * @param {import("./blockers.js").Edge[]} edges
@@ -426,11 +465,13 @@ export function replan(plan, stories, edges, { taken = [], why, at = new Date().
   const added = ids.filter((id) => !plan.stories.includes(id));
   const removed = plan.stories.filter((id) => !ids.includes(id));
   if (added.length === 0 && removed.length === 0) return plan;
-  const { merge_cycle: _cycle, ...next } = computePlan(stories, edges, { taken });
+  const { merge_cycle: _cycle, ...next } = computePlan(stories, edges, { taken, kept: plan.order });
+  const sameRepos = next.repos.length === plan.repos.length && next.repos.every((r) => plan.repos.includes(r));
+  const repos = sameRepos ? { repos: plan.repos, merge_order: plan.merge_order } : {};
   const what = [added.length > 0 && `added ${added.join(', ')}`, removed.length > 0 && `removed ${removed.join(', ')}`]
     .filter(Boolean)
     .join('; ');
-  return { ...plan, ...next, changes: [...plan.changes, { at, by: 'bl', what, why }] };
+  return { ...plan, ...next, ...repos, changes: [...plan.changes, { at, by: 'bl', what, why }] };
 }
 
 /**

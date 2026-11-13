@@ -578,6 +578,42 @@ test('readPlan and writePlan refuse groups, dependencies, merge_order, repos or 
   });
 });
 
+// Review 2026-11-13, Must 4: replan keeps an edited order for the stories not
+// taken; an added story goes after the taken ones, placed by its dependencies.
+test('replan_preserves_edited_order_when_story_added_or_removed', () => {
+  withStories((make) => {
+    const stories = ['S-1', 'S-2', 'S-3'].map((id) => make(id));
+    const edges = [order('S-1', 'S-2')];
+    // An agent's edit: S-3 before S-2.
+    const edited = { ...newPlan('F-7', stories, edges, '2026-11-13T00:00:00Z'), order: ['S-1', 'S-3', 'S-2'] };
+    const S4 = make('S-4');
+    const cases = [
+      // [name, stories now, edges now, taken, the order]
+      ['a story added', [...stories, S4], edges, ['S-1'], ['S-1', 'S-3', 'S-2', 'S-4']],
+      [
+        'a story added that S-2 waits for',
+        [...stories, S4],
+        [...edges, order('S-4', 'S-2')],
+        ['S-1'],
+        ['S-1', 'S-3', 'S-4', 'S-2'],
+      ],
+      ['a story added, nothing taken', [...stories, S4], edges, [], ['S-1', 'S-3', 'S-2', 'S-4']],
+      ['a story removed', stories.filter((s) => s.id !== 'S-1'), [], [], ['S-3', 'S-2']],
+      ['a story removed, one taken', stories.filter((s) => s.id !== 'S-2'), edges, ['S-1'], ['S-1', 'S-3']],
+    ];
+    for (const [name, now, nowEdges, taken, expected] of cases) {
+      const next = replan(edited, now, nowEdges, { taken, why: name, at: '2026-11-13T01:00:00Z' });
+      assert.deepEqual(next.order, expected, name);
+      assert.deepEqual(next.groups.flat().sort(), [...expected].sort(), `${name}: groups name each story once`);
+      assert.deepEqual(next.repos, edited.repos, `${name}: the same repos stay`);
+      assert.deepEqual(next.merge_order, edited.merge_order, `${name}: merge_order stays`);
+    }
+    // The case the review named: a stored plan with S-4 in its edited order loses S-4.
+    const withFour = replan(edited, [...stories, S4], edges, { taken: ['S-1'], why: 'w' });
+    assert.deepEqual(replan(withFour, stories, edges, { taken: ['S-1'], why: 'w' }).order, ['S-1', 'S-3', 'S-2']);
+  });
+});
+
 test('newPlan stores computePlan without merge_cycle; replan puts the taken stories first and records the change', () => {
   withStories((make) => {
     const stories = ['S-1', 'S-2', 'S-3'].map((id) => make(id));
