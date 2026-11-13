@@ -37,7 +37,7 @@ import { graphOf } from './backlog-graph.js';
 import { findFeature, normalizeFeatureId } from './feature.js';
 import { findBatch, normalizeBatchId } from './batch.js';
 import { withLock } from './lock.js';
-import { BLOCKERS_FILE, RUN_EDGE, WILDCARD, gateStatus } from './blockers.js';
+import { BLOCKERS_FILE, RUN_EDGE, UNHELD_VERBS, WILDCARD, gateStatus, holdRefusal } from './blockers.js';
 import { loadFlow, statusWordProblem } from './flow.js';
 import { applyNew, applyTransition, nowAt, storedLog } from './transition.js';
 
@@ -304,8 +304,8 @@ export async function createTask(config, { unit, title, gate, body = null }) {
 
 /**
  * `bl task done T-<n> [note]`: record `done` by `done` in the log (which sets
- * `done:` to the entry's date) and `note:`, and commit the task file. A task already done, or one that is not there,
- * refuses. Its edges stay in `blockers.json`, met.
+ * `done:` to the entry's date) and `note:`, and commit the task file. A task already done, one that is not there,
+ * or one that a hold keeps out of `done` (`holdRefusal`, F-119 R4) refuses. Its edges stay in `blockers.json`, met.
  * @returns {Promise<{ refused?: string, id?: string, path?: string, commit?: object }>}
  */
 export async function markTaskDone(config, rawId, note = '', { at = nowAt() } = {}) {
@@ -317,6 +317,8 @@ export async function markTaskDone(config, rawId, note = '', { at = nowAt() } = 
     const task = findTask(config, parsed.id);
     if (!task) return { refused: `no task ${parsed.id} under ${TASKS_DIR}/ (see bl task list)` };
     if (task.status === 'done') return { refused: `${task.id} is already done (${task.done || 'no date'})` };
+    const held = holdRefusal(config, task.id, 'done');
+    if (held) return { refused: held };
     const undo = snapshot(
       root,
       [task.path],
@@ -358,8 +360,8 @@ function typeOfId(id) {
  * What one edge of a task holds, in the words `bl inbox` and the `## Tasks`
  * table use: `bl merge F-3`, `bl run, bl implement (every unit) once F-54 is
  * done`. The verbs are those whose nominal path enters the gate's status
- * (`Flow.nominalPath`, F-119 D6) in the unit's type; a gate that no verb
- * enters shows as itself.
+ * (`Flow.nominalPath`, F-119 D6) in the unit's type, less the verbs that
+ * check no hold (`UNHELD_VERBS`); a gate that no verb enters shows as itself.
  * @param {import("./blockers.js").Edge} edge
  * @param {import("./flow.js").Flow} flow
  */
@@ -367,7 +369,9 @@ export function holdsText(edge, flow) {
   const verbs = new Set();
   for (const [type, def] of Object.entries(flow.types)) {
     if (edge.unit !== '*' && type !== typeOfId(edge.unit)) continue;
-    for (const v of Object.keys(def.verbs)) if (flow.nominalPath(type, v).includes(edge.gate)) verbs.add(v);
+    for (const v of Object.keys(def.verbs)) {
+      if (!UNHELD_VERBS.has(v) && flow.nominalPath(type, v).includes(edge.gate)) verbs.add(v);
+    }
   }
   const what = verbs.size > 0 ? [...verbs].map((v) => `bl ${v}`).join(', ') : edge.gate;
   const on = edge.unit === '*' ? '(every unit)' : edge.unit;

@@ -27,6 +27,7 @@
 
 import { FlowError, LEGACY_LOG, REVIEW, fromLegacy, loadFlow, statusWords } from './flow.js';
 import { GUARDS } from './guards.js';
+import { holdRefusal } from './blockers.js';
 import { updateSpecFile } from './spec-file.js';
 
 /**
@@ -622,7 +623,9 @@ export function failingGuards(flow, when, ctx, { first = false } = {}) {
  * with no log (D4). The verb is the first whose `from` holds the
  * status, checked with `assertFrom` (its `when` guards too). When none
  * does, `refusal` is the first verb's. A malformed `transitions:`
- * (`malformedLogRefusal`) refuses every verb. Every hand-written start-state check
+ * (`malformedLogRefusal`) refuses every verb. Then a hold on a status of the
+ * chosen verb's nominal path refuses it (`holdRefusal`, F-119 D6): the one
+ * hold check of every verb that calls this. Every hand-written start-state check
  * of a verb handler became this. `bl run` passes its `then` chain
  * (`Flow.chainOf`), so it resumes a unit in review or fixing.
  * @param {{ backlogRoot: string }} config
@@ -630,7 +633,7 @@ export function failingGuards(flow, when, ctx, { first = false } = {}) {
  * @param {{ id: string, indexPath: string, fm: object, change?: { fm: object } | null }} unit
  * @param {string | string[]} verbs
  * @param {{ guards?: boolean }} [opts]  `guards: false`: the caller checks the
- *   `when` guards itself, with its own messages (`bl merge`'s `mergeGates`)
+ *   `when` guards and the holds itself, with its own messages (`bl merge`'s `mergeGates`)
  * @returns {{ verb: string | null, status: string, refusal: string | null }}
  */
 export function startOf(config, kind, unit, verbs, { guards = true } = {}) {
@@ -646,7 +649,9 @@ export function startOf(config, kind, unit, verbs, { guards = true } = {}) {
   // Every verb writes the unit's log, which a malformed one refuses.
   const refusal =
     malformedLogRefusal([{ id: unit.id, fm: unit.fm }]) ??
-    assertFrom(flow, { id: unit.id, kind, status }, verb ?? list[0], ctx);
+    assertFrom(flow, { id: unit.id, kind, status }, verb ?? list[0], ctx) ??
+    // The holds on the nominal path of the verb that starts (F-119 D6, R4).
+    (guards ? holdRefusal(config, unit.id, verb) : null);
   return { verb: refusal ? null : verb, status, refusal };
 }
 

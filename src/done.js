@@ -33,6 +33,7 @@ import { acquireLock, releaseLock } from './lock.js';
 import { commitAndRecord, reportBacklogCommit, exitOnSyncError } from './sync.js';
 import { dirtySnapshot, failedCommitPending, failedCommitRecord, hasOwnRepo } from './backlog-commit.js';
 import { loadFlow } from './flow.js';
+import { holdRefusal } from './blockers.js';
 import { applyTransition, reviewOf, roundOf, statusOf } from './transition.js';
 
 function resolveCommitHash(config, primaryRepoName, rawCommit) {
@@ -186,6 +187,13 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
   const current = statusOf('story', fm);
 
   if (flow.meets('story', current, 'done')) return alreadyClosed(parsed, current, config, found);
+  const by = status === 'done' ? 'done' : 'supersede';
+  // A hold on the status the verb enters refuses it (F-119 R4); none holds `superseded` in practice.
+  const held = holdRefusal(config, parsed.id, by);
+  if (held) {
+    console.error(held);
+    process.exit(1);
+  }
 
   // Only the reviewer may sign a story off (`featureReviewGate`, the merge
   // gate's rule, F-69 D5): `fixing` means items are open, `in_review` that
@@ -230,7 +238,6 @@ async function markStoryDone(parsed, status, rawCommit, config, commitMap) {
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const by = status === 'done' ? 'done' : 'supersede';
   // One read-modify-write under the story's spec lock (F-67 D1), inside the
   // backlog lock `doneStory` holds (D4): a session difference written while
   // the transcripts are read is either in the file this write starts from or

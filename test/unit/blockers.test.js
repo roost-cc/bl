@@ -16,6 +16,7 @@ import {
   gateIds,
   heldAt,
   heldBy,
+  holdRefusal,
   heldLines,
   holdGraph,
   inFeature,
@@ -390,6 +391,24 @@ test("heldBy: an edge on a feature's story holds the feature at the verb's gate,
   assert.equal(held[0].line, 'S-2 is held at done by S-3 (in_progress, needs done)');
   assert.deepEqual(heldBy(config, 'F-1', 'run'), []);
   assert.deepEqual(heldBy(config, 'S-1', 'merge'), []);
+});
+
+test("holdRefusal: heldBy's lines, then next: bl status per blocker once; null when nothing holds (F-119 R4)", () => {
+  const config = heldBacklog([edge('S-3', 'in_progress', 'S-1'), edge('S-3', 'in_review', 'S-1')]);
+  assert.equal(
+    holdRefusal(config, 'S-1', 'run'),
+    [
+      'S-1 is held at in_progress by S-3 (in_progress, needs done)',
+      'S-1 is held at in_review by S-3 (in_progress, needs done)',
+      'next: bl status S-3',
+    ].join('\n'),
+  );
+  assert.equal(
+    holdRefusal(config, 'S-1', 'implement'),
+    ['S-1 is held at in_progress by S-3 (in_progress, needs done)', 'next: bl status S-3'].join('\n'),
+  );
+  assert.equal(holdRefusal(config, 'S-1', 'merge'), null);
+  assert.equal(holdRefusal(heldBacklog(null), 'S-1', 'run'), null, 'no blockers.json');
 });
 
 test('heldAt and the gate_free guard: the holds at one status, a feature through its stories (F-69 D1)', () => {

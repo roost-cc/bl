@@ -9,9 +9,9 @@
  * `bl implement` takes one target: verbs.js refuses several (F-125 Decision
  * A3), and this module works on one story.
  *
- * Dependency gating: a story is only launched when every story it waits for
- * (the blockers of the run and order edges on it, `storyDependencies` of
- * `readEdges`, F-111 D4) is already closed (i.e. merged).
+ * A story is only launched when no hold is on the nominal path of the verb
+ * that starts (`startOf`, F-119 R4): an edge in `blockers.json`, or a
+ * `depends_on:` on a story not yet done (F-111 D4).
  */
 
 import { existsSync, readFileSync } from 'fs';
@@ -40,11 +40,9 @@ import {
   launchSession,
 } from './session.js';
 import { featureSessionVars } from './feature.js';
-import { readEdges, storyDependencies } from './blockers.js';
 import { storyUnit, storyAsOrdered, unitVars } from './unit.js';
 import { applyFixOutcome, openUnitChange, readChange, unitChange } from './change-doc.js';
 import { tokensStepKey } from './tokens.js';
-import { loadFlow } from './flow.js';
 import { enterVerb, implementVerbOf, nowAt, roundOf, startOf } from './transition.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { takeUnitLocksOrExit } from './unit-lock.js';
@@ -64,40 +62,40 @@ export function idNum(id) {
 }
 
 /**
- * Resolve workon targets from positional args, then split them by dependency
- * readiness.
+ * Resolve workon targets from positional args.
  *
  * Component IDs expand to their refined stories (draft stories must be
- * refined first; closed ones are complete). An explicitly-named story is
- * included when `flow.json`'s `implement` row starts from its status, or its
- * `fix` row does when its review position is `fixing` (`implementVerbOf`,
- * `startOf`); any
- * other is reported as a notice with the table's refusal. Named targets
- * outrank component-expanded ones on dedup.
+ * refined first; closed ones are complete). A story is included when
+ * `implement` may start on it (`startOf`): `flow.json`'s `implement` row
+ * starts from its status, or its `fix` row does when its review position is
+ * `fixing` (`implementVerbOf`), and no hold is on the verb's nominal path (a
+ * `depends_on:` on a story not yet done is one, F-119 R4). Any other is
+ * reported as a notice with the refusal. Named targets outrank
+ * component-expanded ones on dedup.
  *
- * Each resolved target is then classified:
- *   - `startable` — every story it waits for is already closed.
- *   - `deferred`  — at least one is not; `blockers` lists them.
- * A dependency that is itself a not-yet-merged story (even one in the same
- * batch) is unmet, so the dependent defers.
- *
- * @returns {{ startable: Array, deferred: Array, errors: string[],
- *             notices: string[] }}
+ * @returns {{ startable: Array, errors: string[], notices: string[] }}
  */
 export function resolveWorkonTargets(positionals, config) {
-  const flow = loadFlow(config.backlogRoot);
-  const closed = (s) => flow.meets('story', s, 'done');
   const errors = [];
   const notices = [];
   const byId = new Map();
+  const refused = new Set();
 
   const all = readAllStories(config);
-  const statusById = new Map(all.map((s) => [s.id, s.status]));
 
   const addStory = (story, source) => {
     const existing = byId.get(story.id);
     // A named target outranks a component-expanded one; never downgrade.
-    if (existing && existing.source === 'named') return;
+    if (existing?.source === 'named' || refused.has(story.id)) return;
+    if (!existing) {
+      const unit = storyUnit(story, config);
+      const { refusal } = startOf(config, 'story', unit, implementVerbOf('story', unit));
+      if (refusal) {
+        refused.add(story.id);
+        notices.push(`${refusal} — skipping.`);
+        return;
+      }
+    }
     byId.set(story.id, { ...story, source });
   };
 
@@ -127,29 +125,11 @@ export function resolveWorkonTargets(positionals, config) {
       errors.push(`Story ${parsed.id} not found in backlog`);
       continue;
     }
-    const unit = storyUnit(story, config);
-    const { refusal } = startOf(config, 'story', unit, implementVerbOf('story', unit));
-    if (refusal) {
-      notices.push(`${refusal} — skipping.`);
-      continue;
-    }
     addStory(story, 'named');
   }
 
-  const startable = [];
-  const deferred = [];
-  const waits = storyDependencies(readEdges(config));
-  for (const t of byId.values()) {
-    const blockers = (waits.get(t.id) ?? []).filter((d) => !closed(statusById.get(d)));
-    if (blockers.length === 0) startable.push(t);
-    else deferred.push({ ...t, blockers });
-  }
-
-  const byNum = (a, b) => idNum(a.id) - idNum(b.id);
-  startable.sort(byNum);
-  deferred.sort(byNum);
-
-  return { startable, deferred, errors, notices };
+  const startable = [...byId.values()].sort((a, b) => idNum(a.id) - idNum(b.id));
+  return { startable, errors, notices };
 }
 
 /**
@@ -538,8 +518,8 @@ export async function main(argv) {
     console.log(`Usage: bl implement <story-id> [options]
 
 Arguments:
-  <story-id>           A story ID (S34, S-34). A story whose dependencies
-                       aren't all merged (done) is deferred, not launched.
+  <story-id>           A story ID (S34, S-34). A story that a hold keeps
+                       from starting (bl status names it) is refused.
 
 Options:
   -A, --agent <id>     Agent provider (e.g. "claude", "codex", "gemini", "local")
@@ -562,27 +542,13 @@ runs its command there instead and commits the result; no agent starts.`);
     process.exit(1);
   }
 
-  const { startable, deferred, errors, notices } = resolveWorkonTargets(positionals, baseConfig);
+  const { startable, errors, notices } = resolveWorkonTargets(positionals, baseConfig);
 
   for (const n of notices) info(n);
   for (const e of errors) console.error(e);
 
-  if (deferred.length > 0) {
-    info('');
-    info('Deferred (dependencies not yet merged):');
-    for (const d of deferred) {
-      info(`  ${d.id} — ${d.title}  (blocked on: ${d.blockers.join(', ')})`);
-    }
-    info('');
-  }
-
   if (startable.length === 0) {
-    if (deferred.length > 0) {
-      console.error(
-        'No startable stories — every resolved story is blocked by unmerged ' +
-          'dependencies (see above). Merge them, then re-run.',
-      );
-    } else if (errors.length === 0 && notices.length === 0) {
+    if (errors.length === 0 && notices.length === 0) {
       console.error('No stories to work on.');
     }
     process.exit(1);

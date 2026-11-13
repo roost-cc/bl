@@ -220,12 +220,12 @@ test("formatTask writes the keys in bl's order and leaves out empty ones", () =>
 test("holdsText names an edge by the verbs whose nominal path enters its gate's status (F-119 D6)", () => {
   assert.equal(holdsText(edge('T-1', 'done', 'F-3'), flow), 'bl merge F-3');
   assert.equal(holdsText(edge('T-1', 'done', 'S-3'), flow), 'bl merge, bl done S-3');
-  assert.equal(holdsText(edge('T-1', 'in_progress', 'S-4'), flow), 'bl run, bl implement, bl side S-4');
+  assert.equal(holdsText(edge('T-1', 'in_progress', 'S-4'), flow), 'bl run, bl implement S-4');
   assert.equal(holdsText(edge('T-1', 'in_progress', 'F-4'), flow), 'bl run, bl implement F-4');
   assert.equal(holdsText(edge('T-1', 'in_refinement', 'S-4'), flow), 'bl refine S-4');
   assert.equal(
     holdsText(edge('T-1', 'in_progress', '*', 'done', { unit: 'F-54', status: 'done' }), flow),
-    'bl run, bl implement, bl side (every unit) once F-54 is done',
+    'bl run, bl implement (every unit) once F-54 is done',
   );
   assert.equal(holdsText(edge('T-1', 'gone', 'F-3'), flow), 'gone F-3', "a gate the flow lacks: the gate's name");
 });
@@ -236,7 +236,7 @@ test("taskTableRows: ID linked, Title, Holds from the task's edges, Status, Done
   const { headers, rows } = taskTableRows(tasks, edges, flow, (p) => `../../${p}`);
   assert.deepEqual(headers, ['ID', 'Title', 'Holds', 'Status', 'Done']);
   assert.deepEqual(rows, [
-    ['[T-1](../../tasks/T1-x.md)', 'Task 1', 'bl merge F-1; bl run, bl implement, bl side S-2', 'draft', ''],
+    ['[T-1](../../tasks/T1-x.md)', 'Task 1', 'bl merge F-1; bl run, bl implement S-2', 'draft', ''],
     ['[T-2](../../tasks/T2-x.md)', 'a \\| b', 'none', 'done', '2026-10-28'],
   ]);
 });

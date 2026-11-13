@@ -3,20 +3,10 @@ import assert from 'node:assert/strict';
 import { writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { pluginForExtension, bucketByPlugin, runPluginBatch, runPlugins } from '../../src/config.js';
-import {
-  DISPATCH,
-  GATED_VERBS,
-  ONE_TARGET_VERBS,
-  VERBS,
-  dispatch,
-  flagsOf,
-  heldTargets,
-  oneTargetRefusal,
-} from '../../src/verbs.js';
+import { DISPATCH, ONE_TARGET_VERBS, VERBS, dispatch, flagsOf, oneTargetRefusal } from '../../src/verbs.js';
 import * as featureCmd from '../../src/feature-cmd.js';
-import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import { runAfterExitOnSignal } from '../helpers/exit-on-signal-script.js';
-import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { mkTempDir } from '../helpers/tempdir.js';
 
 // ---------------------------------------------------------------------------
 // Verb dispatch (F-35 Design §1): each verb × kind cell names its handler.
@@ -275,14 +265,6 @@ test('runPlugins and runPluginBatch: a plugin that exits 130 stops bl with exit 
 });
 
 // ---------------------------------------------------------------------------
-// The run gate (F-66 D3): dispatch holds `run` and `implement` only.
-// ---------------------------------------------------------------------------
-
-test('dispatch checks a gate at run and implement only; refine, review, status and the rest are never held', () => {
-  assert.deepEqual([...GATED_VERBS].sort(), ['implement', 'run']);
-});
-
-// ---------------------------------------------------------------------------
 // One target (F-125 Decision A3): run and implement refuse several ids.
 // ---------------------------------------------------------------------------
 
@@ -310,37 +292,3 @@ for (const verb of ['run', 'implement']) {
     assert.match(lines[0], new RegExp(`^bl ${verb}: takes one target; .*\\bbl batch\\b`));
   });
 }
-
-test('heldTargets: each held target with its lines and blockers; an unheld one is not listed', () => {
-  const { dir } = mkTempBacklog({
-    components: [{ id: 'C01', title: 'Work' }],
-    stories: [
-      { id: 'S-1', component: 'C01', title: 'One', status: 'refined' },
-      { id: 'S-2', component: 'C01', title: 'Two', status: 'refined' },
-      { id: 'S-3', component: 'C01', title: 'Three', status: 'in_progress' },
-      { id: 'S-4', component: 'C01', title: 'Four', status: 'refined', feature: 'F-1' },
-    ],
-    features: [{ id: 'F-1', title: 'Feat', status: 'approved', stories: ['S-4'] }],
-  });
-  writeBlockersLocked(dir, [
-    { blocker: 'S-3', gate: 'run', unit: 'S-1', until: 'done' },
-    { blocker: 'S-3', gate: 'run', unit: 'S-4', until: 'done' },
-    { blocker: 'S-3', gate: 'merge', unit: 'S-2', until: 'done' },
-  ]);
-  const targets = ['S-1', 'S-2', 'F-1'].map((id) => ({ id, kind: id[0] === 'F' ? 'feature' : 'story' }));
-  assert.deepEqual(heldTargets('run', targets, { backlogRoot: dir }), [
-    {
-      id: 'S-1',
-      kind: 'story',
-      lines: ['S-1 is held at in_progress by S-3 (in_progress, needs done)'],
-      blockers: ['S-3'],
-    },
-    {
-      id: 'F-1',
-      kind: 'feature',
-      lines: ['S-4 is held at in_progress by S-3 (in_progress, needs done)'],
-      blockers: ['S-3'],
-    },
-  ]);
-  assert.deepEqual(heldTargets('implement', targets.slice(1, 2), { backlogRoot: dir }), []);
-});

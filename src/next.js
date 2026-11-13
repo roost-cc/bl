@@ -42,7 +42,7 @@ Print the next unit to run, a feature or a loose story, that is not ${statusWord
 that nothing holds, by the backlog's priority: the units ${PRIORITY_FILE} lists first,
 then every other unit, oldest "added:" first. Hard dependencies come first: a
 unit that bl run would refuse (an open story it depends on outside itself, or
-a blockers.json edge at a run gate) gives way to its blocker's unit, followed
+a blockers.json edge at a status on bl run's path) gives way to its blocker's unit, followed
 until one is free. A unit held only by a task is passed over.
 
 Options:

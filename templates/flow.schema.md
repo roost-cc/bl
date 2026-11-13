@@ -40,7 +40,7 @@ The file is plain JSON, one object:
         },
         "run": {
           "from": ["approved", "in_progress", "escalated"],
-          "when": ["gate_free:run", "escalation_cleared"],
+          "when": ["escalation_cleared"],
           "during": "in_progress",
           "via": ["implement", "test", "self_review", "open_pr"],
           "success": [{ "to": "in_review", "then": "review" }],
@@ -146,7 +146,9 @@ a colon:
 - `escalation_cleared`: the unit's `## Escalation` is `None.`.
 - `round_within_cap`: the review round is not over the unit's cap.
 - `gate_free:<status>`: no hold keeps the unit out of the status. The old gate names `run` and
-  `merge` read as `in_progress` and `done`.
+  `merge` read as `in_progress` and `done`. bl's template names it nowhere, because every verb
+  checks its holds when it starts (see **Holds and the nominal path**); a file from before
+  F-119 that names it still loads.
 
 `bl validate` reports a guard name that bl does not register.
 
@@ -161,6 +163,9 @@ A verb checks its holds when it starts (F-119 D6), on the statuses of its **nomi
 `during`, each `success` branch's `to`, and the same for each verb that a success branch chains
 to with `then`, each once. `run`'s nominal path is `in_progress`, `in_review`,
 `ready_for_merge`; `refine`'s is `in_refinement`, `refined`. A failure branch is no part of it.
+If a hold applies to any of those statuses, the verb refuses to start and names the hold. A hold
+added while the verb runs does not stop it. `new` and `side` make a new unit, which no edge can
+name yet, so they check no hold.
 `bl flow` shows each verb's nominal path in the Gates column.
 
 ## The `task` type

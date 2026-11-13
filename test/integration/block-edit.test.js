@@ -441,6 +441,33 @@ test('bl block add takes any status of the unit as its gate: in_refinement holds
   assert.match(bad.stderr, /gate "approved" is not a story status in flow\.json \(blockers-gate\)/);
 });
 
+test('a hold at in_refinement refuses bl refine S-y, and bl refine F-n through its story, naming the hold (F-119 R4)', () => {
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Work' }],
+    stories: [
+      { id: 'S-1', component: 'C01', title: 'Blocker' },
+      { id: 'S-2', component: 'C01', title: 'Held' },
+      { id: 'S-3', component: 'C01', title: 'In feature', feature: 'F-1' },
+    ],
+    features: [{ id: 'F-1', title: 'Feat', status: 'draft', stories: ['S-3'] }],
+  });
+  writeBlockersLocked(dir, [
+    { blocker: 'S-1', gate: 'in_refinement', unit: 'S-2', until: 'done' },
+    { blocker: 'S-1', gate: 'in_refinement', unit: 'S-3', until: 'done' },
+  ]);
+  let r = bl(['refine', 'S-2'], dir);
+  assert.equal(r.status, 1);
+  assert.match(
+    r.stderr,
+    /^S-2 is held at in_refinement by S-1 \(draft, needs done\)\nnext: bl status S-1 — skipping\.$/m,
+  );
+  assert.match(r.stderr, /^No stories to refine\.$/m);
+  r = bl(['refine', 'F-1'], dir);
+  assert.equal(r.status, 1);
+  assert.equal(r.stderr, 'S-3 is held at in_refinement by S-1 (draft, needs done)\nnext: bl status S-1\n');
+  assert.equal(r.stdout, '');
+});
+
 test('bl block list stops on a missing flow.json, naming the file', () => {
   const { dir } = mkTempBacklog({ flow: null });
   const r = bl(['block', 'list'], dir);

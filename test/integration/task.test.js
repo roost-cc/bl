@@ -228,7 +228,7 @@ test('a task is a blocker in blockers.json: bl block add accepts it, a task is h
   // The rendered table names what the task holds, in blockers.json's order.
   assert.match(
     rendered(dir, 'F-1'),
-    /\| \[T-1\]\([^)]*\) \| Migrate \| bl run, bl implement, bl side \(every unit\) once F-1 is done; bl merge F-1; bl run, bl implement, bl side S-2 \| draft/,
+    /\| \[T-1\]\([^)]*\) \| Migrate \| bl run, bl implement \(every unit\) once F-1 is done; bl merge F-1; bl run, bl implement S-2 \| draft/,
   );
 
   const v = bl(['validate', '--json', '--skip', 'plugin-binary'], dir);
@@ -236,6 +236,25 @@ test('a task is a blocker in blockers.json: bl block add accepts it, a task is h
   assert.ok(!codes.includes('blockers-cycle'), v.stdout);
   assert.ok(!codes.some((c) => c.startsWith('task-')), v.stdout);
   assert.ok(!codes.includes('blockers-unit'), v.stdout);
+});
+
+test('bl task done refuses a task held at done and names the hold, writing nothing; the hold met, it closes (F-119 R4)', () => {
+  const dir = backlog();
+  initGitBacklog(dir);
+  assert.equal(bl(['task', 'F-1', '--title', 'Migrate', '--gate', 'none'], dir).stdout, 'T-1\n');
+  let r = bl(['block', 'add', 'S-1', '--gate', 'done', '--unit', 'T-1', '--until', 'done'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  const before = read(dir, 'tasks/T1-migrate.md');
+  r = bl(['task', 'done', 'T-1'], dir);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /T-1 is held at done by S-1 \(draft, needs done\)\nnext: bl status S-1/);
+  assert.equal(read(dir, 'tasks/T1-migrate.md'), before);
+
+  r = bl(['done', '--superseded', 'S-1', 'abcdef0'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  r = bl(['task', 'done', 'T-1'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(logStatusOf('task', parseFrontmatter(read(dir, 'tasks/T1-migrate.md')).fm), 'done');
 });
 
 test('bl validate reports task-unit and task-field on hand-edited task files', () => {

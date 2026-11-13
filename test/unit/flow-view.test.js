@@ -48,7 +48,7 @@ test('flowTables: one row per Flow.edges transition, with the verb guards and no
   );
   assert.deepEqual(
     story.find(([from, , verb]) => from === 'refined' && verb === 'run'),
-    ['refined', 'in_progress', 'run', 'gate_free:run, escalation_cleared', 'in_progress, in_review, ready_for_merge'],
+    ['refined', 'in_progress', 'run', 'escalation_cleared', 'in_progress, in_review, ready_for_merge'],
   );
   assert.deepEqual(story[0], ['(none)', 'draft', 'new', '—', 'draft']);
 });

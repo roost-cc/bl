@@ -34,7 +34,8 @@ import {
   transition,
 } from '../../src/transition.js';
 import { escalatingVerb } from '../../src/feature-run.js';
-import { mkTempDir } from '../helpers/tempdir.js';
+import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 
 const TEMPLATES = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates');
 const flow = loadFlow(TEMPLATES);
@@ -516,6 +517,72 @@ test('startOf picks the first verb whose from holds the status, and refuses with
   const merge = startOf(config, 'feature', unit(pending), 'merge', { guards: false });
   assert.equal(merge.verb, null);
   assert.match(merge.refusal, /^F-5 is fixing; merge starts from /);
+});
+
+/**
+ * A backlog with refined S-1, S-2 at in_review, draft S-4, F-1 (refined) with
+ * its story S-5, and the blocker S-3 in progress; `edges` in blockers.json.
+ * `unit(id)` is the record `startOf` takes.
+ */
+function heldUnits(edges) {
+  const { dir } = mkTempBacklog({
+    components: [{ id: 'C01', title: 'Work' }],
+    stories: [
+      { id: 'S-1', component: 'C01', title: 'One', dirSuffix: 'one', status: 'refined' },
+      { id: 'S-2', component: 'C01', title: 'Two', dirSuffix: 'two', status: 'in_review' },
+      { id: 'S-3', component: 'C01', title: 'Three', dirSuffix: 'three', status: 'in_progress' },
+      { id: 'S-4', component: 'C01', title: 'Four', dirSuffix: 'four', status: 'draft' },
+      { id: 'S-5', component: 'C01', title: 'Five', dirSuffix: 'five', status: 'draft', feature: 'F-1' },
+    ],
+    features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'refined', stories: ['S-5'] }],
+  });
+  writeBlockersLocked(dir, edges);
+  const unit = (id) => {
+    const n = id.slice(2);
+    const suffix = { 'S-1': 'one', 'S-2': 'two', 'S-4': 'four', 'F-1': 'feat' }[id];
+    const indexPath = join(dir, id[0] === 'F' ? 'features' : 'stories', `${id[0]}${n}-${suffix}`, 'index.md');
+    return { id, indexPath, fm: parseFrontmatter(readFileSync(indexPath, 'utf8')).fm };
+  };
+  return { config: { backlogRoot: dir }, unit };
+}
+
+const hold = (gate, unit) => ({ blocker: 'S-3', gate, unit, until: 'done' });
+const heldLine = (id, gate) => `${id} is held at ${gate} by S-3 (in_progress, needs done)\nnext: bl status S-3`;
+
+test('startOf refuses a verb that a hold on its nominal path keeps from starting, naming the hold (F-119 D6, R4)', () => {
+  // A hold at in_progress: run and implement; at in_review: run and review, not implement.
+  let { config, unit } = heldUnits([hold('in_progress', 'S-1')]);
+  for (const verb of ['run', 'implement']) {
+    assert.deepEqual(startOf(config, 'story', unit('S-1'), verb), {
+      verb: null,
+      status: 'refined',
+      refusal: heldLine('S-1', 'in_progress'),
+    });
+  }
+  ({ config, unit } = heldUnits([hold('in_review', 'S-1'), hold('in_review', 'S-2')]));
+  assert.equal(startOf(config, 'story', unit('S-1'), 'run').refusal, heldLine('S-1', 'in_review'));
+  assert.equal(startOf(config, 'story', unit('S-1'), 'implement').refusal, null, 'implement does not enter in_review');
+  assert.equal(startOf(config, 'story', unit('S-2'), 'review').refusal, heldLine('S-2', 'in_review'));
+  // A hold at in_refinement: refine, on the story and, through its story, on the feature.
+  ({ config, unit } = heldUnits([hold('in_refinement', 'S-4'), hold('in_refinement', 'S-5')]));
+  assert.equal(startOf(config, 'story', unit('S-4'), 'refine').refusal, heldLine('S-4', 'in_refinement'));
+  assert.equal(startOf(config, 'feature', unit('F-1'), 'refine').refusal, heldLine('S-5', 'in_refinement'));
+  // guards: false leaves the holds to the caller (bl merge's mergeGates), so it refuses once.
+  ({ config, unit } = heldUnits([hold('done', 'S-2')]));
+  assert.equal(startOf(config, 'story', unit('S-2'), 'merge', { guards: false }).refusal, null);
+  // A status refusal comes first: a verb that cannot start names no hold.
+  ({ config, unit } = heldUnits([hold('in_progress', 'S-4')]));
+  assert.match(startOf(config, 'story', unit('S-4'), 'run').refusal, /^S-4 is draft; run starts from /);
+});
+
+test('a hold added after a verb starts does not stop it: the later hops record past it (F-119 D6.3)', async () => {
+  const { config, unit } = heldUnits([]);
+  const s1 = { kind: 'story', ...unit('S-1') };
+  assert.equal(startOf(config, 'story', s1, 'run').refusal, null);
+  assert.equal((await enterVerb(config.backlogRoot, s1, 'run')).to, 'in_progress');
+  writeBlockersLocked(config.backlogRoot, [hold('in_review', 'S-1'), hold('ready_for_merge', 'S-1')]);
+  assert.equal((await transition(config.backlogRoot, s1, 'in_review', { by: 'run' })).to, 'in_review');
+  assert.equal((await transition(config.backlogRoot, s1, 'ready_for_merge', { by: 'review' })).to, 'ready_for_merge');
 });
 
 test('branchOf takes the first branch whose guards hold', () => {

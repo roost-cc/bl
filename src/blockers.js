@@ -690,6 +690,30 @@ export function heldBy(config, id, verb, { units = null } = {}) {
 }
 
 /**
+ * The refusal of a verb that a hold keeps from starting (F-119 D6, R4): each
+ * of `heldBy`'s lines, then `next: bl status <blocker>` for each blocker
+ * once; null when nothing holds the unit. `startOf`, `bl done`, `bl task
+ * done` and `bl run`'s own check print it.
+ * @param {{ backlogRoot: string }} config
+ * @param {string} id
+ * @param {string} verb
+ * @param {{ units?: Map<string, Unit> }} [opts]
+ * @returns {string | null}
+ */
+export function holdRefusal(config, id, verb, opts = {}) {
+  const holds = heldBy(config, id, verb, opts);
+  if (holds.length === 0) return null;
+  const blockers = [...new Set(holds.map((h) => h.edge.blocker))];
+  return [...holds.map((h) => h.line), ...blockers.map((b) => `next: bl status ${b}`)].join('\n');
+}
+
+/**
+ * The verbs that check no hold (F-119 R4): each makes a new unit, which no
+ * edge can name yet. `holdsText` leaves them out.
+ */
+export const UNHELD_VERBS = new Set(['new', 'side']);
+
+/**
  * `heldBy` for one status rather than a verb's nominal path: the unmet edges
  * that keep unit `id` (and a feature's stories) out of `status`. The
  * `gate_free` guard (`guards.js`, F-69 D1) reads it.

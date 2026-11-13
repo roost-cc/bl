@@ -71,7 +71,7 @@ import {
   LEAD_REPO,
   PLAN_FILE,
 } from './execution-plan.js';
-import { edgeArrow, featureMergeEdges, heldBy, heldLines, readBlockers, readEdges } from './blockers.js';
+import { edgeArrow, featureMergeEdges, heldBy, heldLines, holdRefusal, readBlockers, readEdges } from './blockers.js';
 import {
   ensureWorktree,
   launchSession,
@@ -1127,8 +1127,7 @@ export async function prepareFeatureWorktree(config, feature, verb = 'run') {
     process.exit(1);
   }
   // A hold on the feature or one of its stories, a `depends_on:` outside it
-  // among them (`readEdges`), refused it already: `dispatch` names each hold
-  // (`heldTargets`), and `startOf` checks `gate_free:run`.
+  // among them (`readEdges`), refused it already (`startOf`, F-119 R4).
   const { stories } = resolveFeatureStories(feature, config);
   const ordered = stories;
 
@@ -1639,20 +1638,10 @@ export async function cmdRunStory(args, baseConfig, story) {
     }
     return s;
   };
-  // A story `bl run` cannot start is refused before its holds are listed
-  // (`heldBy`: an edge in blockers.json, or a `depends_on:` key's run edge);
-  // the guards are checked after `runUnit`'s own escalation check.
+  // A story `bl run` cannot start is refused before `runUnit` names its
+  // holds; the guards are checked after `runUnit`'s own escalation check.
   if (!args.plan) start(false);
   const ordered = [storyAsOrdered(unit)];
-  if (!args.plan) {
-    const holds = heldBy(config, unit.id, 'run');
-    if (holds.length > 0) {
-      console.error(`Story ${unit.id} is blocked on unmerged work:`);
-      for (const h of holds) console.error(`  ${h.line}`);
-      console.error('Merge those first.');
-      process.exit(1);
-    }
-  }
   return runUnit(args, config, unit, {
     ordered: () => ordered,
     prepare: async () => {
@@ -1667,6 +1656,13 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
   const { planSteps, formatPlan, runFeature, defaultRunner, escalationOpen, runLockPath, parseMaxRounds } =
     await import('./feature-run.js');
   const kind = unitLabel(unit);
+  // A hold on `run`'s nominal path refuses the run, its --plan too, before
+  // anything else (F-119 D6). `startOf` in `prepare` checks the same holds.
+  const held = holdRefusal(config, unit.id, 'run');
+  if (held) {
+    console.error(held);
+    process.exit(1);
+  }
   const maxRounds = parseMaxRounds(args['max-rounds'], unit.reviewRoundsMax);
   if (!Number.isInteger(maxRounds) || maxRounds < 1) {
     console.error('bl run: --max-rounds must be a positive integer.');

@@ -101,7 +101,7 @@ test('bl batch refuses, before it writes anything, each story that may not join,
   assert.match(r.stderr, /bl batch: refused; nothing written\./);
   assert.match(r.stderr, /S-3: it is draft; a batch takes refined stories \(bl refine S-3\)\./);
   assert.match(r.stderr, /S-4: it is in F-1\./);
-  assert.match(r.stderr, /S-5: it is held at its run gate: .*S-6/);
+  assert.match(r.stderr, /S-5: bl run would refuse it: .*S-6/);
   assert.match(r.stderr, /S-7: it is in B-1\./);
   assert.doesNotMatch(r.stderr, /S-1:/);
   assert.ok(!existsSync(join(dir, 'batches', 'B2-mixed')), 'no batch written');

@@ -85,11 +85,11 @@ test('bl force lists each skip: no transition, a hold on the status, a failing g
   let r = force(dir, ['S-1', 'in_progress'], '\n');
   assert.match(r.stderr, /bl force S-1: done → in_progress\. The move skips:/);
   assert.match(r.stderr, /- flow\.json has no story transition from done to in_progress/);
-  // escalated → done: merge and done have it; merge's gate_free guard and the hold refuse it.
+  // escalated → done: merge and done have it; the hold refuses it, named once (no gate_free guard, F-119 R4).
   r = force(dir, ['S-2', 'done'], '\n');
   assert.doesNotMatch(r.stderr, /has no story transition/);
   assert.match(r.stderr, /- hold: S-2 is held at done by S-3 \(in_progress, needs done\)/);
-  assert.match(r.stderr, /- guard: S-2: merge needs gate_free:merge, and it does not hold/);
+  assert.doesNotMatch(r.stderr, /- guard:/);
   // escalated → in_progress: run's escalation_cleared refuses it.
   r = force(dir, ['S-2', 'in_progress'], '\n');
   assert.match(r.stderr, /- guard: S-2: run needs escalation_cleared, and it does not hold/);

@@ -28,16 +28,16 @@ import { findStoryDir, findComponentDir, readAllStories } from './story.js';
 import { updateTabTitle } from './tab-title.js';
 import { launchSession, loadPrompt, loadSchema, spillSubagentPrompts } from './session.js';
 import { flowForHelp, loadFlow } from './flow.js';
-import { assertFrom, enterVerb, logOf, requireBranch, statusOf, transition } from './transition.js';
+import { enterVerb, logOf, requireBranch, startOf, transition } from './transition.js';
 import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
 import { sessionEffort } from './effort.js';
 import { takeUnitLocksOrExit } from './unit-lock.js';
 
 /**
  * Resolve refine targets from positional args. Component IDs expand to their
- * draft stories; explicitly-named story IDs are included when `flow.json`'s
- * `refine` row starts from their status (`assertFrom`), else skipped with
- * the table's message. Results are deduped by story ID —
+ * draft stories; a story is included when `refine` may start on it
+ * (`startOf`: the row's from and guards, and no hold on its nominal path),
+ * else skipped with the refusal. Results are deduped by story ID —
  * an explicitly-named story wins over the same story pulled in via a component, so
  * an already-refined story named on the command line is still re-refined.
  *
@@ -48,6 +48,12 @@ export function resolveRefineTargets(positionals, config) {
   const errors = [];
   const notices = [];
   const byId = new Map();
+  // `startOf`: the refine row's from, its guards and the holds (F-119 R4); a refused story is skipped.
+  const refusedOf = (id, found, fm) => {
+    const { refusal } = startOf(config, 'story', { id, indexPath: found.indexPath, fm }, 'refine');
+    if (refusal) notices.push(`${refusal} — skipping.`);
+    return refusal != null;
+  };
 
   const addStory = (found, fm, source) => {
     const id = fm.story_id ?? normalizeId(found.storyEntry)?.id ?? found.storyEntry;
@@ -80,7 +86,7 @@ export function resolveRefineTargets(positionals, config) {
         const found = parsed && findStoryDir(parsed, config);
         if (!found) continue;
         const { fm } = parseFrontmatter(readFileSync(found.indexPath, 'utf8'));
-        addStory(found, fm, 'component');
+        if (!refusedOf(parsed.id, found, fm)) addStory(found, fm, 'component');
       }
       continue;
     }
@@ -96,13 +102,7 @@ export function resolveRefineTargets(positionals, config) {
       continue;
     }
     const { fm } = parseFrontmatter(readFileSync(found.indexPath, 'utf8'));
-    const unit = { id: parsed.id, kind: 'story', status: statusOf('story', fm) };
-    const refused = assertFrom(loadFlow(config.backlogRoot), unit, 'refine', { config, ...unit });
-    if (refused) {
-      notices.push(`${refused} — skipping.`);
-      continue;
-    }
-    addStory(found, fm, 'named');
+    if (!refusedOf(parsed.id, found, fm)) addStory(found, fm, 'named');
   }
 
   const targets = [...byId.values()].sort(

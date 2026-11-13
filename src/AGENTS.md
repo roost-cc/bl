@@ -846,8 +846,9 @@ keeps the code notes.
   name only a step (`VIA_CAPABILITIES`), not a `DISPATCH` handler. The file wires them; the
   registries define them. A guard name may carry one argument after a colon. In F-69 bl
   validates a branch's `then` but does not follow it: `bl run` chains in code.
-- **The nominal path** of a verb (F-119 D6) is `nominalPath(type, verb)`. A verb that checks
-  holds checks the statuses on it (`heldBy`, under **Holds between units**). A `gates` table
+- **The nominal path** of a verb (F-119 D6) is `nominalPath(type, verb)`. Every verb checks
+  the holds on it when it starts (`heldBy`, under **Holds between units**); bl's seed names no
+  `gate_free` guard, which stays registered for an older `flow.json`. A `gates` table
   from before F-119 loads, and `flow.gateTables` names the types that still have one, for the
   `flow-json` warning.
 - **`src/flow.js`.** `loadFlow(backlogRoot)` returns the parsed flow (cached while the file's
@@ -966,8 +967,10 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
   (`reviewOf`) is `fixing`, whatever its status, else `implement` (a `done` or `superseded`
   unit always gets `implement`, whose row refuses it); a started `fix` records
   `fixing`, its `during`;
-  `bl review`, `bl merge`, `bl refine` and `bl approve` their own verb. `bl merge` checks the
-  `when` guards in `mergeGates` with their own messages (`guards: false`). A malformed
+  `bl review`, `bl merge`, `bl refine` and `bl approve` their own verb. When the verb may
+  start, a hold on its nominal path refuses it (`holdRefusal`, F-119 R4): the one hold check
+  of every verb that calls `startOf`. `bl merge` checks the `when` guards and the holds in
+  `mergeGates` with their own messages (`guards: false`), so it names a hold once. A malformed
   `transitions:` (`malformedLogRefusal`) refuses every verb; `bl merge F-n` and
   `prepareFeatureWorktree` also refuse a feature whose story has one, before the first repo step.
 - **A unit with no log** (before `bl/scripts/migrate-transitions.js` runs) reads as the log the
@@ -1168,14 +1171,22 @@ derives each unit's view.
   `heldAt(config, id, status)` is the same check for one status. A file with no edges holds
   nothing and reads neither `flow.json` nor the units; with edges, a missing `flow.json` stops
   the verb with its `FlowError`.
-  - `bl run` and `bl implement`: `dispatch` (`verbs.js`) checks the one target after it
-    resolves and before `runTarget` (`GATED_VERBS`, `heldTargets`); both verbs take one target
-    (`ONE_TARGET_VERBS`, F-125 Decision A3), and several ids are refused before the check. A
-    held target is refused, one line per edge, then `next: bl status <blocker>` per blocker.
-    `--plan` is held too.
+  - Every verb checks its holds when it starts (F-119 D6, R4), and only then: a hold added
+    while it runs does not stop it. `holdRefusal(config, id, verb)` is the refusal: one line per
+    edge, then `next: bl status <blocker>` per blocker. `startOf` checks it for the verb that
+    starts, so `bl run`, `bl implement`, `bl review`, `bl refine` (a story or a feature) and
+    `bl approve` refuse a held unit in their handler. `bl run` also checks `run`'s path in
+    `runUnit` before anything else, so `--plan` is held too. `bl done S-n` checks `done`
+    (`--superseded`: `supersede`), and `bl task done T-n` checks the task's `done`.
+  - Several ids: `dispatch` (`verbs.js`) checks nothing itself, so each target refuses in its
+    own handler (a child `bl <verb> <id>`, or a `bl refine` story batch that skips a held story
+    with a notice), and the others start. `bl run` and `bl implement` take one target
+    (`ONE_TARGET_VERBS`, F-125 Decision A3).
   - `bl merge`: `mergeGates` adds the finding `blocker` first, one per unmet edge on the unit or
-    its stories, before any repo is touched, for a story and a feature alike.
-  - No other verb is held: `bl refine`, `bl new`, `bl review`, `bl side`, `bl status`, `bl done`.
+    its stories, before any repo is touched, for a story and a feature alike (`startOf` with
+    `guards: false` adds none).
+  - No hold check: `bl new` and `bl side` make a new unit, which no edge can name yet
+    (`UNHELD_VERBS`), and `bl status` only reads.
   - No override flag: the blocker moving on (its status meets `until`) or `bl block remove`
     lifts the hold.
   - `bl status <id>` prints a `held: <line>` for each active, unmet edge on the unit (and a
@@ -1186,15 +1197,14 @@ derives each unit's view.
   `formatBlockers`,
   `writeBlockers`, `edgeKey`, `unitIndex` / `readUnits` (every story, feature and task by id, a
   story with the feature it runs with and its `unitRepo`), `isActive`, `isMet`, `unmetEdges`,
-  `gateIds`, `heldBy`, `heldAt`, `heldLines`, `OLD_GATES`, `gateStatus`, `holdGate`,
-  `edgeProblems` (the per-edge checks `bl block add`
+  `gateIds`, `heldBy`, `holdRefusal`, `UNHELD_VERBS`, `heldAt`, `heldLines`, `OLD_GATES`,
+  `gateStatus`, `holdGate`, `edgeProblems` (the per-edge checks `bl block add`
   and `bl validate` share), `holdGraph`, `findHoldCycles`, `wouldCycle`, `findBlockersFindings`,
   for merge and order edges `repoEnd`, `edgeArrow`, `inFeature`, `featureMergeEdges` and
   `featureGraph`, and for story dependencies `dependencyEdge` (the edge "S-a waits for S-b"
   stands for, `RUN_EDGE` or `ORDER_EDGE`), `dependsOnEdges`, `withDependsOn`, `readEdges` and
   `storyDependencies` (each story's dependencies from the run and order edges between two
-  stories, which the graph's `dependsOn`, `computePlan`, `dependencyOrder` and `bl implement S-n`'s
-  deferral read).
+  stories, which the graph's `dependsOn`, `computePlan` and `dependencyOrder` read).
 - **The deadlock graph** (`holdGraph`, D5). Nodes are features (each standing for its stories)
   and standalone stories; an arc says one node cannot pass a gate until another moves on.
   Arcs come from every active, unmet edge of `readEdges` (so from a `depends_on:` outside a
@@ -3064,8 +3074,9 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   in a feature and after `## Dependencies` in a story, only when the unit has a task; nothing
   writes it into the unit's file. Holds names each edge the task is the blocker of in
   `blockers.json` by the verbs whose nominal path enters its gate's status (`holdsText`,
-  `Flow.nominalPath`): `bl merge F-3`, `bl run, bl implement, bl side (every unit) once F-54 is
-done`; `none` when it has none. A `bl block add T-<n> …` shows there at the next read.
+  `Flow.nominalPath`, less `UNHELD_VERBS`), for example `bl merge F-3` or
+  `bl run, bl implement (every unit) once F-54 is done`; `none` when it has none. A
+  `bl block add T-<n> …` shows there at the next read.
 - **A task is a unit in the graph** (`unitIndex`): it can be the `blocker` of an edge or its
   `active_when` unit (`bl block add T-7 --gate done --unit F-53 --until done`). A hold on a
   task can gate only a task status, `draft` or `done`; any other gate is `blockers-gate`.

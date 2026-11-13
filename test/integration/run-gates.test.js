@@ -64,9 +64,10 @@ test('a wildcard run edge with active_when holds nothing until its unit is done,
     assert.equal(r.status, 1);
     assert.equal(r.stderr, want);
     assert.equal(r.stdout, '');
+    // bl implement skips a story it cannot start, with the same lines.
     r = bl(fx.dir, ['implement', 'S-1']);
     assert.equal(r.status, 1);
-    assert.equal(r.stderr, want);
+    assert.equal(r.stderr, want.replace(/\n$/, ' — skipping.\n'));
 
     // bl status is never held, and shows the hold.
     r = bl(fx.dir, ['status', 'S-1']);
@@ -116,11 +117,14 @@ test('a next task (bl task --gate next) holds nothing while its unit is open, th
     ]) {
       r = bl(fx.dir, args);
       assert.equal(r.status, 1, args.join(' '));
-      assert.match(r.stderr, /^S-[12] is held at in_progress by T-1 \(draft, needs done\)\nnext: bl status T-1\n$/);
+      assert.match(
+        r.stderr,
+        /^S-[12] is held at in_progress by T-1 \(draft, needs done\)\nnext: bl status T-1( — skipping\.)?\n$/,
+      );
     }
     assert.match(
       bl(fx.dir, ['inbox']).stdout,
-      /^  T-1 +S-5 +Reinstall the browsers\n +holds: bl run, bl implement, bl side \(every unit\)\n/m,
+      /^  T-1 +S-5 +Reinstall the browsers\n +holds: bl run, bl implement \(every unit\)\n/m,
     );
 
     r = bl(fx.dir, ['task', 'done', 'T-1', 'reinstalled']);

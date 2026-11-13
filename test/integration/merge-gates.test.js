@@ -545,6 +545,8 @@ test("a merge edge on S-1 and on F-1's story refuses both before any repo is tou
       /^S-2 is held at done by S-3 \(in_progress, needs done\): F-1 merges once S-3 meets "done" \(bl status S-3\)\.$/m,
     );
     assert.equal(g(fx.repos.code, 'rev-parse', 'main'), before, 'nothing merged');
+    // mergeGates names each hold once: startOf leaves bl merge's holds to it (F-119 R4).
+    for (const r of [s, f]) assert.equal(r.stderr.match(/is held at done by S-3/g).length, 1, r.stderr);
 
     // bl status names the hold, on the story and on the feature through its story.
     assert.match(

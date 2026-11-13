@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, wr
 import { dirname, join } from 'path';
 import { mkTempBacklog, STORY_INDEX_TEMPLATE } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
+import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
 import {
   GIT_ENV,
@@ -64,6 +65,43 @@ test('bl done --superseded marks story as superseded rather than done', () => {
     assert.equal(r.status, 0, r.stderr);
     assert.equal(logStatusOf('story', storyFm(dir, rel)), 'superseded');
     assertNothingArchived(dir);
+  } finally {
+    cleanup();
+  }
+});
+
+test('bl done refuses a story held at done and names the hold; --superseded does not; of several ids the others close (F-119 R4)', () => {
+  const { dir, rel, cleanup } = backlogWithStory('Held', {
+    // A repo with a commit: bl done with several ids reads each story's commit from its HEAD.
+    repos: { code: { path: './code' } },
+    components: [{ ...FOUNDATION, repo: 'code' }],
+    stories: [
+      { id: 'S-1', component: 'C00', title: 'Held', dirSuffix: 'first-story', points: 1 },
+      { id: 'S-2', component: 'C00', title: 'Free', dirSuffix: 'free', points: 1 },
+      { id: 'S-3', component: 'C00', title: 'Blocker', dirSuffix: 'blocker', points: 1, status: 'in_progress' },
+    ],
+  });
+  try {
+    git(dir, 'init', '-q', '-b', 'main', join(dir, 'code'));
+    git(join(dir, 'code'), 'commit', '--allow-empty', '-q', '-m', 'init');
+    writeBlockersLocked(dir, [{ blocker: 'S-3', gate: 'done', unit: 'S-1', until: 'done' }]);
+    const before = readFileSync(join(dir, rel), 'utf8');
+    let r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
+    assert.equal(r.status, 1);
+    assert.equal(r.stderr, 'S-1 is held at done by S-3 (in_progress, needs done)\nnext: bl status S-3\n');
+    assert.equal(readFileSync(join(dir, rel), 'utf8'), before, 'nothing written');
+
+    // Several ids: S-1 is refused and named, S-2 closes.
+    r = runBl(['done', 'S-1', 'S-2'], { cwd: dir });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /^S-1 is held at done by S-3 \(in_progress, needs done\)$/m);
+    assert.match(r.stderr, /bl done: failed for S-1\./);
+    assert.equal(logStatusOf('story', storyFm(dir, 'stories/S2-free/index.md')), 'done');
+
+    // The hold is at done; superseded is not on supersede's path.
+    r = runBl(['done', '--superseded', 'S-1', 'abcdef0'], { cwd: dir });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(logStatusOf('story', storyFm(dir, rel)), 'superseded');
   } finally {
     cleanup();
   }

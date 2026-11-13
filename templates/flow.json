@@ -26,7 +26,7 @@
         },
         "run": {
           "from": ["refined", "in_progress", "escalated"],
-          "when": ["gate_free:run", "escalation_cleared"],
+          "when": ["escalation_cleared"],
           "during": "in_progress",
           "via": ["implement", "test", "self_review", "open_pr"],
           "success": [{ "to": "in_review", "then": "review" }],
@@ -48,7 +48,6 @@
         },
         "merge": {
           "from": ["in_progress", "in_review", "ready_for_merge", "escalated"],
-          "when": ["gate_free:merge"],
           "via": ["merge"],
           "success": [{ "to": "done" }],
           "failure": [{ "to": "escalated" }]
@@ -86,17 +85,13 @@
         "approve": { "from": ["refined"], "success": [{ "to": "approved" }] },
         "run": {
           "from": ["approved", "in_progress", "escalated"],
-          "when": ["gate_free:run", "escalation_cleared"],
+          "when": ["escalation_cleared"],
           "during": "in_progress",
           "via": ["implement", "test", "self_review", "open_pr"],
           "success": [{ "to": "in_review", "then": "review" }],
           "failure": [{ "to": "escalated" }]
         },
-        "implement": {
-          "from": ["approved", "in_progress", "escalated"],
-          "when": ["gate_free:run"],
-          "success": [{ "to": "in_progress" }]
-        },
+        "implement": { "from": ["approved", "in_progress", "escalated"], "success": [{ "to": "in_progress" }] },
         "review": {
           "from": ["in_progress", "in_review", "ready_for_merge", "escalated"],
           "during": "in_review",
@@ -113,7 +108,6 @@
         },
         "merge": {
           "from": ["in_progress", "in_review", "ready_for_merge", "escalated"],
-          "when": ["gate_free:merge"],
           "via": ["merge"],
           "success": [{ "to": "done" }],
           "failure": [{ "to": "escalated" }]
@@ -137,17 +131,13 @@
         "new": { "from": [], "success": [{ "to": "approved" }] },
         "run": {
           "from": ["approved", "in_progress", "escalated"],
-          "when": ["gate_free:run", "escalation_cleared"],
+          "when": ["escalation_cleared"],
           "during": "in_progress",
           "via": ["implement", "test", "self_review", "open_pr"],
           "success": [{ "to": "in_review", "then": "review" }],
           "failure": [{ "to": "escalated" }]
         },
-        "implement": {
-          "from": ["approved", "in_progress", "escalated"],
-          "when": ["gate_free:run"],
-          "success": [{ "to": "in_progress" }]
-        },
+        "implement": { "from": ["approved", "in_progress", "escalated"], "success": [{ "to": "in_progress" }] },
         "review": {
           "from": ["in_progress", "in_review", "ready_for_merge", "escalated"],
           "during": "in_review",
@@ -164,7 +154,6 @@
         },
         "merge": {
           "from": ["in_progress", "in_review", "ready_for_merge", "escalated"],
-          "when": ["gate_free:merge"],
           "via": ["merge"],
           "success": [{ "to": "done" }],
           "failure": [{ "to": "escalated" }]

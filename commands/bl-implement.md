@@ -35,12 +35,13 @@ whose `transitions:` is malformed.
 and launches one interactive agent session (the flow below). `bl implement S-1 S-2` is refused
 before anything starts. To work on several stories as one unit, group them with `bl batch`.
 
-## Dependency gating
+## Holds
 
-A story is only launched when every story it waits for (the blockers of the run
-and order edges on it in `blockers.json`) is already `done`/`superseded`
-(i.e. **merged**). Otherwise it is refused and the blocker is named. After you
-review and merge the blocker, re-run the same command.
+A target is only launched when no hold in `blockers.json` (or `depends_on:` on a
+story that is not `done`) is on the nominal path of the verb that starts:
+`in_progress` for `implement`, and `fixing`, `in_review`, `ready_for_merge` for a
+fix round (F-119 D6). Otherwise it is refused, and each hold and its blocker is
+named. When the blocker meets the hold's status, re-run the same command.
 
 ## What It Does
 
