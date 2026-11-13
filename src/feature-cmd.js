@@ -60,6 +60,7 @@ import {
   resolveFeaturePlugins,
   DEFAULT_REVIEW_ROUNDS_MAX,
 } from './feature.js';
+import { normalizeBatchId } from './batch.js';
 import {
   computePlan,
   featureRepoOrder,
@@ -214,10 +215,10 @@ export async function markFeatureMerged(config, feature, stories, { decided, at 
   });
 }
 
-/** A feature's or a batch's id as `normalizeFeatureId` parses one: `{ id, num }`. */
+/** A feature's or a batch's id as its kind's parser (`normalizeFeatureId`, `normalizeBatchId`) reads it: `{ id, num }`. */
 function parsedFor(feature) {
-  const m = feature.id.match(/^[FB]-(\d+)$/);
-  return { id: feature.id, num: m ? m[1] : '0' };
+  const normalize = flowKind(feature) === 'batch' ? normalizeBatchId : normalizeFeatureId;
+  return { id: feature.id, num: normalize(feature.id)?.num ?? '0' };
 }
 
 function renderStoriesPlan(config, ordered) {
