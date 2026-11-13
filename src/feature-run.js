@@ -103,6 +103,7 @@ import {
   extractReviewLog,
   featureReviewGate,
   openCheckboxItems,
+  resolutionCommit,
   reviewOutcome,
   summarizeLatestReviewSession,
 } from './review-log.js';
@@ -4137,7 +4138,10 @@ function openItemsSummary(ctx) {
   const items = openCheckboxItems(block).map((i) => {
     const whole = [i.text, ...i.lines].join(' ');
     const claim = whole.split(/ — Repro:|\bClass:/)[0].trim();
-    return `- [ ] ${wrapItem(claim || whole)}`;
+    // A `→` note naming a commit on an unticked item is likely a missed tick (S-1292).
+    const sha = resolutionCommit(i);
+    const flag = sha ? ` (has a resolution note naming ${sha}, but its box is unticked: possible oversight)` : '';
+    return `- [ ] ${wrapItem(`${claim || whole}${flag}`)}`;
   });
   return items.length ? `Open items from session ${latest.date}:\n\n${items.join('\n')}` : '';
 }

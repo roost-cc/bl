@@ -2691,6 +2691,10 @@ Rules:
 - Items are checkbox bullets. The implementing agent flips `- [ ]` →
   `- [x]` in place and appends a short `→ <resolution>` note (typically
   a commit SHA and a few words; for deferred items, a deferral reason).
+  bl reads only the box: an unticked item stays open whatever its note says.
+  An escalation's open-items list (`openItemsSummary()`) flags an unticked
+  item whose `→` continuation line names a commit (`resolutionCommit()`) as a
+  possible missed tick. The flag is only a hint (S-1292).
 - The implementing agent makes **one commit** to the backlog repo per
   review session, after the final item is checked. bl then records
   `in_review` by `fix` from the fix outcome. Commit message:

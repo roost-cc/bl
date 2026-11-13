@@ -91,6 +91,27 @@ export function openCheckboxItems(text) {
   return items;
 }
 
+/** A commit SHA in a resolution note: a 7 to 40 character lowercase hex word, bare or in backticks. */
+const RESOLUTION_SHA_RE = /\b[0-9a-f]{7,40}\b/;
+
+/**
+ * The first commit SHA that a resolution note of `item` names, else `null`.
+ * A resolution note is a continuation line that starts with `→`; the item's
+ * own first line is the reviewer's claim and is never a note. The result is
+ * only a hint for an escalation: the box alone decides whether an item is open.
+ *
+ * @param {{ text: string, lines: string[] }} item an item from `openCheckboxItems`
+ * @returns {string | null}
+ */
+export function resolutionCommit(item) {
+  for (const line of item.lines) {
+    if (!line.startsWith('→')) continue;
+    const sha = line.match(RESOLUTION_SHA_RE)?.[0];
+    if (sha) return sha;
+  }
+  return null;
+}
+
 /**
  * Count the open boxes of one session body. `unchecked` counts every open
  * box; `blocking` leaves out those under **Nits** — nits never gate a merge

@@ -461,6 +461,39 @@ test('featureReviewGate blocks an open Must in a CRLF feature file', async () =>
   }
 });
 
+test('an escalation flags an open item whose → note names a commit, and the item still escalates (S-1292)', async () => {
+  // F-78's shape: the fixer wrote `→ c531dab.` but left the box unticked.
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        verify: () => {
+          editFile(CH(feature), (fm, body) => {
+            const block =
+              '### Session 2026-09-24 (PR #7)\n\n**Must fix**\nNone.\n\n**Should fix**\n\n' +
+              '- [ ] guard checks pathspec elements\n      → c531dab. fixed every instance\n' +
+              '- [ ] second item\n\n**Nits**\nNone.\n';
+            return body.replace(/(## Review Log\n\n)(No reviews yet\.\n)?/, `$1${block}\n`);
+          });
+          return reviewOutcome();
+        },
+      },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'escalated');
+    const text = readFileSync(feature.indexPath, 'utf8');
+    assert.match(
+      text,
+      /- \[ \] guard checks pathspec elements → c531dab\. fixed every instance \(has a resolution note naming\s+c531dab, but its box is unticked: possible oversight\)/,
+    );
+    assert.match(text, /- \[ \] second item\n/);
+  } finally {
+    cleanup();
+  }
+});
+
 test('the test gate refuses a dirty tree with no test plugin configured', async () => {
   // Leftovers from each step the gate follows: a story, the self-review, a fix round.
   for (const leftBy of ['story', 'selfReview', 'fix']) {

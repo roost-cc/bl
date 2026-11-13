@@ -5,6 +5,7 @@ import {
   parseLatestSession,
   summarizeLatestReviewSession,
   openCheckboxItems,
+  resolutionCommit,
   reviewOutcome,
   sessionDates,
   CHECKBOX_RE,
@@ -356,4 +357,22 @@ test('openCheckboxItems ends an item at a blank line, a heading, a plain bullet 
   ]);
   assert.deepEqual(openCheckboxItems(''), []);
   assert.deepEqual(openCheckboxItems('**Must fix**\nNone.\n'), []);
+});
+
+test('resolutionCommit: the first commit a → continuation line names, never one in the claim', () => {
+  const cases = [
+    ['- [ ] guard misses pathspecs\n      → c531dab. fixed every instance', 'c531dab'],
+    ['- [ ] guard misses pathspecs\n      → fixed in 3a1f9bc — every caller', '3a1f9bc'],
+    ['- [ ] guard misses pathspecs\n      → bl `3a1f9bc`. fixed', '3a1f9bc'],
+    ['- [ ] guard misses pathspecs\n      Class: guard\n      → c531dab. fixed', 'c531dab'],
+    ['- [ ] guard misses pathspecs\n      → c531dab. fixed\n      → 3a1f9bc. again', 'c531dab'],
+    ['- [ ] a nit\n      → dropped (nit)', null],
+    ['- [ ] too big\n      → deferred to S-471 for later', null],
+    ['- [ ] no note at all\n      wraps here', null],
+    ['- [ ] claim says → abc1234 already', null],
+  ];
+  for (const [md, sha] of cases) {
+    const [item] = openCheckboxItems(md);
+    assert.equal(resolutionCommit(item), sha, md);
+  }
 });
