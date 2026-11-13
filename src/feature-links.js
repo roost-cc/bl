@@ -130,6 +130,19 @@ export function writeRecord(backlogRoot, record) {
 }
 
 /**
+ * Remove the record at `path` once every story is written. A failure leaves
+ * it: the next command finds the links complete and drops it.
+ * @param {string} path
+ */
+export function dropRecord(path) {
+  try {
+    unlinkSync(path);
+  } catch {
+    // Settled as complete by the next command.
+  }
+}
+
+/**
  * Settle one record; the caller holds the backlog lock. Each story is
  * restored under its spec lock (its covering lock, F-126). Rejects, before
  * anything is written, on a record `checkRecord` refuses.

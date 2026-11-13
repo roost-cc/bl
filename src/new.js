@@ -20,7 +20,7 @@
  * edges between them it turned into order edges.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join, dirname, relative, isAbsolute, resolve } from 'path';
 import * as readline from 'readline';
 import {
@@ -62,7 +62,7 @@ import { syncAndCommit, reportBacklogCommit } from './sync.js';
 import { prepareBody } from './body.js';
 import { validateSpec, SpecError } from './spec.js';
 import { resolveTargets } from './targets.js';
-import { failPoint, settleRecord, writeRecord } from './feature-links.js';
+import { dropRecord, failPoint, settleRecord, writeRecord } from './feature-links.js';
 import { atomicWriteFile, moveIntoBacklog, removeBacklogPath, STAGING_DIR } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
 import { BLOCKERS_FILE, dependencyEdge, edgeKey, edgeLabel, readUnits, storyUnitOf } from './blockers.js';
@@ -495,11 +495,7 @@ async function newFeature(args, stories) {
         }
         throw err;
       }
-      try {
-        unlinkSync(record);
-      } catch {
-        // The links are complete: the next command finds them so and drops it.
-      }
+      dropRecord(record);
     },
   });
 

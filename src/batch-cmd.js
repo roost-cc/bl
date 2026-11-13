@@ -21,7 +21,7 @@
  * A batch needs no `bl approve`: it is approved when it is built.
  */
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync } from 'fs';
 import { join, relative } from 'path';
 import { info, loadConfig, normalizeId, parseArgs, slugify } from './config.js';
 import { readAllStories } from './story.js';
@@ -29,7 +29,7 @@ import { loadFlow } from './flow.js';
 import { applyNew } from './transition.js';
 import { renderTemplate } from './template.js';
 import { atomicWriteFile } from './atomic-write.js';
-import { settleRecord, writeRecord } from './feature-links.js';
+import { dropRecord, settleRecord, writeRecord } from './feature-links.js';
 import { updateSpecFile } from './spec-file.js';
 import { withLock } from './lock.js';
 import { heldBy, readUnits } from './blockers.js';
@@ -155,13 +155,9 @@ async function writeBatch(config, { id, title, stories }) {
         stories.map((s) => s.id),
       ) ?? [];
   } catch (err) {
-    throw await rolledBack(root, record, err);
+    throw await settleFailedWrite(root, record, err);
   }
-  try {
-    unlinkSync(record);
-  } catch {
-    // The batch is complete: the next command finds it so and drops the record.
-  }
+  dropRecord(record);
   return { dir, edgePaths };
 }
 
@@ -170,7 +166,7 @@ async function writeBatch(config, { id, title, stories }) {
  * with what is left: `left` (the paths still changed) when a story could not
  * be restored or the record could not be settled.
  */
-async function rolledBack(root, record, err) {
+async function settleFailedWrite(root, record, err) {
   let res;
   try {
     res = await settleRecord(root, record, { rollback: true });
