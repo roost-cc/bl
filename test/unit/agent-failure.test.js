@@ -5,12 +5,13 @@ import { classifyCause, describeFailure, localTime } from '../../src/agent-failu
 const NOW = Date.parse('2026-10-13T23:59:36Z');
 const RESET = new Date(NOW + 2 * 3_600_000);
 const out = (kind, until = null) => ({ agent: 'a', model: 'm', scope: 'model', kind, message: 'refused', until });
-const reading = (state, { until = null, windows = [], message = '' } = {}) => ({
+const reading = (state, { until = null, windows = [], message = '', spend } = {}) => ({
   state,
   scope: 'model',
   until,
   windows,
   message,
+  ...(spend ? { spend } : {}),
 });
 const win = (name, remainingPercent, resetsAt = RESET) => ({ name, remainingPercent, resetsAt });
 
@@ -19,7 +20,7 @@ test('classifyCause: each cause, in its order', () => {
     ['spend via refusal', { out: out('spend'), reading: reading('available') }, 'spend cap reached'],
     [
       'spend via reading',
-      { out: out('quota'), reading: reading('unavailable', { windows: [win('5h', 10)] }) },
+      { out: out('quota'), reading: reading('unavailable', { windows: [win('5h', 10)], spend: true }) },
       'spend cap reached',
     ],
     [
@@ -89,7 +90,7 @@ test('classifyCause: a window at 0% with no reset time is a used-up window', () 
     ],
     [
       'a session refusal, reading unavailable with no window at 0% and no until',
-      { out: out('session'), reading: reading('unavailable', { message: 'spend cap reached (credits)' }) },
+      { out: out('session'), reading: reading('unavailable', { message: 'spend cap reached (credits)', spend: true }) },
       'spend cap reached',
     ],
   ];
@@ -211,12 +212,41 @@ test('describeFailure: a spend cause from a reading shows the reading that says 
         agent: 'a',
         model: 'm',
         out: out('session'),
-        reading: reading('unavailable', { message: 'spend cap reached (credits)' }),
+        reading: reading('unavailable', { message: 'spend cap reached (credits)', spend: true }),
       },
     ],
   });
   assert.equal(cause, 'spend');
   assert.ok(text.includes('\n  - capacity: unavailable — spend cap reached (credits)\n'), text);
+});
+
+test('describeFailure: an unavailable reading that is not a spend cap is not called one', () => {
+  // Invariant: a cause line and its steps never contradict the reading's own
+  // message. A reading `unavailable` with no window at 0%, no reset time and
+  // no spend marker (the local adapter's refused connection) is `unknown`,
+  // whatever the refusal's kind.
+  const refused = 'local server http://x refused the connection: start the server';
+  for (const kind of ['capacity', 'session', 'weekly', 'quota', 'other']) {
+    for (const windows of [[], [win('5h', 40)]]) {
+      const { cause, causeLine, text } = describeFailure({
+        ...base,
+        configurations: [
+          {
+            agent: 'local',
+            model: 'qwen',
+            out: out(kind),
+            reading: reading('unavailable', { windows, message: refused }),
+          },
+        ],
+      });
+      const name = `${kind} ${windows.length}`;
+      assert.equal(cause, 'unknown', name);
+      assert.equal(causeLine, 'unknown', name);
+      assert.ok(text.includes(`\n  - capacity: unavailable — ${refused}\n`), name);
+      assert.ok(!/spend/i.test(text), `${name}: ${text}`);
+      assert.match(steps(text)[0], /^Run `bl capacity`/, name);
+    }
+  }
 });
 
 /** The numbered steps of `text`, without their numbers, checked to run 1, 2, 3, … */

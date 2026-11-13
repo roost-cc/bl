@@ -261,7 +261,9 @@ export class AgentProvider {
    * `account` (the reading applies to every model of this agent) or `model`;
    * `until` is the earliest time an `unavailable` configuration may be tried
    * again, or null; `windows` lists the quota windows read, for
-   * `bl capacity`; `message` is the adapter's own words.
+   * `bl capacity`; `message` is the adapter's own words. `spend` is true
+   * on an `unavailable` reading whose cause is a spend cap; the cause line
+   * (`classifyCause`) names a spend cap from a reading only then.
    *
    * `topLevel` is `backlog.json`'s top level as the caller's config loaded
    * it: an adapter whose answer depends on `backlog.json` (`local` reads its
@@ -273,7 +275,7 @@ export class AgentProvider {
    *             scope: "account"|"model", until: Date|null,
    *             windows: { name: string, remainingPercent: number,
    *                        resetsAt: Date|null }[],
-   *             message: string }}
+   *             message: string, spend?: true }}
    */
   capacity(_opts = {}) {
     return {

@@ -63,6 +63,7 @@ test('Codex capacity with spendControlReached is unavailable with no reset', () 
   const { c, running } = readFake('spend');
   assert.equal(c.state, 'unavailable');
   assert.equal(c.until, null);
+  assert.equal(c.spend, true);
   assert.deepEqual(c.windows, OPEN_WINDOWS);
   assert.match(c.message, /spend cap reached/);
   assert.equal(running, false);

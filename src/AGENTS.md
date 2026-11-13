@@ -1937,12 +1937,14 @@ time>` or `no reset time`). An adapter that reports
    (`sessionFailure`) shows its configuration and `Error: <sessionError>`,
    and no reading is taken.
 3. **The cause line:** `Cause: <cause>`, exactly one, the first that any
-   refused configuration has (`classifyCause`). The reading outranks the
-   refusal: a reading `available` is never a used-up window.
+   refused configuration has (`classifyCause`). A reading outranks a
+   `session` or `weekly` refusal: a reading `available` is never a used-up
+   window.
    - `spend cap reached`: refusal `kind: spend`, or a reading `unavailable`
-     with no `until` and no window at 0%;
+     that says so (`spend: true`, which the Codex adapter sets);
    - `quota window used up until <local time>`, or `quota window used up, no
-reset time` (with the windows at 0%): any other reading `unavailable`, or
+reset time` (with the windows at 0%): a reading `unavailable` with a window
+     at 0% or a reset time, or
      refusal `kind` `session` or `weekly` with no reading or an `unknown` one;
      the reset is the reading's `until` when it holds a time, else the
      refusal's; with several, the earliest reset, and one with no reset time
@@ -1950,7 +1952,8 @@ reset time` (with the windows at 0%): any other reading `unavailable`, or
    - `provider overloaded, your quota is fine`: refusal `kind: capacity` and
      a reading `available`; `provider overloaded; quota could not be read`
      when the reading is `unknown`;
-   - `unknown`: anything else. A session failure with no refusal is always
+   - `unknown`: anything else, a reading `unavailable` that is neither (a
+     local server that refused the connection) among them. A session failure with no refusal is always
      `unknown — not a capacity refusal bl recognised`.
 4. **The steps:** `Next steps:`, numbered in execution order. Each list ends
    with "Clear `## Escalation` to `None.`." and then the resume command
@@ -3606,7 +3609,7 @@ with a 20-second deadline and stops app-server on every path;
 `rateLimitsByLimitId` (else `rateLimits`) gives its `primary` and
 `secondary` windows ("codex 5h", "codex 7d"). A window with nothing left, or
 `spendControlReached`, makes every Codex model `unavailable` until the latest
-such reset (none for a spend cap). A timeout, an exit, a JSON-RPC error or an
+such reset (none for a spend cap, which also sets `spend: true`). A timeout, an exit, a JSON-RPC error or an
 answer with no windows is `unknown`, with the reason.
 
 Claude's reading comes from Claude Code's OAuth usage endpoint,

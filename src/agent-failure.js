@@ -38,25 +38,29 @@ const usedUp = (reading) => (reading?.windows ?? []).filter((w) => w.remainingPe
  * `spend`, `window`, `overloaded` or `unknown`; `line` is the operator's
  * words; `until` is the reset (epoch ms) of a used-up window, else null.
  *
- * The reading outranks the refusal: a reading `available` is never a used-up
- * window, and a reading `unavailable` is one, with or without a reset time.
+ * A reading outranks a `session` or `weekly` refusal: a reading `available`
+ * is never a used-up window, and a reading `unavailable` with a window at 0%
+ * or a reset time is one. A reading
+ * `unavailable` is a spend cap only when it says so (`spend: true`); one that
+ * is neither (a local server that refused the connection) gives `unknown`.
  * A `session` or `weekly` refusal is a used-up window only when no reading
  * says otherwise (none, or `unknown`).
  *
  * @param {{ out: { kind: string, until: string|null } | null,
- *   reading: { state: string, until: Date|string|null, windows?: object[], message?: string } | null }} c
+ *   reading: { state: string, until: Date|string|null, windows?: object[], message?: string, spend?: true } | null }} c
  */
 export function classifyCause({ out, reading }) {
   const kind = out?.kind ?? null;
   const state = reading?.state ?? null;
   const zero = usedUp(reading);
-  if (kind === 'spend' || (state === 'unavailable' && reading.until == null && zero.length === 0)) {
+  if (kind === 'spend' || (state === 'unavailable' && reading.spend === true)) {
     return { cause: 'spend', line: 'spend cap reached', until: null };
   }
-  const refusedWindow = (kind === 'session' || kind === 'weekly') && state !== 'available';
-  if (state === 'unavailable' || refusedWindow) {
+  const readWindow = state === 'unavailable' && (zero.length > 0 || Number.isFinite(timeMs(reading.until)));
+  const refusedWindow = (kind === 'session' || kind === 'weekly') && (state == null || state === 'unknown');
+  if (readWindow || refusedWindow) {
     // The reading's reset when it holds a time, else the refusal's.
-    const sources = state === 'unavailable' ? [reading.until, out?.until] : [out.until];
+    const sources = readWindow ? [reading.until, out?.until] : [out.until];
     const until = sources.map(timeMs).find(Number.isFinite) ?? null;
     const names = zero.length ? ` (${zero.join(', ')} at 0%)` : '';
     const when = until == null ? ', no reset time' : ` until ${localTime(until)}`;
