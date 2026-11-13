@@ -3098,7 +3098,9 @@ function runScope(ctx) {
  */
 async function rescope(ctx) {
   // `bl merge`'s integration merges the repos it prepared; a story added by
-  // its sessions is for the next `bl run`, not this merge.
+  // its sessions is for the next `bl run`, not this merge. An edit to
+  // `plan.yaml`'s `merge_order` is not followed here: `cmdMerge` reads the
+  // plan again after the integration.
   if (ctx.integration) return { changed: false, added: { stories: [], repos: [] } };
   const before = runScope(ctx);
   const stopped = await refreshRepos(ctx);

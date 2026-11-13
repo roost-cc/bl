@@ -1806,19 +1806,24 @@ export async function cmdMerge(args, config, feature) {
   // feature's merge edges put a repo after the repos it waits for, else
   // `names`, so `bl` merges first and syncs the backlog before a later
   // repo's push gate reads it (S-864). A cycle is refused before any repo is
-  // touched.
-  const plan =
-    storedMergeOrder(config, feature, names) ??
-    mergeOrder(names, featureMergeEdges(readBlockers(config.backlogRoot).edges, feature.id));
-  if (plan.cycle) {
-    console.error(
-      `${unitLabel(feature)} ${feature.id}: its merge edges form a cycle, so no repo can merge first: ${plan.cycle.map(edgeArrow).join(', ')}.\nRemove one with bl block remove <blocker> --gate merge --unit <unit>.`,
-    );
-    process.exit(1);
-  }
-  const targets = plan.order.map((repoName) => ({ repoName, repoPath: config.reposByName[repoName] }));
-  // The lead repo stays `names`' first, wherever it merges (F-111 R3).
-  const primary = targets.find((t) => t.repoName === names[0]);
+  // touched. Read again after the integration, whose resolution agent may
+  // edit `merge_order` (F-125 D2); `names` comes from the stories, which it
+  // does not change.
+  const mergePlan = () => {
+    const plan =
+      storedMergeOrder(config, feature, names) ??
+      mergeOrder(names, featureMergeEdges(readBlockers(config.backlogRoot).edges, feature.id));
+    if (plan.cycle) {
+      console.error(
+        `${unitLabel(feature)} ${feature.id}: its merge edges form a cycle, so no repo can merge first: ${plan.cycle.map(edgeArrow).join(', ')}.\nRemove one with bl block remove <blocker> --gate merge --unit <unit>.`,
+      );
+      process.exit(1);
+    }
+    const targets = plan.order.map((repoName) => ({ repoName, repoPath: config.reposByName[repoName] }));
+    // The lead repo stays `names`' first, wherever it merges (F-111 R3).
+    return { plan, targets, primary: targets.find((t) => t.repoName === names[0]) };
+  };
+  let { plan, targets, primary } = mergePlan();
 
   // One gate set with `bl merge S-n` (F-36 D1), before any repo is touched:
   // an unmet blockers.json edge on it or a story (F-66 D3), review state,
@@ -1856,6 +1861,10 @@ export async function cmdMerge(args, config, feature) {
   // Every branch is brought up to date with main in its worktree, gated and
   // pushed before any main checkout is touched (F-36 D4).
   if (!(await integrateForMerge(config, unit, names))) process.exit(1);
+  const order = plan.order.join(', ');
+  ({ plan, targets, primary } = mergePlan());
+  if (plan.order.join(', ') !== order)
+    info(`Repos   : ${plan.order.join(', ')} (${PLAN_FILE}, changed by the integration)`);
 
   await recordFeatureTokens(feature, config);
 

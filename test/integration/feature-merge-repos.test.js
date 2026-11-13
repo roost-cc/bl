@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { basename, dirname, join, resolve } from 'path';
-import { mkTempBacklog } from '../helpers/tempdir.js';
+import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { LOCK_FILE } from '../../src/lock.js';
 import { parseFrontmatter, serializeFrontmatter } from '../../src/config.js';
@@ -151,11 +151,14 @@ for (const [name, repos, recorded, commitFm, expected] of [
  * origin and, unless in `noBranch`, a commit on f1-feat, and `edges` in its
  * blockers.json. Returns the paths and a git runner.
  */
-async function mergeFixture(repos, { deps = {}, extraRepos = [], edges = [] } = {}) {
+async function mergeFixture(repos, { deps = {}, extraRepos = [], edges = [], test = null } = {}) {
   const { spawnSync } = await import('child_process');
   const all = [...repos, ...extraRepos];
+  // `test`: the test plugin command of the first repo, which its integration gate runs.
+  const plugin = (r) => (test && r === repos[0] ? { 'plugins-test': ['t'] } : {});
   const { dir, cleanup } = mkTempBacklog({
-    repos: Object.fromEntries(all.map((r) => [r, { path: `./${r}`, deployable: true }])),
+    repos: Object.fromEntries(all.map((r) => [r, { path: `./${r}`, deployable: true, ...plugin(r) }])),
+    config: test ? { plugins: { t: { test } } } : {},
     components: all.map((r, i) => ({ id: `C0${i}`, title: r, dirSuffix: r, repo: r, home: true })),
     stories: repos.map((r, i) => ({
       id: `S-${i + 1}`,
@@ -328,6 +331,50 @@ test("bl merge F-n refuses a plan.yaml whose merge_order does not name the featu
     for (const n of ['bl', 'ci-cd']) assert.equal(g(built[n].repo, 'rev-parse', 'main'), before[n], `${n} not merged`);
   } finally {
     cleanup();
+  }
+});
+
+/**
+ * A bl + ci-cd feature with a stored plan (`merge_order` bl, ci-cd) whose bl
+ * branch is behind main in a worktree, so `bl merge` integrates it and runs
+ * its test gate. The gate stands for the resolution agent: it runs `gate.sh`,
+ * which the caller writes into `scratch`.
+ */
+async function integratedMergeFixture() {
+  const scratch = mkTempDir('bl-merge-integrate-gate-');
+  const fx = await mergeFixture(['bl', 'ci-cd'], { test: `sh ${join(scratch, 'gate.sh')}` });
+  storePlan(fx.dir, fx.g, ['bl', 'ci-cd'], ['bl', 'ci-cd']);
+  const wt = join(scratch, 'wt-bl');
+  fx.g(fx.built.bl.repo, 'worktree', 'add', '-q', wt, 'f1-feat');
+  fx.g(wt, 'push', '-q', 'origin', 'f1-feat');
+  advanceOriginMain(fx.g, fx.built.bl.repo);
+  const plan = join(fx.dir, 'features', 'F1-feat', 'plan.yaml');
+  return { ...fx, scratch, plan };
+}
+
+// Review 2026-11-13 (round 2), Must 2: the integration's resolution agent may
+// edit merge_order (_execution-inputs.md); bl merge follows the edit.
+test('bl_merge_uses_merge_order_edited_by_resolution_agent', async () => {
+  const fx = await integratedMergeFixture();
+  try {
+    writeFileSync(
+      join(fx.scratch, 'edited.yaml'),
+      readFileSync(fx.plan, 'utf8').replace(/merge_order:\n {2}- bl\n {2}- ci-cd/, 'merge_order:\n  - ci-cd\n  - bl'),
+    );
+    writeFileSync(join(fx.scratch, 'gate.sh'), `cp ${join(fx.scratch, 'edited.yaml')} ${fx.plan}\n`);
+    const r = runBl(['merge', 'F-1'], { cwd: fx.dir, env: fx.env });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^Repos {3}: bl, ci-cd \(plan\.yaml\)$/m);
+    assert.match(r.stderr, /^Repos {3}: ci-cd, bl \(plan\.yaml, changed by the integration\)$/m);
+    const at = (s) => {
+      const i = r.stderr.indexOf(s);
+      assert.notEqual(i, -1, `missing ${s}`);
+      return i;
+    };
+    assert.ok(at('=== ci-cd ===') < at('=== bl ==='), 'ci-cd, then bl');
+    assert.equal(logStatusOf('feature', fm(join(fx.dir, 'features', 'F1-feat', 'index.md'))), 'done');
+  } finally {
+    fx.cleanup();
   }
 });
 
