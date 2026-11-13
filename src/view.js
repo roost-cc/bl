@@ -22,12 +22,13 @@ import { findUnitFile } from './unit-file.js';
  * left behind, never thrown, so the fallback still runs and the editor's
  * status still decides bl's.
  * @param {string} tmp
+ * @param {string} cmd  the name the message starts with
  */
-function removeCopy(tmp) {
+function removeCopy(tmp, cmd) {
   try {
     rmSync(tmp, { recursive: true, force: true });
   } catch (err) {
-    console.error(`bl view: cannot remove ${tmp} (${err.message}); left behind`);
+    console.error(`${cmd}: cannot remove ${tmp} (${err.message}); left behind`);
   }
 }
 
@@ -79,7 +80,19 @@ terminal, else paged ($PAGER → less → more).`);
     console.error(page.error);
     process.exit(1);
   }
-  const { indexPath, text } = page;
+  showReadOnly(page.indexPath, page.text, 'bl view');
+}
+
+/**
+ * Show a page read-only: in the editor as a copy in a fresh temp directory,
+ * removed when the editor exits; with stdout not a terminal, or when the copy
+ * cannot be made, through `showText`. Sets `process.exitCode`. Shared by
+ * `bl view` and `bl change` (S-1157).
+ * @param {string} indexPath  the real file
+ * @param {string | null} text  the rendered text, or null to show the file byte for byte
+ * @param {string} cmd  the name the stderr messages start with
+ */
+export function showReadOnly(indexPath, text, cmd) {
   // By path when nothing was rendered: shown byte for byte, and paged with no temp file.
   const source = text ?? { path: indexPath };
 
@@ -104,8 +117,8 @@ terminal, else paged ($PAGER → less → more).`);
     else writeFileSync(copy, text);
     chmodSync(copy, 0o444);
   } catch (err) {
-    if (tmp) removeCopy(tmp);
-    console.error(`bl view: cannot make a read-only copy (${err.message}); showing it instead`);
+    if (tmp) removeCopy(tmp, cmd);
+    console.error(`${cmd}: cannot make a read-only copy (${err.message}); showing it instead`);
     process.exitCode = exitStatus(showText(source));
     return;
   }
@@ -114,7 +127,7 @@ terminal, else paged ($PAGER → less → more).`);
   try {
     result = runEditor(copy);
   } finally {
-    removeCopy(tmp);
+    removeCopy(tmp, cmd);
   }
   process.exitCode = reportExit(editorCommand(), result);
 }
