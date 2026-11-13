@@ -1627,6 +1627,14 @@ export function prepUnitDir(prep) {
 }
 
 /**
+ * The `backlog.json` key of a role's configuration list: `roleConfigurations`'
+ * refusal and the escalations of a failed step (S-1140) name it.
+ */
+function roleKey(role) {
+  return role === 'review' ? 'review_agent' : 'agent';
+}
+
+/**
  * A role's configurations in priority order (F-64 D2): the review list for
  * the review passes and the verifier, the implementing list for every other
  * step. An interactive run attaches the operator to the role's first entry
@@ -1634,9 +1642,8 @@ export function prepUnitDir(prep) {
  */
 function roleConfigurations(ctx, role) {
   const cfg = ctx.prep.cfg ?? ctx.config;
-  const key = role === 'review' ? 'review_agent' : 'agent';
   const list = (role === 'review' ? cfg.reviewAgents : cfg.agents) ?? [];
-  if (list.length === 0) throw new Error(`backlog.json "${key}" lists no configurations`);
+  if (list.length === 0) throw new Error(`backlog.json "${roleKey(role)}" lists no configurations`);
   if (!ctx.runner.interactive) return list;
   // The interactive reviewer is the first one D4 does not exclude.
   const excluded = role === 'review' ? implementers(ctx) : [];
@@ -2116,9 +2123,6 @@ function runnerNow(runner) {
 function resumeCommand(ctx) {
   return ctx.resumeHint ?? `bl run ${ctx.feature.id} --resume`;
 }
-
-/** The `backlog.json` key of a role's configuration list. */
-const roleKey = (role) => (role === 'review' ? 'review_agent' : 'agent');
 
 /** The adapter's `{ checkCommand, billingUrl }` through the runner; null on a runner without it. */
 function remediationOf(runner, agent) {
