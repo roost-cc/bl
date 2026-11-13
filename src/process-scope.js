@@ -159,8 +159,17 @@ export function scopeActive(unit) {
 }
 
 /**
+ * Whether read error `err` says the cgroup is gone: ENOENT when it was removed
+ * before the open, ENODEV when the kernel removed it between the open and the
+ * read (kernfs answers a read of a removed node with ENODEV).
+ */
+function cgroupGone(err) {
+  return err?.code === 'ENOENT' || err?.code === 'ENODEV';
+}
+
+/**
  * Every pid in cgroup `dir` and the cgroups below it. A sub-cgroup that is
- * gone (ENOENT) has no processes; any other read failure throws.
+ * gone (`cgroupGone`) has no processes; any other read failure throws.
  */
 function cgroupPids(dir) {
   const pids = [];
@@ -173,7 +182,7 @@ function cgroupPids(dir) {
     try {
       pids.push(...cgroupPids(join(dir, e.name)));
     } catch (err) {
-      if (err?.code !== 'ENOENT') throw err;
+      if (!cgroupGone(err)) throw err;
     }
   }
   return pids;
@@ -196,7 +205,8 @@ function processCommand(pid) {
  * when the scope is gone (its command and everything it started exited, and
  * `--collect` removed it). Throws when the scope may still be running but its
  * processes cannot be listed: a failed or empty `ControlGroup` query, or an
- * unreadable cgroup. A cgroup gone by the time it is read is rechecked.
+ * unreadable cgroup. A cgroup gone by the time it is read (`cgroupGone`) is
+ * rechecked.
  *
  * @returns {{ pid: number, command: string }[]}
  */
@@ -212,7 +222,7 @@ export function scopeProcesses(unit) {
   try {
     pids = cgroupPids(`/sys/fs/cgroup${cg}`);
   } catch (e) {
-    if (e?.code === 'ENOENT' && !scopeActive(unit)) return [];
+    if (cgroupGone(e) && !scopeActive(unit)) return [];
     throw new Error(`could not list ${unit}.scope's processes: ${e?.message ?? e}`);
   }
   return pids.map((pid) => ({ pid, command: processCommand(pid) }));
