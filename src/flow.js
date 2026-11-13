@@ -225,7 +225,9 @@ const isStringList = (v) => Array.isArray(v) && v.every((s) => typeof s === 'str
  */
 
 /**
- * A v1 file as v2: bl's template, with the file's own gates per type.
+ * A v1 file as v2: bl's template, with the file's own gates per type. A
+ * template type that v1 never had (`batch`, F-125 D1) keeps the template's
+ * gates.
  * @param {string} path
  * @param {any} raw  a v1 file with every type in `FLOW_TYPES`
  */
@@ -233,6 +235,10 @@ function legacyAsV2(path, raw) {
   const template = readJson(join(TEMPLATE_DIR, FLOW_FILE));
   const types = {};
   for (const [type, def] of Object.entries(template.types)) {
+    if (!FLOW_TYPES.includes(type) && !Object.hasOwn(raw.types, type)) {
+      types[type] = def;
+      continue;
+    }
     if (!isObject(raw.types[type])) throw new FlowError(path, `type "${type}" is not an object`);
     types[type] = { ...def, gates: raw.types[type].gates };
   }

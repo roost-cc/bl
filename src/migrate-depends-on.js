@@ -70,7 +70,7 @@ function planEdges(config) {
   const graph = loadBacklog(config, { reload: true });
   const stories = graph.list('story');
   const fromKeys = dependsOnEdges(
-    stories.map((s) => ({ id: s.id, depends_on: s.fm.depends_on, feature: s.feature?.id ?? '' })),
+    stories.map((s) => ({ id: s.id, depends_on: s.fm.depends_on, unit: (s.feature ?? s.batch)?.id ?? '' })),
   );
   const keyEdges = new Map();
   for (const e of fromKeys) keyEdges.set(e.unit, [...(keyEdges.get(e.unit) ?? []), e]);
@@ -107,7 +107,7 @@ function planEdges(config) {
  * @param {Map<string, import("./blockers.js").Edge[]>} keyEdges
  * @param {Set<string>} keys
  */
-function planFiles(stories, keyEdges, keys) {
+function planRewrites(stories, keyEdges, keys) {
   const rewrites = [];
   const kept = [];
   for (const s of stories) {
@@ -135,7 +135,7 @@ function planFiles(stories, keyEdges, keys) {
 export function planDependsOn(config) {
   const edges = planEdges(config);
   const keys = new Set([...edges.fileEdges, ...edges.add].map(edgeKey));
-  return { ...edges, ...planFiles(edges.stories, edges.keyEdges, keys) };
+  return { ...edges, ...planRewrites(edges.stories, edges.keyEdges, keys) };
 }
 
 /**
@@ -223,7 +223,7 @@ export async function migrate(config, { dryRun = false, log = console.log, commi
         // The evidence (Decision A3): a depends_on: goes only when the file, as
         // re-read, holds every edge it gives.
         const onDisk = new Set(readBlockers(root).edges.map(edgeKey));
-        const { rewrites } = planFiles(plan.stories, plan.keyEdges, onDisk);
+        const { rewrites } = planRewrites(plan.stories, plan.keyEdges, onDisk);
         const same = (a, b) =>
           a.map((r) => `${r.id}:${r.removed}`).join() === b.map((r) => `${r.id}:${r.removed}`).join();
         if (!same(rewrites, plan.rewrites))

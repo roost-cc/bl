@@ -748,7 +748,7 @@ export function leaveRegenerationPending(root) {
 /**
  * Whether `bl <command> <argv>` rebases the backlog onto `origin/main`
  * before it runs (F-50 D4): every command that commits the backlog (`new`,
- * `side`, `attach`, `move`, `run`, `implement`, `merge`, `done`, `refine`,
+ * `side`, `attach`, `batch`, `move`, `run`, `implement`, `merge`, `done`, `refine`,
  * `approve`, `init`, `updates`, `sync --commit`,
  * `block add`, `block remove`, `block list --fix`, `task`,
  * `task done`), a bare `bl sync`, whose whole job is the pull and push
@@ -764,6 +764,7 @@ export function commandPullsBacklog(command, argv) {
     case 'new':
     case 'side':
     case 'attach':
+    case 'batch':
     case 'move':
     case 'run':
     case 'implement':

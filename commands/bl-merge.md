@@ -11,7 +11,7 @@ bl merge F-3                 # a feature: every repo, every listed story
 bl merge S-1 S-2             # several: in dependency order, stopping at the first failure
 ```
 
-A story that belongs to a feature is refused: merge the feature.
+A story that belongs to a feature or a batch is refused: merge the feature or the batch.
 
 ## Gates
 

@@ -58,6 +58,9 @@ Commands:
                --json         Print {schema, story, feature, changed}
                Refuses a closed feature, a story in another feature or not
                ${unstarted}, and a repo a started feature does not span
+  batch      Build a story batch from refined stories (<S-n> <S-n>…
+               --title <t>): approved at once, then one agent session
+               checks the stories' file lists and order edges; commits
   move       Move stories to another component (<S-n>… <C-n>, any order):
                sets each story's component:, commits
                --no-sync      Write the stories, commit nothing
@@ -65,7 +68,7 @@ Commands:
                Refuses an unknown id, a story not ${unstarted}, and a
                repo change for a story in a started feature
   task       An action for the operator, with no branch, in tasks/ (F-65)
-               <F-n|S-n> --title <t> --gate <merge|next|none>
+               <F-n|B-n|S-n> --title <t> --gate <merge|next|none>
                  [--body-file <p>] [--json]  File one; prints T-<n>
                done <T-n> [note]  Close it (operator only)
                list [--open] [<F-n|S-n>]  The tasks
@@ -76,8 +79,8 @@ Commands:
                stories) for implementation
                -P, --prompt <text>  Discuss <text> with the agent first
   approve    Approve a refined feature: the human gate before run
-  run        The loop for a feature: implement, test gate, self-review, PR,
-               review rounds; stops before merge
+  run        The loop for a feature, a story batch or a story: implement,
+               test gate, self-review, PR, review rounds; stops before merge
                --resume, --interactive, --plan, --max-rounds <n>
   implement  Start/resume an interactive session on a story or feature
                worktree: the manual single step
@@ -190,20 +193,22 @@ Commands:
                --json         Print one snapshot (schema bl-top-json/v1)
                --stream       One snapshot per line until stdin closes
                               (--interval <ms>, default 2000)
-  watch      Follow a run's live agent session, step by step (<F-id|S-id>):
-               one line per agent message or tool call
+  watch      Follow a run's live agent session, step by step
+               (<F-id|B-id|S-id>): one line per agent message or tool call
                --from-start   The current session from its beginning
                --json         One JSON object per line
-  stop       Stop a running bl run cleanly (<F-id|S-id>): ends its agent
-               session, records "stopped"; bl run <id> --resume continues it
+  stop       Stop a running bl run cleanly (<F-id|B-id|S-id>): ends its
+               agent session, records "stopped"; bl run <id> --resume
+               continues it
   agent      Launch the configured agent with backlog allowed-tools applied
                [args...]      Passthrough args to the agent
 
 refine, approve, run, implement, review, status, merge and done take story
-(S-34), feature (F-3) or component (C01) ids and act by the id's kind. A story that
-belongs to a feature goes through its feature. Given several ids, run and
-implement start the independent ones and list the targets that depend on or
-overlap another first; merge goes in dependency order.
+(S-34), feature (F-3) or component (C01) ids and act by the id's kind; run,
+implement, review, status and merge also take a story batch (B-2). A story that
+belongs to a feature or a batch goes through it. run and implement take one id
+(group stories with bl batch); review and merge take several, and merge goes in
+dependency order.
 
 Filters (list, tree, what-next): --theme <slug>, --epic <E-id>, --feature <F-id>
 and --component <C-id> combine, and every one given must match. A story is in
@@ -291,6 +296,10 @@ async function run() {
     }
     case 'move': {
       const { main } = await import('./move.js');
+      return main(subArgv);
+    }
+    case 'batch': {
+      const { main } = await import('./batch-cmd.js');
       return main(subArgv);
     }
     case 'task': {

@@ -101,7 +101,8 @@ const head = (dir) => git(dir, 'rev-parse', 'HEAD');
 const script = (dir, ...args) =>
   spawnSyncFiles(process.execPath, [SCRIPT, '--backlog', dir, ...args], { encoding: 'utf8' });
 const COUNTS =
-  'stories: 2 (required_for: 2); features: 2 (stories: 1, points: 2, components: 1); epics: 1 (features: 1, status: 1)';
+  'stories: 2 (required_for: 2); features: 2 (stories: 1, points: 2, components: 1); ' +
+  'batches: 0 (stories: 0, points: 0, components: 0); epics: 1 (features: 1, status: 1)';
 
 /**
  * What bl derives: each story's requiredFor, each feature's stories, points
@@ -205,7 +206,7 @@ test('a run removes every derived key in one commit, derives the same, and a sec
   assert.equal(again.status, 0, again.stderr);
   assert.match(
     again.stdout,
-    /^stories: 0 \(required_for: 0\); features: 0 \(stories: 0, points: 0, components: 0\); epics: 0 /m,
+    /^stories: 0 \(required_for: 0\); features: 0 \(stories: 0, points: 0, components: 0\); batches: 0 \(stories: 0, points: 0, components: 0\); epics: 0 /m,
   );
   assert.doesNotMatch(again.stdout, /would rewrite/);
   const rerun = script(dir);

@@ -20,7 +20,7 @@
  * edges between them it turned into order edges.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join, dirname, relative, isAbsolute, resolve } from 'path';
 import * as readline from 'readline';
 import {
@@ -62,10 +62,10 @@ import { syncAndCommit, reportBacklogCommit } from './sync.js';
 import { prepareBody } from './body.js';
 import { validateSpec, SpecError } from './spec.js';
 import { resolveTargets } from './targets.js';
-import { failPoint, settleRecord, writeRecord } from './feature-links.js';
+import { dropRecord, failPoint, settleFailedWrite, writeRecord } from './feature-links.js';
 import { atomicWriteFile, moveIntoBacklog, removeBacklogPath, STAGING_DIR } from './atomic-write.js';
 import { updateSpecFile } from './spec-file.js';
-import { BLOCKERS_FILE, dependencyEdge, edgeKey, edgeLabel, readUnits } from './blockers.js';
+import { BLOCKERS_FILE, dependencyEdge, edgeKey, edgeLabel, readUnits, storyUnitOf } from './blockers.js';
 import { joinRefusal, orderJoinedEdges, writeEdges } from './block.js';
 import { flowForHelp, loadFlow, statusWords } from './flow.js';
 import { applyNew } from './transition.js';
@@ -476,30 +476,10 @@ async function newFeature(args, stories) {
             stories.map((s) => s.id),
           ) ?? [];
       } catch (err) {
-        let state, left;
-        try {
-          ({ state, left } = await settleRecord(root, record));
-        } catch (settleErr) {
-          // Unsettled: the feature and the record stay for the next command.
-          err.keepFeature = true;
-          err.message += `; could not settle ${relative(root, record)} (${settleErr.message}): the next bl command retries`;
-          throw err;
-        }
-        if (state === 'rolled back') throw err;
-        err.keepFeature = true;
-        if (state === 'complete') err.message += `; every story names ${feature.id}`;
-        else {
-          err.message +=
-            `; could not restore ${left.join(', ')}, so ${feature.id} is kept with it; ` +
-            `the next bl command rolls it back`;
-        }
-        throw err;
+        // `kept`: cmdNew keeps the feature, which a story still names.
+        throw await settleFailedWrite(root, record, err);
       }
-      try {
-        unlinkSync(record);
-      } catch {
-        // The links are complete: the next command finds them so and drops it.
-      }
+      dropRecord(record);
     },
   });
 
@@ -852,7 +832,7 @@ function storyValues(cfg, vars, { feature = null, effort = null } = {}) {
  * The edges a `bl new`'s dependencies stand for (F-111 D5): each `[unit,
  * blocker, field]` (story `unit` waits for story `blocker`, from `field`,
  * `depends_on` or `required_for`) is `dependencyEdge`'s, an order edge when
- * both stories are in one feature, else a run edge. `newIds` are the stories
+ * both stories are in one feature or batch, else a run edge. `newIds` are the stories
  * this `bl new` creates, in `feature` (null for none). An end that is neither
  * new nor a story in the backlog is warned about and skipped: an edge names
  * units that exist. Each edge once.
@@ -867,7 +847,7 @@ function newEdges(cfg, pairs, newIds, feature) {
   const units = readUnits(cfg);
   const isNew = (id) => newIds.includes(id);
   const exists = (id) => isNew(id) || units.get(id)?.type === 'story';
-  const featureOf = (id) => (isNew(id) ? (feature?.id ?? '') : (units.get(id)?.feature ?? ''));
+  const unitOf = (id) => (isNew(id) ? (feature?.id ?? '') : storyUnitOf(units, id));
   const out = new Map();
   for (const [unit, blocker, field] of pairs) {
     const missing = [blocker, unit].find((id) => !exists(id));
@@ -875,7 +855,7 @@ function newEdges(cfg, pairs, newIds, feature) {
       console.error(`warning: ${field} ${missing} does not match any existing story; no edge written`);
       continue;
     }
-    const edge = dependencyEdge(blocker, unit, featureOf);
+    const edge = dependencyEdge(blocker, unit, unitOf);
     out.set(edgeKey(edge), edge);
   }
   return [...out.values()];
@@ -1048,7 +1028,7 @@ Options:
   --print-template <kind>
                        Print bl/templates/<kind>.md to stdout and exit.
                        kind ∈ {story, story-feature, component, feature,
-                       change, theme, epic}.
+                       batch, change, theme, epic}.
                        No other flags required.
   --depends-on <ids>   Comma-separated story IDs this story waits for
                        (e.g. S-379,S-380). Repeatable. Each is an edge in
@@ -1112,7 +1092,7 @@ Example:
       process.exit(1);
     }
     const kind = String(args['print-template']);
-    const KINDS = ['story', 'story-feature', 'component', 'feature', 'change', 'theme', 'epic'];
+    const KINDS = ['story', 'story-feature', 'component', 'feature', 'batch', 'change', 'theme', 'epic'];
     if (!KINDS.includes(kind)) {
       console.error(`unknown template '${kind}' (expected: ${KINDS.join(', ')})`);
       process.exit(1);

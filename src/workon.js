@@ -6,8 +6,8 @@
  *   bl implement <story-id>   The story's worktree in its repo: its
  *                             component's (F-52 D1)
  *
- * Several targets are scheduled by verbs.js, which opens one tmux window per
- * started story (F-35 decision J); this module works on one story.
+ * `bl implement` takes one target: verbs.js refuses several (F-125 Decision
+ * A3), and this module works on one story.
  *
  * Dependency gating: a story is only launched when every story it waits for
  * (the blockers of the run and order edges on it, `storyDependencies` of
@@ -549,8 +549,7 @@ Options:
 
 Creates/resumes the story's worktree in its repo (its component's) and
 launches an interactive agent session. A scripted story (plugins-implement)
-runs its command there instead and commits the result; no agent starts.
-Several targets (bl implement S-1 S-2) open one tmux window each.`);
+runs its command there instead and commits the result; no agent starts.`);
     process.exit(0);
   }
   refuseStoryRepo('implement', args);
@@ -559,7 +558,7 @@ Several targets (bl implement S-1 S-2) open one tmux window each.`);
 
   const positionals = args.positional;
   if (positionals.length === 0) {
-    console.error('Usage: bl implement <id...>  (story IDs)');
+    console.error('Usage: bl implement <story-id>');
     process.exit(1);
   }
 
@@ -590,7 +589,7 @@ Several targets (bl implement S-1 S-2) open one tmux window each.`);
   }
 
   if (startable.length > 1) {
-    console.error('bl implement takes one story here; bl implement <id...> opens one tmux window per story.');
+    console.error('bl implement takes one story.');
     process.exit(1);
   }
 

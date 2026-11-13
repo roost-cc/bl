@@ -238,20 +238,23 @@ test("taskTableRows: ID linked, Title, Holds from the task's edges, Status, Done
   ]);
 });
 
-test('findTaskFindings: task-unit for a unit that is not a feature or story; task-field per field', () => {
+test('findTaskFindings: task-unit for a unit that is not a feature, story batch or story; task-field per field', () => {
   const units = unitIndex(
     [{ id: 'S-1', status: 'draft', depends_on: [] }],
     [{ id: 'F-1', status: 'approved', stories: [] }],
     [{ id: 'T-1', status: 'draft' }],
+    [{ id: 'B-1', status: 'approved', stories: [] }],
   );
   const find = (...tasks) => findTaskFindings(tasks, units, flow).map((f) => `${f.severity} ${f.code}: ${f.message}`);
   assert.deepEqual(find(task('T-1'), task('T-2', { unit: 'S-1' })), []);
+  // A task may belong to a story batch (F-125 D1).
+  assert.deepEqual(find(task('T-2', { unit: 'B-1' })), []);
   assert.deepEqual(find(task('T-1', { status: 'done', done: '2026-10-28', note: 'ran' })), []);
   assert.deepEqual(find(task('T-1', { unit: 'F-9' })), [
-    'error task-unit: unit F-9 is not a feature or story in the backlog',
+    'error task-unit: unit F-9 is not a feature, story batch or story in the backlog',
   ]);
   assert.deepEqual(find(task('T-2', { unit: 'T-1' })), [
-    'error task-unit: unit T-1 is not a feature or story in the backlog',
+    'error task-unit: unit T-1 is not a feature, story batch or story in the backlog',
   ]);
   assert.deepEqual(find(task('T-1', { owner: 'agent' })), ['error task-field: owner "agent" is not one of operator']);
   assert.deepEqual(find(task('T-1', { status: 'blocked' })), [

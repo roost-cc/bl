@@ -146,6 +146,12 @@ test('bl new --print-template component prints the component template', () => {
     assert.match(theme.stdout, /^theme_id:$/m);
     assert.match(theme.stdout, /^repos: \[\]$/m);
     assert.match(theme.stdout, /^## Overview$/m);
+    // A story batch's (F-125 D1): its id, its log, and only the run's sections.
+    const batch = runBl(['new', '--print-template', 'batch'], { cwd: dir });
+    assert.equal(batch.status, 0, batch.stderr);
+    assert.match(batch.stdout, /^batch_id:$/m);
+    assert.match(batch.stdout, /^transitions:$/m);
+    assert.deepEqual(batch.stdout.match(/^## .*$/gm), ['## Notes', '## Escalation']);
   } finally {
     cleanup();
   }

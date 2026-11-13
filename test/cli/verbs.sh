@@ -73,6 +73,10 @@ assert_contains "approve F-3 → feature approve" 'F-3 is draft; approve starts 
 blrun run F-1 --plan
 assert_exit "run F-1 --plan" 0 "$RC"
 assert_contains "run F-1 → feature run" "1. setup" "$OUT"
+# The execution plan comes first (F-125 D2), and --plan writes no plan.yaml.
+assert_contains "run F-1 --plan prints the work order" "Work order  : S-2" "$OUT"
+assert_contains "run F-1 --plan prints the merge order" "Merge order : " "$OUT"
+if [[ -e "$DIR/features/F1-feat/plan.yaml" ]]; then fail "run F-1 --plan writes no plan.yaml"; else pass; fi
 
 blrun implement F-2
 assert_exit "implement F-2" 1 "$RC"
@@ -113,7 +117,7 @@ assert_contains "refine S-5 → story refine" "S-5 is done; refine starts from d
 for verb in run implement; do
   blrun "$verb" C00
   assert_exit "$verb C00" 1 "$RC"
-  assert_contains "$verb C00 refuses a component" 'C00 is a component. Make the stories you want into a feature: `bl new --feature --title … S-1 S-2`' "$ERR"
+  assert_contains "$verb C00 refuses a component" 'C00 is a component. Make the stories you want into a feature (`bl new --feature --title … S-1 S-2`) or a batch (`bl batch S-1 S-2 --title …`)' "$ERR"
 done
 for verb in run implement review merge; do
   blrun "$verb" S-2
@@ -137,8 +141,8 @@ blrun done F-1
 assert_exit "done F-1" 1 "$RC"
 assert_contains "done refuses a feature" "F-1 is a feature; bl merge F-1 marks it done." "$ERR"
 blrun run F-1 F-2 --plan
-assert_exit "run F-1 F-2 --plan" 0 "$RC"
-assert_contains "several targets go through the scheduler" "Starting: F-1, F-2" "$ERR"
+assert_exit "run F-1 F-2 --plan" 1 "$RC"
+assert_contains "run takes one target" "bl run: takes one target" "$ERR"
 blrun run X-1
 assert_exit "run X-1" 1 "$RC"
 assert_contains "malformed id" "Invalid id: X-1" "$ERR"
@@ -148,6 +152,8 @@ blrun run S-1 --plan
 assert_exit "run S-1 --plan" 0 "$RC"
 assert_contains "run S-1 → the loop's plan for the story" "S-1 · loose — run plan" "$OUT"
 assert_contains "run S-1 plan implements the story" " 2. implement S-1" "$OUT"
+assert_contains "run S-1 --plan prints the story's dependencies" "  S-1 waits for (none)" "$OUT"
+if [[ -e "$DIR/stories/S1-loose/plan.yaml" ]]; then fail "run S-1 --plan writes no plan.yaml"; else pass; fi
 
 blrun run S-3
 assert_exit "run S-3" 1 "$RC"

@@ -476,7 +476,7 @@ export function activeWorktreesByStory(config) {
  * and its one repo (`unitRepo`, `placeStory`).
  * @returns {Array<{
  *   unitRepo, componentId, componentEntry, id, title, status, type, points, effort,
- *   requiredFor, feature, found_by, added, completed,
+ *   requiredFor, feature, batch, found_by, added, completed,
  *   storyEntry, indexPath, storyRelPath
  * }>}
  */
@@ -502,6 +502,8 @@ export function readAllStories(config) {
       // stored `required_for:`.
       requiredFor: (unit.requiredFor ?? []).map((r) => r.id),
       feature: fm.feature ?? '',
+      // The story batch it is in (F-125 D1); a story names a feature or a batch.
+      batch: fm.batch ?? '',
       found_by: fm.found_by ?? '',
       added: fm.added ?? '',
       completed: fm.completed ?? '',

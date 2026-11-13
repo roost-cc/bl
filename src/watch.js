@@ -1,8 +1,8 @@
 /**
- * watch.js — `bl watch <F-id|S-id>`: follow a run's live agent session, step
+ * watch.js — `bl watch <F-id|B-id|S-id>`: follow a run's live agent session, step
  * by step (S-1272).
  *
- *   bl watch <F-id|S-id> [--from-start] [--json]
+ *   bl watch <F-id|B-id|S-id> [--from-start] [--json]
  *
  * It reads the run state `.bl/run/<id>.json` every WATCH_POLL_MS. Its
  * `session` (written by `bl run` before each headless spawn, `recordSession`
@@ -29,7 +29,7 @@ import { runArgs } from './run-arg.js';
 /** How often `watch` reads the run state again, in ms: at most 5 s (S-1272). */
 export const WATCH_POLL_MS = 2000;
 
-const HELP = `Usage: bl watch <F-id|S-id> [--from-start] [--json]
+const HELP = `Usage: bl watch <F-id|B-id|S-id> [--from-start] [--json]
 
 Follow the live agent session of a headless bl run: one line for each agent
 message or tool call. When the run moves to its next step (implement,

@@ -294,7 +294,7 @@ export function roundOf(kind, fm, change = null) {
 
 /** The unit's id, for a message: its id key, else `the <kind>`. */
 function idOf(kind, fm) {
-  return str(fm.story_id) || str(fm.feature_id) || str(fm.task_id) || `the ${kind}`;
+  return str(fm.story_id) || str(fm.feature_id) || str(fm.batch_id) || str(fm.task_id) || `the ${kind}`;
 }
 
 /** Whether the type's table has the edge `from` → `to` under `by` (`operator`: under any verb). */

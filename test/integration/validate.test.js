@@ -1143,8 +1143,8 @@ test('bl validate reports a bad order edge and a cycle of order edges with the e
     [
       'blockers-cycle: story order cycle: S-1 → S-4 (order edge S-4 → S-1) → S-1 (order edge S-1 → S-4)',
       `blockers-status: S-2 at order by S-4: an order edge's until is "implemented", not "done"`,
-      'blockers-unit: S-1 at order by S-5: blocker S-5 is in no feature',
-      'blockers-unit: S-2 at order by S-3: an order edge joins two stories of one feature, not of F-2 and F-1',
+      'blockers-unit: S-1 at order by S-5: blocker S-5 is in no feature or batch',
+      'blockers-unit: S-2 at order by S-3: an order edge joins two stories of one feature or batch, not of F-2 and F-1',
     ],
   );
   assert.deepEqual(

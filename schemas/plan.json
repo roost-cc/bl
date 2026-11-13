@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "execution plan",
+  "description": "plan.yaml in a work unit's directory (F-125 D2): the execution plan bl run computes at run start and follows during the run. readPlan and writePlan (src/execution-plan.js) check it. An agent that changes the plan adds a changes entry that says why.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "unit",
+    "computed_at",
+    "stories",
+    "dependencies",
+    "order",
+    "groups",
+    "repos",
+    "merge_order",
+    "changes"
+  ],
+  "properties": {
+    "schema": { "description": "The format and its version.", "const": "bl-plan/v1" },
+    "unit": {
+      "description": "The work unit the plan is for: F-<n>, B-<n> or S-<n>.",
+      "type": "string",
+      "pattern": "^[A-Z]-[0-9]+$"
+    },
+    "computed_at": { "description": "When bl computed the plan (ISO 8601).", "type": "string", "minLength": 1 },
+    "stories": {
+      "description": "The unit's stories.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/story" }
+    },
+    "dependencies": {
+      "description": "For each story, the stories of the unit it waits for (run and order edges).",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/story" },
+      "additionalProperties": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/story" } }
+    },
+    "order": {
+      "description": "The work order: bl run implements the stories in it.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/story" }
+    },
+    "groups": {
+      "description": "The parallel groups, in work order.",
+      "type": "array",
+      "items": { "type": "array", "items": { "$ref": "#/$defs/story" } }
+    },
+    "repos": {
+      "description": "The repo order: bl first, then by first story in the work order.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/repo" }
+    },
+    "merge_order": {
+      "description": "The order bl merge merges the repos in; null when the merge edges form a cycle.",
+      "anyOf": [{ "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/repo" } }, { "type": "null" }]
+    },
+    "changes": {
+      "description": "Each change to the plan after bl computed it, oldest first.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["at", "by", "what", "why"],
+        "properties": {
+          "at": { "description": "When (ISO 8601).", "type": "string", "minLength": 1 },
+          "by": { "description": "Who changed it: bl, or the agent's step.", "type": "string", "minLength": 1 },
+          "what": { "description": "What changed.", "type": "string", "minLength": 1 },
+          "why": { "description": "Why it changed.", "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "story": { "type": "string", "pattern": "^S-[0-9]+$" },
+    "repo": { "type": "string", "minLength": 1 }
+  }
+}

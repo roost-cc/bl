@@ -22,12 +22,9 @@ Backlog repo : {{backlogDir}}
    - Write each plan step as
      `<step> → verify: <check>`, where the check is the test, command or
      observation that shows the step worked.
-   - Put each file path in the plan in backticks (`src/x.js`). When several targets run at once,
-     `bl run` reads the backticked paths to hold back a target that touches the same file as
-     another. `bl run` does not see a path that is not in backticks.
+   - Follow **Execution plan inputs** below for the plan's file paths.
    - Give the plan a `### Sources of truth` part: for each concept the story touches, where it is
-     defined and how the code reaches it. The story reads these paths and does not change them,
-     so `bl run` does not hold a target back for them.
+     defined and how the code reaches it. The story reads these paths and does not change them.
    - Name the behaviour the story shares with existing code, and whether it gets a shared
      abstraction (see **Simple, surgical changes** below).
 
@@ -69,6 +66,8 @@ Backlog repo : {{backlogDir}}
 {{simplicityGuide}}
 
 {{effortGuide}}
+
+{{executionInputs}}
 
 {{validateBeforeSync}}
 

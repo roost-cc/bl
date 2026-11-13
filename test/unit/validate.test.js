@@ -156,6 +156,53 @@ test('findDanglingFindings: dangling-feature, a story naming a feature that does
   ]);
 });
 
+test('findDanglingFindings: dangling-batch and feature-and-batch, each an error at the story (F-125 D1)', () => {
+  const batch = '---\nbatch_id: B-1\ntitle: Fixes\n---\n';
+  const g = graphOver({
+    'batches/B1-fixes/index.md': batch,
+    'features/F1-x/index.md': '---\nfeature_id: F-1\ntitle: X\n---\n',
+    'stories/S1-x/index.md': '---\nstory_id: S-1\nbatch: B-9\n---\n',
+    'stories/S2-x/index.md': '---\nstory_id: S-2\nfeature: F-1\nbatch: B-1\n---\n',
+    'stories/S3-x/index.md': '---\nstory_id: S-3\nbatch: b1\n---\n',
+  });
+  const { batches, featureAndBatch } = findDanglingFindings(g);
+  assert.deepEqual(batches, [
+    {
+      severity: 'error',
+      code: 'dangling-batch',
+      message: 'story S-1 names non-existent batch B-9',
+      location: 'stories/S1-x/index.md',
+    },
+  ]);
+  assert.deepEqual(featureAndBatch, [
+    {
+      severity: 'error',
+      code: 'feature-and-batch',
+      message: 'story S-2 names feature F-1 and batch B-1; a story is in one work unit',
+      location: 'stories/S2-x/index.md',
+    },
+  ]);
+});
+
+test('batch: is a story key, and a batch has its own keys and id format (F-125 D1)', () => {
+  assert.ok(VALID_STORY_KEYS.has('batch'));
+  const story = { story_id: 'S-1', title: 'X', status: 'refined', batch: 'B-1' };
+  assert.deepEqual(featureCodes(validateFrontmatter(story, 'story', 'stories/S1-x/index.md')), []);
+  const batch = { batch_id: 'B-1', title: 'Fixes', transitions: [{ to: 'approved' }], review_rounds_max: '2' };
+  assert.deepEqual(
+    featureCodes(validateFrontmatter(batch, 'batch', 'batches/B1-fixes/index.md', { dirName: 'B1-fixes' })),
+    [],
+  );
+  assert.deepEqual(
+    featureCodes(
+      validateFrontmatter({ ...batch, batch_id: 'B1', theme: 'demo', stories: ['S-1'] }, 'batch', 'p', {
+        dirName: 'B2-x',
+      }),
+    ),
+    ['derived-key', 'unknown-fm-key', 'bad-id-format', 'id-dir-mismatch'],
+  );
+});
+
 test('findDuplicateFindings: stories, components and epics, each in its words', () => {
   const g = graphOver({
     'stories/S1-first/index.md': '---\nstory_id: S-1\ntitle: First\n---\n',

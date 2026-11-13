@@ -36,6 +36,7 @@ import { hasFrontmatter } from './body.js';
 import { findStoryDir, ownFm } from './story.js';
 import { graphOf } from './backlog-graph.js';
 import { findFeature, normalizeFeatureId } from './feature.js';
+import { findBatch, normalizeBatchId } from './batch.js';
 import { withLock } from './lock.js';
 import { BLOCKERS_FILE, WILDCARD } from './blockers.js';
 import { loadFlow, statusWordProblem } from './flow.js';
@@ -196,14 +197,20 @@ export function nextTaskNums(config, count) {
 }
 
 /**
- * The feature or story a task belongs to, or null when `raw` names none.
- * @returns {{ id: string, type: "feature" | "story" } | null}
+ * The feature, story batch (F-125 D1) or story a task belongs to, or null
+ * when `raw` names none.
+ * @returns {{ id: string, type: "feature" | "batch" | "story" } | null}
  */
 export function findTaskUnit(config, raw) {
   const featureId = normalizeFeatureId(raw);
   if (featureId) {
     const f = findFeature(featureId, config);
     return f ? { id: f.id, type: 'feature' } : null;
+  }
+  const batchId = normalizeBatchId(raw);
+  if (batchId) {
+    const b = findBatch(batchId, config);
+    return b ? { id: b.id, type: 'batch' } : null;
   }
   const storyId = normalizeId(raw);
   const found = storyId ? findStoryDir(storyId, config) : null;
@@ -407,7 +414,7 @@ export function taskTableRows(tasks, edges, flow, link) {
 
 /**
  * `bl validate`'s findings on the task files: `task-unit` (error) when
- * `unit:` names no feature or story in the backlog; `task-field` (error) for
+ * `unit:` names no feature, story batch or story in the backlog; `task-field` (error) for
  * a missing key, a `task_id` that is not `T-<n>` or not the file's number, a
  * duplicate id, an `owner` outside `TASK_OWNERS`, a `status` outside
  * `flow.json`'s task statuses, a done task with no `done:` date; and
@@ -450,8 +457,8 @@ export function findTaskFindings(tasks, units, flow) {
     }
     if (t.unit) {
       const u = units.get(t.unit);
-      if (!u || (u.type !== 'feature' && u.type !== 'story')) {
-        add('task-unit', `unit ${t.unit} is not a feature or story in the backlog`);
+      if (!u || !['feature', 'batch', 'story'].includes(u.type)) {
+        add('task-unit', `unit ${t.unit} is not a feature, story batch or story in the backlog`);
       }
     }
   }
@@ -462,17 +469,17 @@ export function findTaskFindings(tasks, units, flow) {
 // CLI
 // ---------------------------------------------------------------------------
 
-const HELP = `Usage: bl task <F-n|S-n> --title <t> --gate <merge|next|none>
+const HELP = `Usage: bl task <F-n|B-n|S-n> --title <t> --gate <merge|next|none>
                 [--body-file <path>|-] [--json]
        bl task done <T-n> [note]
-       bl task list [--open] [<F-n|S-n>]
+       bl task list [--open] [<F-n|B-n|S-n>]
 
 A task is an action with an owner (the operator) and no branch: run a
 migration, re-mint a key. It is a file, tasks/T<n>-<slug>.md, belonging to
-one feature or story, whose page shows it in a ## Tasks table that bl
+one feature, story batch or story, whose page shows it in a ## Tasks table that bl
 renders when the page is read (F-65 D1, F-79 D2).
 
-  <unit>       File a task on the feature or story: write the file
+  <unit>       File a task on the feature, batch or story: write the file
                (draft in its transitions:, owner: operator, added: today) and its
                edge in blockers.json, and commit them; print T-<n>
     --title <t>          Required. What to do, in a few words. A title
@@ -536,7 +543,7 @@ export async function main(argv) {
     const { values, positionals } = parse(rest, { open: { type: 'boolean' } });
     if (positionals.length > 1) fail(`list takes one unit; got ${positionals.join(', ')}`);
     const unit = positionals[0] ? findTaskUnit(config, positionals[0]) : null;
-    if (positionals[0] && !unit) fail(`${positionals[0]} is not a feature or story in the backlog`);
+    if (positionals[0] && !unit) fail(`${positionals[0]} is not a feature, story batch or story in the backlog`);
     const flow = loadFlow(config.backlogRoot);
     const tasks = readAllTasks(config).filter(
       (t) => (!values.open || !flow.meets('task', t.status, 'done')) && (!unit || t.unit === unit.id),
@@ -563,8 +570,9 @@ export async function main(argv) {
     'body-file': { type: 'string' },
     json: { type: 'boolean' },
   });
-  if (positionals.length === 0) fail('name the feature (F-<n>) or story (S-<n>) the task belongs to');
-  if (positionals.length > 1) fail(`name one feature or story; got ${positionals.join(', ')}`);
+  if (positionals.length === 0)
+    fail('name the feature (F-<n>), story batch (B-<n>) or story (S-<n>) the task belongs to');
+  if (positionals.length > 1) fail(`name one feature, story batch or story; got ${positionals.join(', ')}`);
   const title = values.title?.replace(/\s+/g, ' ').trim();
   if (!title) fail('--title <t> is required');
   const { gate } = values;
@@ -573,7 +581,7 @@ export async function main(argv) {
   const problem = decisionGateProblem(title, gate);
   if (problem) fail(problem);
   const unit = findTaskUnit(config, positionals[0]);
-  if (!unit) fail(`${positionals[0]} is not a feature (F-<n>) or story (S-<n>) in the backlog`);
+  if (!unit) fail(`${positionals[0]} is not a feature (F-<n>), story batch (B-<n>) or story (S-<n>) in the backlog`);
   const bodyFile = values['body-file'];
   if (bodyFile != null && bodyFile !== '-' && !existsSync(bodyFile)) fail(`--body-file ${bodyFile} not found`);
   const body = readBody(bodyFile);

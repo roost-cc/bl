@@ -10,8 +10,18 @@ function fixture() {
     stories: [
       { id: 'S-1', component: 'C01', title: 'Loose', dirSuffix: 'loose', status: 'refined' },
       { id: 'S-2', component: 'C01', title: 'In feature', dirSuffix: 'in-feature', status: 'refined', feature: 'F-1' },
+      { id: 'S-4', component: 'C01', title: 'In batch', dirSuffix: 'in-batch', status: 'refined', batch: 'B-3' },
+      {
+        id: 'S-5',
+        component: 'C01',
+        title: 'In batch too',
+        dirSuffix: 'in-batch-too',
+        status: 'refined',
+        batch: 'B-3',
+      },
     ],
     features: [{ id: 'F-1', title: 'Feat', dirSuffix: 'feat', status: 'approved', stories: ['S-2'] }],
+    batches: [{ id: 'B-3', title: 'Fixes', dirSuffix: 'fixes' }],
   });
 }
 
@@ -31,6 +41,8 @@ test('classifyId reads the kind from the prefix, in any accepted spelling', () =
   assert.equal(classifyId('f3').parsed.id, 'F-3');
   assert.equal(classifyId('C1').kind, 'component');
   assert.equal(classifyId('c-01').parsed.id, 'C01');
+  assert.equal(classifyId('B-3').kind, 'batch');
+  assert.equal(classifyId('b3').parsed.id, 'B-3');
   assert.equal(classifyId('E1'), null, 'an E-id is no longer a code boundary');
   assert.equal(classifyId('X-1'), null);
   assert.equal(classifyId('S-'), null);
@@ -85,7 +97,7 @@ test('resolveTargets reports malformed and unknown ids as errors and keeps the r
     assert.equal(errors.length, 4);
     assert.match(
       errors[0],
-      /^Invalid id: foo \(expected a story like S-34, a feature like F-3 or a component like C01\)/,
+      /^Invalid id: foo \(expected a story like S-34, a feature like F-3, a story batch like B-2 or a component like C01\)/,
     );
     assert.match(errors[1], /Story S-99 not found/);
     assert.match(errors[2], /Feature F-9 not found/);
@@ -99,14 +111,15 @@ test('run and implement refuse a component, pointing at bl new --feature; done r
       const { targets, errors } = resolveTargets(['C01'], config, verb);
       assert.deepEqual(targets, []);
       assert.deepEqual(errors, [
-        'C01 is a component. Make the stories you want into a feature: `bl new --feature --title … S-1 S-2`',
+        'C01 is a component. Make the stories you want into a feature (`bl new --feature --title … S-1 S-2`) or a batch (`bl batch S-1 S-2 --title …`)',
       ]);
     }
-    for (const verb of ['review', 'merge', 'approve']) {
-      assert.match(
-        resolveTargets(['C01'], config, verb).errors[0],
-        new RegExp(`C01 is a component; bl ${verb} takes a story or a feature`),
-      );
+    for (const [verb, takes] of [
+      ['review', 'a story, a feature or a batch'],
+      ['merge', 'a story, a feature or a batch'],
+      ['approve', 'a story or a feature'],
+    ]) {
+      assert.equal(resolveTargets(['C01'], config, verb).errors[0], `C01 is a component; bl ${verb} takes ${takes}.`);
     }
     assert.deepEqual(resolveTargets(['C01'], config, 'done').errors, [
       'C01 is a component: a code boundary with no status, so it is never done.',
@@ -136,5 +149,36 @@ test('approve refuses a story; done refuses a feature', () => {
     assert.match(resolveTargets(['S-1'], config, 'approve').errors[0], /S-1 is a story; stories have no approve step/);
     assert.deepEqual(resolveTargets(['F-1'], config, 'approve').errors, []);
     assert.deepEqual(resolveTargets(['F-1'], config, 'done').errors, ['F-1 is a feature; bl merge F-1 marks it done.']);
+  });
+});
+
+test('resolveTargets resolves B-3 to the batch as a unit of kind batch, with its stories (F-125 D1)', () => {
+  withConfig((config) => {
+    const { targets, errors } = resolveTargets(['b3'], config, 'run');
+    assert.deepEqual(errors, []);
+    assert.deepEqual(
+      targets.map((t) => [t.kind, t.id, t.record.kind, t.record.status, t.record.featureEntry, t.record.stories]),
+      [['batch', 'B-3', 'batch', 'approved', 'B3-fixes', ['S-4', 'S-5']]],
+    );
+    assert.match(resolveTargets(['B-9'], config, 'run').errors[0], /^Story batch B-9 not found under batches\//);
+  });
+});
+
+test('a batch story is refused by the branch verbs, naming its batch; refine, approve and done refuse a batch', () => {
+  withConfig((config) => {
+    for (const verb of ['run', 'implement', 'review', 'merge']) {
+      assert.deepEqual(resolveTargets(['S-4'], config, verb).errors, ['S-4 is part of B-3; use B-3'], verb);
+      assert.deepEqual(resolveTargets(['B-3'], config, verb).errors, [], verb);
+    }
+    for (const verb of ['refine', 'approve']) {
+      assert.match(
+        resolveTargets(['B-3'], config, verb).errors[0],
+        /^B-3 is a story batch; .* no (refine|approve) step/,
+      );
+    }
+    assert.deepEqual(resolveTargets(['B-3'], config, 'done').errors, [
+      'B-3 is a story batch; bl merge B-3 marks it done.',
+    ]);
+    assert.deepEqual(resolveTargets(['B-3'], config, 'status').errors, []);
   });
 });

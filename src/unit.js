@@ -1,11 +1,14 @@
 /**
- * unit.js — what the feature loop runs: a feature, or a single story.
+ * unit.js — what the feature loop runs: a feature, a story batch, or a
+ * single story.
  *
  * The loop in feature-run.js reads a feature record's field names (`id`,
  * `indexPath`, `featureRelPath`, `featureEntry`, `reviewRoundsMax`, …). A
  * story gets the same names from `storyUnit`, so `bl run S-n` goes through
- * the same loop with nothing copied (F-35 Design §3). `kind` is what
- * differs; both kinds hold follow-up code work under `## Deferred` (F-82 D9).
+ * the same loop with nothing copied (F-35 Design §3), and a batch record has
+ * them already (`workUnitRecord`, F-125 D1). `kind` is what differs, and it
+ * is the unit's type in `flow.json` (`flowKind`); a feature and a story hold
+ * follow-up code work under `## Deferred` (F-82 D9).
  */
 
 import { readFileSync } from 'fs';
@@ -21,9 +24,31 @@ function toInt(v, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-/** A feature record as a unit: the record itself, plus its kind. */
+/**
+ * A feature record as a unit: the record itself, plus its kind. A batch unit
+ * (`batchUnit`) keeps its own kind, so the feature handlers that take either
+ * one can call this.
+ */
 export function featureUnit(feature) {
-  return { ...feature, kind: 'feature' };
+  return { kind: 'feature', ...feature };
+}
+
+/**
+ * A story batch record (`findBatch`) as a unit (F-125 D1): it has the field
+ * names the loop reads from a feature, and `kind: 'batch'`.
+ */
+export function batchUnit(batch) {
+  return { ...batch, kind: 'batch' };
+}
+
+/**
+ * The unit's type in `flow.json`: `story`, `batch`, or `feature`, which is
+ * also what a record with no `kind` is (a `findFeature` record carries none).
+ * @param {{ kind?: string } | null | undefined} unit
+ * @returns {"story" | "batch" | "feature"}
+ */
+export function flowKind(unit) {
+  return unit?.kind === 'story' || unit?.kind === 'batch' ? unit.kind : 'feature';
 }
 
 /**
@@ -92,14 +117,24 @@ export function storyAsOrdered(unit) {
   };
 }
 
+/** The word for the unit's kind at the start of a line: `Story`, `Batch` or `Feature`. */
+export function unitLabel(unit) {
+  return { story: 'Story', batch: 'Batch', feature: 'Feature' }[flowKind(unit)];
+}
+
+/** What the premise of each kind of unit is, for `{{premise}}`. */
+const PREMISE = {
+  story: "the story's Summary and Acceptance Criteria",
+  // A batch has no premise of its own (F-125 D1): each story carries its own.
+  batch: "each story's Summary and Acceptance Criteria",
+  feature: "the feature's Premise",
+};
+
 /**
  * The prompt variables that say which kind of unit a session works on: the
  * shared loop prompts read "the {{unitKind}} file" and "{{premise}}".
  */
 export function unitVars(unit) {
-  const story = unit.kind === 'story';
-  return {
-    unitKind: story ? 'story' : 'feature',
-    premise: story ? "the story's Summary and Acceptance Criteria" : "the feature's Premise",
-  };
+  const kind = flowKind(unit);
+  return { unitKind: kind, premise: PREMISE[kind] };
 }

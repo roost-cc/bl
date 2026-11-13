@@ -14,14 +14,13 @@ bl merge <story-id>
 
 ```bash
 bl implement F-3                    # a feature: one worktree/branch, stories in order
-bl implement <id...>                # several targets: one tmux window each
 ```
 
 ## Arguments
 
-| Arg       | Description                                                                                                                                                                 |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<id...>` | One or more story (S34, S-34, s34) or feature (F-3) IDs. A component is refused: make its stories a feature. A story that belongs to a feature is refused: use the feature. |
+| Arg    | Description                                                                                                                                                                                                                         |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<id>` | One story (S34, S-34, s34) or feature (F-3) ID. A component is refused: make its stories a feature. A story that belongs to a feature or a batch is refused: use the feature or the batch. Several IDs are refused: use `bl batch`. |
 
 `flow.json`'s `implement` row names the statuses it starts from: a story `draft`, `refined`,
 `in_progress` or `escalated`; a feature `approved`, `in_progress` or `escalated`. A unit whose
@@ -30,26 +29,18 @@ review position is `fixing` (a review round left items open), whatever its statu
 refused under `implement`. A feature refuses on open dependencies outside it, and on a story
 whose `transitions:` is malformed.
 
-## One or several
+## One target
 
-- **One target** — creates/resumes its worktree and launches one interactive
-  agent session (the classic flow below).
-- **Several targets** — the deferred ones are listed first, then each started
-  target opens its own interactive session in a new tmux window. Outside tmux this
-  exits with "several targets need tmux": start a tmux session and rerun, run
-  them one at a time, or use `bl run`.
+`bl implement` takes one target (F-125 Decision A3): it creates or resumes the target's worktree
+and launches one interactive agent session (the flow below). `bl implement S-1 S-2` is refused
+before anything starts. To work on several stories as one unit, group them with `bl batch`.
 
 ## Dependency gating
 
 A story is only launched when every story it waits for (the blockers of the run
 and order edges on it in `blockers.json`) is already `done`/`superseded`
-(i.e. **merged**). A dependency that is itself one of the targets counts as
-unmet until its PR merges, so the dependent is **deferred** and reported, not
-launched. So is a target whose files (its branch diff, else the backticked paths
-in its Implementation Plan, outside `### Sources of truth`) overlap a
-lower-numbered target's. After you review
-and merge the launched PRs, re-run the same command and the newly-unblocked
-targets start.
+(i.e. **merged**). Otherwise it is refused and the blocker is named. After you
+review and merge the blocker, re-run the same command.
 
 ## What It Does
 

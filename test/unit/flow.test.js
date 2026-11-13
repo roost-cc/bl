@@ -89,6 +89,29 @@ test('the template is bl-flow/v2: the ten words in lifecycle order, terminal las
   ]);
 });
 
+test("the template's batch type (F-125 D1): new → approved, then the feature's run, implement, review, fix, merge and supersede rows and gates", () => {
+  const raw = template();
+  const { batch, feature } = raw.types;
+  assert.deepEqual(batch.statuses, FEATURE.slice(FEATURE.indexOf('approved')));
+  assert.deepEqual(batch.terminal, feature.terminal);
+  assert.deepEqual(batch.verbs.new, { from: [], success: [{ to: 'approved' }] });
+  const rows = ['run', 'implement', 'review', 'fix', 'merge', 'supersede'];
+  assert.deepEqual(Object.keys(batch.verbs), ['new', ...rows]);
+  for (const verb of rows) assert.deepEqual(batch.verbs[verb], feature.verbs[verb], verb);
+  assert.deepEqual(batch.gates, feature.gates);
+  const flow = loadFlow(TEMPLATE_DIR);
+  assert.equal(flow.initial('batch'), 'approved');
+  assert.ok(flow.meets('batch', 'superseded', 'done'));
+
+  // A flow without the type still loads; only a reader of a batch's statuses is refused.
+  const { batch: _batch, ...types } = raw.types;
+  const older = loadFlow(backlogWith({ ...raw, types }));
+  assert.ok(older.meets('feature', 'done', 'done'));
+  assert.throws(() => older.statusesOf('batch'), /no "batch" type/);
+  // A v1 file, which never had one, reads the template's batch type.
+  assert.deepEqual(loadFlow(backlogWith(v1())).verbOf('batch', 'run'), flow.verbOf('batch', 'run'));
+});
+
 test('Flow.chainOf follows then: run chains review, and review chains fix', () => {
   const flow = loadFlow(TEMPLATE_DIR);
   assert.deepEqual(flow.chainOf('feature', 'run'), ['run', 'review', 'fix']);

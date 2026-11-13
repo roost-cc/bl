@@ -1,9 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { parseFrontmatter, runForgeOp } from '../../src/config.js';
-import { extractSection, replaceSection, resolveFeaturePluginsReport } from '../../src/feature.js';
+import {
+  extractSection,
+  replaceSection,
+  resolveFeaturePluginsReport,
+  resolveFeatureStories,
+} from '../../src/feature.js';
 import {
   runFeature,
   planSteps,
@@ -50,6 +55,8 @@ import { NO_MARKERS } from '../../src/test-excerpt.js';
 import { validateOutcome } from '../../src/outcome.js';
 import { loadSchema } from '../../src/session.js';
 import { reviewOf, statusOf as logStatusOf, transition } from '../../src/transition.js';
+import { planPath, readPlan } from '../../src/execution-plan.js';
+import { stringify as stringifyYaml } from 'yaml';
 
 // --- how `bl review` ends (S-1348) ---
 
@@ -208,6 +215,37 @@ test('reviewEnd: an escalation points at the unit index.md', () => {
   });
 });
 
+/** A computed plan (`computePlan`'s shape) of S-1 and S-2, S-2 waiting for S-1. */
+const PLAN = {
+  stories: ['S-1', 'S-2', 'S-3'],
+  dependencies: { 'S-1': [], 'S-2': ['S-1'], 'S-3': [] },
+  order: ['S-1', 'S-3', 'S-2'],
+  groups: [['S-1', 'S-3'], ['S-2']],
+  repos: ['bl', 'app'],
+  merge_order: ['app', 'bl'],
+  merge_cycle: null,
+};
+
+test('formatPlan prints the dependencies, work order, groups, repo and merge order before the steps', () => {
+  const text = formatPlan({ id: 'F-1', title: 'Feat' }, PLAN, planSteps([{ id: 'S-1' }], 1));
+  assert.match(
+    text,
+    /^F-1 · Feat — run plan\nDependencies:\n {2}S-1 waits for \(none\)\n {2}S-2 waits for S-1\n {2}S-3 waits for \(none\)\nWork order {2}: S-1, S-3, S-2\nGroups {6}: 1\. S-1, S-3 · 2\. S-2\nRepos {7}: bl, app\nMerge order : app, bl\nSteps:\n 1\. setup\n/,
+  );
+  const cycle = {
+    ...PLAN,
+    merge_order: null,
+    merge_cycle: [
+      { blocker: 'F-1:bl', gate: 'merge', unit: 'F-1:app', until: 'merged' },
+      { blocker: 'F-1:app', gate: 'merge', unit: 'F-1:bl', until: 'merged' },
+    ],
+  };
+  assert.match(
+    formatPlan({ id: 'F-1', title: 'Feat' }, cycle, []),
+    /^Merge order : none: the merge edges form a cycle \(F-1:bl → F-1:app, F-1:app → F-1:bl\)$/m,
+  );
+});
+
 test('planSteps and formatPlan list implement per story, then gate, PR, and review rounds', () => {
   const steps = planSteps([{ id: 'S-1' }, { id: 'S-2' }], 2);
   assert.deepEqual(
@@ -229,7 +267,7 @@ test('planSteps and formatPlan list implement per story, then gate, PR, and revi
       'stop',
     ],
   );
-  const text = formatPlan({ id: 'F-1', title: 'Feat' }, steps);
+  const text = formatPlan({ id: 'F-1', title: 'Feat' }, PLAN, steps);
   assert.match(text, /2\. implement S-1/);
   assert.match(text, /8\. fix \(round 1\)/);
   assert.match(text, /9\. fix-self-review \(round 1\)/);
@@ -364,6 +402,222 @@ test('happy path: stories, gate, self-review, PR, review → fix → re-review �
     assert.equal(runner.calls.filter((c) => c.cmd === 'npm test').length, 2);
   } finally {
     cleanup();
+  }
+});
+
+// --- the stored execution plan (F-125 D2) ---
+
+/** F-1's plan as `plan.yaml` stores it, in the work order `order` (the fixture's edges say S-1, S-2). */
+const storedPlan = (order) => ({
+  schema: 'bl-plan/v1',
+  unit: 'F-1',
+  computed_at: '2026-11-12T18:00:00Z',
+  stories: ['S-1', 'S-2'],
+  dependencies: { 'S-1': [], 'S-2': ['S-1'] },
+  order,
+  groups: order.map((id) => [id]),
+  repos: ['demo-repo'],
+  merge_order: ['demo-repo'],
+  changes: [],
+});
+
+const implemented = (runner) => runner.calls.filter((c) => c.prompt === 'feature-story').map((c) => c.story);
+
+test('a fresh run writes plan.yaml before the first implement step, commits it as run started, and follows its order', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    // A plan from an earlier run is computed again and overwritten.
+    writeFileSync(planPath(dirname(feature.indexPath)), stringifyYaml(storedPlan(['S-2', 'S-1'])));
+    initGitBacklog(dir);
+    let planAtFirstSession = null;
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        story: (o) => {
+          planAtFirstSession ??= readPlan(dirname(feature.indexPath), feature.id);
+          checkAll(o.vars.storyAbsPath);
+        },
+      },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean');
+    assert.deepEqual(planAtFirstSession.order, ['S-1', 'S-2'], 'written before the first implement step');
+    assert.equal(planAtFirstSession.unit, 'F-1');
+    assert.deepEqual(planAtFirstSession.changes, []);
+    assert.deepEqual(implemented(runner), ['S-1', 'S-2']);
+    assert.match(
+      git(dir, 'log', '--name-only', '--format=', '--grep=run started'),
+      /^features\/F1-feat\/plan\.yaml$/m,
+      'the run started commit carries it',
+    );
+  } finally {
+    cleanup();
+  }
+});
+
+test('--resume follows the stored plan without computing it again, also against the edges', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const path = planPath(dirname(feature.indexPath));
+    const text = stringifyYaml(storedPlan(['S-2', 'S-1']));
+    writeFileSync(path, text);
+    const runner = fakeRunner({ dir, feature });
+    const state = await runFeature({ feature, config, prep, runner, opts: { resume: true, maxRounds: 2 } });
+    assert.equal(state.status, 'clean');
+    assert.deepEqual(implemented(runner), ['S-2', 'S-1'], "the plan's order, not the edges'");
+    assert.equal(readFileSync(path, 'utf8'), text, 'the plan is not written again');
+  } finally {
+    cleanup();
+  }
+});
+
+test('--resume with no plan.yaml computes and writes one', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const runner = fakeRunner({ dir, feature });
+    await runFeature({ feature, config, prep, runner, opts: { resume: true, maxRounds: 2 } });
+    assert.deepEqual(readPlan(dirname(feature.indexPath), feature.id).order, ['S-1', 'S-2']);
+    assert.deepEqual(implemented(runner), ['S-1', 'S-2']);
+  } finally {
+    cleanup();
+  }
+});
+
+test('--resume refuses a plan.yaml that does not match its schema, naming the file and the field', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const { order: _order, ...plan } = storedPlan(['S-1', 'S-2']);
+    writeFileSync(planPath(dirname(feature.indexPath)), stringifyYaml(plan));
+    const runner = fakeRunner({ dir, feature });
+    const state = await runFeature({ feature, config, prep, runner, opts: { resume: true, maxRounds: 2 } });
+    assert.equal(state.refused, true);
+    assert.match(state.lastError, /features\/F1-feat\/plan\.yaml: schema violation at \$\/order: /);
+    assert.match(state.lastError, /fix it, or delete it to compute a new plan/);
+    assert.deepEqual(implemented(runner), []);
+  } finally {
+    cleanup();
+  }
+});
+
+// Review 2026-11-13, Must 4 and Should 1: a session's edit to plan.yaml is
+// followed by the next story and committed. The case where the session also
+// adds a story is in feature-run-repos.test.js (its fixture gives a story a repo).
+test('run_follows_plan_edit_between_story_sessions', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    // S-3, a copy of S-2 in F-1: S-2 and S-3 both wait for S-1 only.
+    const s2 = prep.ordered.find((s) => s.id === 'S-2');
+    const s3 = join(dir, 'stories', 'S3-third', 'index.md');
+    mkdirSync(dirname(s3), { recursive: true });
+    writeFileSync(s3, readFileSync(s2.indexPath, 'utf8').replaceAll('S-2', 'S-3').replaceAll('Second', 'Third'));
+    prep.ordered = resolveFeatureStories(feature, config).stories;
+    initGitBacklog(dir);
+    const unitDir = dirname(feature.indexPath);
+    const edit = { at: '2026-11-13T00:00:00Z', by: 'implement', what: 'S-3 before S-2', why: 'the work needs it' };
+    const runner = fakeRunner({
+      dir,
+      feature,
+      behaviour: {
+        story: (o) => {
+          checkAll(o.vars.storyAbsPath);
+          if (o.vars.storyId !== 'S-1') return;
+          const plan = readPlan(unitDir, 'F-1');
+          const edited = { ...plan, order: ['S-1', 'S-3', 'S-2'], groups: [['S-1'], ['S-3', 'S-2']] };
+          writeFileSync(planPath(unitDir), stringifyYaml({ ...edited, changes: [edit] }));
+        },
+      },
+    });
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'clean', state.lastError);
+    assert.deepEqual(implemented(runner), ['S-1', 'S-3', 'S-2']);
+    const plan = readPlan(unitDir, 'F-1');
+    assert.deepEqual(plan.order, ['S-1', 'S-3', 'S-2']);
+    assert.deepEqual(plan.changes, [edit], "the session's changes entry stays");
+    assert.match(git(dir, 'log', '--format=%s'), /^chore: F-1 plan as a session changed it$/m);
+    assert.equal(git(dir, 'status', '--porcelain', '--', 'features/F1-feat/plan.yaml'), '', 'committed');
+  } finally {
+    cleanup();
+  }
+});
+
+// Review 2026-11-13, Should 1: an edit bl cannot read stops the run at once, with the message.
+test("a session's plan.yaml edit that bl cannot read escalates with readPlan's message", async () => {
+  const cases = [
+    ['not YAML', 'order: [S-1\n', /the execution plan cannot be read after a session: .*plan\.yaml: not YAML: /],
+    ['order leaves out a story', null, /plan\.yaml: order must name each story of stories once; it leaves out S-2/],
+  ];
+  for (const [name, text, message] of cases) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      initGitBacklog(dir);
+      const unitDir = dirname(feature.indexPath);
+      const runner = fakeRunner({
+        dir,
+        feature,
+        behaviour: {
+          story: (o) => {
+            checkAll(o.vars.storyAbsPath);
+            if (o.vars.storyId !== 'S-1') return;
+            const bad = text ?? stringifyYaml({ ...readPlan(unitDir, 'F-1'), order: ['S-1'] });
+            writeFileSync(planPath(unitDir), bad);
+          },
+        },
+      });
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'escalated', name);
+      assert.match(state.lastError, message, name);
+      assert.deepEqual(implemented(runner), ['S-1'], `${name}: S-2 not started`);
+    } finally {
+      cleanup();
+    }
+  }
+});
+
+// Review 2026-11-13, nit: the "delete it" hint goes only with a plan bl could not read.
+test('--resume names no file to delete when writing a new plan fails', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  const unitDir = dirname(feature.indexPath);
+  try {
+    chmodSync(unitDir, 0o555);
+    const runner = fakeRunner({ dir, feature });
+    const state = await runFeature({ feature, config, prep, runner, opts: { resume: true, maxRounds: 2 } });
+    assert.equal(state.refused, true);
+    assert.match(state.lastError, /EACCES/);
+    assert.doesNotMatch(state.lastError, /delete it/);
+  } finally {
+    chmodSync(unitDir, 0o755);
+    cleanup();
+  }
+});
+
+// Review 2026-11-13, Must 3. The merge half is in feature-merge-repos.test.js.
+test('stored_plan_rejects_another_work_unit_for_resume_and_merge (resume)', async () => {
+  const cases = [
+    ['another unit', { unit: 'F-2' }, /plan\.yaml: unit is F-2, not F-1: it is the plan of another work unit/],
+    [
+      'groups leave out a story',
+      { groups: [['S-1']] },
+      /plan\.yaml: groups must name each story of stories once; it leaves out S-2/,
+    ],
+    [
+      'a dependency outside stories',
+      { dependencies: { 'S-2': ['S-9'] } },
+      /plan\.yaml: dependencies must name only stories of stories; it names S-9/,
+    ],
+  ];
+  for (const [name, change, message] of cases) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      writeFileSync(planPath(dirname(feature.indexPath)), stringifyYaml({ ...storedPlan(['S-1', 'S-2']), ...change }));
+      const runner = fakeRunner({ dir, feature });
+      const state = await runFeature({ feature, config, prep, runner, opts: { resume: true, maxRounds: 2 } });
+      assert.equal(state.refused, true, name);
+      assert.match(state.lastError, message, name);
+      assert.deepEqual(implemented(runner), [], `${name}: nothing implemented`);
+    } finally {
+      cleanup();
+    }
   }
 });
 

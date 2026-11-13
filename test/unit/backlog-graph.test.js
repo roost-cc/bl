@@ -251,6 +251,60 @@ test('feature links: derived stories (dependency order, ties by number), points 
   assert.equal(f3.theme, null);
 });
 
+test('batch links (F-125 D1): its stories from their batch:, in plan order, with points, components and dependsOn', () => {
+  const { root, config } = fixture();
+  const story = (n, extra) =>
+    replace(
+      join(root, 'stories', `S${n}-b`, 'index.md'),
+      `---\ncomponent: C01\nstory_id: S-${n}\ntitle: B${n}\ntype: chore\npoints: "2"\nstatus: refined\n${extra}---\n`,
+    );
+  replace(
+    join(root, 'batches', 'B1-fixes', 'index.md'),
+    '---\nbatch_id: B-1\ntitle: Fixes\ntransitions:\n  - to: approved\n    by: new\n---\n',
+  );
+  story(11, 'batch: B-1\n');
+  // S-12 waits for S-13 by an order edge inside the batch, and for S-1 outside it.
+  story(12, 'batch: b1\ndepends_on: [S-13, S-1]\n');
+  story(13, 'batch: B-1\n');
+  const g = loadBacklog(config);
+  const b1 = g.get('b-1');
+  assert.equal(b1, g.batches.get('B-1'));
+  assert.equal(b1.kind, 'batch');
+  assert.equal(b1.status, 'approved');
+  assert.equal(b1.done, false);
+  assert.deepEqual(ids(b1.stories), ['S-11', 'S-13', 'S-12']);
+  assert.equal(b1.points, 6);
+  assert.deepEqual(ids(b1.components), ['C01']);
+  assert.deepEqual(ids(b1.dependsOn), ['S-1']);
+  assert.equal(g.get('S-12').batch, b1);
+  assert.equal(g.get('S-12').feature, null);
+  assert.deepEqual(
+    g.edges.filter((e) => e.unit === 'S-12'),
+    [
+      { blocker: 'S-13', gate: 'order', unit: 'S-12', until: 'implemented' },
+      { blocker: 'S-1', gate: 'run', unit: 'S-12', until: 'done' },
+    ],
+  );
+  assert.deepEqual(ids(g.list('batch')), ['B-1']);
+  assert.equal(g.maxNum('batch'), 1n);
+  assert.deepEqual(
+    g.problems.filter((p) => p.kind === 'batch' || p.field === 'batch'),
+    [],
+  );
+
+  // A flow without the batch type still loads the batch; only its done throws.
+  const flow = JSON.parse(readFileSync(join(dirname(FIXTURE), '..', '..', 'templates', 'flow.json'), 'utf8'));
+  delete flow.types.batch;
+  replace(join(root, 'flow.json'), JSON.stringify(flow));
+  const older = loadBacklog(config);
+  assert.deepEqual(ids(older.get('B-1').stories), ['S-11', 'S-13', 'S-12']);
+  assert.throws(
+    () => older.get('B-1').done,
+    (e) => e instanceof FlowError && /no "batch" type/.test(e.message),
+  );
+  assert.equal(older.get('S-11').done, false);
+});
+
 test("blockers.json's run and order edges link stories as a depends_on: does; a rewrite gives a new snapshot (F-111 D4)", () => {
   const { root, config } = fixture();
   const before = loadBacklog(config);
@@ -355,7 +409,7 @@ test('one list of kinds: list(), maxNum() and unitFiles() take the same kinds, e
     assert.fail('a kind that is none must throw');
   };
   const kinds = named(() => g.list('nope'));
-  assert.deepEqual(kinds, ['story', 'component', 'feature', 'theme', 'epic', 'task']);
+  assert.deepEqual(kinds, ['story', 'component', 'feature', 'batch', 'theme', 'epic', 'task']);
   assert.deepEqual(
     named(() => g.maxNum('nope')),
     kinds,

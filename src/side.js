@@ -53,12 +53,12 @@ import {
 } from './story.js';
 import {
   featureBranchName,
-  featureRepoOrder,
   findFeature,
   isFeatureWorkable,
   normalizeFeatureId,
   resolveFeatureStories,
 } from './feature.js';
+import { featureRepoOrder } from './execution-plan.js';
 import { loadFlow } from './flow.js';
 import { applyTransition } from './transition.js';
 import { prepareFeatureRepo } from './feature-cmd.js';

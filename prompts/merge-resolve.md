@@ -63,6 +63,8 @@ Backlog repo : {{backlogDir}}
 
 {{simplicityGuide}}
 
+{{executionInputs}}
+
 {{writingGuide}}
 
 {{toolGuide}}

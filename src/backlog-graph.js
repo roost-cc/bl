@@ -7,8 +7,8 @@
  *   g.get('S-1258').requiredFor    // the stories that wait for it
  *   g.edges                        // every edge bl reads (`readEdges`)
  *
- * Six kinds of unit, each one `Map` keyed by canonical id: stories,
- * features, components, epics, themes and tasks. Every unit carries its
+ * Seven kinds of unit, each one `Map` keyed by canonical id: stories,
+ * features, story batches, components, epics, themes and tasks. Every unit carries its
  * frontmatter (`fm`, frozen, parsed with `parseFrontmatter` under the YAML
  * failsafe schema) and the common fields; its body and its change document are
  * lazy: `body()` slices the text already read, `section(name)` extracts one
@@ -17,7 +17,7 @@
  * of the unit's change documents says one changed, reusing the text of any
  * document a tolerant load parsed at its current stat key. Links are objects, built in a second
  * pass, and every inverse is computed, never read from a stored key: a
- * feature's `stories`, `points` and `components`, an epic's `features` and
+ * feature's and a batch's `stories`, `points` and `components`, an epic's `features` and
  * `status`, and a story's `requiredFor` (F-77 D3). The root `priority.yaml` is
  * read with the units, and its order is the graph's `priority` and
  * `rankOf` (F-78 D1, `src/priority.js`). The root `blockers.json` is read
@@ -74,7 +74,9 @@ import {
 } from './config.js';
 import { FlowError, loadFlow } from './flow.js';
 import { logOf, readsChange, roundOf, statusOf } from './transition.js';
-import { FEATURES_DIR, extractSection, normalizeFeatureId, orderStoriesByDeps } from './feature.js';
+import { FEATURES_DIR, extractSection, normalizeFeatureId } from './feature.js';
+import { BATCHES_DIR, normalizeBatchId } from './batch.js';
+import { orderStoriesByDeps } from './execution-plan.js';
 import {
   BLOCKERS_FILE,
   BlockersError,
@@ -102,7 +104,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * @typedef {"story" | "feature" | "component" | "epic" | "theme" | "task"} UnitKind
+ * @typedef {"story" | "feature" | "batch" | "component" | "epic" | "theme" | "task"} UnitKind
  */
 
 /**
@@ -140,6 +142,7 @@ import {
  *   type: string,
  *   points: number,
  *   feature: FeatureUnit | null,
+ *   batch: BatchUnit | null,
  *   component: ComponentUnit | null,
  *   repo: string,
  *   dependsOn: StoryUnit[],
@@ -147,6 +150,8 @@ import {
  *   tasks: TaskUnit[],
  *   change: () => ReturnType<typeof unitChange>,
  * }} StoryUnit
+ * `batch` is the story batch its `batch:` names (F-125 D1); a story that
+ * names a feature too is a `feature-and-batch` problem, and keeps both links.
  * `repo` is its component's `repo` (`placeStory`), empty when it has none.
  * `dependsOn` are the stories it waits for, the blockers of the run and
  * order edges on it (`storyDependencies` of `edges`), in edge order;
@@ -170,6 +175,20 @@ import {
  * order of `edges`, ties by number; `points` their points summed (every status);
  * `components` the set of their components, by id; `dependsOn` the stories
  * outside it that its stories depend on, by number.
+ */
+
+/**
+ * @typedef {BaseUnit & {
+ *   kind: "batch",
+ *   stories: StoryUnit[],
+ *   points: number,
+ *   components: ComponentUnit[],
+ *   dependsOn: StoryUnit[],
+ *   change: () => ReturnType<typeof unitChange>,
+ * }} BatchUnit
+ * A story batch (F-125 D1). `stories` are the stories whose `batch:` names
+ * it, and `points`, `components` and `dependsOn` are derived from them as a
+ * feature's are.
  */
 
 /**
@@ -210,13 +229,13 @@ import {
  * `num` is its file name's number (null past `MAX_TASK_NUM`).
  */
 
-/** @typedef {StoryUnit | FeatureUnit | ComponentUnit | EpicUnit | ThemeUnit | TaskUnit} Unit */
+/** @typedef {StoryUnit | FeatureUnit | BatchUnit | ComponentUnit | EpicUnit | ThemeUnit | TaskUnit} Unit */
 
 /**
  * One thing the graph could not read or resolve. `code` is the `bl validate`
  * finding code that reports it: `frontmatter-yaml`, `frontmatter-list`,
  * `duplicate-id` (a task's: `task-field`), `dangling-dep`,
- * `dangling-feature`, `component-unknown`, `feature-theme`, `feature-epic`,
+ * `dangling-feature`, `dangling-batch`, `feature-and-batch`, `component-unknown`, `feature-theme`, `feature-epic`,
  * `epic-theme`, `task-unit`, and `priority.yaml`'s `priority-file` and
  * `priority-unit` (F-78 D1).
  * @typedef {object} Problem
@@ -239,6 +258,7 @@ import {
  * @property {import("./flow.js").Flow | null} flow  null when `flow.json` is missing or unreadable
  * @property {ReadonlyMap<string, StoryUnit>} stories
  * @property {ReadonlyMap<string, FeatureUnit>} features
+ * @property {ReadonlyMap<string, BatchUnit>} batches
  * @property {ReadonlyMap<string, ComponentUnit>} components
  * @property {ReadonlyMap<string, EpicUnit>} epics
  * @property {ReadonlyMap<string, ThemeUnit>} themes
@@ -282,7 +302,7 @@ import {
  * `key` is the graph's map of the kind; `num` the number a directory or file
  * name carries; `accept` whether a name is a unit of the kind at all.
  * Built on first use, not at load: the readers this module projects
- * (`story.js`, `feature.js`, `theme.js`, `task.js`) import it, and their
+ * (`story.js`, `feature.js`, `batch.js`, `theme.js`, `task.js`) import it, and their
  * constants are not initialised yet while that import cycle loads.
  */
 let kindTable;
@@ -291,6 +311,7 @@ function kinds() {
     { kind: 'story', key: 'stories', dir: STORIES_DIR, num: /^S(\d+)/, changes: true },
     { kind: 'component', key: 'components', dir: COMPONENTS_DIR, num: /^C(\d+)/ },
     { kind: 'feature', key: 'features', dir: FEATURES_DIR, num: /^F(\d+)/, changes: true },
+    { kind: 'batch', key: 'batches', dir: BATCHES_DIR, num: /^B(\d+)/, changes: true },
     { kind: 'theme', key: 'themes', dir: THEMES_DIR, accept: (e) => THEME_ID_RE.test(e) },
     { kind: 'epic', key: 'epics', dir: EPICS_DIR, num: /^E(\d+)/ },
     { kind: 'task', key: 'tasks', dir: TASKS_DIR, num: TASK_FILE_RE, files: true },
@@ -308,6 +329,11 @@ function kindOf(fn, kind) {
   return k;
 }
 
+/** The plural a kind's map has in the graph (`stories`, `batches`, …); one that is not a kind throws. */
+export function kindKeyOf(kind) {
+  return kindOf('kindKeyOf', kind).key;
+}
+
 /** The id a unit's directory or file name gives, for a problem on an unread unit. */
 function idOfEntry(kind, entry) {
   const digits = entry.match(/^[A-Z](\d+)/)?.[1];
@@ -315,6 +341,7 @@ function idOfEntry(kind, entry) {
   if (digits == null) return null;
   if (kind === 'story') return `S-${digits}`;
   if (kind === 'feature') return `F-${digits}`;
+  if (kind === 'batch') return `B-${digits}`;
   if (kind === 'task') return `T-${digits}`;
   if (kind === 'component') return normalizeComponentId(`C${digits}`)?.id ?? null;
   return normalizeEpicId(`E${digits}`)?.id ?? `E${digits}`;
@@ -720,6 +747,11 @@ export const DERIVED_KEYS = Object.freeze({
     points: "the sum of its stories' points:",
     components: "the set of its stories' component:",
   }),
+  batch: Object.freeze({
+    stories: 'the stories whose batch: names it',
+    points: "the sum of its stories' points:",
+    components: "the set of its stories' component:",
+  }),
   epic: Object.freeze({
     features: 'the features whose epic: names it',
     status: 'its features: done when every one is done, draft when it has none or every one is draft',
@@ -748,6 +780,8 @@ function canonicalId(kind, fm, entry) {
       return fm.story_id ? (normalizeId(str(fm.story_id))?.id ?? str(fm.story_id)) : '';
     case 'feature':
       return fm.feature_id ? (normalizeFeatureId(str(fm.feature_id))?.id ?? str(fm.feature_id)) : '';
+    case 'batch':
+      return fm.batch_id ? (normalizeBatchId(str(fm.batch_id))?.id ?? str(fm.batch_id)) : '';
     case 'component':
       return normalizeComponentId(fm.component_id ?? '')?.id ?? idOfEntry(kind, entry);
     case 'epic':
@@ -774,11 +808,18 @@ const unitText = new WeakMap();
 function makeUnit(kind, slot, rec, root, flow, flowError) {
   const { fm } = rec;
   const id = canonicalId(kind, fm, slot.entry);
-  const hasFlow = kind === 'story' || kind === 'feature' || kind === 'task';
+  const hasFlow = kind === 'story' || kind === 'feature' || kind === 'batch' || kind === 'task';
+  // Why the unit's kind has no flow: none was read, or the flow lacks the
+  // kind's type (a `flow.json` from before F-125 has no `batch`).
+  const kindFlowError = !flow
+    ? flowError
+    : hasFlow && !Object.hasOwn(flow.types, kind)
+      ? new FlowError(flow.path, `no "${kind}" type in "types"`)
+      : null;
   // The status is the transition log's last `to`; a unit with no log reads
   // its `status:`, a v1 word as its current one (F-69 D2, D4).
   let status = '';
-  if (hasFlow) status = statusOf(kind, fm) || (kind === 'task' ? '' : 'draft');
+  if (hasFlow) status = statusOf(kind, fm) || (kind === 'story' || kind === 'feature' ? 'draft' : '');
   let body;
   const sections = new Map();
   /** @type {any} */
@@ -793,7 +834,7 @@ function makeUnit(kind, slot, rec, root, flow, flowError) {
     title: str(fm.title),
     status,
     added: str(fm.added),
-    done: hasFlow && flow ? flow.meets(kind, status, 'done') : false,
+    done: hasFlow && !kindFlowError ? flow.meets(kind, status, 'done') : false,
     text() {
       return rec.text;
     },
@@ -812,7 +853,7 @@ function makeUnit(kind, slot, rec, root, flow, flowError) {
       return sections.get(name);
     },
   };
-  if (kind === 'story' || kind === 'feature') {
+  if (kind === 'story' || kind === 'feature' || kind === 'batch') {
     // Revalidated by stat like the graph (Decision A1): a strict listing does
     // not stat change documents, so a snapshot kept warm across a write to
     // change.md must not hand back the document it read before.
@@ -835,6 +876,7 @@ function makeUnit(kind, slot, rec, root, flow, flowError) {
       type: str(fm.type),
       points: toInt(fm.points),
       feature: null,
+      batch: null,
       component: null,
       repo: '',
       dependsOn: [],
@@ -843,6 +885,8 @@ function makeUnit(kind, slot, rec, root, flow, flowError) {
     });
   } else if (kind === 'feature') {
     Object.assign(unit, { stories: [], points: 0, components: [], epic: null, theme: null, dependsOn: [], tasks: [] });
+  } else if (kind === 'batch') {
+    Object.assign(unit, { stories: [], points: 0, components: [], dependsOn: [], tasks: [] });
   } else if (kind === 'component') {
     Object.assign(unit, {
       repo: str(fm.repo),
@@ -879,10 +923,10 @@ function makeUnit(kind, slot, rec, root, flow, flowError) {
       transitions: { get: () => logOf(kind, fm, change()), enumerable: true },
     });
   }
-  // No flow: what needs one throws the flow's error when asked (`flowOf`).
-  if (!flow) {
+  // No flow for the kind: what needs one throws the error when asked (`flowOf`).
+  if (kindFlowError) {
     const fail = () => {
-      throw flowError;
+      throw kindFlowError;
     };
     if (hasFlow || kind === 'epic') Object.defineProperty(unit, 'done', { get: fail, enumerable: true });
     if (kind === 'epic') Object.defineProperty(unit, 'status', { get: fail, enumerable: true });
@@ -991,6 +1035,8 @@ function buildGraph(root, flow, flowError, listing, files, tolerant, blockers) {
       if (story) return frozen.story.get(story.id) ?? null;
       const feature = normalizeFeatureId(s);
       if (feature) return frozen.feature.get(feature.id) ?? null;
+      const batch = normalizeBatchId(s);
+      if (batch) return frozen.batch.get(batch.id) ?? null;
       const component = normalizeComponentId(s);
       if (component) return frozen.component.get(component.id) ?? null;
       const task = normalizeTaskId(s);
@@ -1069,7 +1115,15 @@ function readPriority(root, slot, files, maps, problem) {
  * @returns {import("./blockers.js").Edge[]}
  */
 function linkUnits(maps, flow, problem, fileEdges) {
-  const { story: stories, feature: features, component: components, epic: epics, theme: themes, task: tasks } = maps;
+  const {
+    story: stories,
+    feature: features,
+    batch: batches,
+    component: components,
+    epic: epics,
+    theme: themes,
+    task: tasks,
+  } = maps;
   const dangling = (u, code, field, ref, message) =>
     problem({
       code,
@@ -1117,13 +1171,32 @@ function linkUnits(maps, flow, problem, fileEdges) {
       }
     }
     s.feature?.stories.push(s);
+
+    const rawBatch = str(s.fm.batch);
+    if (rawBatch) {
+      s.batch = batches.get(normalizeBatchId(rawBatch)?.id ?? rawBatch) ?? null;
+      if (!s.batch) {
+        dangling(s, 'dangling-batch', 'batch', rawBatch, `story ${s.id} names non-existent batch ${rawBatch}`);
+      }
+      // A story is in a feature or in a batch, not both (F-125 D1).
+      if (rawFeature) {
+        dangling(
+          s,
+          'feature-and-batch',
+          'batch',
+          rawBatch,
+          `story ${s.id} names feature ${rawFeature} and batch ${rawBatch}; a story is in one work unit`,
+        );
+      }
+    }
+    s.batch?.stories.push(s);
   }
 
   // The `depends_on:` keys as edges (F-111 R4), each entry that names no
   // story a problem at its file; then every story's dependencies from the
   // run and order edges between two stories (F-111 D4).
   const fromKeys = dependsOnEdges(
-    byNumber.map((s) => ({ id: s.id, depends_on: s.fm.depends_on, feature: s.feature?.id ?? '' })),
+    byNumber.map((s) => ({ id: s.id, depends_on: s.fm.depends_on, unit: (s.feature ?? s.batch)?.id ?? '' })),
   );
   for (const e of fromKeys) {
     if (stories.has(e.blocker)) continue;
@@ -1141,15 +1214,21 @@ function linkUnits(maps, flow, problem, fileEdges) {
     }
   }
 
-  for (const f of [...features.values()].sort(byNum)) {
-    f.stories = orderStoriesByDeps(f.stories, edges);
-    f.points = f.stories.reduce((sum, s) => sum + s.points, 0);
-    f.components = [...new Set(f.stories.map((s) => s.component).filter(Boolean))].sort(byId);
-    for (const c of f.components) c.features.push(f);
-    const inside = new Set(f.stories);
+  // A feature's and a batch's stories in plan order, and what follows from them.
+  const deriveStories = (u) => {
+    u.stories = orderStoriesByDeps(u.stories, edges);
+    u.points = u.stories.reduce((sum, s) => sum + s.points, 0);
+    u.components = [...new Set(u.stories.map((s) => s.component).filter(Boolean))].sort(byId);
+    const inside = new Set(u.stories);
     const outside = new Set();
-    for (const s of f.stories) for (const d of s.dependsOn) if (!inside.has(d)) outside.add(d);
-    f.dependsOn = [...outside].sort(byNum);
+    for (const s of u.stories) for (const d of s.dependsOn) if (!inside.has(d)) outside.add(d);
+    u.dependsOn = [...outside].sort(byNum);
+  };
+  for (const b of batches.values()) deriveStories(b);
+
+  for (const f of [...features.values()].sort(byNum)) {
+    deriveStories(f);
+    for (const c of f.components) c.features.push(f);
 
     const rawTheme = str(f.fm.theme);
     if (rawTheme) {
@@ -1208,9 +1287,12 @@ function linkUnits(maps, flow, problem, fileEdges) {
     const raw = str(t.fm.unit);
     if (!raw) continue;
     const fid = normalizeFeatureId(raw)?.id;
+    const bid = normalizeBatchId(raw)?.id;
     const sid = normalizeId(raw)?.id;
-    t.unit = (fid && features.get(fid)) || (sid && stories.get(sid)) || null;
-    if (!t.unit) dangling(t, 'task-unit', 'unit', raw, `unit ${raw} is not a feature or story in the backlog`);
+    t.unit = (fid && features.get(fid)) || (bid && batches.get(bid)) || (sid && stories.get(sid)) || null;
+    if (!t.unit) {
+      dangling(t, 'task-unit', 'unit', raw, `unit ${raw} is not a feature, story batch or story in the backlog`);
+    }
     t.unit?.tasks.push(t);
   }
   return edges;

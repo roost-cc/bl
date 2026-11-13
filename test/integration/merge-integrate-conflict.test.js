@@ -136,6 +136,30 @@ test('an agent that leaves the merge unfinished is aborted and escalated, and ma
   }
 });
 
+// Review 2026-11-13, Should 1: the resolution agent may change plan.yaml
+// (_execution-inputs.md); a change bl cannot read fails the resolution checks.
+test('a resolution agent that leaves a plan.yaml bl cannot read is rolled back and escalated with the message', async () => {
+  const fx = fixture();
+  try {
+    landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
+    const { config, unit, prep } = featureCtx(fx);
+    const head = g(fx.wts['f1-feat'], 'rev-parse', 'HEAD');
+    const resolve = (cwd) => {
+      writeFileSync(join(fx.dir, 'features', 'F1-feat', 'plan.yaml'), 'order: [S-2\n');
+      return resolveBoth(cwd);
+    };
+    const { runner, calls } = scriptedRunner({ test: 'true', resolve });
+    const res = await integrateUnit({ unit, config, prep, runner });
+    assert.equal(res.ok, false);
+    assert.equal(res.escalated, true);
+    assert.deepEqual(calls.sessions, ['merge-resolve'], 'no gate or review after a failed resolution');
+    assert.equal(g(fx.wts['f1-feat'], 'rev-parse', 'HEAD'), head, 'the resolution is rolled back');
+    assert.match(escalation(featureFile(fx)), /- .*features\/F1-feat\/plan\.yaml: not YAML: /);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('a resolution session that ends with RESOLVED text and no outcome is resumed once, then rolled back and escalated', async () => {
   const fx = fixture();
   try {

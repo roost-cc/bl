@@ -17,6 +17,7 @@ import {
 import { DERIVED_KEYS, changeDoc, loadBacklog } from './backlog-graph.js';
 import { readAllStories, readComponents, pathEntryProblem } from './story.js';
 import { readAllFeatures, extractSection, isFeatureWorkable, sectionHasContent } from './feature.js';
+import { readAllBatches } from './batch.js';
 import { readAllThemes, readAllEpics, normalizeEpicId, splitBriefEntry, THEME_ID_RE } from './theme.js';
 import { findRoadmapFindings } from './roadmap.js';
 import { extractReviewLog, parseLatestSession } from './review-log.js';
@@ -71,6 +72,9 @@ export const VALID_STORY_KEYS = new Set([
   // No `required_for`: the inverse of `depends_on` is derived (F-77 D3);
   // one still set is `derived-key`.
   'feature',
+  // The story batch it is in (F-125 D1): a story names a feature or a batch,
+  // not both (`feature-and-batch`); a missing batch is `dangling-batch`.
+  'batch',
   // The unit whose work found a side story (`bl side --from`, F-48 D2): a
   // record only; `found-by` checks that it names a feature or story.
   'found_by',
@@ -169,6 +173,15 @@ export const VALID_FEATURE_KEYS = new Set([
   'tokens_by_step',
 ]);
 
+/**
+ * A story batch's keys (F-125 D1): a feature's without the planning ones
+ * (`theme`, `epic`, `approved`). Its stories, points and components are
+ * derived (`DERIVED_KEYS`), so one still set is `derived-key`.
+ */
+export const VALID_BATCH_KEYS = new Set(
+  [...VALID_FEATURE_KEYS].filter((k) => !['feature_id', 'status', 'theme', 'epic', 'approved'].includes(k)),
+).add('batch_id');
+
 // Titles that describe a verification step rather than a change. Verification
 // is an acceptance criterion of the story that made the change, not a story.
 export const VERIFICATION_TITLE_RE = /^(confirm|verify|re-?verify|re-?run|manually verify|double-?check)\b/i;
@@ -243,7 +256,7 @@ export function tokensByStepProblems(map) {
 
 /**
  * @param {any} fm
- * @param {"story" | "component" | "feature" | "theme" | "epic"} kind
+ * @param {"story" | "component" | "feature" | "batch" | "theme" | "epic"} kind
  * @param {string} location
  * @param {{ dirName?: string, knownRepos?: Set<string>, componentId?: string, unitRepo?: string,
  *   flow?: import("./flow.js").Flow }} context
@@ -276,6 +289,14 @@ export function validateFrontmatter(fm, kind, location, context = {}) {
       validKeys: VALID_FEATURE_KEYS,
       idKey: 'feature_id',
       idRegex: /^F-\d+$/,
+    },
+    // A story batch (F-125 D1): `bl batch` writes its transition log, so it
+    // never needs a `status:`.
+    batch: {
+      required: ['batch_id', 'title'],
+      validKeys: VALID_BATCH_KEYS,
+      idKey: 'batch_id',
+      idRegex: /^B-\d+$/,
     },
     // `repos` is `theme-repo` (findValueAxisFindings); `brief` is
     // `theme-brief` (findThemeBriefFindings).
@@ -369,7 +390,7 @@ export function validateFrontmatter(fm, kind, location, context = {}) {
   }
 
   // bad-tokens-by-step (S-904): the per-step token map bl writes.
-  if ((kind === 'story' || kind === 'feature') && Object.hasOwn(fm, 'tokens_by_step')) {
+  if ((kind === 'story' || kind === 'feature' || kind === 'batch') && Object.hasOwn(fm, 'tokens_by_step')) {
     for (const problem of tokensByStepProblems(fm.tokens_by_step)) {
       findings.push({ severity: 'error', code: 'bad-tokens-by-step', message: `tokens_by_step ${problem}`, location });
     }
@@ -1320,10 +1341,10 @@ export function findFrontmatterFindings(backlogRoot, graph = loadBacklog({ backl
  *
  * A task's duplicate id is `findTaskFindings`'s `task-field`.
  * @param {import("./backlog-graph.js").BacklogGraph} graph
- * @returns {{ stories: Finding[], components: Finding[], epics: Finding[], features: Finding[] }}
+ * @returns {{ stories: Finding[], components: Finding[], epics: Finding[], features: Finding[], batches: Finding[] }}
  */
 export function findDuplicateFindings(graph) {
-  const out = { stories: [], components: [], epics: [], features: [] };
+  const out = { stories: [], components: [], epics: [], features: [], batches: [] };
   const grouped = new Set();
   for (const p of graph.problems) {
     if (p.code !== 'duplicate-id') continue;
@@ -1331,9 +1352,9 @@ export function findDuplicateFindings(graph) {
     // resolves to no unit, though its copies are in `list()`.
     const { kind } = p;
     const copies = graph.list(kind).filter((u) => u.id === p.ref);
-    if (kind === 'epic' || kind === 'feature') {
+    if (kind === 'epic' || kind === 'feature' || kind === 'batch') {
       const first = copies[0].relPath;
-      out[`${kind}s`].push({
+      out[kind === 'batch' ? 'batches' : `${kind}s`].push({
         severity: 'error',
         code: 'duplicate-id',
         message: `duplicate ${kind} ID ${p.ref} across directories: ${first}, ${p.file}`,
@@ -1359,15 +1380,21 @@ export function findDuplicateFindings(graph) {
 
 /**
  * The dangling-reference findings, from the graph's problems (F-77 D2):
- * `dangling-dep` (a `depends_on:` naming no story) and
- * `dangling-feature` (a `feature:` naming no feature), each at the story's
- * file.
+ * `dangling-dep` (a `depends_on:` naming no story),
+ * `dangling-feature` (a `feature:` naming no feature), `dangling-batch` (a
+ * `batch:` naming no story batch) and `feature-and-batch` (a story naming
+ * both, F-125 D1), each at the story's file.
  * @param {import("./backlog-graph.js").BacklogGraph} graph
- * @returns {{ deps: Finding[], features: Finding[] }}
+ * @returns {{ deps: Finding[], features: Finding[], batches: Finding[], featureAndBatch: Finding[] }}
  */
 export function findDanglingFindings(graph) {
   const pick = (code) => graph.problems.filter((p) => p.code === code).map((p) => problemFinding(p));
-  return { deps: pick('dangling-dep'), features: pick('dangling-feature') };
+  return {
+    deps: pick('dangling-dep'),
+    features: pick('dangling-feature'),
+    batches: pick('dangling-batch'),
+    featureAndBatch: pick('feature-and-batch'),
+  };
 }
 
 /**
@@ -1457,7 +1484,8 @@ export function runAll(config, opts = {}) {
   const componentCount = allComponents.length;
   const allFeatures = readAllFeatures(config);
   const allTasks = readAllTasks(config);
-  const units = unitIndex(allStories, allFeatures, allTasks);
+  const allBatches = readAllBatches(config);
+  const units = unitIndex(allStories, allFeatures, allTasks, allBatches);
   const featureNote =
     allFeatures.length > 0 ? ` (${allFeatures.length} feature${allFeatures.length === 1 ? '' : 's'})` : '';
 
@@ -1527,6 +1555,11 @@ export function runAll(config, opts = {}) {
     findings.push(...findDeferredErrors(f.id, f.status, f.content, f.featureRelPath, flow, 'feature'));
   }
 
+  // 2b'. Frontmatter checks for story batches (F-125 D1).
+  for (const b of allBatches) {
+    findings.push(...validateFrontmatter(b.fm, 'batch', b.featureRelPath, { dirName: b.featureEntry }));
+  }
+
   // 2c. Themes and epics (F-51 D1): their frontmatter, then the value-axis
   //     rules, which also check each feature's `theme:` and `epic:`.
   const allThemes = readAllThemes(config);
@@ -1559,9 +1592,12 @@ export function runAll(config, opts = {}) {
   findings.push(
     ...dupes.stories,
     ...dupes.features,
+    ...dupes.batches,
     ...dangling.deps,
     ...featureLinks,
     ...dangling.features,
+    ...dangling.batches,
+    ...dangling.featureAndBatch,
     ...foundBy,
     ...implementPlugins,
     ...verificationTitles,
@@ -1580,7 +1616,8 @@ export function runAll(config, opts = {}) {
   // The task files (F-65 D1): `task-unit`, `task-field`.
   findings.push(...findTaskFindings(allTasks, units, flow));
   // The transition logs (F-69 D2, D4): `transition-log`, `legacy-status`.
-  for (const kind of ['story', 'feature', 'task']) {
+  // A flow from before F-125 has no `batch` type, and so no batch log to check.
+  for (const kind of ['story', 'feature', 'batch', 'task'].filter((k) => Object.hasOwn(flow.types, k))) {
     for (const u of graph.list(kind)) findings.push(...findTransitionFindings(flow, kind, u.fm, u.relPath));
   }
 
@@ -1695,6 +1732,7 @@ Findings codes:
   bad-effort, bad-review-status, id-dir-mismatch, bad-id-format, duplicate-id,
   dangling-dep, depends-on-key, review-log-missing,
   review-log-unaddressed, plugin-binary, derived-key, dangling-feature,
+  dangling-batch, feature-and-batch,
   found-by, feature-no-stories, verification-only-title, run-state-in-spec,
   change-of-mismatch, change-repo-incomplete, bad-change-status,
   legacy-review-fields, forge-plugin, forge-op, forge-op-reads-body, component-unknown,

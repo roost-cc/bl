@@ -65,6 +65,8 @@ code reaches it.
 
 {{simplicityGuide}}
 
+{{executionInputs}}
+
 ## The side-PR rule each sub-agent follows
 
 Each sub-agent's file also carries this rule. You open no PR yourself.

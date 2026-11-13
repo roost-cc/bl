@@ -115,7 +115,7 @@ test('a flag with no id is a usage error that lists nothing; bl run with no id t
   }
   const run = runBl(['run'], { cwd: dir });
   assert.equal(run.status, 1);
-  assert.match(run.stderr, /Usage: bl run <id\.\.\.>/);
+  assert.match(run.stderr, /Usage: bl run <id> /);
 });
 
 test('bl status <id> still reports the one target', () => {

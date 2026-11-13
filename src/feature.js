@@ -34,7 +34,9 @@ import { CHECKBOX_RE } from './review-log.js';
 import { statusOf } from './transition.js';
 import { entryMatches, ownFm, readAllStories } from './story.js';
 import { graphOf } from './backlog-graph.js';
-import { ORDER_EDGE, featureGraph, findHoldCycles, readEdges, repoEnd } from './blockers.js';
+import { readEdges } from './blockers.js';
+import { featureRepoOrder, orderStoriesByDeps } from './execution-plan.js';
+import { namesBatch } from './batch.js';
 
 export const FEATURES_DIR = 'features';
 
@@ -109,24 +111,27 @@ function toInt(v, fallback = 0) {
 }
 
 /**
- * One feature unit of the graph (`loadBacklog`) in the record shape used
- * across bl, or null when it has no `feature_id`. The branch, PR, review
- * state and Review Log (`changeBody`) come from the feature's current change
- * document (`unit.change()`, read now), not its spec. The text is the
- * graph's, CRLF read as LF (S-896).
+ * One feature or story batch unit of the graph (`loadBacklog`) in the record
+ * shape used across bl, or null when it has no id key (`feature_id`,
+ * `batch_id`). A batch record has a feature's field names (F-125 D1), its
+ * `theme` and `epic` empty. The branch, PR, review state and Review Log
+ * (`changeBody`) come from the unit's current change document
+ * (`unit.change()`, read now), not its spec. The text is the graph's, CRLF
+ * read as LF (S-896).
  */
-function featureRecord(unit, config) {
-  if (!unit.fm.feature_id) return null;
+export function workUnitRecord(unit, config) {
+  const idKey = unit.kind === 'batch' ? 'batch_id' : 'feature_id';
+  if (!unit.fm[idKey]) return null;
   const fm = ownFm(unit);
   // No repo of its own (F-52 D3): the branch and PR are read off the change
   // document's first `repos:` entry, which is the lead repo's.
   const change = unit.change();
   return {
-    id: fm.feature_id,
+    id: fm[idKey],
     title: fm.title ?? '',
     // The log's last `to` and its review rounds (F-69 D2, D5); with no log,
     // `status:` (a v1 word mapped) placed by the change document (D4).
-    status: statusOf('feature', fm, change.change) || unit.status,
+    status: statusOf(unit.kind, fm, change.change) || unit.status,
     round: unit.round,
     // The value axis (F-51 D1): the theme slug and the epic id as written.
     theme: String(fm.theme ?? '').trim(),
@@ -153,25 +158,40 @@ function featureRecord(unit, config) {
   };
 }
 
-/** Read every feature, whatever its status. */
-export function readAllFeatures(config) {
+/**
+ * Every `kind` (`feature` or `batch`) work unit as a record, whatever its status.
+ * @param {"feature" | "batch"} kind
+ */
+export function readWorkUnits(kind, config) {
   const out = [];
-  for (const unit of graphOf(config).list('feature')) {
-    const f = featureRecord(unit, config);
+  for (const unit of graphOf(config).list(kind)) {
+    const f = workUnitRecord(unit, config);
     if (f) out.push(f);
   }
   return out;
 }
 
 /**
- * Find a feature by parsed ID: the first directory named for it.
- * @returns {ReturnType<typeof featureRecord> | null}
+ * Find a `kind` (`feature` or `batch`) work unit by parsed ID: the first
+ * directory named for it.
+ * @param {"feature" | "batch"} kind
+ * @returns {ReturnType<typeof workUnitRecord> | null}
  */
-export function findFeature(parsed, config) {
+export function findWorkUnit(kind, parsed, config) {
   const unit = graphOf(config)
-    .list('feature')
+    .list(kind)
     .find((u) => entryMatches(u.entry, parsed));
-  return unit ? featureRecord(unit, config) : null;
+  return unit ? workUnitRecord(unit, config) : null;
+}
+
+/** Read every feature, whatever its status. */
+export function readAllFeatures(config) {
+  return readWorkUnits('feature', config);
+}
+
+/** Find a feature by parsed ID: the first directory named for it. */
+export function findFeature(parsed, config) {
+  return findWorkUnit('feature', parsed, config);
 }
 
 /** The highest feature number: every feature directory's, readable or not (`maxNum`). */
@@ -195,13 +215,17 @@ export function closedFeatureRefusal(feature, flow) {
 
 /**
  * Why the existing story `id` (frontmatter `fm`) cannot move into the feature
- * `featureId`, or null when it can: it names another feature, or it is not
- * unstarted (`Flow.isUnstarted`; a started story is someone's work in flight,
- * and the feature's merge would mark it done). A story that already names
- * `featureId` is the feature's and is never refused. `bl new --feature`
- * passes a null `featureId`: its feature is new, so any `feature:` refuses.
+ * `featureId`, or null when it can: it names a story batch (`batch:`; a story
+ * is in a feature or in a batch, F-125 D1), it names another feature, or it
+ * is not unstarted (`Flow.isUnstarted`; a started story is someone's work in
+ * flight, and the feature's merge would mark it done). A story that already
+ * names `featureId`, and no batch, is the feature's and is never refused.
+ * `bl new --feature` passes a null `featureId`: its feature is new, so any
+ * `feature:` refuses.
  */
 export function storyMoveRefusal(id, fm, featureId, flow) {
+  const batch = String(fm.batch ?? '').trim();
+  if (batch) return `${id} is already in ${batch}.`;
   const named = String(fm.feature ?? '').trim();
   if (named) {
     if (featureId != null && (normalizeFeatureId(named)?.id ?? named) === featureId) return null;
@@ -214,112 +238,37 @@ export function storyMoveRefusal(id, fm, featureId, flow) {
   return null;
 }
 
+/**
+ * Whether `raw` (a story's `feature:` or `batch:`) names the work unit `id`
+ * in any spelling `normalize` reads.
+ * @param {unknown} raw
+ * @param {string} id
+ * @param {(raw: string) => { id: string } | null} normalize
+ */
+export function namesWorkUnit(raw, id, normalize) {
+  const named = String(raw ?? '').trim();
+  return named !== '' && (normalize(named)?.id ?? named) === id;
+}
+
 /** Whether the story record `s` names the feature `featureId` in its `feature:`. */
 export function namesFeature(s, featureId) {
-  const raw = String(s?.feature ?? '').trim();
-  return raw !== '' && (normalizeFeatureId(raw)?.id ?? raw) === featureId;
+  return namesWorkUnit(s?.feature, featureId, normalizeFeatureId);
 }
 
 /**
- * The stories of a feature: the records in `allStories` (read when null)
- * whose `feature:` names it, the only statement of membership (F-77 D3), in
- * the graph's order: order-edge order (`orderStoriesByDeps` of `readEdges`),
- * ties by story number.
+ * The stories of a feature, or of a story batch (`batchUnit`, F-125 D1): the
+ * records in `allStories` (read when null) whose `feature:` (a batch's:
+ * `batch:`) names it, the only statement of membership (F-77 D3), in the
+ * graph's order: the order of the run and order edges between them
+ * (`orderStoriesByDeps` of `readEdges`), ties by story number.
  *
  * @returns {{ stories: Array<object> }}  readAllStories records
  */
 export function resolveFeatureStories(feature, config, allStories = null) {
   const all = allStories ?? readAllStories(config);
-  const own = all.filter((s) => namesFeature(s, feature.id));
+  const names = feature.kind === 'batch' ? namesBatch : namesFeature;
+  const own = all.filter((s) => names(s, feature.id));
   return { stories: orderStoriesByDeps(own, readEdges(config)) };
-}
-
-/**
- * Order a feature's stories by its order edges (F-111 D4): each story after
- * the blockers of the order edges on it, ties by story number. Only edges
- * between two of `stories` count. A cycle (`bl validate`'s
- * `blockers-cycle`) leaves the stuck remainder in number order.
- * @template {{ id: string }} S
- * @param {S[]} stories
- * @param {import("./blockers.js").Edge[]} edges  `readEdges`'s, or the graph's `edges`
- * @returns {S[]}
- */
-export function orderStoriesByDeps(stories, edges) {
-  const num = (s) => Number(String(s.id).match(/(\d+)$/)?.[1] ?? -1);
-  const ids = new Set(stories.map((s) => s.id));
-  const after = new Map();
-  for (const e of edges) {
-    if (e.gate !== ORDER_EDGE.gate || !ids.has(e.unit) || !ids.has(e.blocker)) continue;
-    after.set(e.unit, [...(after.get(e.unit) ?? []), e.blocker]);
-  }
-  const remaining = [...stories].sort((a, b) => num(a) - num(b));
-  const emitted = new Set();
-  const out = [];
-  while (remaining.length > 0) {
-    const idx = remaining.findIndex((s) => (after.get(s.id) ?? []).every((d) => emitted.has(d)));
-    if (idx === -1) {
-      out.push(...remaining);
-      break;
-    }
-    const [next] = remaining.splice(idx, 1);
-    emitted.add(next.id);
-    out.push(next);
-  }
-  return out;
-}
-
-/** The repo a feature's order puts first whenever one of its stories is in it (F-52 D3). */
-export const LEAD_REPO = 'bl';
-
-/**
- * A feature's repos in the one order every step uses (F-52 D3): its stories'
- * repos (`unitRepo`, each story's component's, D1), `bl` first when one is
- * there (S-864: a later repo's push gate reads backlog output the new `bl`
- * generates), then every other repo by its first story in the order given:
- * `resolveFeatureStories`'s (`orderStoriesByDeps`). A repo named twice keeps
- * its first place; an empty name is dropped. The first entry is the lead
- * repo. Pure: the stories are `readAllStories` records.
- *
- * @param {Array<{ id?: string, unitRepo?: string }>} stories
- * @returns {string[]}
- */
-export function featureRepoOrder(stories) {
-  const names = [];
-  for (const s of stories ?? []) {
-    const name = String(s.unitRepo ?? '').trim();
-    if (name && !names.includes(name)) names.push(name);
-  }
-  const lead = names.indexOf(LEAD_REPO);
-  if (lead > 0) names.unshift(...names.splice(lead, 1));
-  return names;
-}
-
-/**
- * The order `bl merge` merges a feature's repos in (F-111 D2): a
- * topological sort of `names` (`featureRepoOrder`) by the feature's merge
- * edges, each edge's blocker repo before its unit repo. Among the repos no
- * unmerged repo holds, `names`' order stays, so with no merge edge the order
- * is `names`. `edges` are the edges between two of `names`. A cycle gives no
- * order and the edges of one cycle.
- * @param {string[]} names
- * @param {import("./blockers.js").Edge[]} edges  the feature's merge edges (`featureMergeEdges`)
- * @returns {{ order: string[] | null, edges: import("./blockers.js").Edge[], cycle: import("./blockers.js").Edge[] | null }}
- */
-export function mergeOrder(names, edges) {
-  const repo = (id) => repoEnd(id)?.repo;
-  const used = edges.filter((e) => names.includes(repo(e.blocker)) && names.includes(repo(e.unit)));
-  const order = [];
-  const rest = [...names];
-  while (rest.length > 0) {
-    const free = rest.findIndex((n) => used.every((e) => repo(e.unit) !== n || order.includes(repo(e.blocker))));
-    if (free === -1) {
-      const stuck = used.filter((e) => !order.includes(repo(e.unit)) && !order.includes(repo(e.blocker)));
-      const [cycle] = findHoldCycles(featureGraph(stuck));
-      return { order: null, edges: used, cycle: cycle.map((arc) => arc.edge) };
-    }
-    order.push(...rest.splice(free, 1));
-  }
-  return { order, edges: used, cycle: null };
 }
 
 /**

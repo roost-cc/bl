@@ -163,6 +163,8 @@ export async function getDeniedTools(mode, { backlogRoot, config } = {}) {
  * `selfConsistencyGuide`, in every refine and implementation prompt and the
  * two prompts that review for it. `effortGuide` is the effort-level rubric
  * (F-85 D6) that every refine prompt carries, so the refiner sets `effort:`.
+ * `executionInputs` is the planning rules that feed the execution plan
+ * (F-125 D3), carried by every refine, implementing and resolving prompt.
  * `refineOutcome` is the story refine's closing **Outcome** section (F-68
  * D1): the object to write to `{{outcomePath}}` as the session's last act.
  * The batch refine passes its sub-agents `_refine-outcome-subagent` in its
@@ -192,6 +194,7 @@ const PROMPT_PARTIALS = {
   collaborationGuide: '_collaboration',
   simplicityGuide: '_simplicity',
   effortGuide: '_effort',
+  executionInputs: '_execution-inputs',
 };
 
 /** The heading `_collaboration.md` opens with: a prompt that has it carries the rules. */

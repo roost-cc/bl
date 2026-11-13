@@ -143,6 +143,8 @@ headless session cannot remove files.
 
 {{simplicityGuide}}
 
+{{executionInputs}}
+
 {{blockedByBug}}
 
 {{escalationGuide}}

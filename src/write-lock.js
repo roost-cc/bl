@@ -4,7 +4,7 @@
  *
  * | Path (backlog-relative)                                        | Covering lock    |
  * | -------------------------------------------------------------- | ---------------- |
- * | an existing story or feature `index.md`, change document, or   | its spec lock    |
+ * | an existing story, feature or batch `index.md`, change doc, or | its spec lock    |
  * | `allowed-tools.json`                                           |                  |
  * | any of those when the file does not exist yet                  | the backlog lock |
  * | every other path that git does not ignore                      | the backlog lock |
@@ -28,6 +28,7 @@ import { isChangeFile } from './change-doc.js';
 import { git } from './child.js';
 import { STORIES_DIR } from './config.js';
 import { FEATURES_DIR } from './feature.js';
+import { BATCHES_DIR } from './batch.js';
 import { holds } from './kernel-lock.js';
 import { canonical, LOCK_FILE, withLock } from './lock.js';
 import { specLockPath, withSpecFileLock, withSpecLock } from './spec-file.js';
@@ -36,13 +37,13 @@ import { specLockPath, withSpecFileLock, withSpecLock } from './spec-file.js';
 
 /**
  * Whether `rel` (backlog-relative, split on `sep`) is a file that takes a
- * spec lock while it exists: a story or feature `index.md`, a change document
- * in a unit directory, or `allowed-tools.json` at the root.
+ * spec lock while it exists: a story, feature or story batch `index.md`, a
+ * change document in a unit directory, or `allowed-tools.json` at the root.
  * @param {string[]} parts
  */
 function isSpecFile(parts) {
   if (parts.length === 1) return parts[0] === ALLOWED_TOOLS_FILE;
-  if (parts.length !== 3 || (parts[0] !== STORIES_DIR && parts[0] !== FEATURES_DIR)) return false;
+  if (parts.length !== 3 || ![STORIES_DIR, FEATURES_DIR, BATCHES_DIR].includes(parts[0])) return false;
   return parts[2] === 'index.md' || isChangeFile(parts[2]) != null;
 }
 

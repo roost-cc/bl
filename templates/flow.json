@@ -125,6 +125,61 @@
         "merge": { "verbs": ["merge"] }
       }
     },
+    "batch": {
+      "statuses": [
+        "approved",
+        "in_progress",
+        "in_review",
+        "fixing",
+        "ready_for_merge",
+        "escalated",
+        "done",
+        "superseded"
+      ],
+      "terminal": ["done", "superseded"],
+      "verbs": {
+        "new": { "from": [], "success": [{ "to": "approved" }] },
+        "run": {
+          "from": ["approved", "in_progress", "escalated"],
+          "when": ["gate_free:run", "escalation_cleared"],
+          "during": "in_progress",
+          "via": ["implement", "test", "self_review", "open_pr"],
+          "success": [{ "to": "in_review", "then": "review" }],
+          "failure": [{ "to": "escalated" }]
+        },
+        "implement": {
+          "from": ["approved", "in_progress", "escalated"],
+          "when": ["gate_free:run"],
+          "success": [{ "to": "in_progress" }]
+        },
+        "review": {
+          "from": ["in_progress", "in_review", "ready_for_merge", "escalated"],
+          "during": "in_review",
+          "via": ["review"],
+          "success": [{ "to": "ready_for_merge" }],
+          "failure": [{ "when": ["round_within_cap"], "to": "fixing", "then": "fix" }, { "to": "escalated" }]
+        },
+        "fix": {
+          "from": ["in_progress", "fixing", "escalated"],
+          "during": "fixing",
+          "via": ["fix", "fix_self_review"],
+          "success": [{ "to": "in_review", "then": "review" }],
+          "failure": [{ "to": "escalated" }]
+        },
+        "merge": {
+          "from": ["in_progress", "in_review", "ready_for_merge", "escalated"],
+          "when": ["gate_free:merge"],
+          "via": ["merge"],
+          "success": [{ "to": "done" }],
+          "failure": [{ "to": "escalated" }]
+        },
+        "supersede": { "from": "*", "success": [{ "to": "superseded" }] }
+      },
+      "gates": {
+        "run": { "verbs": ["run", "implement"] },
+        "merge": { "verbs": ["merge"] }
+      }
+    },
     "task": {
       "statuses": ["draft", "done"],
       "terminal": ["done"],

@@ -19,10 +19,12 @@
  *
  * A merge edge (F-111 D1) joins two repos of one feature, each end
  * `<feature>:<repo>`: `bl merge` merges the blocker's repo before the
- * unit's (`mergeOrder` in `feature.js`). An order edge joins two stories of
+ * unit's (`mergeOrder` in `execution-plan.js`). An order edge joins two stories of
  * one feature (`{"blocker":"S-1446","gate":"order","unit":"S-1448",
  * "until":"implemented"}`): the implement loop takes the blocker first
- * (`orderStoriesByDeps`). Both are edges inside one feature (`inFeature`):
+ * (`orderStoriesByDeps`). A story batch (F-125 D1) has both as a feature
+ * does: "feature" here reads "the work unit of a story" (`storyUnitOf`).
+ * Both are edges inside one feature (`inFeature`):
  * no verb checks them as a gate, so neither is a hold or adds an arc to
  * `holdGraph`; a cycle of one feature's merge edges, or of its order edges,
  * is `blockers-cycle`. bl reads `bl-blockers/v1` (which has neither) and
@@ -50,7 +52,9 @@ import { atomicWriteFile } from './atomic-write.js';
 import { loadFlow } from './flow.js';
 import { normalizeId } from './config.js';
 import { parseIdList, readAllStories } from './story.js';
-import { featureRepoOrder, normalizeFeatureId, readAllFeatures } from './feature.js';
+import { normalizeFeatureId, readAllFeatures } from './feature.js';
+import { normalizeBatchId, readAllBatches } from './batch.js';
+import { featureRepoOrder } from './execution-plan.js';
 import { readAllTasks } from './task.js';
 import { graphOf } from './backlog-graph.js';
 
@@ -277,21 +281,38 @@ export function edgeArrow(e) {
   return `${e.blocker} → ${e.unit}`;
 }
 
+/** The unit types whose stories run and merge as one: a feature and a story batch (F-125 D1). */
+const WORK_UNIT_TYPES = ['feature', 'batch'];
+
 /**
- * Whether an edge joins two parts of one feature: two repo ends of one
- * feature (a merge edge), or two stories of one feature at gate `order` (an
- * order edge). The feature's own loops read such an edge; no verb checks it
- * as a gate.
+ * The work unit of story `storyId` (F-125 D1): the id of its feature or its
+ * story batch (`unitIndex`), `''` when it is a loose story or not a story.
+ * Every edge check that asks which unit a story runs and merges with asks
+ * this.
+ * @param {Map<string, Unit>} units
+ * @param {string} storyId
+ * @returns {string}
+ */
+export function storyUnitOf(units, storyId) {
+  const s = units.get(storyId);
+  return s?.type === 'story' ? s.feature || s.batch || '' : '';
+}
+
+/**
+ * Whether an edge joins two parts of one work unit (a feature or a story
+ * batch): two repo ends of one unit (a merge edge), or two stories of one
+ * unit at gate `order` (an order edge). The unit's own loops read such an
+ * edge; no verb checks it as a gate.
  * @param {Edge} e
  * @param {Map<string, Unit>} units
  */
 export function inFeature(e, units) {
   if (e.gate === ORDER_EDGE.gate) {
-    const [b, u] = [units.get(e.blocker), units.get(e.unit)];
-    return b?.type === 'story' && u?.type === 'story' && b.feature !== '' && b.feature === u.feature;
+    const own = storyUnitOf(units, e.blocker);
+    return own !== '' && own === storyUnitOf(units, e.unit);
   }
   const [b, u] = [repoEnd(e.blocker), repoEnd(e.unit)];
-  return b != null && u != null && b.unit === u.unit && units.get(b.unit)?.type === 'feature';
+  return b != null && u != null && b.unit === u.unit && WORK_UNIT_TYPES.includes(units.get(b.unit)?.type);
 }
 
 /** The merge edges of feature `id`: both ends `<id>:<repo>`. */
@@ -319,15 +340,15 @@ export function featureGraph(edges) {
   return graph;
 }
 
-/** The repos of feature `id` (`featureRepoOrder` of its stories, F-52 D3). */
+/** The repos of work unit `id` (`featureRepoOrder` of its stories, F-52 D3). */
 function featureRepos(units, id) {
-  return featureRepoOrder([...units.values()].filter((u) => u.type === 'story' && u.feature === id));
+  return featureRepoOrder([...units.values()].filter((u) => storyUnitOf(units, u.id) === id));
 }
 
 /**
  * What is wrong with a merge edge (one that names a `<feature>:<repo>` end),
- * by F-111 D1: an end that is `*`, not `<feature>:<repo>`, not a feature, or
- * a repo no story of the feature names, or ends in two features
+ * by F-111 D1: an end that is `*`, not `<feature>:<repo>`, not a feature or
+ * a batch, or a repo no story of the unit names, or ends in two units
  * (`blockers-unit`); a gate other than `merge` (`blockers-gate`); an `until`
  * other than `merged` (`blockers-status`).
  */
@@ -341,8 +362,8 @@ function mergeEdgeProblems(e, units, add) {
     let problem = null;
     if (id === WILDCARD) problem = `a merge edge's ${role} is never "${WILDCARD}"`;
     else if (!end) problem = `a merge edge's ${role} is <feature>:<repo>, not ${id}`;
-    else if (units.get(end.unit)?.type !== 'feature')
-      problem = `${role} ${id}: ${end.unit} is not a feature in the backlog`;
+    else if (!WORK_UNIT_TYPES.includes(units.get(end.unit)?.type))
+      problem = `${role} ${id}: ${end.unit} is not a feature or batch in the backlog`;
     else if (!featureRepos(units, end.unit).includes(end.repo)) {
       problem = `${role} ${id}: no story of ${end.unit} names repo ${end.repo}`;
     }
@@ -362,26 +383,29 @@ function mergeEdgeProblems(e, units, add) {
 
 /**
  * What is wrong with an order edge (one at gate `order`), by F-111 D1: an
- * end that is `*`, not a story, or a story in no feature, or ends in two
- * features (`blockers-unit`); an `until` other than `implemented`
+ * end that is `*`, not a story, or a story in no feature or batch, or ends
+ * in two work units (`blockers-unit`); an `until` other than `implemented`
  * (`blockers-status`).
  */
 function orderEdgeProblems(e, units, add) {
-  const features = [];
+  const owners = [];
   for (const [role, id] of [
     ['blocker', e.blocker],
     ['unit', e.unit],
   ]) {
-    const u = units.get(id);
+    const own = storyUnitOf(units, id);
     let problem = null;
     if (id === WILDCARD) problem = `an order edge's ${role} is never "${WILDCARD}"`;
-    else if (u?.type !== 'story') problem = `${role} ${id} is not a story in the backlog`;
-    else if (!u.feature) problem = `${role} ${id} is in no feature`;
+    else if (units.get(id)?.type !== 'story') problem = `${role} ${id} is not a story in the backlog`;
+    else if (!own) problem = `${role} ${id} is in no feature or batch`;
     if (problem) add('blockers-unit', problem);
-    else features.push(u.feature);
+    else owners.push(own);
   }
-  if (features.length === 2 && features[0] !== features[1]) {
-    add('blockers-unit', `an order edge joins two stories of one feature, not of ${features[0]} and ${features[1]}`);
+  if (owners.length === 2 && owners[0] !== owners[1]) {
+    add(
+      'blockers-unit',
+      `an order edge joins two stories of one feature or batch, not of ${owners[0]} and ${owners[1]}`,
+    );
   }
   if (e.until !== ORDER_EDGE.until) {
     add('blockers-status', `an order edge's until is "${ORDER_EDGE.until}", not "${e.until}"`);
@@ -395,28 +419,38 @@ function orderEdgeProblems(e, units, add) {
 /**
  * Every unit an edge can name, by id. A story's `feature` is the feature
  * it runs and merges with: its `feature:` when that names a feature (the
- * only statement of membership, F-77 D3), and `unitRepo` its one repo. A
- * task (F-65 D1) is a unit too, so it can be a blocker or an `active_when`
- * unit; its type has no gates, so no edge holds it (`blockers-gate`).
- * @param {Array<{ id: string, status: string, feature?: string, unitRepo?: string }>} stories
+ * only statement of membership, F-77 D3); its `batch` the same for its
+ * `batch:` and a story batch (F-125 D1), and `unitRepo` its one repo.
+ * `storyUnitOf` reads the two as the story's work unit. A task (F-65 D1) is
+ * a unit too, so it can be a blocker or an `active_when` unit; its type has
+ * no gates, so no edge holds it (`blockers-gate`).
+ * @param {Array<{ id: string, status: string, feature?: string, batch?: string, unitRepo?: string }>} stories
  * @param {Array<{ id: string, status: string, stories: string[] }>} features
  * @param {Array<{ id: string, status: string }>} [tasks]
+ * @param {Array<{ id: string, status: string, stories: string[] }>} [batches]
  * @returns {Map<string, Unit>}
  */
-export function unitIndex(stories, features, tasks = []) {
+export function unitIndex(stories, features, tasks = [], batches = []) {
   const units = new Map();
   for (const f of features) {
     units.set(f.id, { id: f.id, type: 'feature', status: f.status, stories: [...f.stories] });
   }
+  for (const b of batches) {
+    units.set(b.id, { id: b.id, type: 'batch', status: b.status, stories: [...b.stories] });
+  }
+  // The id `raw` names, when it is a unit of `type`.
+  const own = (raw, normalize, type) => {
+    const named = String(raw ?? '').trim();
+    const id = normalize(named)?.id ?? named;
+    return units.get(id)?.type === type ? id : '';
+  };
   for (const s of stories) {
-    const named = String(s.feature ?? '').trim();
-    const fid = normalizeFeatureId(named)?.id ?? named;
-    const own = units.get(fid)?.type === 'feature' ? fid : '';
     units.set(s.id, {
       id: s.id,
       type: 'story',
       status: s.status,
-      feature: own,
+      feature: own(s.feature, normalizeFeatureId, 'feature'),
+      batch: own(s.batch, normalizeBatchId, 'batch'),
       unitRepo: s.unitRepo ?? '',
     });
   }
@@ -424,9 +458,9 @@ export function unitIndex(stories, features, tasks = []) {
   return units;
 }
 
-/** `unitIndex` over the backlog's stories, features and tasks. */
+/** `unitIndex` over the backlog's stories, features, tasks and story batches. */
 export function readUnits(config) {
-  return unitIndex(readAllStories(config), readAllFeatures(config), readAllTasks(config));
+  return unitIndex(readAllStories(config), readAllFeatures(config), readAllTasks(config), readAllBatches(config));
 }
 
 // ---------------------------------------------------------------------------
@@ -436,19 +470,20 @@ export function readUnits(config) {
 /**
  * The edges the `depends_on:` keys still in story files stand for (F-111
  * D4), the read adapter of R4: for `S-a depends_on S-b`, the order edge
- * `S-b → S-a` when both name one feature, else the run edge that holds
- * `S-a` until `S-b` is `done`. An entry that names no story still gives a
- * run edge, so it holds, as it did. Each entry once, in the key's order.
- * @param {Array<{ id: string, depends_on?: unknown, feature: string }>} stories
- *   `feature` is the feature id the story names (`''` for none)
+ * `S-b → S-a` when both are in one work unit (a feature or a batch), else
+ * the run edge that holds `S-a` until `S-b` is `done`. An entry that names
+ * no story still gives a run edge, so it holds, as it did. Each entry once,
+ * in the key's order.
+ * @param {Array<{ id: string, depends_on?: unknown, unit: string }>} stories
+ *   `unit` is the id of the story's work unit (`''` for none)
  * @returns {Edge[]}
  */
 export function dependsOnEdges(stories) {
-  const featureOf = new Map(stories.map((s) => [s.id, s.feature]));
+  const unitOf = new Map(stories.map((s) => [s.id, s.unit]));
   const out = [];
   for (const s of stories) {
     for (const dep of new Set(parseIdList(s.depends_on))) {
-      out.push(dependencyEdge(dep, s.id, (id) => featureOf.get(id) ?? ''));
+      out.push(dependencyEdge(dep, s.id, (id) => unitOf.get(id) ?? ''));
     }
   }
   return out;
@@ -456,17 +491,18 @@ export function dependsOnEdges(stories) {
 
 /**
  * The edge for "story `unit` waits for story `blocker`" (F-111 D4): the order
- * edge when both are in one feature, else the run edge that holds `unit`
- * until `blocker` is `done`. `bl new` writes it, the migration moves each
- * `depends_on:` entry to it, and `dependsOnEdges` reads an entry as it.
+ * edge when both are in one work unit (a feature or a batch, F-125 D1),
+ * else the run edge that holds `unit` until `blocker` is `done`. `bl new`
+ * writes it, the migration moves each `depends_on:` entry to it, and
+ * `dependsOnEdges` reads an entry as it.
  * @param {string} blocker
  * @param {string} unit
- * @param {(id: string) => string} featureOf  a story's feature id, `''` for none
+ * @param {(id: string) => string} unitOf  a story's work unit id (`storyUnitOf`), `''` for none
  * @returns {Edge}
  */
-export function dependencyEdge(blocker, unit, featureOf) {
-  const feature = featureOf(unit);
-  const { gate, until } = feature !== '' && featureOf(blocker) === feature ? ORDER_EDGE : RUN_EDGE;
+export function dependencyEdge(blocker, unit, unitOf) {
+  const own = unitOf(unit);
+  const { gate, until } = own !== '' && unitOf(blocker) === own ? ORDER_EDGE : RUN_EDGE;
   return { blocker, gate, unit, until };
 }
 
@@ -552,16 +588,17 @@ export function unmetEdges(edges, unitIds, gate, units, flow) {
 // ---------------------------------------------------------------------------
 
 /**
- * The ids a unit's gate checks: itself, and for a feature every story that
- * runs and merges with it (D2), so an edge on one of its stories holds it.
+ * The ids a unit's gate checks: itself, and for a feature or a story batch
+ * every story that runs and merges with it (D2, `storyUnitOf`), so an edge
+ * on one of its stories holds it.
  * @param {Map<string, Unit>} units
  * @param {string} id
  * @returns {string[]}
  */
 export function gateIds(units, id) {
   const ids = [id];
-  if (units.get(id)?.type !== 'feature') return ids;
-  for (const u of units.values()) if (u.type === 'story' && u.feature === id) ids.push(u.id);
+  if (!WORK_UNIT_TYPES.includes(units.get(id)?.type)) return ids;
+  for (const u of units.values()) if (storyUnitOf(units, u.id) === id) ids.push(u.id);
   return ids;
 }
 
@@ -720,12 +757,11 @@ export function edgeProblems(e, units, flow) {
 // ---------------------------------------------------------------------------
 
 /**
- * The node a unit stands as: a story of a feature is its feature, since a
- * feature runs and merges as one unit; anything else is itself.
+ * The node a unit stands as: a story of a feature or a batch is that work
+ * unit, since it runs and merges as one; anything else is itself.
  */
 function nodeOf(units, id) {
-  const u = units.get(id);
-  return u?.type === 'story' && u.feature ? u.feature : id;
+  return storyUnitOf(units, id) || id;
 }
 
 /**
@@ -950,7 +986,7 @@ export function findBlockersFindings(config, units, flow) {
 /**
  * @typedef {{ blocker: string, gate: string, unit: string, until: string,
  *   active_when?: { unit: string, status: string } }} Edge
- * @typedef {{ id: string, type: string, status: string, feature?: string,
+ * @typedef {{ id: string, type: string, status: string, feature?: string, batch?: string,
  *   stories?: string[], unitRepo?: string }} Unit
  * @typedef {{ from: string, to: string, why: string, kind: "edge" | "merge" | "order",
  *   edge?: Edge }} Arc
