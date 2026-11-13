@@ -36,6 +36,7 @@ import {
   edgeKey,
   edgeLabel,
   edgeProblems,
+  flowOrNull,
   formatBlockers,
   holdGate,
   inFeature,
@@ -166,8 +167,8 @@ async function underLock(config, fn) {
  * @returns {{ refused?: string[], edge?: object, paths?: string[] | null }}
  */
 export function writeEdge(config, given) {
-  const edge = holdGate(given);
   const flow = loadFlow(config.backlogRoot);
+  const edge = holdGate(given, flow);
   const { edges } = readBlockers(config.backlogRoot);
   const units = readUnits(config);
   const problems = edgeProblems(edge, units, flow);
@@ -302,7 +303,7 @@ export async function addEdge(config, edge) {
  * @returns {Promise<{ refused?: string[], edge?: object, commit?: object }>}
  */
 export async function removeEdge(config, given) {
-  const key = holdGate(given);
+  const key = holdGate(given, flowOrNull(config.backlogRoot));
   return underLock(config, async ({ edges }) => {
     const found = edges.find((e) => edgeKey(e) === edgeKey(key));
     if (!found) return { refused: [`no edge ${edgeLabel(key)} (see bl block list ${key.unit})`] };

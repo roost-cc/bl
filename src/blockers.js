@@ -15,8 +15,8 @@
  * An edge's identity is (`blocker`, `gate`, `unit`): no id, no duplicates.
  * A hold's gate is a status of its unit's type. The reader takes the gate
  * names from before F-119 as the statuses they stand for (`holdGate`:
- * `run` is `in_progress`, `merge` is `done`), so the next write stores
- * statuses. `unit: "*"` holds every unit of every type that has the status;
+ * `run` is `in_progress`, `merge` is `done`, unless `flow.json` has a status
+ * of that name), so the next write stores statuses. `unit: "*"` holds every unit of every type that has the status;
  * `blocker` is never `*`. `active_when` keeps the edge from holding anything until
  * that unit's status meets that status. Statuses meet through `flow.json`
  * (`Flow.meets`). Met edges stay as history; nothing prunes them.
@@ -54,7 +54,7 @@
 import { lstatSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
-import { loadFlow } from './flow.js';
+import { FlowError, loadFlow } from './flow.js';
 import { normalizeId } from './config.js';
 import { parseIdList, readAllStories } from './story.js';
 import { normalizeFeatureId, readAllFeatures } from './feature.js';
@@ -92,9 +92,35 @@ export const OLD_GATES = Object.freeze({ run: 'in_progress', merge: 'done' });
  */
 export const RUN_EDGE = { gate: OLD_GATES.run, until: 'done' };
 
-/** The status gate name `gate` stands for: an old name (`OLD_GATES`) mapped, any other unchanged. */
-export function gateStatus(gate) {
-  return Object.hasOwn(OLD_GATES, gate) ? OLD_GATES[gate] : gate;
+/**
+ * The status gate name `gate` stands for: an old name (`OLD_GATES`) mapped,
+ * unless a type of `flow` has a status of that name (an admin may name one
+ * `run` or `merge`); any other name unchanged. With no flow (`flowOrNull`
+ * could not read it), an old name is mapped.
+ * @param {string} gate
+ * @param {import("./flow.js").Flow | null} [flow]
+ * @returns {string}
+ */
+export function gateStatus(gate, flow = null) {
+  if (!Object.hasOwn(OLD_GATES, gate)) return gate;
+  const own = flow != null && Object.keys(flow.types).some((t) => flow.statusesOf(t).includes(gate));
+  return own ? gate : OLD_GATES[gate];
+}
+
+/**
+ * The backlog's flow for `gateStatus`, or null when `loadFlow` cannot read
+ * it. Every reader and writer of a hold's gate reads the flow through it, so
+ * they map an old name the same way.
+ * @param {string} backlogRoot
+ * @returns {import("./flow.js").Flow | null}
+ */
+export function flowOrNull(backlogRoot) {
+  try {
+    return loadFlow(backlogRoot);
+  } catch (err) {
+    if (err instanceof FlowError) return null;
+    throw err;
+  }
 }
 
 /** Whether an edge names a `<feature>:<repo>` end: a merge edge (F-111 D1). */
@@ -108,10 +134,11 @@ function isRepoEdge(e) {
  * `bl block add` and `remove` read every gate through it, so bl compares and
  * writes statuses only.
  * @param {Edge} e
+ * @param {import("./flow.js").Flow | null} flow  `gateStatus`'s
  * @returns {Edge}
  */
-export function holdGate(e) {
-  return isRepoEdge(e) ? e : { ...e, gate: gateStatus(e.gate) };
+export function holdGate(e, flow) {
+  return isRepoEdge(e) ? e : { ...e, gate: gateStatus(e.gate, flow) };
 }
 
 /** The `unit` that holds every unit of every type with the gate (F-66 A3). */
@@ -145,14 +172,15 @@ const isName = (v) => typeof v === 'string' && v.trim() !== '' && v === v.trim()
  * `active_when` that is not `{ unit, status }`).
  * @param {string} text
  * @param {string} [path]  for messages
+ * @param {import("./flow.js").Flow | null} [flow]  the backlog's (`flowOrNull`), for `holdGate`
  * @returns {Edge[]}
  */
-export function parseBlockers(text, path = BLOCKERS_FILE) {
-  return parseFile(text, path).edges;
+export function parseBlockers(text, path = BLOCKERS_FILE, flow = null) {
+  return parseFile(text, path, flow).edges;
 }
 
 /** `parseBlockers`, with the file's schema. */
-function parseFile(text, path) {
+function parseFile(text, path, flow) {
   let raw;
   try {
     raw = JSON.parse(text);
@@ -185,7 +213,7 @@ function parseFile(text, path) {
       }
     }
   });
-  const edges = raw.edges.map((e) => normalizeEdge(holdGate(e)));
+  const edges = raw.edges.map((e) => normalizeEdge(holdGate(e, flow)));
   const renamed = raw.edges.some((e, i) => e.gate !== edges[i].gate);
   return { schema: raw.schema, edges, renamed };
 }
@@ -222,7 +250,7 @@ export function readBlockers(backlogRoot) {
     }
     throw new BlockersError(path, `cannot be read (${err.code ?? err.message})`);
   }
-  return { ...parseFile(text, path), text, path };
+  return { ...parseFile(text, path, flowOrNull(backlogRoot)), text, path };
 }
 
 // Code point order, so the layout is the same under every locale.

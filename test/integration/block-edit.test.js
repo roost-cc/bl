@@ -2,10 +2,22 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { mkTempBacklog } from '../helpers/tempdir.js';
+import { fileURLToPath } from 'url';
+import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { GIT_ENV, git, initGitBacklog } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
-import { BLOCKERS_FILE, formatBlockers, heldBy, readBlockers } from '../../src/blockers.js';
+import {
+  BLOCKERS_FILE,
+  formatBlockers,
+  heldAt,
+  heldBy,
+  parseBlockers,
+  readBlockers,
+  readEdges,
+} from '../../src/blockers.js';
+import { loadFlow } from '../../src/flow.js';
+import { GUARDS } from '../../src/guards.js';
+import { spawnSyncFiles } from '../../src/child-stdio.js';
 import { writeBlockersLocked } from '../helpers/covering-lock.js';
 import { backlog, bl } from '../helpers/block-fixture.js';
 
@@ -421,6 +433,80 @@ test('bl block reads a gate name from before F-119 as its status: add writes it,
   const gone = bl(['block', 'remove', 'S-2', '--gate', 'merge', '--unit', 'S-1'], dir);
   assert.equal(gone.status, 0, gone.stderr);
   assert.equal(gone.stdout, 'unblocked: S-1 at done by S-2\n');
+});
+
+test('custom_status_names_survive_hold_gate_read_and_write: a status named run or merge keeps its gate (F-119 R3)', () => {
+  const { dir } = backlog();
+  initGitBacklog(dir);
+  // An admin's flow.json: the story type has a status run, the feature type one named merge.
+  const flowFile = join(dir, 'flow.json');
+  const custom = JSON.parse(readFileSync(flowFile, 'utf8'));
+  const addStatus = (type, name) => {
+    const { statuses } = custom.types[type];
+    statuses.splice(statuses.indexOf('done'), 0, name);
+  };
+  addStatus('story', 'run');
+  addStatus('feature', 'merge');
+  writeFileSync(flowFile, JSON.stringify(custom, null, 2) + '\n');
+  const config = { backlogRoot: dir };
+  const flow = loadFlow(dir);
+  // In the file's order: by unit.
+  const kept = [
+    // A wildcard keeps a name that some type has as a status.
+    { blocker: 'S-9', gate: 'run', unit: '*', until: 'done' },
+    { blocker: 'S-2', gate: 'merge', unit: 'F-1', until: 'done' },
+    { blocker: 'S-1', gate: 'run', unit: 'S-2', until: 'done' },
+  ];
+  const text = formatBlockers(kept);
+  writeFileSync(join(dir, BLOCKERS_FILE), text);
+  git(dir, 'add', 'flow.json', BLOCKERS_FILE);
+  git(dir, 'commit', '-q', '-m', 'custom statuses');
+
+  // Every reader: parseBlockers with the flow, readBlockers, readEdges, bl validate.
+  assert.deepEqual(parseBlockers(text, BLOCKERS_FILE, flow), kept, 'parseBlockers');
+  assert.deepEqual(readBlockers(dir).edges, kept, 'readBlockers');
+  assert.equal(readBlockers(dir).renamed, false, 'readBlockers renamed');
+  assert.deepEqual(
+    readEdges(config).filter((e) => e.blocker !== 'S-11'),
+    kept,
+    'readEdges',
+  );
+  const findings = JSON.parse(bl(['validate', '--json'], dir).stdout).findings.filter((f) =>
+    f.code.startsWith('blockers-'),
+  );
+  assert.deepEqual(findings, [], 'bl validate: no old-name warning and no gate error');
+
+  // The guard and the hold check read the gate the same way.
+  const free = GUARDS.get('gate_free');
+  assert.equal(free({ config, id: 'S-2' }, 'run'), false, 'gate_free:run is the run status');
+  assert.equal(free({ config, id: 'S-2' }, 'in_progress'), true, 'gate_free:in_progress');
+  assert.deepEqual(
+    heldAt(config, 'S-2', 'run').map((h) => h.line),
+    ['S-2 is held at run by S-1 (draft, needs done)'],
+  );
+
+  // The merge driver keeps both names.
+  const driver = fileURLToPath(new URL('../../src/blockers-merge.js', import.meta.url));
+  const scratch = mkTempDir('bl-blockers-driver-');
+  const paths = ['base', 'ours', 'theirs'].map((p) => join(scratch, p));
+  [text, text, formatBlockers([...kept, { blocker: 'S-1', gate: 'run', unit: 'S-13', until: 'done' }])].forEach(
+    (t, i) => writeFileSync(paths[i], t),
+  );
+  const merged = spawnSyncFiles(process.execPath, [driver, ...paths], { cwd: dir, encoding: 'utf8' });
+  assert.equal(merged.status, 0, merged.stderr);
+  assert.match(readFileSync(paths[1], 'utf8'), /"blocker":"S-1","gate":"run","unit":"S-13"/, 'merge driver');
+
+  // The writers: bl block add --gate run and bl block remove --gate merge.
+  const r = bl(['block', 'add', 'S-1', '--gate', 'run', '--unit', 'S-12', '--until', 'done'], dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'blocked: S-12 at run by S-1 until done\n');
+  const written = readFileSync(join(dir, BLOCKERS_FILE), 'utf8');
+  for (const line of [...kept, { blocker: 'S-1', gate: 'run', unit: 'S-12', until: 'done' }]) {
+    assert.ok(written.includes(JSON.stringify(line)), `the write keeps ${JSON.stringify(line)}`);
+  }
+  const gone = bl(['block', 'remove', 'S-2', '--gate', 'merge', '--unit', 'F-1'], dir);
+  assert.equal(gone.status, 0, gone.stderr);
+  assert.equal(gone.stdout, 'unblocked: F-1 at merge by S-2\n');
 });
 
 test('bl block add takes any status of the unit as its gate: in_refinement holds refine (F-119 D4)', () => {

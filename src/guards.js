@@ -12,7 +12,7 @@
  * checks a verb's `when`, and `branchOf` a branch's (`transition.js`).
  */
 
-import { gateStatus, heldAt } from './blockers.js';
+import { flowOrNull, gateStatus, heldAt } from './blockers.js';
 import { escalationOpen } from './feature.js';
 
 /**
@@ -24,7 +24,10 @@ import { escalationOpen } from './feature.js';
 export const GUARDS = new Map([
   // Nothing in blockers.json keeps the unit, or a feature's stories, out of
   // the status; an old gate name reads as its status (`run`: `in_progress`, F-119 R3).
-  ['gate_free', (ctx, gate) => heldAt(ctx.config, ctx.id, gateStatus(gate)).length === 0],
+  [
+    'gate_free',
+    (ctx, gate) => heldAt(ctx.config, ctx.id, gateStatus(gate, flowOrNull(ctx.config.backlogRoot))).length === 0,
+  ],
   // The unit's `## Escalation` section is `None.` or empty.
   ['escalation_cleared', (ctx) => !escalationOpen(ctx.indexPath)],
   // The round is at most the round cap: a review that fails at the cap still
