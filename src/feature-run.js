@@ -2797,7 +2797,9 @@ async function refreshRepos(ctx) {
     const ids = added.map((s) => s.id).join(', ');
     let changed;
     try {
-      const plan = runPlan(ctx);
+      // The stored plan, not the one read at run start: a session may have
+      // changed it, and its `changes` entries stay (F-125 D2).
+      const plan = readPlan(dirname(feature.indexPath)) ?? runPlan(ctx);
       ctx.plan = replan(plan, held, scope.edges, {
         taken: prep.ordered.filter((s) => ctx.implemented.has(s.id)).map((s) => s.id),
         why: `a session added ${ids} to ${feature.id} during the run`,

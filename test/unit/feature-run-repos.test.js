@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { basename, dirname, join } from 'path';
 import { loadConfig, serializeFrontmatter, configForRepo } from '../../src/config.js';
+import { stringify as stringifyYaml } from 'yaml';
 import { readPlan } from '../../src/execution-plan.js';
 import { git, initGitBacklog } from '../helpers/git-backlog.js';
 import { readAllStories } from '../../src/story.js';
@@ -1159,6 +1160,35 @@ test('a story added during the run joins plan.yaml after the stories taken, with
     assert.match(change.at, /^\d{4}-\d{2}-\d{2}T/);
     assert.match(git(dir, 'log', '--format=%s'), /^chore: F-1 plan adds S-3$/m);
     assert.equal(git(dir, 'status', '--porcelain', '--', 'features/F1-feat/plan.yaml'), '', 'committed');
+  } finally {
+    cleanup();
+  }
+});
+
+test("a story added during the run keeps a session's own changes entry in plan.yaml", async () => {
+  const { dir, cleanup, config, feature, prep, addSide, sideShell } = setupSide();
+  try {
+    initGitBacklog(dir);
+    const planDir = dirname(feature.indexPath);
+    const agentChange = { at: '2026-11-13T00:00:00Z', by: 'implement', what: 'merge_order kept', why: 'a test' };
+    const behaviour = {
+      story: (o) => {
+        checkAll(o.vars.storyAbsPath);
+        if (o.vars.storyId !== 'S-1') return;
+        // The session records a change of its own, then adds a story.
+        const stored = readPlan(planDir);
+        writeFileSync(join(planDir, 'plan.yaml'), stringifyYaml({ ...stored, changes: [agentChange] }));
+        addSide();
+      },
+    };
+    const runner = sideShell(fakeRunner({ dir, feature, behaviour }));
+    await runFeature({ feature, config, prep, runner, opts: { maxRounds: 3 } });
+    const plan = readPlan(planDir);
+    assert.deepEqual(plan.changes[0], agentChange);
+    assert.deepEqual(
+      plan.changes.map((c) => c.by),
+      ['implement', 'bl'],
+    );
   } finally {
     cleanup();
   }
