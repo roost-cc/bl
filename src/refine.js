@@ -197,7 +197,8 @@ export async function applyRefineStatus(backlogRoot, { id, kind, indexPath }, re
  * the session, and this catches the rest, the token totals `launchSession`
  * writes and the status `apply` writes included. The snapshot is taken here,
  * before the session starts (D3). A session without a valid outcome file
- * changes no status, and its fault is printed (F-68 D5). Exits with the
+ * records no outcome: each unit stays at the refine verb's `during`, where
+ * the session started it, and its fault is printed (F-68 D5). Exits with the
  * session's status, or 1 when the status write or the commit failed.
  * `bl refine S-n`, the batch and `bl refine F-n` (`feature-cmd.js`
  * `cmdRefine`) all end here.

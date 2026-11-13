@@ -939,7 +939,9 @@ outcome, note, at, change })` is pure: it appends the entry when the type's tabl
 - **The writers (F-69 D3).** `applyNew` gives a new story, feature or task its first entry,
   `draft` by `new` (the templates hold `transitions:`, no `status:`). `bl refine` records
   `in_refinement` by `refine` before the session (`enterVerb` in `refineAndCommit`, F-119 R1;
-  nothing on a unit there already or on a `refine` row with no `during`), then `refined` or
+  nothing on a unit there already or on a `refine` row with no `during`). The start is all or
+  nothing: when one unit's write fails, bl puts back each unit it moved (`snapshot`), starts no
+  session and commits nothing; a unit file it cannot put back is named and left changed. Then `refined` or
   `draft` by `refine` from the outcome; an outcome of `refined: false`, or none, leaves the
   unit at `in_refinement`, and the next `bl refine` resumes from there with the prompt of the
   status before (`statusBeforeRefine`). `bl approve` records `approved` by `approve`, and
@@ -1636,8 +1638,9 @@ Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
   `draft`; otherwise the status stays and `reason` is printed
   (`applyRefineStatus`, through `transition`, with `reason` as the entry's
   `outcome`). A batch story the outcome does not name stays as it is. A
-  session without a valid outcome file changes no status and prints the
-  fault; the agent's own commit of the refinement is not affected. No refine
+  session without a valid outcome file records no outcome: each unit stays at
+  the status the session started it in (the `refine` row's `during`,
+  `in_refinement`), and bl prints the fault; the agent's own commit of the refinement is not affected. No refine
   prompt asks the agent to write a status
   (`test/unit/prompts-no-status-writes.test.js`).
 - **No valid outcome is an error, not a verdict (D5).** `runSession` in
@@ -4369,9 +4372,13 @@ bl force F-3 refined          # a feature past its refinement session, then bl a
    and each failing `when` guard of the verbs that have the transition (`failingGuards`): on
    the verb's row, and on its branches to the new status when none of them has all its guards
    hold. The guards read the unit's round and round cap, as the review loop does.
-4. It reads one line. Only the exact line `force <id> to <status>` writes the entry
-   `by: force` (`transition`) and commits the unit file as `chore: force <id> to <status>`.
-   Any other input, an empty line or the end of input changes nothing and exits 1.
+4. It reads one line. Any other input than the exact line `force <id> to <status>`, an empty
+   line or the end of input changes nothing and exits 1.
+5. On the exact line it takes the backlog lock and reads the unit's status and the skip list
+   again. If either changed while the operator typed (a hold added, a guard that changed, a
+   `flow.json` change, another move of the unit), it writes nothing, prints the new list and
+   exits 1. Otherwise it writes the entry `by: force` (`transition`) and commits the unit file
+   as `chore: force <id> to <status>`.
 
 ### `bl sync`
 
