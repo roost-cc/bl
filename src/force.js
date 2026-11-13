@@ -19,7 +19,7 @@ import { askLine } from './ask-line.js';
 import { HEADLESS_ENV, isHeadless } from './agents/provider.js';
 import { heldAt } from './blockers.js';
 import { info, loadConfig } from './config.js';
-import { loadFlow } from './flow.js';
+import { FlowError, loadFlow } from './flow.js';
 import { withLock } from './lock.js';
 import { reportBacklogCommit, syncAndCommit } from './sync.js';
 import { resolveTargets } from './targets.js';
@@ -185,7 +185,18 @@ export async function main(
       // Resolved again: a feature's or a batch's record holds the status read before the prompt.
       const [fresh] = resolveTargets([unit.id], config, null).targets;
       const now = fresh ? unitOf(fresh, config) : null;
-      const again = now?.status === unit.status ? skipsOf(config, now, to) : null;
+      let again = null;
+      if (now?.status === unit.status) {
+        // A flow.json that is unreadable now, or lacks the status, is the new list.
+        try {
+          again = loadFlow(root).statusesOf(kind).includes(to)
+            ? skipsOf(config, now, to)
+            : [`${to} is no longer a ${kind} status in flow.json`];
+        } catch (err) {
+          if (!(err instanceof FlowError)) throw err;
+          again = [err.message];
+        }
+      }
       if (again == null || again.join('\n') !== skips.join('\n')) return { changed: again };
       await transition(root, unit, to, { by: FORCE });
       return syncAndCommit(config, {

@@ -232,6 +232,28 @@ test('force_rechecks_skips_after_confirmation: a change to what the move skips w
       },
     ],
     [
+      'flow.json cut short',
+      ['S-1', 'in_progress'],
+      (dir) => {
+        const path = join(dir, 'flow.json');
+        writeFileSync(path, readFileSync(path, 'utf8').slice(0, -20));
+      },
+    ],
+    [
+      'a flow.json without the new status',
+      ['S-1', 'in_progress'],
+      (dir) => {
+        const path = join(dir, 'flow.json');
+        const raw = JSON.parse(readFileSync(path, 'utf8'));
+        const story = raw.types.story;
+        story.statuses = story.statuses.filter((s) => s !== 'in_progress');
+        for (const verb of Object.values(story.verbs)) {
+          if (Array.isArray(verb.from)) verb.from = verb.from.filter((s) => s !== 'in_progress');
+        }
+        writeFileSync(path, JSON.stringify(raw, null, 2));
+      },
+    ],
+    [
       "the unit's status",
       ['S-1', 'in_progress'],
       (dir) => {
