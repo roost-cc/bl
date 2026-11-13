@@ -18,8 +18,7 @@
  * `done:` (its date) and `note:` (what was done, or why it is moot). The
  * body is the task: what to do, the commands, why it is not code. A task has
  * no points and no branch. It is a unit in F-66's graph (`unitIndex`), so it
- * can block another; it has no gates of its own (`flow.json`'s `task` type),
- * so nothing holds it. A unit lists no tasks: its `## Tasks` table is
+ * can block another. A unit lists no tasks: its `## Tasks` table is
  * rendered when read (`render.js`, F-79 D2) from the task files' `unit:` and
  * the edges in `blockers.json` (`taskTableRows`). `bl task --gate` writes the task's hold as an edge there
  * (`gateEdges`, F-65 D2) in the same commit as the file. `bl task done` is
@@ -38,7 +37,7 @@ import { graphOf } from './backlog-graph.js';
 import { findFeature, normalizeFeatureId } from './feature.js';
 import { findBatch, normalizeBatchId } from './batch.js';
 import { withLock } from './lock.js';
-import { BLOCKERS_FILE, WILDCARD } from './blockers.js';
+import { BLOCKERS_FILE, RUN_EDGE, WILDCARD, gateStatus } from './blockers.js';
 import { loadFlow, statusWordProblem } from './flow.js';
 import { applyNew, applyTransition, nowAt, storedLog } from './transition.js';
 
@@ -82,20 +81,19 @@ export function decisionGateProblem(title, gate) {
 
 /**
  * The edges `bl task <unit> --gate <gate>` files for task `taskId` (F-65
- * D2): `merge` holds `bl merge` of the unit until the task is done; `next`
- * holds `bl run` and `bl implement` of every unit (`*`) until the task is
- * done, once the unit is done (`active_when`); `none` holds nothing.
+ * D2): `merge` keeps the unit out of `done` (`bl merge`) until the task is
+ * done; `next` keeps every unit (`*`) out of `in_progress` (`bl run` and
+ * `bl implement`, `RUN_EDGE`) until the task is done, once the unit is done
+ * (`active_when`); `none` holds nothing. The gates are statuses (F-119 R3).
  * @param {string} taskId
  * @param {string} unitId
  * @param {string} gate  one of `TASK_GATES`
  * @returns {import("./blockers.js").Edge[]}
  */
 export function gateEdges(taskId, unitId, gate) {
-  if (gate === 'merge') return [{ blocker: taskId, gate: 'merge', unit: unitId, until: 'done' }];
+  if (gate === 'merge') return [{ blocker: taskId, gate: gateStatus('merge'), unit: unitId, until: 'done' }];
   if (gate === 'next') {
-    return [
-      { blocker: taskId, gate: 'run', unit: WILDCARD, until: 'done', active_when: { unit: unitId, status: 'done' } },
-    ];
+    return [{ blocker: taskId, ...RUN_EDGE, unit: WILDCARD, active_when: { unit: unitId, status: 'done' } }];
   }
   if (gate === 'none') return [];
   throw new Error(`--gate ${gate} is not one of ${TASK_GATES.join(', ')}`);
@@ -359,8 +357,9 @@ function typeOfId(id) {
 /**
  * What one edge of a task holds, in the words `bl inbox` and the `## Tasks`
  * table use: `bl merge F-3`, `bl run, bl implement (every unit) once F-54 is
- * done`. The verbs are the gate's in `flow.json`; a gate the flow does not
- * name shows as itself.
+ * done`. The verbs are those whose nominal path enters the gate's status
+ * (`Flow.nominalPath`, F-119 D6) in the unit's type; a gate that no verb
+ * enters shows as itself.
  * @param {import("./blockers.js").Edge} edge
  * @param {import("./flow.js").Flow} flow
  */
@@ -368,7 +367,7 @@ export function holdsText(edge, flow) {
   const verbs = new Set();
   for (const [type, def] of Object.entries(flow.types)) {
     if (edge.unit !== '*' && type !== typeOfId(edge.unit)) continue;
-    if (Object.hasOwn(def.gates, edge.gate)) for (const v of def.gates[edge.gate].verbs) verbs.add(v);
+    for (const v of Object.keys(def.verbs)) if (flow.nominalPath(type, v).includes(edge.gate)) verbs.add(v);
   }
   const what = verbs.size > 0 ? [...verbs].map((v) => `bl ${v}`).join(', ') : edge.gate;
   const on = edge.unit === '*' ? '(every unit)' : edge.unit;

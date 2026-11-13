@@ -37,6 +37,7 @@ import {
   edgeLabel,
   edgeProblems,
   formatBlockers,
+  holdGate,
   inFeature,
   isActive,
   isMet,
@@ -157,13 +158,15 @@ async function underLock(config, fn) {
  * `until`), a duplicate, and an edge that closes a cycle; otherwise readies
  * the clone and writes `blockers.json` with the edge (`prepareAndWrite`, all
  * or nothing), and returns the paths to commit (null when the backlog is not
- * a repo).
+ * a repo). A gate name from before F-119 is read as its status (`holdGate`),
+ * so `--gate run` writes `in_progress`.
  * `bl block add` and `bl task --gate` (F-65 D2) share it.
  * @param {object} config
- * @param {import("./blockers.js").Edge} edge
+ * @param {import("./blockers.js").Edge} given
  * @returns {{ refused?: string[], edge?: object, paths?: string[] | null }}
  */
-export function writeEdge(config, edge) {
+export function writeEdge(config, given) {
+  const edge = holdGate(given);
   const flow = loadFlow(config.backlogRoot);
   const { edges } = readBlockers(config.backlogRoot);
   const units = readUnits(config);
@@ -288,17 +291,18 @@ export async function addEdge(config, edge) {
   return withLock(config.backlogRoot, async () => {
     const res = writeEdge(config, edge);
     if (res.refused) return res;
-    const message = `chore: block ${edge.unit} at ${edge.gate} on ${edge.blocker}`;
-    return { edge, commit: await commitBlockers(config.backlogRoot, res.paths, message) };
+    const message = `chore: block ${res.edge.unit} at ${res.edge.gate} on ${res.edge.blocker}`;
+    return { edge: res.edge, commit: await commitBlockers(config.backlogRoot, res.paths, message) };
   });
 }
 
 /**
- * `bl block remove`: drop the edge with this identity. An unknown one
- * refuses.
+ * `bl block remove`: drop the edge with this identity, its gate read as
+ * `writeEdge` reads it (`holdGate`). An unknown one refuses.
  * @returns {Promise<{ refused?: string[], edge?: object, commit?: object }>}
  */
-export async function removeEdge(config, key) {
+export async function removeEdge(config, given) {
+  const key = holdGate(given);
   return underLock(config, async ({ edges }) => {
     const found = edges.find((e) => edgeKey(e) === edgeKey(key));
     if (!found) return { refused: [`no edge ${edgeLabel(key)} (see bl block list ${key.unit})`] };
@@ -366,11 +370,16 @@ const HELP = `Usage: bl block add <blocker> --gate <gate> --unit <id|*> --until 
        bl block list [<id>] [--fix]
 
 Holds between units, kept in ${BLOCKERS_FILE} at the backlog root (one
-edge per line, sorted by unit, blocker and gate). An edge holds <unit> at
-<gate> until <blocker>'s status meets <until>, as flow.json says; --unit *
-holds every unit with the gate. --active-when and --active-status keep the
-edge from holding anything until that unit meets that status; a merge or
-order edge takes neither.
+edge per line, sorted by unit, blocker and gate). A hold's <gate> is a
+status of <unit>'s type in flow.json: the edge keeps <unit> out of that
+status until <blocker>'s status meets <until>. bl run, bl implement and
+bl merge check, when they start, the holds on each status their nominal
+path enters. --unit * holds every unit whose type has the status. The gate
+names run and merge read as in_progress and done. --active-when and
+--active-status keep the edge from holding anything until that unit meets
+that status; a merge or order edge takes neither.
+
+  bl block add S-1 --gate in_refinement --unit S-2 --until done
 
 A merge edge joins two repos of one feature and holds nothing: bl merge
 merges the blocker's repo before the unit's, as in

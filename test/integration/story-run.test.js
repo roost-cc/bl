@@ -161,7 +161,7 @@ test('bl run S-n refuses while a dependency is not merged', async () => {
   assert.equal(exit, 1);
   assert.match(
     err,
-    /Story S-7 is blocked on unmerged work:\n {2}S-7 is held at run by S-6 \(in_progress, needs done\)/,
+    /Story S-7 is blocked on unmerged work:\n {2}S-7 is held at in_progress by S-6 \(in_progress, needs done\)/,
   );
 });
 

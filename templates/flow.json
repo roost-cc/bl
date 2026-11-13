@@ -57,10 +57,6 @@
         "implement": { "from": ["draft", "refined", "in_progress", "escalated"], "success": [{ "to": "in_progress" }] },
         "side": { "from": ["draft", "refined"], "success": [{ "to": "in_progress" }] },
         "done": { "from": "*", "success": [{ "to": "done" }] }
-      },
-      "gates": {
-        "run": { "verbs": ["run", "implement"] },
-        "merge": { "verbs": ["merge"] }
       }
     },
     "feature": {
@@ -123,10 +119,6 @@
           "failure": [{ "to": "escalated" }]
         },
         "supersede": { "from": "*", "success": [{ "to": "superseded" }] }
-      },
-      "gates": {
-        "run": { "verbs": ["run", "implement"] },
-        "merge": { "verbs": ["merge"] }
       }
     },
     "batch": {
@@ -178,10 +170,6 @@
           "failure": [{ "to": "escalated" }]
         },
         "supersede": { "from": "*", "success": [{ "to": "superseded" }] }
-      },
-      "gates": {
-        "run": { "verbs": ["run", "implement"] },
-        "merge": { "verbs": ["merge"] }
       }
     },
     "task": {
@@ -190,8 +178,7 @@
       "verbs": {
         "new": { "from": [], "success": [{ "to": "draft" }] },
         "done": { "from": ["draft"], "success": [{ "to": "done" }] }
-      },
-      "gates": {}
+      }
     }
   }
 }

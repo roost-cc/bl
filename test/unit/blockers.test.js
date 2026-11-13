@@ -14,7 +14,6 @@ import {
   findHoldCycles,
   formatBlockers,
   gateIds,
-  gatesAt,
   heldAt,
   heldBy,
   heldLines,
@@ -77,11 +76,11 @@ const deps = (map) =>
 
 test('formatBlockers sorts by unit, blocker, gate, one edge per line, and round-trips byte for byte', () => {
   const edges = [
-    edge('S-y', 'run', 'S-x'),
-    edge('S-x', 'merge', 'F-1', 'done', { unit: 'F-2', status: 'done' }),
-    edge('S-b', 'run', 'F-1'),
-    edge('S-b', 'merge', 'F-1'),
-    edge('S-z', 'run', '*'),
+    edge('S-y', 'in_progress', 'S-x'),
+    edge('S-x', 'done', 'F-1', 'done', { unit: 'F-2', status: 'done' }),
+    edge('S-b', 'in_progress', 'F-1'),
+    edge('S-b', 'done', 'F-1'),
+    edge('S-z', 'in_progress', '*'),
   ];
   const text = formatBlockers(edges);
   assert.equal(
@@ -89,11 +88,11 @@ test('formatBlockers sorts by unit, blocker, gate, one edge per line, and round-
     `{
   "schema": "bl-blockers/v2",
   "edges": [
-    {"blocker":"S-z","gate":"run","unit":"*","until":"done"},
-    {"blocker":"S-b","gate":"merge","unit":"F-1","until":"done"},
-    {"blocker":"S-b","gate":"run","unit":"F-1","until":"done"},
-    {"blocker":"S-x","gate":"merge","unit":"F-1","until":"done","active_when":{"unit":"F-2","status":"done"}},
-    {"blocker":"S-y","gate":"run","unit":"S-x","until":"done"}
+    {"blocker":"S-z","gate":"in_progress","unit":"*","until":"done"},
+    {"blocker":"S-b","gate":"done","unit":"F-1","until":"done"},
+    {"blocker":"S-b","gate":"in_progress","unit":"F-1","until":"done"},
+    {"blocker":"S-x","gate":"done","unit":"F-1","until":"done","active_when":{"unit":"F-2","status":"done"}},
+    {"blocker":"S-y","gate":"in_progress","unit":"S-x","until":"done"}
   ]
 }
 `,
@@ -104,8 +103,14 @@ test('formatBlockers sorts by unit, blocker, gate, one edge per line, and round-
 
 test('readBlockers: a missing file is an empty graph; writeBlockers writes it sorted and a read-write is byte-identical', () => {
   const dir = mkTempDir('bl-blockers-');
-  assert.deepEqual(readBlockers(dir), { edges: [], text: null, path: join(dir, BLOCKERS_FILE), schema: null });
-  writeBlockersLocked(dir, [edge('S-y', 'run', 'S-x'), edge('S-b', 'run', 'F-1')]);
+  assert.deepEqual(readBlockers(dir), {
+    edges: [],
+    text: null,
+    path: join(dir, BLOCKERS_FILE),
+    schema: null,
+    renamed: false,
+  });
+  writeBlockersLocked(dir, [edge('S-y', 'in_progress', 'S-x'), edge('S-b', 'in_progress', 'F-1')]);
   const first = readFileSync(join(dir, BLOCKERS_FILE), 'utf8');
   const read = readBlockers(dir);
   assert.deepEqual(
@@ -118,6 +123,43 @@ test('readBlockers: a missing file is an empty graph; writeBlockers writes it so
   assert.ok(!existsSync(join(dir, `${BLOCKERS_FILE}.tmp`)));
 });
 
+test('the old gate names read as statuses: run is in_progress, merge done; merge and order edges keep theirs (F-119 R3)', () => {
+  const old = [
+    `{"blocker":"S-y","gate":"run","unit":"S-x","until":"done"}`,
+    `{"blocker":"T-1","gate":"merge","unit":"F-1","until":"done"}`,
+    `{"blocker":"T-2","gate":"run","unit":"*","until":"done","active_when":{"unit":"F-1","status":"done"}}`,
+    `{"blocker":"F-1:ci-cd","gate":"merge","unit":"F-1:bl","until":"merged"}`,
+    `{"blocker":"S-a","gate":"order","unit":"S-d","until":"implemented"}`,
+  ];
+  const text = `{"schema":"bl-blockers/v2","edges":[\n${old.join(',\n')}\n]}\n`;
+  assert.deepEqual(parseBlockers(text), [
+    edge('S-y', 'in_progress', 'S-x'),
+    edge('T-1', 'done', 'F-1'),
+    edge('T-2', 'in_progress', '*', 'done', { unit: 'F-1', status: 'done' }),
+    edge('F-1:ci-cd', 'merge', 'F-1:bl', 'merged'),
+    edge('S-a', 'order', 'S-d', 'implemented'),
+  ]);
+
+  // bl validate names the old names; the next write stores the statuses.
+  const dir = mkTempDir('bl-blockers-');
+  writeFileSync(join(dir, BLOCKERS_FILE), text);
+  assert.equal(readBlockers(dir).renamed, true);
+  assert.deepEqual(
+    findBlockersFindings({ backlogRoot: dir }, units(), flow)
+      .filter((f) => f.code === 'blockers-order')
+      .map((f) => `${f.severity}: ${f.message}`),
+    [
+      'warning: names a gate from before F-119 (run, merge), which bl reads as its status; bl block list --fix rewrites it',
+    ],
+  );
+  writeBlockersLocked(dir, readBlockers(dir).edges);
+  const written = readFileSync(join(dir, BLOCKERS_FILE), 'utf8');
+  assert.doesNotMatch(written, /"gate":"run"/);
+  assert.match(written, /"blocker":"T-1","gate":"done","unit":"F-1"/);
+  assert.match(written, /"blocker":"F-1:ci-cd","gate":"merge","unit":"F-1:bl"/);
+  assert.equal(readBlockers(dir).renamed, false);
+});
+
 test('parseBlockers refuses JSON it cannot read, naming the file', () => {
   for (const [text, reason] of [
     ['{ nope', /not valid JSON/],
@@ -127,13 +169,16 @@ test('parseBlockers refuses JSON it cannot read, naming the file', () => {
     ],
     [`{"schema":"bl-blockers/v1"}`, /"edges" is not a list/],
     [`{"schema":"bl-blockers/v1","edges":[],"x":1}`, /unknown key "x"/],
-    [`{"schema":"bl-blockers/v1","edges":[{"blocker":"S-1","gate":"run","unit":"S-2"}]}`, /edge 1 has no "until"/],
     [
-      `{"schema":"bl-blockers/v1","edges":[{"blocker":"S-1","gate":"run","unit":"S-2","until":"done","why":"x"}]}`,
+      `{"schema":"bl-blockers/v1","edges":[{"blocker":"S-1","gate":"in_progress","unit":"S-2"}]}`,
+      /edge 1 has no "until"/,
+    ],
+    [
+      `{"schema":"bl-blockers/v1","edges":[{"blocker":"S-1","gate":"in_progress","unit":"S-2","until":"done","why":"x"}]}`,
       /edge 1 has unknown key "why"/,
     ],
     [
-      `{"schema":"bl-blockers/v1","edges":[{"blocker":"S-1","gate":"run","unit":"S-2","until":"done","active_when":{"unit":"F-1"}}]}`,
+      `{"schema":"bl-blockers/v1","edges":[{"blocker":"S-1","gate":"in_progress","unit":"S-2","until":"done","active_when":{"unit":"F-1"}}]}`,
       /"active_when" is not/,
     ],
   ]) {
@@ -147,31 +192,31 @@ test('parseBlockers refuses JSON it cannot read, naming the file', () => {
 
 test("isMet uses flow.json's meets: superseded meets done; isActive waits for active_when", () => {
   const u = units({ status: { 'S-x': 'superseded', 'F-2': 'running' } });
-  assert.equal(isMet(edge('S-x', 'run', 'S-y'), u, flow), true);
-  assert.equal(isMet(edge('S-y', 'run', 'S-x'), u, flow), false);
-  assert.equal(isMet(edge('S-nope', 'run', 'S-x'), u, flow), false);
-  assert.equal(isActive(edge('S-y', 'run', '*', 'done', { unit: 'F-2', status: 'done' }), u, flow), false);
-  assert.equal(isActive(edge('S-y', 'run', '*', 'done', { unit: 'F-2', status: 'approved' }), u, flow), true);
+  assert.equal(isMet(edge('S-x', 'in_progress', 'S-y'), u, flow), true);
+  assert.equal(isMet(edge('S-y', 'in_progress', 'S-x'), u, flow), false);
+  assert.equal(isMet(edge('S-nope', 'in_progress', 'S-x'), u, flow), false);
+  assert.equal(isActive(edge('S-y', 'in_progress', '*', 'done', { unit: 'F-2', status: 'done' }), u, flow), false);
+  assert.equal(isActive(edge('S-y', 'in_progress', '*', 'done', { unit: 'F-2', status: 'approved' }), u, flow), true);
 });
 
 test('unmetEdges: the active, unmet edges at the gate on the units or on *', () => {
   const u = units({ status: { 'F-2': 'done' } });
   const edges = [
-    edge('S-y', 'run', 'S-x'),
-    edge('S-y', 'merge', 'S-x'),
-    edge('S-z', 'run', 'S-x'),
-    edge('S-y', 'run', '*', 'done', { unit: 'F-2', status: 'done' }),
-    edge('S-x', 'run', '*', 'done', { unit: 'F-1', status: 'done' }),
-    edge('S-y', 'run', 'S-a'),
+    edge('S-y', 'in_progress', 'S-x'),
+    edge('S-y', 'done', 'S-x'),
+    edge('S-z', 'in_progress', 'S-x'),
+    edge('S-y', 'in_progress', '*', 'done', { unit: 'F-2', status: 'done' }),
+    edge('S-x', 'in_progress', '*', 'done', { unit: 'F-1', status: 'done' }),
+    edge('S-y', 'in_progress', 'S-a'),
   ];
-  assert.deepEqual(unmetEdges(edges, ['S-x'], 'run', u, flow), [edges[0], edges[3]]);
+  assert.deepEqual(unmetEdges(edges, ['S-x'], 'in_progress', u, flow), [edges[0], edges[3]]);
 });
 
 test('blockers-cycle: two features whose stories depend across them deadlock with no story cycle', () => {
   const u = units();
   const cycles = findHoldCycles(holdGraph(deps({ 'S-a': 'S-b', 'S-c': 'S-d' }), u, flow));
   assert.equal(cycles.length, 1);
-  assert.equal(describeCycle(cycles[0]), 'F-1 → F-2 (S-a at run by S-b) → F-1 (S-c at run by S-d)');
+  assert.equal(describeCycle(cycles[0]), 'F-1 → F-2 (S-a at in_progress by S-b) → F-1 (S-c at in_progress by S-d)');
   // A depends_on inside one feature is an order edge, not a hold.
   assert.deepEqual(findHoldCycles(holdGraph(deps({ 'S-a': 'S-d', 'S-d': 'S-a' }), u, flow)), []);
   // A depends_on on a closed story holds nothing.
@@ -180,26 +225,29 @@ test('blockers-cycle: two features whose stories depend across them deadlock wit
 
 test('blockers-cycle: an edge and a depends_on close a cycle; a met or inactive edge does not', () => {
   const u = units();
-  const held = [edge('S-x', 'run', 'F-1'), ...deps({ 'S-x': 'S-a' })];
+  const held = [edge('S-x', 'in_progress', 'F-1'), ...deps({ 'S-x': 'S-a' })];
   assert.equal(
     describeCycle(findHoldCycles(holdGraph(held, u, flow))[0]),
-    'F-1 → S-x (F-1 at run by S-x) → F-1 (S-x at run by S-a)',
+    'F-1 → S-x (F-1 at in_progress by S-x) → F-1 (S-x at in_progress by S-a)',
   );
   assert.deepEqual(
-    findHoldCycles(holdGraph([edge('S-x', 'run', 'F-1', 'backlog'), ...deps({ 'S-x': 'S-a' })], u, flow)),
+    findHoldCycles(holdGraph([edge('S-x', 'in_progress', 'F-1', 'backlog'), ...deps({ 'S-x': 'S-a' })], u, flow)),
     [],
   );
-  const inactive = [edge('S-x', 'run', 'F-1', 'done', { unit: 'S-y', status: 'done' }), ...deps({ 'S-x': 'S-a' })];
+  const inactive = [
+    edge('S-x', 'in_progress', 'F-1', 'done', { unit: 'S-y', status: 'done' }),
+    ...deps({ 'S-x': 'S-a' }),
+  ];
   assert.deepEqual(findHoldCycles(holdGraph(inactive, u, flow)), []);
 });
 
 test('blockers-cycle: a wildcard edge whose blocker has the gate holds itself', () => {
   const u = units();
-  const cycles = findHoldCycles(holdGraph([edge('S-x', 'run', '*')], u, flow));
-  assert.deepEqual(cycles.map(describeCycle), ['S-x → S-x (* at run by S-x)']);
+  const cycles = findHoldCycles(holdGraph([edge('S-x', 'in_progress', '*')], u, flow));
+  assert.deepEqual(cycles.map(describeCycle), ['S-x → S-x (* at in_progress by S-x)']);
   // A story of a feature stands as its feature.
-  assert.deepEqual(findHoldCycles(holdGraph([edge('S-a', 'run', '*')], u, flow)).map(describeCycle), [
-    'F-1 → F-1 (* at run by S-a)',
+  assert.deepEqual(findHoldCycles(holdGraph([edge('S-a', 'in_progress', '*')], u, flow)).map(describeCycle), [
+    'F-1 → F-1 (* at in_progress by S-a)',
   ]);
 });
 
@@ -207,31 +255,34 @@ test('wouldCycle: refuses the edge that closes a cycle; an inactive or met new e
   const u = units();
   const dep = deps({ 'S-x': 'S-a' });
   assert.equal(
-    describeCycle(wouldCycle(edge('S-x', 'merge', 'F-1'), dep, u, flow)),
-    'F-1 → S-x (F-1 at merge by S-x) → F-1 (S-x at run by S-a)',
+    describeCycle(wouldCycle(edge('S-x', 'done', 'F-1'), dep, u, flow)),
+    'F-1 → S-x (F-1 at done by S-x) → F-1 (S-x at in_progress by S-a)',
   );
-  assert.equal(wouldCycle(edge('S-x', 'run', 'S-a', 'done', { unit: 'S-y', status: 'done' }), dep, u, flow), null);
-  assert.ok(wouldCycle(edge('S-x', 'run', 'S-a', 'done', { unit: 'S-y', status: 'backlog' }), dep, u, flow));
-  assert.ok(wouldCycle(edge('S-y', 'run', '*'), [], u, flow));
-  assert.ok(wouldCycle(edge('S-y', 'run', 'S-x'), [edge('S-x', 'run', 'S-y')], u, flow));
-  assert.equal(wouldCycle(edge('S-y', 'run', 'S-x'), [], u, flow), null);
-  assert.equal(wouldCycle(edge('S-z', 'run', '*'), [], u, flow), null, 'a done blocker holds nothing');
+  assert.equal(
+    wouldCycle(edge('S-x', 'in_progress', 'S-a', 'done', { unit: 'S-y', status: 'done' }), dep, u, flow),
+    null,
+  );
+  assert.ok(wouldCycle(edge('S-x', 'in_progress', 'S-a', 'done', { unit: 'S-y', status: 'backlog' }), dep, u, flow));
+  assert.ok(wouldCycle(edge('S-y', 'in_progress', '*'), [], u, flow));
+  assert.ok(wouldCycle(edge('S-y', 'in_progress', 'S-x'), [edge('S-x', 'in_progress', 'S-y')], u, flow));
+  assert.equal(wouldCycle(edge('S-y', 'in_progress', 'S-x'), [], u, flow), null);
+  assert.equal(wouldCycle(edge('S-z', 'in_progress', '*'), [], u, flow), null, 'a done blocker holds nothing');
 });
 
 test('findBlockersFindings reports each D5 fault in a hand-edited file', () => {
   const dir = mkTempDir('bl-blockers-');
   const u = units({ status: { 'F-2': 'done' } });
   const lines = [
-    `{"blocker":"S-y","gate":"run","unit":"S-x","until":"done"}`,
-    `{"blocker":"S-x","gate":"run","unit":"S-y","until":"done"}`,
-    `{"blocker":"S-nope","gate":"run","unit":"S-x","until":"done"}`,
+    `{"blocker":"S-y","gate":"in_progress","unit":"S-x","until":"done"}`,
+    `{"blocker":"S-x","gate":"in_progress","unit":"S-y","until":"done"}`,
+    `{"blocker":"S-nope","gate":"in_progress","unit":"S-x","until":"done"}`,
     `{"blocker":"S-y","gate":"deploy","unit":"S-x","until":"done"}`,
-    `{"blocker":"S-y","gate":"merge","unit":"S-x","until":"shipped"}`,
-    `{"blocker":"S-y","gate":"run","unit":"S-x","until":"done"}`,
-    `{"blocker":"F-2","gate":"merge","unit":"S-x","until":"superseded"}`,
-    `{"blocker":"*","gate":"merge","unit":"F-1","until":"done"}`,
-    `{"blocker":"S-y","gate":"merge","unit":"F-1","until":"done","active_when":{"unit":"F-9","status":"done"}}`,
-    `{"blocker":"S-y","gate":"merge","unit":"S-a","until":"done","active_when":{"unit":"F-2","status":"merged"}}`,
+    `{"blocker":"S-y","gate":"done","unit":"S-x","until":"shipped"}`,
+    `{"blocker":"S-y","gate":"in_progress","unit":"S-x","until":"done"}`,
+    `{"blocker":"F-2","gate":"done","unit":"S-x","until":"superseded"}`,
+    `{"blocker":"*","gate":"done","unit":"F-1","until":"done"}`,
+    `{"blocker":"S-y","gate":"done","unit":"F-1","until":"done","active_when":{"unit":"F-9","status":"done"}}`,
+    `{"blocker":"S-y","gate":"done","unit":"S-a","until":"done","active_when":{"unit":"F-2","status":"merged"}}`,
   ];
   writeFileSync(join(dir, BLOCKERS_FILE), `{"schema":"bl-blockers/v1","edges":[\n${lines.join(',\n')}\n]}\n`);
   const findings = findBlockersFindings({ backlogRoot: dir }, u, flow);
@@ -242,20 +293,22 @@ test('findBlockersFindings reports each D5 fault in a hand-edited file', () => {
   ]);
   assert.equal(findings.find((f) => f.code === 'blockers-order').severity, 'warning');
   assert.deepEqual(by('blockers-unit'), [
-    'S-x at run by S-nope: blocker S-nope is not a unit in the backlog',
-    `F-1 at merge by *: the blocker is never "*"`,
-    'F-1 at merge by S-y: active_when unit F-9 is not a unit in the backlog',
+    'S-x at in_progress by S-nope: blocker S-nope is not a unit in the backlog',
+    `F-1 at done by *: the blocker is never "*"`,
+    'F-1 at done by S-y: active_when unit F-9 is not a unit in the backlog',
   ]);
-  assert.deepEqual(by('blockers-gate'), [`S-x at deploy by S-y: a story has no gate "deploy" in flow.json`]);
+  assert.deepEqual(by('blockers-gate'), [`S-x at deploy by S-y: gate "deploy" is not a story status in flow.json`]);
   assert.deepEqual(by('blockers-status'), [
-    `S-x at merge by S-y: until "shipped" is not a story status in flow.json`,
-    `S-a at merge by S-y: active_when status "merged" is not a feature status in flow.json`,
+    `S-x at done by S-y: until "shipped" is not a story status in flow.json`,
+    `S-a at done by S-y: active_when status "merged" is not a feature status in flow.json`,
   ]);
-  assert.deepEqual(by('blockers-duplicate'), ['S-x at run by S-y is listed more than once']);
+  assert.deepEqual(by('blockers-duplicate'), ['S-x at in_progress by S-y is listed more than once']);
   assert.deepEqual(by('blockers-unmeetable'), [
-    `S-x at merge by F-2: F-2 is done, closed, and never meets "superseded"`,
+    `S-x at done by F-2: F-2 is done, closed, and never meets "superseded"`,
   ]);
-  assert.deepEqual(by('blockers-cycle'), ['deadlock: S-x → S-y (S-x at run by S-y) → S-x (S-y at run by S-x)']);
+  assert.deepEqual(by('blockers-cycle'), [
+    'deadlock: S-x → S-y (S-x at in_progress by S-y) → S-x (S-y at in_progress by S-x)',
+  ]);
   for (const f of findings.filter((x) => x.code !== 'blockers-order')) assert.equal(f.severity, 'error', f.code);
 
   writeFileSync(join(dir, BLOCKERS_FILE), '{ nope');
@@ -285,7 +338,11 @@ test('findBlockersFindings: a cycle of depends_on: keys is blockers-cycle, a dea
   assert.deepEqual(
     findBlockersFindings(config, readUnits(config), flow).map((f) => [f.code, f.location, f.message]),
     [
-      ['blockers-cycle', BLOCKERS_FILE, 'deadlock: S-1 → S-2 (S-1 at run by S-2) → S-1 (S-2 at run by S-1)'],
+      [
+        'blockers-cycle',
+        BLOCKERS_FILE,
+        'deadlock: S-1 → S-2 (S-1 at in_progress by S-2) → S-1 (S-2 at in_progress by S-1)',
+      ],
       [
         'blockers-cycle',
         BLOCKERS_FILE,
@@ -296,12 +353,12 @@ test('findBlockersFindings: a cycle of depends_on: keys is blockers-cycle, a dea
 });
 
 test('unmetEdges: a dormant active_when holds nothing, a live one holds; a superseded blocker meets done', () => {
-  const wild = edge('S-y', 'run', '*', 'done', { unit: 'S-x', status: 'done' });
-  assert.deepEqual(unmetEdges([wild], ['F-1'], 'run', units(), flow), []);
-  assert.deepEqual(unmetEdges([wild], ['F-1'], 'run', units({ status: { 'S-x': 'done' } }), flow), [wild]);
-  const onX = edge('S-y', 'merge', 'S-x');
-  assert.deepEqual(unmetEdges([onX], ['S-x'], 'merge', units({ status: { 'S-y': 'in_progress' } }), flow), [onX]);
-  assert.deepEqual(unmetEdges([onX], ['S-x'], 'merge', units({ status: { 'S-y': 'superseded' } }), flow), []);
+  const wild = edge('S-y', 'in_progress', '*', 'done', { unit: 'S-x', status: 'done' });
+  assert.deepEqual(unmetEdges([wild], ['F-1'], 'in_progress', units(), flow), []);
+  assert.deepEqual(unmetEdges([wild], ['F-1'], 'in_progress', units({ status: { 'S-x': 'done' } }), flow), [wild]);
+  const onX = edge('S-y', 'done', 'S-x');
+  assert.deepEqual(unmetEdges([onX], ['S-x'], 'done', units({ status: { 'S-y': 'in_progress' } }), flow), [onX]);
+  assert.deepEqual(unmetEdges([onX], ['S-x'], 'done', units({ status: { 'S-y': 'superseded' } }), flow), []);
 });
 
 test("gateIds: a feature's gate checks its stories, a story's only itself", () => {
@@ -309,13 +366,6 @@ test("gateIds: a feature's gate checks its stories, a story's only itself", () =
   assert.deepEqual(gateIds(u, 'F-1'), ['F-1', 'S-a', 'S-d']);
   assert.deepEqual(gateIds(u, 'S-a'), ['S-a']);
   assert.deepEqual(gateIds(u, 'S-x'), ['S-x']);
-});
-
-test('gatesAt: the gates of a type that a verb checks, from flow.json', () => {
-  assert.deepEqual(gatesAt(flow, 'story', 'run'), ['run']);
-  assert.deepEqual(gatesAt(flow, 'story', 'implement'), ['run']);
-  assert.deepEqual(gatesAt(flow, 'feature', 'merge'), ['merge']);
-  assert.deepEqual(gatesAt(flow, 'feature', 'review'), []);
 });
 
 /** A fixture backlog: F-1 over S-2, standalone S-1 and S-3 (the blocker). */
@@ -334,32 +384,36 @@ function heldBacklog(edges, { s3 = 'in_progress' } = {}) {
 }
 
 test("heldBy: an edge on a feature's story holds the feature at the verb's gate, named on the story", () => {
-  const config = heldBacklog([edge('S-3', 'merge', 'S-2')]);
+  const config = heldBacklog([edge('S-3', 'done', 'S-2')]);
   const held = heldBy(config, 'F-1', 'merge');
   assert.equal(held.length, 1);
-  assert.equal(held[0].line, 'S-2 is held at merge by S-3 (in_progress, needs done)');
+  assert.equal(held[0].line, 'S-2 is held at done by S-3 (in_progress, needs done)');
   assert.deepEqual(heldBy(config, 'F-1', 'run'), []);
   assert.deepEqual(heldBy(config, 'S-1', 'merge'), []);
 });
 
-test('heldAt and the gate_free guard: the holds at one gate, a feature through its stories (F-69 D1)', () => {
-  const config = heldBacklog([edge('S-3', 'merge', 'S-2')]);
+test('heldAt and the gate_free guard: the holds at one status, a feature through its stories (F-69 D1)', () => {
+  const config = heldBacklog([edge('S-3', 'done', 'S-2'), edge('S-3', 'in_progress', 'S-1')]);
   assert.deepEqual(
-    heldAt(config, 'F-1', 'merge').map((h) => h.line),
-    ['S-2 is held at merge by S-3 (in_progress, needs done)'],
+    heldAt(config, 'F-1', 'done').map((h) => h.line),
+    ['S-2 is held at done by S-3 (in_progress, needs done)'],
   );
-  assert.deepEqual(heldAt(config, 'F-1', 'run'), []);
+  assert.deepEqual(heldAt(config, 'F-1', 'in_progress'), []);
   const free = GUARDS.get('gate_free');
+  // A flow.json that names gate_free:run or gate_free:merge still holds (F-119 R3).
   assert.equal(free({ config, id: 'F-1' }, 'merge'), false);
+  assert.equal(free({ config, id: 'F-1' }, 'done'), false);
   assert.equal(free({ config, id: 'F-1' }, 'run'), true);
+  assert.equal(free({ config, id: 'S-1' }, 'run'), false, 'S-1 is held at in_progress');
+  assert.equal(free({ config, id: 'S-1' }, 'in_progress'), false);
   assert.equal(free({ config, id: 'S-1' }, 'merge'), true);
 });
 
 test('heldBy: a wildcard is named on the unit asked about; a superseded blocker holds nothing', () => {
-  const edges = [edge('S-3', 'run', '*')];
+  const edges = [edge('S-3', 'in_progress', '*')];
   assert.deepEqual(
     heldBy(heldBacklog(edges), 'S-1', 'implement').map((h) => h.line),
-    ['S-1 is held at run by S-3 (in_progress, needs done)'],
+    ['S-1 is held at in_progress by S-3 (in_progress, needs done)'],
   );
   assert.deepEqual(heldBy(heldBacklog(edges, { s3: 'superseded' }), 'S-1', 'run'), []);
 });
@@ -368,52 +422,64 @@ test('heldBy: no blockers.json holds nothing and needs no flow.json; with edges 
   const config = heldBacklog(null);
   rmSync(join(config.backlogRoot, 'flow.json'));
   assert.deepEqual(heldBy(config, 'S-1', 'run'), []);
-  writeBlockersLocked(config.backlogRoot, [edge('S-3', 'run', 'S-1')]);
+  writeBlockersLocked(config.backlogRoot, [edge('S-3', 'in_progress', 'S-1')]);
   assert.throws(() => heldBy(config, 'S-1', 'run'), /flow\.json: missing/);
 });
 
 test('heldLines: every unmet edge on the unit and its stories at any gate', () => {
   const config = heldBacklog([
-    edge('S-3', 'merge', 'S-2'),
-    edge('S-3', 'run', 'F-1', 'done', { unit: 'S-1', status: 'done' }),
-    edge('S-1', 'run', 'F-1'),
+    edge('S-3', 'done', 'S-2'),
+    edge('S-3', 'in_progress', 'F-1', 'done', { unit: 'S-1', status: 'done' }),
+    edge('S-1', 'in_progress', 'F-1'),
   ]);
   // In the file's order: by unit, so F-1's own edge first.
   assert.deepEqual(heldLines(config, 'F-1'), [
-    'F-1 is held at run by S-1 (draft, needs done)',
-    'S-2 is held at merge by S-3 (in_progress, needs done)',
+    'F-1 is held at in_progress by S-1 (draft, needs done)',
+    'S-2 is held at done by S-3 (in_progress, needs done)',
   ]);
   assert.deepEqual(heldLines(config, 'S-1'), []);
 });
 
-test("heldBy, heldLines: a feature honours each story's gates with the story type's verbs, on the story or on *", () => {
+test('heldBy: a verb is held at each status on its nominal path, whatever the gate was called (F-119 D4, D6)', () => {
+  // S-1 held at in_refinement until S-3 is done, S-2 (of F-1) at in_review.
+  const config = heldBacklog([edge('S-3', 'in_refinement', 'S-1'), edge('S-3', 'in_review', 'S-2')]);
+  assert.deepEqual(
+    heldBy(config, 'S-1', 'refine').map((h) => h.line),
+    ['S-1 is held at in_refinement by S-3 (in_progress, needs done)'],
+  );
+  for (const verb of ['run', 'implement', 'merge']) assert.deepEqual(heldBy(config, 'S-1', verb), [], verb);
+  // run's path goes through in_review; implement's ends at in_progress.
+  assert.deepEqual(
+    heldBy(config, 'F-1', 'run').map((h) => h.line),
+    ['S-2 is held at in_review by S-3 (in_progress, needs done)'],
+  );
+  assert.deepEqual(heldBy(config, 'F-1', 'implement'), []);
+  assert.deepEqual(heldBy(config, 'F-1', 'merge'), []);
+});
+
+test("heldBy, heldLines: a feature honours each story's holds with the story type's row of the verb, on the story or on *", () => {
   const template = () => JSON.parse(readFileSync(FLOW_TEMPLATE, 'utf8'));
-  const VERBS = ['run', 'implement', 'merge'];
+  const VERBS = ['refine', 'run', 'implement', 'merge'];
   const cases = [
-    // The template: story and feature define run and merge alike.
-    { name: 'matching definitions, run', gates: null, gate: 'run', held: ['run', 'implement'] },
-    { name: 'matching definitions, merge', gates: null, gate: 'merge', held: ['merge'] },
-    // A shared gate the story maps differently: the story's mapping wins.
+    // The template: story and feature define the rows alike.
+    { name: 'matching rows, in_progress', gate: 'in_progress', held: ['run', 'implement'] },
+    { name: 'matching rows, done', gate: 'done', held: ['merge'] },
+    { name: 'matching rows, in_review', gate: 'in_review', held: ['run'] },
+    { name: 'matching rows, in_refinement', gate: 'in_refinement', held: ['refine'] },
+    // The story's run row skips in_progress: the story's row wins.
     {
-      name: 'differing mapping',
-      gates: { run: { verbs: ['merge'] }, merge: { verbs: ['merge'] } },
-      gate: 'run',
-      held: ['merge'],
-      // On *, the feature's own run gate holds it too.
-      heldStar: VERBS,
+      name: 'differing row',
+      story: (s) => (s.verbs.run.during = 'in_review'),
+      gate: 'in_progress',
+      held: ['implement'],
+      // On *, the feature's own run row holds it too.
+      heldStar: ['run', 'implement'],
     },
-    // A gate only stories have.
-    ...VERBS.map((v) => ({
-      name: `story-only gate at ${v}`,
-      gates: { child: { verbs: [v] } },
-      gate: 'child',
-      held: [v],
-    })),
   ];
   for (const c of cases) {
     for (const unit of ['S-2', '*']) {
       const raw = template();
-      if (c.gates) raw.types.story.gates = c.gates;
+      c.story?.(raw.types.story);
       const { dir } = mkTempBacklog({
         flow: raw,
         components: [{ id: 'C01', title: 'Work' }],
@@ -476,11 +542,11 @@ test('blockers.json that is there but unreadable is a BlockersError and a blocke
 });
 
 test('mergeEdges: a three-way merge by edge identity; one edge both sides made differ is a conflict', () => {
-  const a = edge('S-1', 'merge', 'F-1');
-  const b = edge('S-1', 'merge', 'F-2');
-  const c = edge('S-1', 'merge', 'F-3');
-  const aLater = edge('S-1', 'merge', 'F-1', 'in_progress');
-  const aOther = edge('S-1', 'merge', 'F-1', 'refined');
+  const a = edge('S-1', 'done', 'F-1');
+  const b = edge('S-1', 'done', 'F-2');
+  const c = edge('S-1', 'done', 'F-3');
+  const aLater = edge('S-1', 'done', 'F-1', 'in_progress');
+  const aOther = edge('S-1', 'done', 'F-1', 'refined');
   const units = (edges) => (edges === null ? null : edges.map((e) => `${e.unit}:${e.until}`).sort());
   const cases = [
     { name: 'adds on both sides', base: [a], ours: [a, b], theirs: [a, c], want: ['F-1:done', 'F-2:done', 'F-3:done'] },
@@ -502,11 +568,11 @@ test('mergeEdges: a three-way merge by edge identity; one edge both sides made d
 });
 
 test('mergeEdges_rejects_ambiguous_duplicate_keys_on_every_side: a side that lists one identity twice is a conflict', () => {
-  const a = edge('S-1', 'merge', 'F-1');
-  const b = edge('S-1', 'merge', 'F-2');
+  const a = edge('S-1', 'done', 'F-1');
+  const b = edge('S-1', 'done', 'F-2');
   const dups = {
-    'differing until': [a, edge('S-1', 'merge', 'F-1', 'refined')],
-    'differing active_when': [a, edge('S-1', 'merge', 'F-1', 'done', { unit: 'F-2', status: 'done' })],
+    'differing until': [a, edge('S-1', 'done', 'F-1', 'refined')],
+    'differing active_when': [a, edge('S-1', 'done', 'F-1', 'done', { unit: 'F-2', status: 'done' })],
     identical: [a, a],
   };
   for (const [name, dup] of Object.entries(dups)) {
@@ -518,8 +584,8 @@ test('mergeEdges_rejects_ambiguous_duplicate_keys_on_every_side: a side that lis
 
 test('merge_driver_rejects_blank_existing_sides_without_dropping_holds: only a zero-byte base is an empty graph', () => {
   const driver = fileURLToPath(new URL('../../src/blockers-merge.js', import.meta.url));
-  const a = formatBlockers([edge('S-1', 'merge', 'F-1')]);
-  const ab = formatBlockers([edge('S-1', 'merge', 'F-1'), edge('S-1', 'merge', 'F-2')]);
+  const a = formatBlockers([edge('S-1', 'done', 'F-1')]);
+  const ab = formatBlockers([edge('S-1', 'done', 'F-1'), edge('S-1', 'done', 'F-2')]);
   const dir = mkTempDir('bl-blockers-driver-');
   try {
     const cases = [
@@ -531,13 +597,13 @@ test('merge_driver_rejects_blank_existing_sides_without_dropping_holds: only a z
         name: 'whitespace base',
         base: '  \n',
         ours: a,
-        theirs: formatBlockers([edge('S-1', 'merge', 'F-2')]),
+        theirs: formatBlockers([edge('S-1', 'done', 'F-2')]),
         exit: 1,
       },
       {
         name: 'duplicate in ours',
         base: a,
-        ours: formatBlockers([edge('S-1', 'merge', 'F-1'), edge('S-1', 'merge', 'F-1', 'refined')]),
+        ours: formatBlockers([edge('S-1', 'done', 'F-1'), edge('S-1', 'done', 'F-1', 'refined')]),
         theirs: ab,
         exit: 1,
       },
@@ -545,7 +611,7 @@ test('merge_driver_rejects_blank_existing_sides_without_dropping_holds: only a z
         name: 'zero-byte base, adds on both',
         base: '',
         ours: a,
-        theirs: formatBlockers([edge('S-1', 'merge', 'F-2')]),
+        theirs: formatBlockers([edge('S-1', 'done', 'F-2')]),
         exit: 0,
         want: ab,
       },
@@ -597,7 +663,7 @@ function repoUnits() {
 const mergeEdge = (blocker, unit) => edge(blocker, 'merge', unit, 'merged');
 
 test('parseBlockers reads bl-blockers/v1 and v2; formatBlockers writes v2; a sorted v1 file is no blockers-order', () => {
-  const edges = [edge('S-y', 'run', 'S-x')];
+  const edges = [edge('S-y', 'in_progress', 'S-x')];
   const v1 = formatBlockers(edges, 'bl-blockers/v1');
   assert.match(v1, /"schema": "bl-blockers\/v1"/);
   assert.deepEqual(parseBlockers(v1), edges);
@@ -611,7 +677,7 @@ test('parseBlockers reads bl-blockers/v1 and v2; formatBlockers writes v2; a sor
 
 test('the merge driver merges a v1 side with a v2 side and writes v2', () => {
   const driver = fileURLToPath(new URL('../../src/blockers-merge.js', import.meta.url));
-  const a = edge('S-1', 'merge', 'F-1');
+  const a = edge('S-1', 'done', 'F-1');
   const m = mergeEdge('F-1:ci-cd', 'F-1:bl');
   const dir = mkTempDir('bl-blockers-driver-');
   const paths = ['base', 'ours', 'theirs'].map((p) => join(dir, p));
@@ -662,7 +728,7 @@ test('a merge edge is inside its feature: no holdGraph arc, never a hold', () =>
   const e = mergeEdge('F-1:ci-cd', 'F-1:bl');
   assert.equal(inFeature(e, u), true);
   assert.equal(inFeature(mergeEdge('F-2:app', 'F-1:bl'), u), false);
-  assert.equal(inFeature(edge('S-x', 'merge', 'F-1'), u), false);
+  assert.equal(inFeature(edge('S-x', 'done', 'F-1'), u), false);
   assert.deepEqual([...holdGraph([e], u, flow).keys()], []);
 
   const { dir } = mkTempBacklog({
@@ -679,7 +745,7 @@ test('a merge edge is inside its feature: no holdGraph arc, never a hold', () =>
   writeBlockersLocked(dir, [e]);
   const config = { backlogRoot: dir };
   for (const verb of ['run', 'implement', 'merge']) assert.deepEqual(heldBy(config, 'F-1', verb), [], verb);
-  assert.deepEqual(heldAt(config, 'F-1', 'merge'), []);
+  assert.deepEqual(heldAt(config, 'F-1', 'done'), []);
   assert.deepEqual(heldLines(config, 'F-1'), []);
 });
 
@@ -758,7 +824,7 @@ test('an order edge is inside its feature: no holdGraph arc, never a hold; would
   const forward = orderEdge('S-a', 'S-d');
   assert.equal(inFeature(forward, u), true);
   assert.equal(inFeature(orderEdge('S-a', 'S-b'), u), false);
-  assert.equal(inFeature(edge('S-a', 'run', 'S-d'), u), false);
+  assert.equal(inFeature(edge('S-a', 'in_progress', 'S-d'), u), false);
   assert.deepEqual([...holdGraph([forward], u, flow).keys()], []);
   assert.equal(wouldCycle(forward, [], u, flow), null);
   assert.equal(
@@ -769,7 +835,7 @@ test('an order edge is inside its feature: no holdGraph arc, never a hold; would
   assert.ok(wouldCycle(orderEdge('S-d', 'S-a'), deps({ 'S-d': 'S-a' }), u, flow));
 });
 
-/** F-1 (S-a), the story batch B-1 (S-p, S-q), and a loose S-x held at run by it (F-125 D1). */
+/** F-1 (S-a), the story batch B-1 (S-p, S-q), and a loose S-x held at in_progress by it (F-125 D1). */
 function batchUnits({ status = {} } = {}) {
   return unitIndex(
     [
@@ -807,7 +873,7 @@ test('an order edge inside one batch is valid and inside it; one across a batch 
   // `bl new` and `bl block add` write an order edge between two stories of one batch.
   const unitOf = (id) => storyUnitOf(u, id);
   assert.deepEqual(dependencyEdge('S-p', 'S-q', unitOf), inside);
-  assert.deepEqual(dependencyEdge('S-a', 'S-q', unitOf), edge('S-a', 'run', 'S-q'));
+  assert.deepEqual(dependencyEdge('S-a', 'S-q', unitOf), edge('S-a', 'in_progress', 'S-q'));
   // A depends_on: inside a batch is an order edge too.
   assert.deepEqual(
     dependsOnEdges([
@@ -831,12 +897,12 @@ test("a batch's gate checks its stories' edges: a run edge on its story holds it
     ],
     batches: [{ id: 'B-1', title: 'Fixes' }],
   });
-  writeBlockersLocked(dir, [edge('S-3', 'run', 'S-2')]);
+  writeBlockersLocked(dir, [edge('S-3', 'in_progress', 'S-2')]);
   const config = { backlogRoot: dir };
   assert.deepEqual(gateIds(readUnits(config), 'B-1'), ['B-1', 'S-1', 'S-2']);
   assert.deepEqual(
     heldBy(config, 'B-1', 'run').map((h) => h.line),
-    ['S-2 is held at run by S-3 (refined, needs done)'],
+    ['S-2 is held at in_progress by S-3 (refined, needs done)'],
   );
   assert.deepEqual(heldBy(config, 'B-1', 'merge'), []);
   // A merge edge's end may be a batch's repo: `bl` is one, `nope` is not.
@@ -856,10 +922,10 @@ test('dependsOnEdges: an order edge between two stories of one feature, else a r
     ]),
     [
       orderEdge('S-2', 'S-1'),
-      edge('S-3', 'run', 'S-1'),
-      edge('S-9', 'run', 'S-1'),
-      edge('S-1', 'run', 'S-3'),
-      edge('S-4', 'run', 'S-3'),
+      edge('S-3', 'in_progress', 'S-1'),
+      edge('S-9', 'in_progress', 'S-1'),
+      edge('S-1', 'in_progress', 'S-3'),
+      edge('S-4', 'in_progress', 'S-3'),
     ],
   );
 });
@@ -877,22 +943,22 @@ test("readEdges: the file's edges and the depends_on: keys'; an edge in the file
   });
   const config = { backlogRoot: dir };
   // S-1's key and this edge share an identity: the file's until wins.
-  writeBlockersLocked(dir, [edge('S-3', 'run', 'S-1', 'in_progress')]);
+  writeBlockersLocked(dir, [edge('S-3', 'in_progress', 'S-1', 'in_progress')]);
   assert.deepEqual(readEdges(config), [
-    edge('S-3', 'run', 'S-1', 'in_progress'),
-    edge('S-3', 'run', 'S-2'),
+    edge('S-3', 'in_progress', 'S-1', 'in_progress'),
+    edge('S-3', 'in_progress', 'S-2'),
     orderEdge('S-4', 'S-2'),
   ]);
   assert.deepEqual(heldBy(config, 'S-1', 'run'), [], 'S-3 is in_progress: the file edge is met');
   assert.deepEqual(
     heldBy(config, 'F-1', 'run').map((h) => h.line),
-    ['S-2 is held at run by S-3 (in_progress, needs done)'],
+    ['S-2 is held at in_progress by S-3 (in_progress, needs done)'],
   );
-  assert.deepEqual(heldLines(config, 'F-1'), ['S-2 is held at run by S-3 (in_progress, needs done)']);
+  assert.deepEqual(heldLines(config, 'F-1'), ['S-2 is held at in_progress by S-3 (in_progress, needs done)']);
   // With no blockers.json the keys alone hold.
   rmSync(join(dir, BLOCKERS_FILE));
   assert.deepEqual(
     heldBy(config, 'S-1', 'run').map((h) => h.line),
-    ['S-1 is held at run by S-3 (in_progress, needs done)'],
+    ['S-1 is held at in_progress by S-3 (in_progress, needs done)'],
   );
 });

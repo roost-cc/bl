@@ -25,7 +25,7 @@ import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { PATH_CASES, plan, story, withBacklog } from '../helpers/plan-fixture.js';
 
 const order = (blocker, unit) => ({ blocker, gate: 'order', unit, until: 'implemented' });
-const run = (blocker, unit) => ({ blocker, gate: 'run', unit, until: 'done' });
+const run = (blocker, unit) => ({ blocker, gate: 'in_progress', unit, until: 'done' });
 const merge = (feature, blocker, unit) => ({
   blocker: `${feature}:${blocker}`,
   gate: 'merge',

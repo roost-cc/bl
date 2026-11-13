@@ -240,8 +240,8 @@ test('a main checkout off main is a finding; --switch-main reaches the preflight
 test('an unmet merge edge is a blocker finding per edge, first, for both kinds, and skips the preflight', () => {
   const edge = (blocker) => ({ blocker, gate: 'merge', unit: 'S-9', until: 'done' });
   const held = () => [
-    { edge: edge('S-3'), line: 'S-9 is held at merge by S-3 (in_progress, needs done)' },
-    { edge: edge('S-4'), line: 'S-9 is held at merge by S-4 (refined, needs done)' },
+    { edge: edge('S-3'), line: 'S-9 is held at done by S-3 (in_progress, needs done)' },
+    { edge: edge('S-4'), line: 'S-9 is held at done by S-4 (refined, needs done)' },
   ];
   const { s, f } = bothKinds({ status: 'fixing', changeBody: SESSION('- [ ] broken') }, { held });
   assert.deepEqual(
@@ -250,11 +250,11 @@ test('an unmet merge edge is a blocker finding per edge, first, for both kinds, 
   );
   assert.equal(
     s.findings[0].message,
-    `S-9 is held at merge by S-3 (in_progress, needs done): S-7 merges once S-3 meets "done" (bl status S-3).`,
+    `S-9 is held at done by S-3 (in_progress, needs done): S-7 merges once S-3 meets "done" (bl status S-3).`,
   );
   assert.match(
     f.findings[1].message,
-    /^S-9 is held at merge by S-4 \(refined, needs done\): F-7 merges once S-4 meets "done"/,
+    /^S-9 is held at done by S-4 \(refined, needs done\): F-7 merges once S-4 meets "done"/,
   );
   assert.equal(s.preflightCalls.length, 0);
 });

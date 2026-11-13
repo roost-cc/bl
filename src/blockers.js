@@ -1,19 +1,23 @@
 /**
  * blockers.js — the backlog's `blockers.json` (F-66 D2): every edge that
- * holds a unit at a gate until another unit's status meets a status.
+ * keeps a unit out of a status (its gate, F-119 D4) until another unit's
+ * status meets a status.
  *
  *   {
  *     "schema": "bl-blockers/v2",
  *     "edges": [
  *       {"blocker":"F-96:ci-cd","gate":"merge","unit":"F-96:bl","until":"merged"},
- *       {"blocker":"T-22","gate":"merge","unit":"F-1","until":"done"},
- *       {"blocker":"T-30","gate":"run","unit":"*","until":"done","active_when":{"unit":"F-54","status":"done"}}
+ *       {"blocker":"T-22","gate":"done","unit":"F-1","until":"done"},
+ *       {"blocker":"T-30","gate":"in_progress","unit":"*","until":"done","active_when":{"unit":"F-54","status":"done"}}
  *     ]
  *   }
  *
  * An edge's identity is (`blocker`, `gate`, `unit`): no id, no duplicates.
- * `unit: "*"` holds every unit of every type that has the gate; `blocker`
- * is never `*`. `active_when` keeps the edge from holding anything until
+ * A hold's gate is a status of its unit's type. The reader takes the gate
+ * names from before F-119 as the statuses they stand for (`holdGate`:
+ * `run` is `in_progress`, `merge` is `done`), so the next write stores
+ * statuses. `unit: "*"` holds every unit of every type that has the status;
+ * `blocker` is never `*`. `active_when` keeps the edge from holding anything until
  * that unit's status meets that status. Statuses meet through `flow.json`
  * (`Flow.meets`). Met edges stay as history; nothing prunes them.
  *
@@ -41,9 +45,10 @@
  * (`mergeEdges`, through `blockers-merge.js`). A missing file is an empty
  * graph. `findBlockersFindings` is `bl validate`'s D5 checks;
  * `holdGraph` and `wouldCycle` are the deadlock graph `bl block add` and
- * `blockers-cycle` share. `heldBy` is the gate check `bl run`,
- * `bl implement` and `bl merge` make (D3), and `heldLines` what `bl status`
- * prints.
+ * `blockers-cycle` share. `heldBy` is the hold check a verb makes on the
+ * statuses of its nominal path (`Flow.nominalPath`, F-119 D6): today
+ * `bl run`, `bl implement` and `bl merge` make it. `heldLines` is what
+ * `bl status` prints.
  */
 
 import { lstatSync, readFileSync } from 'fs';
@@ -74,10 +79,40 @@ export const MERGE_EDGE = { gate: 'merge', until: 'merged' };
 export const ORDER_EDGE = { gate: 'order', until: 'implemented' };
 
 /**
- * The edge a dependency outside one feature stands for (F-111 D4): it holds
- * the story at `run` until the dependency is `done`.
+ * A hold's gate names before F-119, and the status each stands for (R3):
+ * `run` the status `run` and `implement` enter, `merge` the one `merge`
+ * enters. A merge edge keeps its gate `merge` (`holdGate`).
  */
-export const RUN_EDGE = { gate: 'run', until: 'done' };
+export const OLD_GATES = Object.freeze({ run: 'in_progress', merge: 'done' });
+
+/**
+ * The edge a dependency outside one feature stands for (F-111 D4): it keeps
+ * the story out of `in_progress` (what `run` enters) until the dependency is
+ * `done`.
+ */
+export const RUN_EDGE = { gate: OLD_GATES.run, until: 'done' };
+
+/** The status gate name `gate` stands for: an old name (`OLD_GATES`) mapped, any other unchanged. */
+export function gateStatus(gate) {
+  return Object.hasOwn(OLD_GATES, gate) ? OLD_GATES[gate] : gate;
+}
+
+/** Whether an edge names a `<feature>:<repo>` end: a merge edge (F-111 D1). */
+function isRepoEdge(e) {
+  return repoEnd(e.blocker) != null || repoEnd(e.unit) != null;
+}
+
+/**
+ * The edge with a hold's gate read as a status (`gateStatus`, F-119 R3). A
+ * merge edge and an order edge keep their gate. `blockers.json`'s reader and
+ * `bl block add` and `remove` read every gate through it, so bl compares and
+ * writes statuses only.
+ * @param {Edge} e
+ * @returns {Edge}
+ */
+export function holdGate(e) {
+  return isRepoEdge(e) ? e : { ...e, gate: gateStatus(e.gate) };
+}
 
 /** The `unit` that holds every unit of every type with the gate (F-66 A3). */
 export const WILDCARD = '*';
@@ -150,7 +185,9 @@ function parseFile(text, path) {
       }
     }
   });
-  return { schema: raw.schema, edges: raw.edges.map(normalizeEdge) };
+  const edges = raw.edges.map((e) => normalizeEdge(holdGate(e)));
+  const renamed = raw.edges.some((e, i) => e.gate !== edges[i].gate);
+  return { schema: raw.schema, edges, renamed };
 }
 
 /** The edge with its keys in bl's order. */
@@ -169,9 +206,10 @@ function normalizeEdge(e) {
  * (`text` null); one that is there but cannot be read (a directory, a
  * dangling symlink, no permission) or parsed throws `BlockersError`, so a
  * gate never takes it for an empty graph. `schema` is the file's (null when
- * it is missing).
+ * it is missing). `renamed` is true when an edge's gate in the text is a
+ * name from before F-119, which `edges` gives as its status (`holdGate`).
  * @param {string} backlogRoot
- * @returns {{ edges: Edge[], text: string | null, path: string, schema: string | null }}
+ * @returns {{ edges: Edge[], text: string | null, path: string, schema: string | null, renamed: boolean }}
  */
 export function readBlockers(backlogRoot) {
   const path = blockersPath(backlogRoot);
@@ -180,7 +218,7 @@ export function readBlockers(backlogRoot) {
     text = readFileSync(path, 'utf8');
   } catch (err) {
     if (err.code === 'ENOENT' && !lstatSync(path, { throwIfNoEntry: false })) {
-      return { edges: [], text: null, path, schema: null };
+      return { edges: [], text: null, path, schema: null, renamed: false };
     }
     throw new BlockersError(path, `cannot be read (${err.code ?? err.message})`);
   }
@@ -422,8 +460,8 @@ function orderEdgeProblems(e, units, add) {
  * only statement of membership, F-77 D3); its `batch` the same for its
  * `batch:` and a story batch (F-125 D1), and `unitRepo` its one repo.
  * `storyUnitOf` reads the two as the story's work unit. A task (F-65 D1) is
- * a unit too, so it can be a blocker or an `active_when` unit; its type has
- * no gates, so no edge holds it (`blockers-gate`).
+ * a unit too, so it can be a blocker or an `active_when` unit, and a hold
+ * can keep it out of one of its statuses.
  * @param {Array<{ id: string, status: string, feature?: string, batch?: string, unitRepo?: string }>} stories
  * @param {Array<{ id: string, status: string, stories: string[] }>} features
  * @param {Array<{ id: string, status: string }>} [tasks]
@@ -602,15 +640,8 @@ export function gateIds(units, id) {
   return ids;
 }
 
-/** The gates of `type` that `verb` checks, from `flow.json`. */
-export function gatesAt(flow, type, verb) {
-  return Object.entries(flow.gatesOf(type))
-    .filter(([, verbs]) => verbs.includes(verb))
-    .map(([gate]) => gate);
-}
-
 /**
- * `F-1 is held at merge by S-9 (in_progress, needs done)`: one unmet edge as
+ * `F-1 is held at done by S-9 (in_progress, needs done)`: one unmet edge as
  * the gate and `bl status` name it. A wildcard edge is named on `id`.
  */
 export function heldLine(edge, id, units) {
@@ -621,10 +652,10 @@ export function heldLine(edge, id, units) {
 
 /**
  * The active, unmet edges that hold unit `id`, in the file's order: each on
- * one of `gateIds(units, id)` or on `*`, at a gate that `gatesFor(type)`
- * names for that member's own type. So a feature's gate honours each of its
- * stories' gates with the story type's verbs, not the feature's. An edge
- * inside one feature (`inFeature`) never holds.
+ * one of `gateIds(units, id)` or on `*`, at a status that `gatesFor(type)`
+ * names for that member's own type. So a feature's check honours each of
+ * its stories' holds with the story type's row of the verb, not the
+ * feature's. An edge inside one feature (`inFeature`) never holds.
  * @param {(type: string) => string[]} gatesFor
  * @returns {Edge[]}
  */
@@ -640,37 +671,38 @@ function holding(edges, units, flow, id, gatesFor) {
 }
 
 /**
- * The gate check (D3): the unmet edges that hold unit `id` at every gate of
- * its type that `verb` checks and, for a feature, every gate of its
- * stories' type that `verb` checks on them (`holding`), each with its line.
- * The edges are `readEdges`'s, so a `depends_on:` outside a feature holds
- * too. No edge at all holds nothing and reads neither `flow.json` nor the
- * units; otherwise a missing `flow.json` throws `FlowError` and an
- * unreadable `blockers.json` `BlockersError`.
+ * The hold check (F-119 D6): the unmet edges that hold unit `id` at a status
+ * on its type's nominal path of `verb` (`Flow.nominalPath`) and, for a
+ * feature, at a status on its stories' type's nominal path of `verb`
+ * (`holding`), each with its line. The edges are `readEdges`'s, so a
+ * `depends_on:` outside a feature holds too. No edge at all holds nothing
+ * and reads neither `flow.json` nor the units; otherwise a missing
+ * `flow.json` throws `FlowError` and an unreadable `blockers.json`
+ * `BlockersError`.
  * @param {{ backlogRoot: string }} config
  * @param {string} id
- * @param {string} verb  `run`, `implement` or `merge`
+ * @param {string} verb  a verb of the unit's type, such as `run` or `merge`
  * @param {{ units?: Map<string, Unit> }} [opts]  the units, when the caller has them
  * @returns {Array<{ edge: Edge, line: string }>}
  */
 export function heldBy(config, id, verb, { units = null } = {}) {
-  return heldWhere(config, id, units, (flow, type) => gatesAt(flow, type, verb));
+  return heldWhere(config, id, units, (flow, type) => flow.nominalPath(type, verb));
 }
 
 /**
- * `heldBy` for one gate rather than a verb's gates: the unmet edges that hold
- * unit `id` (and a feature's stories) at `gate`. The `gate_free` guard
- * (`guards.js`, F-69 D1) reads it.
+ * `heldBy` for one status rather than a verb's nominal path: the unmet edges
+ * that keep unit `id` (and a feature's stories) out of `status`. The
+ * `gate_free` guard (`guards.js`, F-69 D1) reads it.
  * @param {{ backlogRoot: string }} config
  * @param {string} id
- * @param {string} gate
+ * @param {string} status
  * @returns {Array<{ edge: Edge, line: string }>}
  */
-export function heldAt(config, id, gate) {
-  return heldWhere(config, id, null, (flow, type) => (Object.hasOwn(flow.gatesOf(type), gate) ? [gate] : []));
+export function heldAt(config, id, status) {
+  return heldWhere(config, id, null, (flow, type) => (flow.statusesOf(type).includes(status) ? [status] : []));
 }
 
-/** `heldBy` and `heldAt`: the holds at the gates `gatesFor(flow, type)` names per member type. */
+/** `heldBy` and `heldAt`: the holds at the statuses `gatesFor(flow, type)` names per member type. */
 function heldWhere(config, id, units, gatesFor) {
   const edges = readEdges(config);
   if (edges.length === 0) return [];
@@ -686,7 +718,8 @@ function heldWhere(config, id, units, gatesFor) {
 
 /**
  * `bl status`'s `held:` lines: every unmet, active edge on unit `id` (and a
- * feature's stories) at any gate of the member's type, in the file's order.
+ * feature's stories) at any status of the member's type, in the file's
+ * order.
  * @param {{ backlogRoot: string }} config
  * @param {string} id
  * @returns {string[]}
@@ -698,13 +731,14 @@ export function heldLines(config, id) {
   const units = readUnits(config);
   const unit = units.get(id);
   if (!unit) return [];
-  return holding(edges, units, flow, id, (type) => Object.keys(flow.gatesOf(type))).map((e) => heldLine(e, id, units));
+  return holding(edges, units, flow, id, (type) => flow.statusesOf(type)).map((e) => heldLine(e, id, units));
 }
 
 /**
  * What is wrong with one edge against the flow and the backlog: unknown
- * ids (`blockers-unit`), a gate the unit's type lacks (`blockers-gate`), a
- * status its unit's type lacks (`blockers-status`), a blocker that is closed
+ * ids (`blockers-unit`), a gate that is not a status of the unit's type
+ * (`blockers-gate`), an `until` or `active_when` status its unit's type
+ * lacks (`blockers-status`), a blocker that is closed
  * and does not meet `until`, so would hold forever (`blockers-unmeetable`).
  * An edge that names a `<feature>:<repo>` end is a merge edge, and one at
  * gate `order` an order edge; each is checked by its own rules
@@ -716,7 +750,7 @@ export function heldLines(config, id) {
 export function edgeProblems(e, units, flow) {
   const out = [];
   const add = (code, message) => out.push({ code, message });
-  const kind = repoEnd(e.blocker) || repoEnd(e.unit) ? 'a merge' : e.gate === ORDER_EDGE.gate ? 'an order' : null;
+  const kind = isRepoEdge(e) ? 'a merge' : e.gate === ORDER_EDGE.gate ? 'an order' : null;
   if (kind) {
     (kind === 'a merge' ? mergeEdgeProblems : orderEdgeProblems)(e, units, add);
     // It holds nothing, so nothing can keep it from holding.
@@ -734,11 +768,12 @@ export function edgeProblems(e, units, flow) {
     add('blockers-unit', `active_when unit ${e.active_when.unit} is not a unit in the backlog`);
   }
 
+  // A hold's gate is the status it keeps its unit out of (F-119 D4).
   if (e.unit === WILDCARD) {
-    const types = Object.keys(flow.types).filter((t) => Object.hasOwn(flow.gatesOf(t), e.gate));
-    if (types.length === 0) add('blockers-gate', `no type in flow.json has a gate "${e.gate}"`);
-  } else if (unit && !Object.hasOwn(flow.gatesOf(unit.type), e.gate)) {
-    add('blockers-gate', `a ${unit.type} has no gate "${e.gate}" in flow.json`);
+    const types = Object.keys(flow.types).filter((t) => flow.statusesOf(t).includes(e.gate));
+    if (types.length === 0) add('blockers-gate', `gate "${e.gate}" is no type's status in flow.json`);
+  } else if (unit && !flow.statusesOf(unit.type).includes(e.gate)) {
+    add('blockers-gate', `gate "${e.gate}" is not a ${unit.type} status in flow.json`);
   }
   if (blocker && !flow.statusesOf(blocker.type).includes(e.until)) {
     add('blockers-status', `until "${e.until}" is not a ${blocker.type} status in flow.json`);
@@ -766,8 +801,8 @@ function nodeOf(units, id) {
 
 /**
  * The arcs one edge adds (`from` waits on `to`), as if it were active and
- * unmet. A wildcard is expanded to every open unit whose type has the gate,
- * so a blocker that has the gate itself holds its own node. An edge inside
+ * unmet. A wildcard is expanded to every open unit whose type has the gate's
+ * status, so a blocker that has it itself holds its own node. An edge inside
  * one feature (`inFeature`) adds none: both its ends are one node.
  * @returns {Arc[]}
  */
@@ -780,7 +815,7 @@ function edgeArcs(e, units, flow) {
   }
   const froms = new Set();
   for (const u of units.values()) {
-    if (isClosed(u, flow) || !Object.hasOwn(flow.gatesOf(u.type), e.gate)) continue;
+    if (isClosed(u, flow) || !flow.statusesOf(u.type).includes(e.gate)) continue;
     froms.add(nodeOf(units, u.id));
   }
   return [...froms].map((from) => ({ from, to, why, kind: 'edge' }));
@@ -951,13 +986,12 @@ export function findBlockersFindings(config, units, flow) {
     add('error', 'blockers-json', err.reason);
     return findings;
   }
-  const { edges, text, schema } = read;
+  const { edges, text, schema, renamed } = read;
   if (text != null && text !== formatBlockers(edges, schema)) {
-    add(
-      'warning',
-      'blockers-order',
-      'not sorted by unit, blocker and gate one edge per line as bl writes it; bl block list --fix rewrites it',
-    );
+    const fault = renamed
+      ? `names a gate from before F-119 (${Object.keys(OLD_GATES).join(', ')}), which bl reads as its status`
+      : 'not sorted by unit, blocker and gate one edge per line as bl writes it';
+    add('warning', 'blockers-order', `${fault}; bl block list --fix rewrites it`);
   }
   const seen = new Set();
   for (const e of edges) {

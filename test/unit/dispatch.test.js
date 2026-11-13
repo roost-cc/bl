@@ -329,8 +329,18 @@ test('heldTargets: each held target with its lines and blockers; an unheld one i
   ]);
   const targets = ['S-1', 'S-2', 'F-1'].map((id) => ({ id, kind: id[0] === 'F' ? 'feature' : 'story' }));
   assert.deepEqual(heldTargets('run', targets, { backlogRoot: dir }), [
-    { id: 'S-1', kind: 'story', lines: ['S-1 is held at run by S-3 (in_progress, needs done)'], blockers: ['S-3'] },
-    { id: 'F-1', kind: 'feature', lines: ['S-4 is held at run by S-3 (in_progress, needs done)'], blockers: ['S-3'] },
+    {
+      id: 'S-1',
+      kind: 'story',
+      lines: ['S-1 is held at in_progress by S-3 (in_progress, needs done)'],
+      blockers: ['S-3'],
+    },
+    {
+      id: 'F-1',
+      kind: 'feature',
+      lines: ['S-4 is held at in_progress by S-3 (in_progress, needs done)'],
+      blockers: ['S-3'],
+    },
   ]);
   assert.deepEqual(heldTargets('implement', targets.slice(1, 2), { backlogRoot: dir }), []);
 });

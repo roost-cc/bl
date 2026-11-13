@@ -47,7 +47,7 @@ test('bl new --depends-on and --required-for write run edges outside a feature, 
     assert.equal(r.stdout.trim(), 'stories/S3-first/index.md');
     assert.match(r.stderr, /^warning: required_for S-404 does not match any existing story; no edge written$/m);
     // S-3 is in no feature: both edges are run edges, though S-1 is in F-1.
-    assert.deepEqual(edgesOf(dir), ['S-3 run S-2 done', 'S-1 run S-3 done']);
+    assert.deepEqual(edgesOf(dir), ['S-3 in_progress S-2 done', 'S-1 in_progress S-3 done']);
     const created = fmOf(dir, 'stories/S3-first/index.md');
     assert.equal(Object.hasOwn(created, 'depends_on'), false, 'no depends_on: on the new story');
     assert.equal(Object.hasOwn(created, 'required_for'), false, 'no required_for: on the new story');
@@ -76,7 +76,7 @@ test('bl new F-1 --depends-on writes an order edge to a story of F-1 and a run e
       env: GIT_ENV,
     });
     assert.equal(r.status, 0, r.stderr);
-    assert.deepEqual(edgesOf(dir), ['S-1 order S-3 implemented', 'S-2 run S-3 done']);
+    assert.deepEqual(edgesOf(dir), ['S-1 order S-3 implemented', 'S-2 in_progress S-3 done']);
     assert.equal(Object.hasOwn(fmOf(dir, 'stories/S3-second/index.md'), 'depends_on'), false);
     assert.ok(headFiles(dir).includes('A\tblockers.json'), headFiles(dir).join('\n'));
   } finally {
@@ -99,7 +99,11 @@ test("a spec's depends_on and required_for write order edges inside its feature 
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /^warning: required_for S-404 does not match any existing story; no edge written$/m);
     assert.match(r.stderr, /^ {4}S-4 at order by S-3 until implemented$/m, 'the plan names each edge');
-    assert.deepEqual(edgesOf(dir), ['S-3 order S-1 implemented', 'S-2 run S-4 done', 'S-3 order S-4 implemented']);
+    assert.deepEqual(edgesOf(dir), [
+      'S-3 order S-1 implemented',
+      'S-2 in_progress S-4 done',
+      'S-3 order S-4 implemented',
+    ]);
     for (const p of ['stories/S3-base/index.md', 'stories/S4-top/index.md']) {
       assert.equal(Object.hasOwn(fmOf(dir, p), 'depends_on'), false, p);
       assert.equal(Object.hasOwn(fmOf(dir, p), 'required_for'), false, p);
@@ -170,7 +174,7 @@ for (const [name, bad, good] of [
       const again = runBl(good(dir), { cwd: dir, env: GIT_ENV });
       assert.equal(again.status, 0, again.stderr);
       assert.ok(existsSync(join(dir, 'stories', 'S3-first')));
-      assert.deepEqual(edgesOf(dir), ['S-2 run S-3 done']);
+      assert.deepEqual(edgesOf(dir), ['S-2 in_progress S-3 done']);
     } finally {
       cleanup();
     }
@@ -221,7 +225,7 @@ for (const [name, steps, subject] of [
         const r = runBl(args, { cwd: dir, env: GIT_ENV });
         assert.equal(r.status, 0, r.stderr);
         // Until both stories are in the feature, the edge stays a run edge.
-        if (i < steps.length - 1) assert.deepEqual(edgesOf(dir), ['S-1 run S-2 done']);
+        if (i < steps.length - 1) assert.deepEqual(edgesOf(dir), ['S-1 in_progress S-2 done']);
       }
       assert.deepEqual(edgesOf(dir), ['S-1 order S-2 implemented']);
       assert.equal(git(dir, 'log', '-1', '--format=%s'), subject);
@@ -248,7 +252,7 @@ for (const [name, steps, subject] of [
       assert.equal(r.status, 1, r.stderr);
       assert.match(
         r.stderr,
-        /S-2 at run by S-1 holds only once S-1 is done, and an order edge takes no active_when; remove it first \(bl block remove S-1 --gate run --unit S-2\)/,
+        /S-2 at in_progress by S-1 holds only once S-1 is done, and an order edge takes no active_when; remove it first \(bl block remove S-1 --gate in_progress --unit S-2\)/,
       );
       assert.equal(readFileSync(join(dir, 'blockers.json'), 'utf8'), before, 'the edge keeps its active_when');
       assert.equal(fmOf(dir, 'stories/S2-two/index.md').feature ?? '', '', 'S-2 joins no feature');

@@ -278,7 +278,7 @@ test('bl batch: after a failed edge write whose restores also fail, the next bl 
   for (const s of ['S1-one', 'S2-two']) assert.equal(fm(dir, `stories/${s}/index.md`).batch, undefined, s);
   assert.ok(
     readEdges(loadConfig({ backlogRoot: dir })).some(
-      (e) => e.blocker === 'S-1' && e.unit === 'S-2' && e.gate === 'run',
+      (e) => e.blocker === 'S-1' && e.unit === 'S-2' && e.gate === 'in_progress',
     ),
     'the run edge is as it was',
   );

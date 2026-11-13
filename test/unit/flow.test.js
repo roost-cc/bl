@@ -91,7 +91,7 @@ test('the template is bl-flow/v2: the words in lifecycle order, terminal last, n
   ]);
 });
 
-test("the template's batch type (F-125 D1): new → approved, then the feature's run, implement, review, fix, merge and supersede rows and gates", () => {
+test("the template's batch type (F-125 D1): new → approved, then the feature's run, implement, review, fix, merge and supersede rows", () => {
   const raw = template();
   const { batch, feature } = raw.types;
   assert.deepEqual(batch.statuses, FEATURE.slice(FEATURE.indexOf('approved')));
@@ -100,7 +100,6 @@ test("the template's batch type (F-125 D1): new → approved, then the feature's
   const rows = ['run', 'implement', 'review', 'fix', 'merge', 'supersede'];
   assert.deepEqual(Object.keys(batch.verbs), ['new', ...rows]);
   for (const verb of rows) assert.deepEqual(batch.verbs[verb], feature.verbs[verb], verb);
-  assert.deepEqual(batch.gates, feature.gates);
   const flow = loadFlow(TEMPLATE_DIR);
   assert.equal(flow.initial('batch'), 'approved');
   assert.ok(flow.meets('batch', 'superseded', 'done'));
@@ -268,12 +267,20 @@ test('a custom status sorts by its place in statuses', () => {
   assert.ok(flow.listRankOf('story', 'wontfix') < flow.listRankOf('story', 'superseded'));
 });
 
-test('gatesOf names each gate with the verbs that check it', () => {
+test("nominalPath: a verb's during and success to, through each success then, each once (F-119 D6)", () => {
   const flow = loadFlow(TEMPLATE_DIR);
-  const gates = { run: ['run', 'implement'], merge: ['merge'] };
-  assert.deepEqual(flow.gatesOf('story'), gates);
-  assert.deepEqual(flow.gatesOf('feature'), gates);
-  assert.deepEqual(flow.gatesOf('task'), {});
+  for (const type of ['story', 'feature', 'batch']) {
+    assert.deepEqual(flow.nominalPath(type, 'run'), ['in_progress', 'in_review', 'ready_for_merge'], type);
+    assert.deepEqual(flow.nominalPath(type, 'implement'), ['in_progress'], type);
+    assert.deepEqual(flow.nominalPath(type, 'merge'), ['done'], type);
+  }
+  assert.deepEqual(flow.nominalPath('story', 'refine'), ['in_refinement', 'refined']);
+  assert.deepEqual(flow.nominalPath('feature', 'refine'), ['in_refinement', 'refined']);
+  // fix chains review, which chains fix only on failure: no part of the path.
+  assert.deepEqual(flow.nominalPath('story', 'fix'), ['fixing', 'in_review', 'ready_for_merge']);
+  assert.deepEqual(flow.nominalPath('task', 'done'), ['done']);
+  assert.deepEqual(flow.nominalPath('story', 'approve'), [], 'a verb the type lacks');
+  assert.deepEqual(flow.nominalPath('batch', 'refine'), [], 'a verb the type lacks');
 });
 
 test('a type the flow lacks throws naming the file', () => {
@@ -283,26 +290,30 @@ test('a type the flow lacks throws naming the file', () => {
   }
 });
 
-test('a v1 file loads as the v2 template with its own gates, and flow.legacy is set', () => {
+test('a v1 file loads as the v2 template, and flow.legacy is set', () => {
   const raw = v1();
   raw.types.story.gates = { hold: { verbs: ['run'] } };
   const flow = loadFlow(backlogWith(raw));
   assert.equal(flow.legacy, true);
   assert.deepEqual(flow.statusesOf('story'), STORY);
   assert.deepEqual(flow.verbOf('feature', 'run'), loadFlow(TEMPLATE_DIR).verbOf('feature', 'run'));
-  assert.deepEqual(flow.gatesOf('story'), { hold: ['run'] });
-  assert.deepEqual(flow.gatesOf('feature'), { run: ['run', 'implement'], merge: ['merge'] });
+  assert.deepEqual(flow.types, loadFlow(TEMPLATE_DIR).types, "the file's gates are not read");
 });
 
-test("migratedFlowText: the template with a v1 file's own gates, the template's text when they match, null for v2", () => {
+test("migratedFlowText: the template's text for a v1 file, whatever its gates; null for v2", () => {
   const raw = v1();
   raw.types.story.gates = { hold: { verbs: ['run'] } };
-  const text = migratedFlowText(backlogWith(raw));
-  const expected = template();
-  expected.types.story.gates = { hold: { verbs: ['run'] } };
-  assert.deepEqual(JSON.parse(text), expected);
+  assert.equal(migratedFlowText(backlogWith(raw)), readFileSync(FLOW_TEMPLATE, 'utf8'));
   assert.equal(migratedFlowText(backlogWith(v1())), readFileSync(FLOW_TEMPLATE, 'utf8'));
   assert.equal(migratedFlowText(TEMPLATE_DIR), null);
+});
+
+test('a v2 type with a gates table from before F-119 still loads, and its gates are not read', () => {
+  const raw = template();
+  raw.types.story.gates = { run: { verbs: ['run', 'implement'] }, merge: { verbs: ['merge'] } };
+  const flow = loadFlow(backlogWith(raw));
+  assert.deepEqual(flow.types, loadFlow(TEMPLATE_DIR).types);
+  assert.deepEqual(flow.gateTables, ['story']);
 });
 
 test('loadFlow throws naming the file when it is missing, unparsable, of a wrong schema or of a wrong shape', () => {
@@ -323,11 +334,9 @@ test('loadFlow throws naming the file when it is missing, unparsable, of a wrong
       /no "task" type/,
     ],
     [{ schema: 'bl-flow/v1', types: { story: v1().types.story, feature: v1().types.feature } }, /no "task" type/],
-    [{ ...v1(), types: { ...v1().types, story: { statuses: {} } } }, /type "story" has no "gates" object/],
     [withStory({ ...template().types.story, statuses: {} }), /type "story" has no "statuses" list/],
     [withStory({ ...template().types.story, terminal: 'done' }), /type "story" has no "terminal" list/],
     [withStory({ ...template().types.story, verbs: [] }), /type "story" has no "verbs" object/],
-    [withStory({ ...template().types.story, gates: undefined }), /type "story" has no "gates" object/],
     [withVerb({ from: 'refined' }), /verb "run" has no "from" list/],
     [withVerb({ from: [], via: 'implement' }), /verb "run" "via" is not a list/],
     [withVerb({ from: [], during: ['in_progress'] }), /verb "run" "during" is not a status/],
@@ -469,7 +478,7 @@ test('flow-json: a v1 file is one warning naming the migration script', () => {
       code: 'flow-json',
       location: 'flow.json',
       message:
-        "flow.json is bl-flow/v1; bl reads it as its bl-flow/v2 template with this file's gates. " +
+        'flow.json is bl-flow/v1; bl reads it as its bl-flow/v2 template. ' +
         'Run node bl/scripts/migrate-transitions.js to rewrite the backlog.',
     },
   ]);
@@ -603,12 +612,16 @@ test('flow-json: a verb bl dispatches for a type that its table lacks; status re
   assert.equal(DISPATCH.status.feature != null, true, 'status dispatches, and no table has it');
 });
 
-test('flow-json: a gate verb bl does not check', () => {
+test('flow-json: a gates table from before F-119 is a warning, not an error, whatever it names', () => {
   assert.deepEqual(
     findingsAfter((raw) => {
-      raw.types.feature.gates.review = { verbs: ['review', 'merge'] };
+      raw.types.feature.gates = { run: { verbs: ['run', 'implement'] }, review: { verbs: ['review'] } };
+      raw.types.task.gates = {};
     }),
-    ['error: feature gate "review" names verb "review"; bl checks gates only at run, implement, merge'],
+    [
+      'warning: feature has a "gates" table, which bl no longer reads; remove it: a hold can gate any feature status',
+      'warning: task has a "gates" table, which bl no longer reads; remove it: a hold can gate any task status',
+    ],
   );
 });
 

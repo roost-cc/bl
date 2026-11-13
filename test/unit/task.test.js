@@ -217,23 +217,26 @@ test("formatTask writes the keys in bl's order and leaves out empty ones", () =>
   );
 });
 
-test('holdsText names an edge by the verbs of its gate in flow.json', () => {
-  assert.equal(holdsText(edge('T-1', 'merge', 'F-3'), flow), 'bl merge F-3');
-  assert.equal(holdsText(edge('T-1', 'run', 'S-4'), flow), 'bl run, bl implement S-4');
+test("holdsText names an edge by the verbs whose nominal path enters its gate's status (F-119 D6)", () => {
+  assert.equal(holdsText(edge('T-1', 'done', 'F-3'), flow), 'bl merge F-3');
+  assert.equal(holdsText(edge('T-1', 'done', 'S-3'), flow), 'bl merge, bl done S-3');
+  assert.equal(holdsText(edge('T-1', 'in_progress', 'S-4'), flow), 'bl run, bl implement, bl side S-4');
+  assert.equal(holdsText(edge('T-1', 'in_progress', 'F-4'), flow), 'bl run, bl implement F-4');
+  assert.equal(holdsText(edge('T-1', 'in_refinement', 'S-4'), flow), 'bl refine S-4');
   assert.equal(
-    holdsText(edge('T-1', 'run', '*', 'done', { unit: 'F-54', status: 'done' }), flow),
-    'bl run, bl implement (every unit) once F-54 is done',
+    holdsText(edge('T-1', 'in_progress', '*', 'done', { unit: 'F-54', status: 'done' }), flow),
+    'bl run, bl implement, bl side (every unit) once F-54 is done',
   );
   assert.equal(holdsText(edge('T-1', 'gone', 'F-3'), flow), 'gone F-3', "a gate the flow lacks: the gate's name");
 });
 
 test("taskTableRows: ID linked, Title, Holds from the task's edges, Status, Done", () => {
   const tasks = [task('T-1'), task('T-2', { title: 'a | b', status: 'done', done: '2026-10-28' })];
-  const edges = [edge('T-1', 'merge', 'F-1'), edge('S-9', 'merge', 'F-1'), edge('T-1', 'run', 'S-2')];
+  const edges = [edge('T-1', 'done', 'F-1'), edge('S-9', 'done', 'F-1'), edge('T-1', 'in_progress', 'S-2')];
   const { headers, rows } = taskTableRows(tasks, edges, flow, (p) => `../../${p}`);
   assert.deepEqual(headers, ['ID', 'Title', 'Holds', 'Status', 'Done']);
   assert.deepEqual(rows, [
-    ['[T-1](../../tasks/T1-x.md)', 'Task 1', 'bl merge F-1; bl run, bl implement S-2', 'draft', ''],
+    ['[T-1](../../tasks/T1-x.md)', 'Task 1', 'bl merge F-1; bl run, bl implement, bl side S-2', 'draft', ''],
     ['[T-2](../../tasks/T2-x.md)', 'a \\| b', 'none', 'done', '2026-10-28'],
   ]);
 });
@@ -280,7 +283,7 @@ test('findTaskFindings: task-unit for a unit that is not a feature, story batch 
   assert.deepEqual(find(task('T-1', { status: undefined })), ['error task-field: task missing required key "status"']);
 });
 
-test('tasks are units in the graph: a blocker, never held, and a wildcard from a task is no cycle', () => {
+test('tasks are units in the graph: a blocker, held only at a task status, and a wildcard from a task is no cycle', () => {
   const u = unitIndex(
     [{ id: 'S-1', status: 'draft', depends_on: [] }],
     [{ id: 'F-1', status: 'approved', stories: [] }],
@@ -290,22 +293,24 @@ test('tasks are units in the graph: a blocker, never held, and a wildcard from a
     ],
   );
   assert.deepEqual(u.get('T-1'), { id: 'T-1', type: 'task', status: 'draft' });
-  assert.deepEqual(edgeProblems(edge('T-1', 'merge', 'F-1'), u, flow), []);
-  assert.deepEqual(edgeProblems(edge('S-1', 'merge', 'T-1'), u, flow), [
-    { code: 'blockers-gate', message: 'a task has no gate "merge" in flow.json' },
+  assert.deepEqual(edgeProblems(edge('T-1', 'done', 'F-1'), u, flow), []);
+  // A hold's gate is a status of its unit's type (F-119 D4): a task has done, not in_progress.
+  assert.deepEqual(edgeProblems(edge('S-1', 'done', 'T-1'), u, flow), []);
+  assert.deepEqual(edgeProblems(edge('S-1', 'in_progress', 'T-1'), u, flow), [
+    { code: 'blockers-gate', message: 'gate "in_progress" is not a task status in flow.json' },
   ]);
-  assert.deepEqual(edgeProblems(edge('T-1', 'run', 'F-1', 'closed'), u, flow), [
+  assert.deepEqual(edgeProblems(edge('T-1', 'in_progress', 'F-1', 'closed'), u, flow), [
     { code: 'blockers-status', message: 'until "closed" is not a task status in flow.json' },
   ]);
-  assert.deepEqual(edgeProblems(edge('T-9', 'run', 'F-1'), u, flow), [
+  assert.deepEqual(edgeProblems(edge('T-9', 'in_progress', 'F-1'), u, flow), [
     { code: 'blockers-unit', message: 'blocker T-9 is not a unit in the backlog' },
   ]);
   // An unconditional wildcard from an open task holds every open unit with the gate, not the task.
-  const wild = edge('T-1', 'run', '*');
+  const wild = edge('T-1', 'in_progress', '*');
   assert.equal(wouldCycle(wild, [], u, flow), null);
-  assert.deepEqual(findHoldCycles(holdGraph([wild, edge('T-1', 'merge', 'F-1')], u, flow)).map(describeCycle), []);
+  assert.deepEqual(findHoldCycles(holdGraph([wild, edge('T-1', 'done', 'F-1')], u, flow)).map(describeCycle), []);
   // A done task meets done: its edges hold nothing.
-  assert.equal(wouldCycle(edge('T-2', 'run', '*'), [], u, flow), null);
+  assert.equal(wouldCycle(edge('T-2', 'in_progress', '*'), [], u, flow), null);
 });
 
 test("heldBy: an open task's edge holds its unit until the task is done", () => {
@@ -318,20 +323,20 @@ test("heldBy: an open task's edge holds its unit until the task is done", () => 
   });
   mkdirSync(join(dir, 'tasks'));
   writeFileSync(join(dir, 'tasks', 'T1-migrate.md'), fm('draft'));
-  writeBlockersLocked(dir, [edge('T-1', 'merge', 'F-1')]);
+  writeBlockersLocked(dir, [edge('T-1', 'done', 'F-1')]);
   assert.deepEqual(
     heldBy({ backlogRoot: dir }, 'F-1', 'merge').map((h) => h.line),
-    ['F-1 is held at merge by T-1 (draft, needs done)'],
+    ['F-1 is held at done by T-1 (draft, needs done)'],
   );
   writeFileSync(join(dir, 'tasks', 'T1-migrate.md'), fm('done'));
   assert.deepEqual(heldBy({ backlogRoot: dir }, 'F-1', 'merge'), []);
 });
 
-test("gateEdges: merge holds the unit's merge, next every run once the unit is done, none nothing (F-65 D2)", () => {
-  assert.deepEqual(gateEdges('T-3', 'F-53', 'merge'), [edge('T-3', 'merge', 'F-53')]);
-  assert.deepEqual(gateEdges('T-4', 'S-7', 'merge'), [edge('T-4', 'merge', 'S-7')]);
+test("gateEdges: merge holds the unit's done, next every unit's in_progress once the unit is done, none nothing (F-65 D2, F-119 R3)", () => {
+  assert.deepEqual(gateEdges('T-3', 'F-53', 'merge'), [edge('T-3', 'done', 'F-53')]);
+  assert.deepEqual(gateEdges('T-4', 'S-7', 'merge'), [edge('T-4', 'done', 'S-7')]);
   assert.deepEqual(gateEdges('T-5', 'F-54', 'next'), [
-    edge('T-5', 'run', '*', 'done', { unit: 'F-54', status: 'done' }),
+    edge('T-5', 'in_progress', '*', 'done', { unit: 'F-54', status: 'done' }),
   ]);
   assert.deepEqual(gateEdges('T-6', 'F-50', 'none'), []);
   assert.throws(() => gateEdges('T-7', 'F-1', 'run'), /--gate run is not one of merge, next, none/);
@@ -365,5 +370,4 @@ test('flow.json needs the task type (F-65 D1)', () => {
   );
   assert.deepEqual(flow.statusesOf('task'), ['draft', 'done']);
   assert.equal(flow.meets('task', 'done', 'draft'), true);
-  assert.deepEqual(flow.gatesOf('task'), {});
 });

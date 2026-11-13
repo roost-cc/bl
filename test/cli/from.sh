@@ -196,8 +196,8 @@ case "$TEMPLATE_FM" in
   *"depends_on"*) fail "template story writes no depends_on: $TEMPLATE_FM" ;;
   *) pass ;;
 esac
-for edge in '{"blocker":"S-1","gate":"run","unit":"S-3","until":"done"}' \
-  '{"blocker":"S-2","gate":"run","unit":"S-3","until":"done"}'; do
+for edge in '{"blocker":"S-1","gate":"in_progress","unit":"S-3","until":"done"}' \
+  '{"blocker":"S-2","gate":"in_progress","unit":"S-3","until":"done"}'; do
   if grep -qF "$edge" "$TMPDIR_ROOT/blockers.json"; then pass; else fail "template story edge $edge"; fi
 done
 case "$TEMPLATE_FM" in
@@ -313,7 +313,7 @@ case "$EXTRA_FM" in
   *"depends_on"*) fail "extra writes no depends_on: $EXTRA_FM" ;;
   *) pass ;;
 esac
-if grep -qF '{"blocker":"S-1","gate":"run","unit":"S-4","until":"done"}' "$TMPDIR_ROOT/blockers.json" &&
+if grep -qF '{"blocker":"S-1","gate":"in_progress","unit":"S-4","until":"done"}' "$TMPDIR_ROOT/blockers.json" &&
   ! grep -qF 'S-9999' "$TMPDIR_ROOT/blockers.json"; then
   pass
 else
@@ -325,7 +325,7 @@ case "$EXTRA_FM" in
   *) fail "extra takes the spec's component C00: $EXTRA_FM" ;;
 esac
 MORE_FM=$(head -20 "$STORIES/S5-more-work/index.md")
-if grep -qF '{"blocker":"S-4","gate":"run","unit":"S-5","until":"done"}' "$TMPDIR_ROOT/blockers.json"; then
+if grep -qF '{"blocker":"S-4","gate":"in_progress","unit":"S-5","until":"done"}' "$TMPDIR_ROOT/blockers.json"; then
   pass
 else
   fail "more @extra resolved to S-4: $(cat "$TMPDIR_ROOT/blockers.json")"

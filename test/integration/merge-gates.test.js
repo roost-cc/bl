@@ -536,24 +536,24 @@ test("a merge edge on S-1 and on F-1's story refuses both before any repo is tou
     assert.equal(s.status, 1, s.stderr);
     assert.match(
       s.stderr,
-      /^S-1 is held at merge by S-3 \(in_progress, needs done\): S-1 merges once S-3 meets "done" \(bl status S-3\)\.$/m,
+      /^S-1 is held at done by S-3 \(in_progress, needs done\): S-1 merges once S-3 meets "done" \(bl status S-3\)\.$/m,
     );
     const f = runBl(['merge', 'F-1'], { cwd: fx.dir, env: ENV });
     assert.equal(f.status, 1, f.stderr);
     assert.match(
       f.stderr,
-      /^S-2 is held at merge by S-3 \(in_progress, needs done\): F-1 merges once S-3 meets "done" \(bl status S-3\)\.$/m,
+      /^S-2 is held at done by S-3 \(in_progress, needs done\): F-1 merges once S-3 meets "done" \(bl status S-3\)\.$/m,
     );
     assert.equal(g(fx.repos.code, 'rev-parse', 'main'), before, 'nothing merged');
 
     // bl status names the hold, on the story and on the feature through its story.
     assert.match(
       runBl(['status', 'S-1'], { cwd: fx.dir, env: ENV }).stdout,
-      /^held: S-1 is held at merge by S-3 \(in_progress, needs done\)$/m,
+      /^held: S-1 is held at done by S-3 \(in_progress, needs done\)$/m,
     );
     assert.match(
       runBl(['status', 'F-1'], { cwd: fx.dir, env: ENV }).stdout,
-      /^held: S-2 is held at merge by S-3 \(in_progress, needs done\)$/m,
+      /^held: S-2 is held at done by S-3 \(in_progress, needs done\)$/m,
     );
 
     const blockerPath = join(fx.dir, 'stories', 'S3-blocker', 'index.md');
@@ -585,15 +585,16 @@ test('a merge task (bl task --gate merge) holds bl merge of its story and its fe
     assert.equal(s.status, 1, s.stderr);
     assert.match(
       s.stderr,
-      /^S-1 is held at merge by T-1 \(draft, needs done\): S-1 merges once T-1 meets "done" \(bl status T-1\)\.$/m,
+      /^S-1 is held at done by T-1 \(draft, needs done\): S-1 merges once T-1 meets "done" \(bl status T-1\)\.$/m,
     );
     const f = runBl(['merge', 'F-1'], { cwd: fx.dir, env: ENV });
     assert.equal(f.status, 1, f.stderr);
-    assert.match(f.stderr, /^F-1 is held at merge by T-2 \(draft, needs done\)/m);
+    assert.match(f.stderr, /^F-1 is held at done by T-2 \(draft, needs done\)/m);
     assert.equal(g(fx.repos.code, 'rev-parse', 'main'), before, 'nothing merged');
     const inbox = runBl(['inbox'], { cwd: fx.dir, env: ENV }).stdout;
     assert.match(inbox, /^  T-2 +F-1 +Migrate F-1\n +holds: bl merge F-1\n +next: bl task done T-2 \[note\]$/m);
-    assert.match(inbox, /^  T-1 +S-1 +Migrate S-1\n +holds: bl merge S-1\n/m);
+    // A story enters done by bl merge or bl done (F-119 D4).
+    assert.match(inbox, /^  T-1 +S-1 +Migrate S-1\n +holds: bl merge, bl done S-1\n/m);
 
     for (const id of ['T-1', 'T-2']) {
       const r = runBl(['task', 'done', id, 'migrated'], { cwd: fx.dir, env: ENV });
