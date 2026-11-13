@@ -208,6 +208,18 @@ test('pushEscalation: a lint failure shows the log excerpt and does not claim ma
   assert.ok(text.includes(`- Check record: ${gate.recordPath}`), text);
 });
 
+test('pushEscalation: a missing or unreadable gate log still gives the escalation (B-1 self-review)', () => {
+  const missing = render(read(gateRun({ steps: ['lint'] })));
+  assertShape(missing, 'missing log');
+  assert.ok(missing.includes('No readable log at '), missing);
+  // A directory where the log should be: reading it throws EISDIR.
+  const gate = read(gateRun({ steps: ['lint'] }));
+  mkdirSync(gate.logPath);
+  const unreadable = render(gate);
+  assertShape(unreadable, 'unreadable log');
+  assert.ok(unreadable.includes(`No readable log at ${gate.logPath} (EISDIR).`), unreadable);
+});
+
 test('pushEscalation: a record with error says the step could not run, with one option (S-897)', () => {
   const gate = read(
     gateRun({ steps: ['vulns'], error: 'vulns: osv-scanner is not on PATH.', vulns: { status: 'error' } }),

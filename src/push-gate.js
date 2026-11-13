@@ -209,9 +209,13 @@ export function pushEscalation({ repo, branch, worktreePath, push, gate, next })
       ...vulnsKind(record.vulns, next),
     });
   }
-  const log = existsSync(logPath)
-    ? pushFailure(readFileSync(logPath, 'utf8'), GATE_TAIL_LINES)
-    : `No log at ${logPath}.`;
+  // An unreadable log must not cost the escalation: the run would stop with no text.
+  let log;
+  try {
+    log = pushFailure(readFileSync(logPath, 'utf8'), GATE_TAIL_LINES);
+  } catch (e) {
+    log = `No readable log at ${logPath} (${e.code ?? e.message}).`;
+  }
   return escalationText({
     rule: RULE,
     how: how(`stopped at ${named}`),
