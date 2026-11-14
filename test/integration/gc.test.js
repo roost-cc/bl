@@ -9,6 +9,7 @@ import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 import { GIT_ENV, git } from '../helpers/git-backlog.js';
+import { REAL_GIT } from '../helpers/backlog-commit-fixture.js';
 
 /** The run files of the fixture, as `[name, isDirectory]`. */
 const RUN_FILES = [
@@ -167,6 +168,66 @@ test('bl gc refuses an argument it does not take', () => {
   } finally {
     cleanup();
   }
+});
+
+/**
+ * A directory to put first on PATH whose `git` runs `prelude` (shell) and
+ * then the real git.
+ */
+function gitShim(dir, prelude) {
+  const bin = join(dir, 'shim');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, 'git'), `#!/bin/sh\n${prelude}\nexec "${REAL_GIT}" "$@"\n`, { mode: 0o755 });
+  return { ...GIT_ENV, PATH: `${bin}:${process.env.PATH}` };
+}
+
+test('gc_keeps_unit_on_list_failure_or_late_worktree', async (t) => {
+  for (const mode of ['--dry-run', 'remove']) {
+    await t.test(`${mode}: a failed git worktree list keeps every closed work unit directory`, () => {
+      const { dir, run, wt, cleanup } = gcBacklog();
+      try {
+        const env = gitShim(dir, 'if [ "$1 $2" = "worktree list" ]; then echo injected-list-failure >&2; exit 1; fi');
+        const r = runBl(mode === 'remove' ? ['gc'] : ['gc', mode], { cwd: dir, env });
+        assert.equal(r.status, 1, r.stderr);
+        assert.match(
+          r.stdout,
+          new RegExp(
+            `^kept ${join(wt, 's1-done')} \\(git cannot list the worktrees: .*injected-list-failure.*\\)$`,
+            'm',
+          ),
+        );
+        assert.match(r.stdout, new RegExp(`^kept ${join(wt, 's4-dirty')} \\(git cannot list the worktrees`, 'm'));
+        assert.doesNotMatch(r.stdout, /(removed|would remove) .*\/wt\//);
+        assert.ok(existsSync(join(wt, 's1-done', 'code')));
+        assert.ok(existsSync(join(wt, 's4-dirty', 'code', 'notes.txt')));
+        // The run files are swept all the same.
+        assert.match(r.stdout, new RegExp(`(removed|would remove) ${join(run, 'S-1.S-1.scratch')}`));
+      } finally {
+        cleanup();
+      }
+    });
+  }
+
+  await t.test('a worktree registered in the directory after the first listing keeps it', () => {
+    const { dir, code, wt, cleanup } = gcBacklog();
+    try {
+      const late = join(wt, 's1-done', 'late');
+      const fired = join(dir, 'shim-fired');
+      const env = gitShim(
+        dir,
+        `if [ "$1 $2" = "worktree list" ] && [ ! -e '${fired}' ]; then : > '${fired}'; "${REAL_GIT}" "$@"; ` +
+          `"${REAL_GIT}" -C '${code}' worktree add -q --detach '${late}' >/dev/null 2>&1; exit 0; fi`,
+      );
+      const r = runBl(['gc'], { cwd: dir, env });
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stdout, new RegExp(`^kept ${late} \\(registered while bl gc ran\\)$`, 'm'));
+      assert.doesNotMatch(r.stdout, new RegExp(`^removed ${join(wt, 's1-done')}$`, 'm'));
+      assert.ok(existsSync(late), 'the late worktree stays');
+      assert.match(git(code, 'worktree', 'list'), /s1-done\/late/);
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 test('gc_rejects_or_honors_inline_dry_run_values: a valued boolean flag is refused and removes nothing', () => {

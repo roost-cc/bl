@@ -4820,8 +4820,12 @@ units' directories under the worktree root, which `bl merge` removes only when t
    registered worktree whose path is gone is skipped, and the prune below drops it). If git
    cannot read it, or it has uncommitted changes, the worktree is kept with the reason. Otherwise
    `git worktree remove` (no `--force`) removes it; if git refuses, the worktree is kept with the
-   first line of git's error. When no worktree is kept, the directory goes with everything left in
-   it (sandbox mount stubs, caches, a checkout git no longer lists), reported as one path. When
+   first line of git's error. `bl gc` lists the registered worktrees of every repo for each
+   directory, and lists them again just before the directory goes. If git cannot list a repo's
+   worktrees, the directory is kept with the reason `git cannot list the worktrees`. A worktree
+   that the second listing finds and the first did not is kept with the reason
+   `registered while bl gc ran`. When no worktree is kept, the directory goes with everything left
+   in it (sandbox mount stubs, caches, a checkout git no longer lists), reported as one path. When
    one is kept, the directory stays. Then `git worktree prune` runs once in each repo of
    `backlog.json`. A directory whose name is no work unit's branch (an operator's own branch,
    `docs`, a `bl-merge-*` throwaway worktree) is kept with the reason `names no work unit`.

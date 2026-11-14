@@ -177,6 +177,9 @@ export function formatBytes(n) {
 /** Code-point order of two names, so the output does not depend on the locale. */
 const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
+/** The first line of `text`, trimmed. */
+const firstLine = (text) => text.trim().split('\n')[0];
+
 /** The total of `{ bytes }` items. */
 const totalBytes = (items) => items.reduce((sum, r) => sum + r.bytes, 0);
 
@@ -304,13 +307,23 @@ export function sweepWorktrees(config, graph, { dryRun }) {
     for (const u of graph.list(kind)) if (u.id) byBranch.set(u.entry.toLowerCase(), u);
   }
   const repoPaths = [...new Set(Object.values(config.repos ?? {}).map((r) => r.path))];
-  // A registered worktree whose path is gone (deleted by hand) is not in the
-  // directory; the `git worktree prune` below drops its registration.
-  const registered = repoPaths.flatMap((repoPath) =>
-    listWorktrees(repoPath, { detached: true })
-      .filter((w) => existsSync(w.path))
-      .map((w) => ({ repoPath, path: w.path, real: realOrResolved(w.path) })),
-  );
+  // The worktrees registered in the directory `real`, listed now from every
+  // repo. Throws when git cannot list a repo's worktrees, so a failed listing
+  // never reads as "no worktree here". A registered worktree whose path is
+  // gone (deleted by hand) is not in the directory; the `git worktree prune`
+  // below drops its registration.
+  const registeredIn = (real) =>
+    repoPaths.flatMap((repoPath) =>
+      listWorktrees(repoPath, { detached: true, strict: true })
+        .filter((w) => existsSync(w.path))
+        .map((w) => ({ repoPath, path: w.path, real: realOrResolved(w.path) }))
+        .filter((w) => w.real === real || w.real.startsWith(real + sep)),
+    );
+  const listFailure = (dir, err) => ({
+    path: dir,
+    reason: `git cannot list the worktrees: ${firstLine(err.message)}`,
+    failed: true,
+  });
 
   for (const d of dirs) {
     const dir = join(root, d);
@@ -321,7 +334,13 @@ export function sweepWorktrees(config, graph, { dryRun }) {
     }
     if (!u.done) continue;
     const real = realOrResolved(dir);
-    const inside = registered.filter((w) => w.real === real || w.real.startsWith(real + sep));
+    let inside;
+    try {
+      inside = registeredIn(real);
+    } catch (err) {
+      kept.push(listFailure(dir, err));
+      continue;
+    }
     const gone = [];
     const held = [];
     for (const w of inside) {
@@ -334,7 +353,19 @@ export function sweepWorktrees(config, graph, { dryRun }) {
         const bytes = sizeOf(w.path);
         const r = git(w.repoPath, ['worktree', 'remove', w.path]);
         if (r.status === 0) gone.push({ path: w.path, bytes });
-        else held.push({ path: w.path, reason: (r.stderr ?? '').trim().split('\n')[0] || `git exited ${r.status}` });
+        else held.push({ path: w.path, reason: firstLine(r.stderr ?? '') || `git exited ${r.status}` });
+      }
+    }
+    // List again just before the directory goes: a worktree registered in
+    // it since the first listing has not been checked, so it stays.
+    if (held.length === 0) {
+      const checked = new Set(gone.map((w) => w.path));
+      try {
+        for (const w of registeredIn(real)) {
+          if (!checked.has(w.path)) held.push({ path: w.path, reason: 'registered while bl gc ran' });
+        }
+      } catch (err) {
+        held.push(listFailure(dir, err));
       }
     }
     if (held.length > 0) {

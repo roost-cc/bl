@@ -275,12 +275,13 @@ export function findStoryDir(parsed, config) {
 /**
  * List all story worktrees for a given repo path. With `detached`, a
  * worktree on no branch (a detached HEAD, as `bl updates` makes) is listed
- * too, with `branch: null`.
+ * too, with `branch: null`. With `strict`, a failed `git worktree list`
+ * throws, not an empty list.
  * @param {string} repoPath
- * @param {{ detached?: boolean }} [opts]
+ * @param {{ detached?: boolean, strict?: boolean }} [opts]
  * @returns {{ path: string, branch: string | null }[]}
  */
-export function listWorktrees(repoPath, { detached = false } = {}) {
+export function listWorktrees(repoPath, { detached = false, strict = false } = {}) {
   const results = [];
   if (!existsSync(repoPath)) return results;
   try {
@@ -294,8 +295,9 @@ export function listWorktrees(repoPath, { detached = false } = {}) {
       const wBranch = branchLine ? branchLine.slice('branch refs/heads/'.length) : null;
       if (wPath !== repoPath) results.push({ path: wPath, branch: wBranch });
     }
-  } catch {
+  } catch (err) {
     // no worktrees or not a git repo
+    if (strict) throw err;
   }
   return results;
 }
