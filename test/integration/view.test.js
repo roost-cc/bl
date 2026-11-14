@@ -544,3 +544,42 @@ seen newer`);
   assert.equal(r.stderr, 'bl view: cannot refresh the copy (injected rename failure); it keeps its last text\n');
   assert.equal(editor.read('newer'), 'newer\n');
 });
+
+/**
+ * Run `bl view S-1` with `fault` on the watcher: the fake editor changes the real file, waits
+ * longer than a refresh takes, keeps what the copy holds and exits 6. Asserts the exit status,
+ * that the copy kept its first text and that the bl-view-* directory is removed.
+ */
+function viewUnfollowed(fault) {
+  const dir = backlog();
+  const real = join(dir, 'stories', 'S1', 'index.md');
+  const before = readFileSync(real, 'utf8');
+  const editor = followEditor(`printf '%s' "$f" > "$(dirname "$0")/path"
+sleep 0.2
+printf 'changed\\n' > "$SRC"
+sleep 0.6
+cat "$f" > "$(dirname "$0")/kept"
+exit 6`);
+  const r = bl(['view', 'S-1'], dir, {
+    ...tty(fault),
+    VISUAL: editor.bin,
+    SRC: real,
+    TMPDIR: mkTempDir('bl-view-tmp-'),
+  });
+  const edir = dirname(editor.bin);
+  assert.equal(r.status, 6, r.stderr);
+  assert.equal(readFileSync(join(edir, 'kept'), 'utf8'), before, 'the copy keeps its first text');
+  const path = readFileSync(join(edir, 'path'), 'utf8');
+  assert.equal(existsSync(dirname(dirname(path))), false, 'the bl-view-* directory is removed');
+  return { r, real };
+}
+
+test('bl view still opens the editor when it cannot watch the file (S-1182)', () => {
+  const { r, real } = viewUnfollowed('watch');
+  assert.equal(r.stderr, `bl view: cannot follow ${real} (injected watch failure); the copy will not change\n`);
+});
+
+test('bl view keeps the copy after a watcher error (S-1182)', () => {
+  const { r, real } = viewUnfollowed('watch-error');
+  assert.equal(r.stderr, `bl view: stopped following ${real} (injected watch error); the copy keeps its last text\n`);
+});

@@ -14,6 +14,10 @@
  * - `rename`: the second rename into a `bl-view-*` directory (the first
  *   refresh, not the first copy) throws `injected rename failure`; the renames
  *   after it run.
+ * - `watch`: watching the real file's directory throws `injected watch
+ *   failure`, so the copy does not follow the real file.
+ * - `watch-error`: the watcher is made, then emits `error` (`injected watch
+ *   error`) on the next turn of the event loop.
  *
  * Only `bl view` and `bl change` processes are touched (they share the viewer,
  * `showReadOnly`), and for `tty` the other verbs that page through `showText`
@@ -59,6 +63,19 @@ if (view && (faults.has('renames') || faults.has('rename'))) {
       if (faults.has('rename') && placed === 2) throw new Error('injected rename failure');
     }
     return rename(from, to);
+  };
+}
+if (view && faults.has('watch')) {
+  fs.watch = () => {
+    throw new Error('injected watch failure');
+  };
+}
+if (view && faults.has('watch-error')) {
+  const watch = fs.watch;
+  fs.watch = (...args) => {
+    const watcher = watch(...args);
+    setImmediate(() => watcher.emit('error', new Error('injected watch error')));
+    return watcher;
   };
 }
 syncBuiltinESMExports();
