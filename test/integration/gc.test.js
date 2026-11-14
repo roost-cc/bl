@@ -168,3 +168,23 @@ test('bl gc refuses an argument it does not take', () => {
     cleanup();
   }
 });
+
+test('gc_rejects_or_honors_inline_dry_run_values: a valued boolean flag is refused and removes nothing', () => {
+  const { dir, cleanup } = mkTempBacklog({
+    config: { worktrees: './wt' },
+    stories: [{ id: 'S-1', title: 'Done', dirSuffix: 'done', status: 'done' }],
+  });
+  try {
+    const scratch = join(dir, '.bl', 'run', 'S-1.S-1.scratch');
+    mkdirSync(scratch, { recursive: true });
+    for (const flag of ['--dry-run=true', '--dry-run=false', '--dry-run=bad', '--dry-run=', '--help=false']) {
+      const r = runBl(['gc', flag], { cwd: dir });
+      assert.equal(r.status, 1, flag);
+      assert.equal(r.stdout, '', flag);
+      assert.match(r.stderr, /Usage: bl gc \[--dry-run\]/, flag);
+      assert.ok(existsSync(scratch), `${flag} removed nothing`);
+    }
+  } finally {
+    cleanup();
+  }
+});

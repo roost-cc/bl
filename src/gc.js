@@ -366,12 +366,14 @@ export function sweepWorktrees(config, graph, { dryRun }) {
  */
 export async function main(argv) {
   const args = parseArgs(argv);
-  if (args.help) {
+  if (args.help === true) {
     console.log(help());
     process.exit(0);
   }
-  const unknown = Object.keys(args).filter((k) => k !== 'positional' && k !== 'dry-run');
-  if (args.positional.length > 0 || unknown.length > 0) {
+  // Each flag is a bare boolean: `--dry-run=false` is refused, never read as
+  // "not a dry run".
+  const bad = Object.entries(args).filter(([k, v]) => k !== 'positional' && (k !== 'dry-run' || v !== true));
+  if (args.positional.length > 0 || bad.length > 0) {
     console.error(help());
     process.exit(1);
   }
