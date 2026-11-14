@@ -1534,10 +1534,10 @@ edges. `bl block list` derives the view of each work unit.
 
 ## Features
 
-A **feature** is the execution unit: one branch, one pull request, one review
-cycle, and one merge over an ordered set of stories. Components classify work by
-code boundary; features sequence what lands together. The two are orthogonal, and
-a feature may span components and repos:
+A **feature** is the work unit that bl runs: one branch, one pull request, one review and one
+merge over an ordered set of stories. Components sort work by code boundary, and features set the
+order of what lands together. The two are independent of each other, so a feature may span
+components and repos:
 
 ```
 <backlog>/
@@ -1546,25 +1546,34 @@ a feature may span components and repos:
   stories/S53-…/index.md            ← its stories, each naming its component
 ```
 
-Stories name their feature with `feature: F-<n>`, and that is the only
-statement of membership (F-77 D3): a feature's stories are the stories whose
-`feature:` names it, in the order of the run and order edges between them
-(`orderStoriesByDeps`, ties by number), and they are what `bl run` runs, `bl sync` counts and `bl merge`
-marks done. The order carries no meaning: the feature is the unit that gets
-prioritized. A feature stores no `stories:`, `points:` or `components:`, an
-epic no `features:` or `status:`, and a story no `required_for:` (the stories
-that wait for it, from the run and order edges); the graph (`loadBacklog`, `DERIVED_KEYS` in
-`backlog-graph.js`) derives all six, and `bl validate` reports one found
-in a file as `derived-key` (error), naming what it is derived from.
-`scripts/migrate-derived-keys.js` removes them from every file in one commit
-(`--dry-run` prints the per-kind counts). `bl validate` reports a story naming
-a feature that does not exist (`dangling-feature`) and warns
-`feature-no-stories` for a feature from `approved` up to `escalated` that no story names. It also
-warns `escalation-not-none` for a feature from `refined` up to `ready_for_merge` whose
-`## Escalation` is not `None.`, since approve and run both refuse it. A story
-with no `feature:` goes through the same loop on its own branch (`bl run S-n`,
-see **`bl run` for a story** below), or through the manual steps
-(`bl implement` / `bl review` / `bl merge`).
+A story names its feature with `feature: F-<n>`, and that is the only statement of membership
+(F-77 D3). So a feature's stories are the stories whose `feature:` names it. They come in the
+order of the run and order edges between them (`orderStoriesByDeps`, ties by number). They are
+what `bl run` runs, `bl sync` counts and `bl merge` marks done. The order carries no meaning: the
+feature is the work unit that gets a priority.
+
+No file stores these six keys:
+
+- a feature's `stories:`, `points:` and `components:`;
+- an epic's `features:` and `status:`;
+- a story's `required_for:` (the stories that wait for it, from the run and order edges).
+
+The graph (`loadBacklog`, `DERIVED_KEYS` in `backlog-graph.js`) derives all six. If a file holds
+one, `bl validate` reports it as `derived-key` (error) and names what the key is derived from.
+`scripts/migrate-derived-keys.js` removes them from every file in one commit (`--dry-run` prints
+the counts per kind).
+
+`bl validate` reports three more findings about features:
+
+- `dangling-feature`: a story names a feature that does not exist.
+- `feature-no-stories` (warning): no story names a feature whose status is from `approved` up to
+  `escalated`.
+- `escalation-not-none` (warning): a feature from `refined` up to `ready_for_merge` has an
+  `## Escalation` that is not `None.`. Approve and run both refuse such a feature.
+
+A story with no `feature:` goes through the same steps of `bl run` on its own branch (`bl run S-n`,
+see **`bl run` for a story** below). It can also go through the manual steps: `bl implement`,
+`bl review` and `bl merge`.
 
 ### Feature frontmatter
 
@@ -1585,76 +1594,97 @@ commit: # merge SHA (string) or <repo>: <sha> map
 ---
 ```
 
-A feature names no repo: no `primary_repo` (F-52 D3) and no `secondary_repos`
-(S-1010). Its repos are its stories' repos, each story's its component's
-(`unitRepo`, F-52 D1), in one order that every step uses,
-`featureRepoOrder(stories)` (`execution-plan.js`):
+A feature names no repo: it has no `primary_repo` (F-52 D3) and no `secondary_repos` (S-1010).
+Its repos are its stories' repos, and a story's repo is its component's (`unitRepo`, F-52 D1).
+Every step uses one order of these repos, `featureRepoOrder(stories)` (`execution-plan.js`):
 
-1. `bl` first, when a story is in it (S-864: a later repo's push gate reads
-   backlog output that the new `bl` generates);
-2. then every other repo by its first story in `orderStoriesByDeps`
+1. `bl` comes first, when a story is in it. The reason is S-864: the push gate of a later repo
+   reads backlog output that the new `bl` generates.
+2. Every other repo comes next, by its first story in `orderStoriesByDeps`
    (`resolveFeatureStories` gives the stories in that order).
 
-`bl merge F-n` merges in the stored plan's `merge_order` when the unit has a
-`plan.yaml` (see **The execution plan** below), else in
-`mergeOrder(names, edges)` (`execution-plan.js`, F-111 D2): `names` is `featureRepoOrder(stories)` and `edges` the feature's merge edges in
-`blockers.json` (`featureMergeEdges`). It is a topological sort: each edge's
-blocker repo merges before its unit repo, and among the repos no unmerged repo
-holds, `names`' order stays. So with no merge edge the order is
-`featureRepoOrder`'s. A cycle of merge edges is refused before any repo is
-touched, naming the edges. `Repos   :` prints the order and the edges behind
-it: `Repos   : ci-cd, bl (merge edge F-1:ci-cd → F-1:bl)`. The backlog sync
-(S-864) runs right after `bl` merges, wherever `bl` comes. Merge edges change
-only the merge order: the lead repo stays `featureRepoOrder`'s first (F-111
-R3), for `bl run`, `bl review`, the merge gates, the integration step and
-`isSecondary` alike.
+`bl merge F-n` merges the repos in one of two orders:
 
-`computePlan(stories, edges)` (`execution-plan.js`, F-125 D2) gives these
-orders for a list of stories in one object, the execution plan: `stories`,
-`dependencies` (each story's listed stories it waits for, by run and order
-edges), `order` (`orderStoriesByDeps`), `groups`, `repos`
-(`featureRepoOrder`) and `merge_order` (`mergeOrder` over the merge edges of
-the stories' feature or story batch; `null` on a cycle, with its edges in `merge_cycle`). A
-group holds the stories whose dependencies are in earlier groups and whose
-plan files (`planFiles`) overlap no other story of the group (same file, or a
-directory that holds it); a story that overlaps waits for the next group. No
-other module defines a story or repo ordering.
+- If the work unit has a `plan.yaml`, `bl merge` uses the stored plan's `merge_order` (see
+  **The execution plan** below).
+- Otherwise it uses `mergeOrder(names, edges)` (`execution-plan.js`, F-111 D2). `names` is
+  `featureRepoOrder(stories)`, and `edges` are the feature's merge edges in `blockers.json`
+  (`featureMergeEdges`).
 
-Each repo appears once. The first is the **lead repo**: the session starts in
-its worktree, the review runs on `configForRepo(config, lead)`, the change
-document's first `repos:` entry is its (`unitChange` reads that entry for a
-feature; `ensureChange` puts a resumed document's entries in this order), and a closed feature's `commit:` map flattens to its `bl` entry,
-else its first (`flattenCommit`). `reposForFeature` is that order with each
-repo's worktree; it reads nothing from the feature's frontmatter or change
-document, and drops a repo the config does not know (prep and merge refuse
-one, naming the story). A repo enters a feature only by a story in one of its
-components (F-52 D2): work in a repo no story of the feature is in is a
-missing story, which the agent escalates. A leftover `primary_repo` or
-`secondary_repos` on a feature is ignored, and `bl validate` reports it as
-`repo-key` (remove it; F-52's migration stripped every one). `bl list
---features` and `bl status F-n` show the ordered repos in their Repo column.
+`mergeOrder` is a topological sort: each repo comes after the repos that must merge before it.
+Each edge's blocker repo merges before the repo that the edge holds. Among the repos that no
+unmerged repo holds, the order of `names` stays. So with no merge edge, the order is
+`featureRepoOrder`'s. `bl merge` refuses a cycle of merge edges before it touches any repo, and
+names the edges.
 
-Body sections, in order: `## Premise` (the assumption the feature rests on and
-a `Challenged:` paragraph from refinement), `## Goal`, `## Design` (decisions
-written once; stories link here instead of restating), `## Out of Scope`,
-`## Acceptance` (feature-level, observable on the merged result), `## Deferred`
-(follow-up code work discovered while implementing or reviewing, `[points: N]`-prefixed,
-decided once at merge), `## Notes` (dated records and hand-offs; see **`## Deferred`, `## Notes`
-and tasks**), `## Escalation`
-(written by an agent when the feature cannot converge; anything but `None.`
-blocks approve, run and merge). The `## Stories` table and, when the feature
-has a task, the `## Tasks` table are rendered after `## Acceptance` when the
-page is read, never committed (F-79). Operator decisions never live in
-`## Escalation`: refine records them as dated `**Decision …**` bullets in the
-Design (or the Premise), and a decided escalation is set back to `None.` with
-the outcome in the Review Log or the Design. The branch, PR and Review Log
-are not in `index.md`: they are the change document's (below). The review
-state is the unit's transition log's (see **The transition log**).
+The `Repos   :` line prints the order and the edges behind it:
+`Repos   : ci-cd, bl (merge edge F-1:ci-cd → F-1:bl)`. The backlog sync (S-864) runs right after
+`bl` merges, wherever `bl` comes in the order. Merge edges change only the merge order. The lead
+repo stays `featureRepoOrder`'s first (F-111 R3) for `bl run`, `bl review`, the merge gates, the
+integration step and `isSecondary`.
 
-Stories inside a feature use the shorter `story-feature` template (Summary,
-Acceptance Criteria, Implementation Plan of at most 40 lines, Dependencies):
-no Design Notes, Deferred or Notes — those live on the feature, and a story's hand-offs go
-to the feature's `## Notes`.
+`computePlan(stories, edges)` (`execution-plan.js`, F-125 D2) gives these orders for a list of
+stories in one object, the execution plan. The object has these fields:
+
+- `stories`.
+- `dependencies`: for each story, the listed stories that it waits for, by run and order edges.
+- `order`: from `orderStoriesByDeps`.
+- `groups`.
+- `repos`: from `featureRepoOrder`.
+- `merge_order`: from `mergeOrder` over the merge edges of the stories' feature or story batch. It
+  is `null` on a cycle, and then `merge_cycle` holds the cycle's edges.
+
+A group holds the stories whose dependencies are in earlier groups and whose plan files
+(`planFiles`) overlap no other story of the group. Two plan files overlap when they are the same
+file, or when one is a directory that holds the other. A story that overlaps waits for the next
+group. No other module defines an order of stories or repos.
+
+Each repo appears once in the order. The first is the **lead repo**:
+
+- The session starts in its worktree.
+- The review runs on `configForRepo(config, lead)`.
+- The change document's first `repos:` entry is the lead repo's. `unitChange` reads that entry
+  for a feature, and `ensureChange` puts a resumed document's entries in this order.
+- The `commit:` map of a done or superseded feature flattens to its `bl` entry, or else to its
+  first entry (`flattenCommit`).
+
+`reposForFeature` gives that order with each repo's worktree. It reads nothing from the feature's
+frontmatter or change document. It drops a repo that the config does not know, and prep and
+merge refuse such a repo and name the story. A repo enters a feature only through a story in one
+of its components (F-52 D2). So work in a repo that no story of the feature is in is a missing
+story, and the agent escalates it. bl ignores a leftover `primary_repo` or `secondary_repos` on a
+feature, and `bl validate` reports it as `repo-key`. Remove it: F-52's migration removed every
+one. `bl list --features` and `bl status F-n` show the ordered repos in their Repo column.
+
+A feature's body has these sections, in this order:
+
+1. `## Premise`: the assumption that the feature rests on, and a `Challenged:` paragraph from
+   refinement.
+2. `## Goal`.
+3. `## Design`: decisions, written once. Stories link here and do not restate them.
+4. `## Out of Scope`.
+5. `## Acceptance`: the feature's criteria, observable on the merged result.
+6. `## Deferred`: code work that a session found during implementation or review and did not
+   do. Each bullet starts with `[points: N]`, and each is decided once, at merge.
+7. `## Notes`: dated records and hand-offs (see **`## Deferred`, `## Notes` and tasks**).
+8. `## Escalation`: an agent writes it when the agents cannot go on with the feature. Anything
+   but `None.` blocks approve, run and merge.
+
+bl renders the `## Stories` table after `## Acceptance` when a page is read, and the `## Tasks`
+table too when the feature has a task. Nobody commits these tables (F-79).
+
+Operator decisions never live in `## Escalation`. Refine records them as dated `**Decision …**`
+bullets in the Design (or the Premise). A decided escalation is set back to `None.`, and its
+outcome goes in the Review Log or the Design.
+
+The branch, the pull request and the Review Log are not in `index.md`: they belong to the change
+document (below). The review state belongs to the work unit's transition log (see
+**The transition log**).
+
+Stories inside a feature use the shorter `story-feature` template. It has a Summary, Acceptance
+Criteria, an Implementation Plan of at most 40 lines, and Dependencies. It has no Design Notes,
+Deferred or Notes. Those live on the feature, and a story's hand-offs go to the feature's
+`## Notes`.
 
 ### The change document (`change.md`, F-42)
 
