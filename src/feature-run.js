@@ -1082,7 +1082,8 @@ async function writeHop(ctx, step, write) {
  * recorded or null. A status with no such edge (`NoEdgeError`: an operator
  * moved the unit while the run went on) records nothing, and a warning in
  * the run's history says so. Any other error (a spec lock timeout, a disk
- * error) stops the run: the next step depends on the entry.
+ * error, a log that `bl validate` rejects) stops the run: the next step
+ * depends on the entry.
  */
 async function logWrite(ctx, step, write) {
   try {

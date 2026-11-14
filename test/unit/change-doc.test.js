@@ -779,15 +779,14 @@ test('bl implement on an escalated feature or story whose review position is fix
   const at = (n) => `2026-11-0${n}T00:00:00Z`;
   const head = [
     { at: at(1), to: 'draft', by: 'new' },
-    { at: at(2), to: 'in_progress', by: 'operator' },
+    { at: at(2), to: 'in_progress', by: 'force' },
     { at: at(3), to: 'in_review', by: 'run', via: 'open_pr' },
     { at: at(4), to: 'fixing', by: 'review', via: 'review' },
   ];
-  // The entries after fixing: a fix that escalated, the loop's escalation, a
-  // run resumed after one, and a unit still in fixing.
+  // The entries after fixing: a fix that escalated, a run resumed after one,
+  // and a unit still in fixing.
   const tails = [
     [{ at: at(5), to: 'escalated', by: 'fix' }],
-    [{ at: at(5), to: 'escalated', by: 'run' }],
     [
       { at: at(5), to: 'escalated', by: 'fix' },
       { at: at(6), to: 'in_progress', by: 'run' },

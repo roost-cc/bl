@@ -42,12 +42,22 @@ const flow = loadFlow(TEMPLATES);
 const AT = '2026-11-09T10:00:00Z';
 const T0 = '2026-11-01T00:00:00Z';
 
-/** A frontmatter whose log ends at `status` (a synthesized entry, so its edge is not checked). */
-const at = (kind, status) => ({
-  [`${kind}_id`]: { story: 'S-5', feature: 'F-5', batch: 'B-5', task: 'T-5' }[kind],
-  added: '2026-11-01',
-  transitions: [{ at: T0, to: status, by: 'new', note: 'migrated' }],
-});
+/**
+ * A frontmatter whose log `bl validate` accepts and ends at `status`: the
+ * type's initial status by `new`, then a synthesized entry (its edge is not
+ * checked); a terminal one sets the completed key.
+ */
+const at = (kind, status) => {
+  const transitions = [{ at: T0, to: flow.initial(kind), by: 'new', note: 'migrated' }];
+  if (status !== flow.initial(kind)) transitions.push({ at: T0, to: status, by: 'migrated', note: 'migrated' });
+  const closed = flow.typeOf(kind).terminal.includes(status);
+  return {
+    [`${kind}_id`]: { story: 'S-5', feature: 'F-5', batch: 'B-5', task: 'T-5' }[kind],
+    added: '2026-11-01',
+    transitions,
+    ...(closed ? { [COMPLETED_KEY[kind]]: '2026-11-01' } : {}),
+  };
+};
 
 // ---------------------------------------------------------------------------
 // applyTransition
@@ -949,4 +959,167 @@ test('bl validate still accepts the old by: operator entries on any verb’s edg
     transitions: [entry(T0, 'draft', 'new'), entry(AT, 'refined', 'operator'), entry(AT, 'escalated', FORCE)],
   };
   assert.deepEqual(findings('story', fm), []);
+});
+
+// ---------------------------------------------------------------------------
+// The stored-log check (S-1580)
+// ---------------------------------------------------------------------------
+
+test('applyTransition refuses to append to a stored log that bl validate rejects (the S-1573 repro)', () => {
+  const fm = {
+    batch_id: 'B-5',
+    added: '2026-11-13',
+    transitions: [
+      { at: '2026-11-13T00:00:00Z', to: 'approved', by: 'new' },
+      { at: '2026-11-13T01:00:00Z', to: 'in_progress' },
+    ],
+  };
+  const before = structuredClone(fm);
+  assert.throws(
+    () => applyTransition(flow, 'batch', fm, 'done', { by: 'merge', at: '2026-11-14T00:00:00Z' }),
+    (e) =>
+      e instanceof FlowError &&
+      !(e instanceof NoEdgeError) &&
+      /^B-5 has a transitions: log that bl validate rejects/m.test(e.reason) &&
+      /transitions entry 2 has no "by" verb/.test(e.reason) &&
+      /run bl validate/.test(e.reason),
+  );
+  assert.deepEqual(fm, before, 'nothing written');
+});
+
+/** Each stored-log rule a write never repairs: [name, the frontmatter laid over `at(kind, 'in_progress')`]. */
+const BROKEN = (kind) => {
+  const open = at(kind, 'in_progress');
+  const [head] = open.transitions;
+  const tail = (e) => ({ transitions: [...open.transitions, { at: AT, ...e }] });
+  const migrated = { to: 'in_progress', by: 'migrated', note: 'migrated' };
+  return [
+    ['a transitions: that is not a list', { transitions: 'in_progress' }],
+    ['an entry that is not a mapping', { transitions: [head, 'in_progress'] }],
+    ['a field outside ENTRY_FIELDS', tail({ ...migrated, from: 'x' })],
+    ['no by', tail({ to: 'in_progress' })],
+    ['an at that is not ISO 8601 UTC', tail({ ...migrated, at: '2026-11-09' })],
+    ['an at before the entry above it', tail({ ...migrated, at: '2026-10-01T00:00:00Z' })],
+    [
+      'a to that is not a status',
+      {
+        transitions: [head, { at: T0, to: 'nowhere', by: 'migrated', note: 'migrated' }, ...open.transitions.slice(1)],
+      },
+    ],
+    ['a pair with no edge', tail({ to: 'in_progress', by: 'review' })],
+    [
+      'a first entry that is not the initial status by new',
+      { transitions: [{ ...head, by: 'run' }, ...open.transitions.slice(1)] },
+    ],
+    ['an added that disagrees with the log', { added: '2026-10-01' }],
+    ['a completed key on an open log', { completed: '2026-10-01' }],
+  ];
+};
+
+test('applyTransition, transition and enterVerb refuse every stored-log error a write leaves, on every kind', async () => {
+  for (const kind of ['story', 'feature', 'batch']) {
+    for (const [name, broken] of BROKEN(kind)) {
+      const label = `${kind}: ${name}`;
+      const fm = { ...at(kind, 'in_progress'), ...broken };
+      const before = structuredClone(fm);
+      assert.throws(
+        () => applyTransition(flow, kind, fm, 'in_review', { by: 'run', at: AT }),
+        (e) => e instanceof FlowError && !(e instanceof NoEdgeError) && /bl validate/.test(e.message),
+        label,
+      );
+      assert.deepEqual(fm, before, `${label}: fm unchanged`);
+      const { root, file } = unitFile(`${serializeFrontmatter(fm)}\n# X\n`);
+      const text = readFileSync(file, 'utf8');
+      await assert.rejects(
+        () => transition(root, { kind, indexPath: file }, 'in_review', { by: 'run' }),
+        FlowError,
+        label,
+      );
+      await assert.rejects(() => enterVerb(root, { kind, indexPath: file }, 'review'), FlowError, label);
+      assert.equal(readFileSync(file, 'utf8'), text, `${label}: the file unchanged`);
+    }
+  }
+  // A task: draft to done is its one move.
+  const task = { ...at('task', 'draft'), transitions: [{ at: T0, to: 'draft' }] };
+  const { root, file } = unitFile(`${serializeFrontmatter(task)}\n# T\n`, 'tasks/T5-x.md');
+  assert.throws(() => applyTransition(flow, 'task', task, 'done', { by: 'done', at: AT }), /has no "by" verb/);
+  await assert.rejects(() => transition(root, { kind: 'task', file }, 'done', { by: 'done' }), /has no "by" verb/);
+});
+
+test('applyMerged and applyNew refuse a stored log that bl validate rejects', () => {
+  for (const kind of ['story', 'feature', 'batch']) {
+    const fm = { ...at(kind, 'ready_for_merge'), added: '2026-10-01' };
+    assert.throws(() => applyMerged(flow, kind, fm, { at: AT, note: 'merged' }), /added: 2026-10-01 disagrees/, kind);
+  }
+  // A new unit's frontmatter that holds a completed key: its first entry leaves it on an open log.
+  assert.throws(() => applyNew(flow, 'task', { task_id: 'T-5', done: '2026-10-01' }, AT), /done: 2026-10-01 is set/);
+});
+
+test('applyTransition writes over the faults its own write repairs, and leaves a log bl validate accepts', () => {
+  const errors = (kind, fm) => findTransitionFindings(flow, kind, fm, 'x').filter((f) => f.severity === 'error');
+  // No added:, and an added: that is not a date.
+  for (const added of [undefined, 'soon']) {
+    const fm = { ...at('story', 'in_progress'), added };
+    if (added === undefined) delete fm.added;
+    assert.ok(errors('story', fm).length > 0, 'the stored log has the fault');
+    applyTransition(flow, 'story', fm, 'in_review', { by: 'run', at: AT });
+    assert.deepEqual(errors('story', fm), [], `added ${added}`);
+    assert.equal(fm.added, '2026-11-01');
+  }
+  // A batch's legacy undefined: key.
+  const batch = { ...at('batch', 'ready_for_merge'), undefined: '2026-11-02' };
+  applyTransition(flow, 'batch', batch, 'done', { by: 'merge', at: AT });
+  assert.equal(Object.hasOwn(batch, 'undefined'), false);
+  assert.deepEqual(errors('batch', batch), []);
+  // A completed: on an open log: an entry to a terminal status sets it, so the write goes ahead.
+  const stale = { ...at('story', 'ready_for_merge'), completed: '2026-10-01' };
+  assert.ok(errors('story', stale).length > 0);
+  applyTransition(flow, 'story', stale, 'done', { by: 'merge', at: AT });
+  assert.equal(stale.completed, '2026-11-09');
+  assert.deepEqual(errors('story', stale), []);
+  // An entry to an open status leaves that completed: wrong, so it refuses.
+  const kept = { ...at('story', 'in_progress'), completed: '2026-10-01' };
+  assert.throws(
+    () => applyTransition(flow, 'story', kept, 'in_review', { by: 'run', at: AT }),
+    /completed: 2026-10-01 is set/,
+  );
+});
+
+test('bl force appends to a stored log the check refuses; a transitions: that is not a list still refuses', () => {
+  const open = at('story', 'in_progress');
+  const fm = { ...open, transitions: [...open.transitions, { at: AT, to: 'in_review' }] };
+  const entry = applyTransition(flow, 'story', fm, 'ready_for_merge', { by: FORCE, at: AT });
+  assert.deepEqual(entry, { at: AT, to: 'ready_for_merge', by: FORCE });
+  for (const raw of ['in_progress', [null]]) {
+    const bad = { ...open, transitions: raw };
+    assert.throws(() => applyTransition(flow, 'story', bad, 'done', { by: FORCE, at: AT }), /is not a list of entries/);
+  }
+});
+
+test('startOf refuses a stored log the verb’s first entry would leave rejected, after the start-state check', () => {
+  const { root, file } = unitFile('---\nstory_id: S-5\n---\n');
+  const cfg = { backlogRoot: root };
+  const refusal = (fm, verb) =>
+    startOf(cfg, 'story', { id: 'S-5', indexPath: file, fm }, verb, { guards: false }).refusal;
+  // bl merge of a story, a feature and a story batch refuses before its first step, not at its done write.
+  for (const kind of ['story', 'feature', 'batch']) {
+    const noBy = at(kind, 'ready_for_merge');
+    noBy.transitions = [...noBy.transitions.slice(0, -1), { at: T0, to: 'ready_for_merge' }];
+    const id = noBy[`${kind}_id`];
+    const start = startOf(cfg, kind, { id, indexPath: file, fm: noBy }, 'merge', { guards: false });
+    assert.match(start.refusal, new RegExp(`^${id} has a transitions: log that bl validate rejects`), kind);
+    assert.match(start.refusal, /transitions entry 2 has no "by" verb/, kind);
+  }
+  // A stale completed: on an open log: merge's entry to done repairs it; run's to in_review does not.
+  assert.equal(refusal({ ...at('story', 'ready_for_merge'), completed: '2026-10-01' }, 'merge'), null);
+  assert.match(
+    refusal({ ...at('story', 'in_progress'), completed: '2026-10-01' }, 'run'),
+    /completed: 2026-10-01 is set/,
+  );
+  // A closed unit gets the start-state refusal, not the log's.
+  const closed = at('story', 'done');
+  delete closed.completed;
+  assert.match(refusal(closed, 'merge'), /^S-5 is done; merge starts from/);
+  // A malformed transitions: has no status, so its refusal comes first.
+  assert.match(refusal({ ...closed, transitions: 'done' }, 'merge'), /is not a list of entries/);
 });

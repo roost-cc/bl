@@ -355,3 +355,20 @@ test('bl force refuses the current status and a status the type lacks', () => {
   assert.match(r.stderr, /C01 is a component/);
   assert.equal(fmOf(dir, S2).transitions.length, 2);
 });
+
+test('bl force appends to a stored log that bl validate rejects: the stored-log check skips it (S-1580)', () => {
+  const dir = backlog();
+  const S3 = 'stories/S3/index.md';
+  const text = readFileSync(join(dir, S3), 'utf8').replace(
+    /(\n {2}- at: \S+\n {4}to: in_progress)\n {4}by: force/,
+    '$1',
+  );
+  writeFileSync(join(dir, S3), text);
+  git(dir, 'commit', '-qam', 'S-3 loses a by');
+  assert.ok(
+    findTransitionFindings(loadFlow(dir), 'story', fmOf(dir, S3), S3).some((f) => /has no "by" verb/.test(f.message)),
+  );
+  const r = force(dir, ['S-3', 'escalated'], 'force S-3 to escalated\n');
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual({ ...fmOf(dir, S3).transitions.at(-1), at: 'x' }, { at: 'x', to: 'escalated', by: 'force' });
+});

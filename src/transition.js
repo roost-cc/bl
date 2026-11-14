@@ -34,8 +34,8 @@ import { updateSpecFile } from './spec-file.js';
  * The `FlowError` `applyTransition` throws when the table has no edge from the
  * unit's status to the one asked for: the unit moved (an operator's edit) or
  * the caller asked for a wrong one. A caller that may skip the entry catches
- * only this; any other error (a spec lock timeout, a disk error) is a write
- * that failed.
+ * only this; any other error (a spec lock timeout, a disk error, a log that
+ * `bl validate` rejects) is a write that failed.
  */
 export class NoEdgeError extends FlowError {}
 
@@ -347,28 +347,84 @@ function hasEdge(flow, kind, from, to, by, { skipDuring = false } = {}) {
  * replace its entries.
  */
 function writableLog(flowPath, kind, fm, change, at) {
-  const refusal = malformedLogRefusal([{ id: idOf(kind, fm), fm }]);
-  if (refusal) throw new FlowError(flowPath, refusal);
+  if (logShape(fm) === 'malformed') throw new FlowError(flowPath, malformedLine(idOf(kind, fm)));
   return storedLog(fm) ?? legacyLog(kind, fm, change).map((e) => ({ at, ...e }));
 }
 
+/** The refusal line for a unit whose `transitions:` is malformed (`logShape`). */
+const malformedLine = (id) =>
+  `${id} has a transitions: that is not a list of entries; fix it (bl validate names the fault) before bl writes an entry`;
+
+/** `at`, or the last entry's `at` when `at` is before it: a clock behind the last writer's. */
+function notBefore(log, at) {
+  const prev = log.at(-1)?.at;
+  return prev && Date.parse(at) < Date.parse(prev) ? prev : at;
+}
+
 /**
- * The refusal for the units whose `transitions:` is malformed (`logShape`),
- * one line each, or null. No writer appends to such a log (`writableLog`),
- * so a command checks its units with it before its first step that it
- * cannot undo (a worktree, a merge, a tag): `startOf` for the unit, `bl
- * merge F-n` and `prepareFeatureWorktree` for the feature's stories.
- * @param {{ id: string, fm: object }[]} units
+ * `fm` as `applyTransition` leaves it when it appends `entry` to `log`
+ * (`writableLog`): a copy, with `added`, the completed key and `undefined:`
+ * set as the writer sets them. `fm` is unchanged. With a null `entry`, the
+ * copy holds `log` and the writer's `added`. A unit with no log and no
+ * entry is copied as it is.
+ */
+function afterEntry(flow, kind, fm, log, entry) {
+  const after = { ...fm };
+  const next = entry ? [...log, entry] : log;
+  if (next.length === 0) return after;
+  setLog(after, next);
+  if (next.length === 1 || !DATE_RE.test(str(after.added))) after.added = dayOf(next[0].at);
+  const current = log.at(-1)?.to ?? null;
+  const { terminal } = flow.typeOf(kind);
+  if (entry && terminal.includes(entry.to)) after[COMPLETED_KEY[kind]] = dayOf(entry.at);
+  // A move out of a terminal status (`bl force` reopening `done`) leaves an open unit.
+  else if (entry && terminal.includes(current)) delete after[COMPLETED_KEY[kind]];
+  // A batch closed before S-1573 holds its date as `undefined:`; any later entry drops it.
+  delete after.undefined;
+  return after;
+}
+
+/**
+ * The refusal for a unit whose frontmatter `after` has a log that `bl
+ * validate` rejects (`findTransitionFindings`'s errors, S-1580), one line
+ * per error, or null.
+ */
+function logFaultRefusal(flow, kind, id, after) {
+  const errors = findTransitionFindings(flow, kind, after, id).filter((f) => f.severity === 'error');
+  if (errors.length === 0) return null;
+  return [
+    `${id} has a transitions: log that bl validate rejects, so bl writes no entry to it; run bl validate:`,
+    ...errors.map((f) => `  - ${f.message}`),
+  ].join('\n');
+}
+
+/**
+ * The refusal for the units whose log a write to `to` would leave with an
+ * error `bl validate` reports (S-1580), or null: the check
+ * `applyTransition` makes, before the write. A malformed `transitions:`
+ * (`logShape`) refuses; else the check reads the unit as `afterEntry`
+ * leaves it with an entry to `to` by `force`, whose edge always holds, so
+ * it reports only the stored log's faults that the write does not repair.
+ * A null `to`, or the unit's own status, adds no entry. A command checks its
+ * units with it before its first step that it cannot undo (a worktree, a
+ * merge, a tag): `startOf` for the unit, `bl merge F-n` and
+ * `prepareFeatureWorktree` for the feature's stories.
+ * @param {import("./flow.js").Flow} flow
+ * @param {{ id: string, kind: "story" | "feature" | "batch" | "task", fm: object,
+ *   change?: { fm: object } | null, to: string | null }[]} units
  * @returns {string | null}
  */
-export function malformedLogRefusal(units) {
-  const lines = units
-    .filter((u) => logShape(u.fm ?? {}) === 'malformed')
-    .map(
-      (u) =>
-        `${u.id} has a transitions: that is not a list of entries; fix it (bl validate names the fault) before bl writes an entry`,
-    );
-  return lines.length > 0 ? lines.join('\n') : null;
+export function logRefusal(flow, units) {
+  const lines = units.map((u) => {
+    if (logShape(u.fm) === 'malformed') return malformedLine(u.id);
+    const at = nowAt();
+    const log = writableLog(flow.path, u.kind, u.fm, u.change ?? null, at);
+    const add = log.length > 0 && u.to != null && u.to !== log.at(-1).to;
+    const entry = add ? { at: notBefore(log, at), to: u.to, by: FORCE } : null;
+    return logFaultRefusal(flow, u.kind, u.id, afterEntry(flow, u.kind, u.fm, log, entry));
+  });
+  const found = lines.filter(Boolean);
+  return found.length > 0 ? found.join('\n') : null;
 }
 
 /**
@@ -412,6 +468,14 @@ export function setLog(fm, log) {
  * takes `status:`'s place. The first entry sets `added`, and an entry to a
  * terminal status sets `completed` (a task's `done`), each to `at`'s date,
  * and an entry from a terminal status to an open one removes it.
+ *
+ * After the edge check, it reads the frontmatter as its write would leave it
+ * (`afterEntry`) with `findTransitionFindings`, the rules `bl validate`
+ * uses. If an error remains, it throws a `FlowError` (not `NoEdgeError`)
+ * that names each one and writes nothing (S-1580): no writer appends to a
+ * log that `bl validate` rejects. A fault the write repairs (`added`, the
+ * completed key, `undefined:`) does not refuse it. `by: force` skips this
+ * check, so `bl force` moves a unit whose log is broken.
  * @param {import("./flow.js").Flow} flow
  * @param {"story" | "feature" | "batch" | "task"} kind
  * @param {object} fm  the unit's frontmatter, changed in place
@@ -438,19 +502,14 @@ export function applyTransition(flow, kind, fm, to, { by, via, outcome, note, at
     );
   }
   // Never before the entry it follows: a clock behind the last writer's.
-  const prev = log.at(-1)?.at;
-  const when = prev && Date.parse(at) < Date.parse(prev) ? prev : at;
-  const fields = { at: when, to, by, via, outcome, note };
+  const fields = { at: notBefore(log, at), to, by, via, outcome, note };
   const entry = Object.fromEntries(ENTRY_FIELDS.filter((k) => str(fields[k])).map((k) => [k, fields[k]]));
-  const next = [...log, entry];
-  setLog(fm, next);
-  if (next.length === 1 || !DATE_RE.test(str(fm.added))) fm.added = dayOf(next[0].at);
-  const { terminal } = flow.typeOf(kind);
-  if (terminal.includes(to)) fm[COMPLETED_KEY[kind]] = dayOf(when);
-  // A move out of a terminal status (`bl force` reopening `done`) leaves an open unit.
-  else if (terminal.includes(current)) delete fm[COMPLETED_KEY[kind]];
-  // A batch closed before S-1573 holds its date as `undefined:`; any later entry drops it.
-  delete fm.undefined;
+  const after = afterEntry(flow, kind, fm, log, entry);
+  // `bl force` moves a unit whose log is broken; every other writer leaves a log bl validate accepts (S-1580).
+  const refusal = by === FORCE ? null : logFaultRefusal(flow, kind, idOf(kind, fm), after);
+  if (refusal) throw new FlowError(flow.path, refusal);
+  for (const k of Object.keys(fm)) delete fm[k];
+  Object.assign(fm, after);
   return entry;
 }
 
@@ -624,8 +683,13 @@ export function failingGuards(flow, when, ctx, { first = false } = {}) {
  * over its frontmatter and its current change document, which places a unit
  * with no log (D4). The verb is the first whose `from` holds the
  * status, checked with `assertFrom` (its `when` guards too). When none
- * does, `refusal` is the first verb's. A malformed `transitions:`
- * (`malformedLogRefusal`) refuses every verb. Then a hold on a status of the
+ * does, `refusal` is the first verb's. The refusals come in this order: a
+ * malformed `transitions:` refuses every verb (it has no status to start
+ * from); then the start state (`assertFrom`); then a log that the verb's
+ * first entry (to the first status of its nominal path that is not the
+ * current one) would leave with an error `bl validate` reports
+ * (`logRefusal`, S-1580), so the verb refuses before a worktree, a merge or
+ * a tag. Then a hold on a status of the
  * chosen verb's nominal path refuses it (`holdRefusal`, F-119 D6): the one
  * hold check of every verb that calls this. Every hand-written start-state check
  * of a verb handler became this. `bl run` passes its `then` chain
@@ -648,10 +712,14 @@ export function startOf(config, kind, unit, verbs, { guards = true } = {}) {
   };
   const verb = list.find(fits) ?? null;
   const ctx = guards ? { config, id: unit.id, indexPath: unit.indexPath } : null;
-  // Every verb writes the unit's log, which a malformed one refuses.
+  // The verb that starts writes the unit's log: its first entry goes to the first status of its nominal path.
+  const to = verb ? (flow.nominalPath(kind, verb).find((s) => s !== status) ?? null) : null;
+  const logFault = () => logRefusal(flow, [{ id: unit.id, kind, fm: unit.fm, change: unit.change ?? null, to }]);
+  // A malformed log has no status to start from, so its refusal comes first.
   const refusal =
-    malformedLogRefusal([{ id: unit.id, fm: unit.fm }]) ??
+    (logShape(unit.fm) === 'malformed' ? logFault() : null) ??
     assertFrom(flow, { id: unit.id, kind, status }, verb ?? list[0], ctx) ??
+    logFault() ??
     // The holds on the nominal path of the verb that starts (F-119 D6, R4).
     (guards ? holdRefusal(config, unit.id, verb) : null);
   return { verb: refusal ? null : verb, status, refusal };

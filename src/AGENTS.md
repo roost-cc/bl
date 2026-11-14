@@ -1119,9 +1119,19 @@ An entry's `from` is the `to` of the entry before it.
   - `applyTransition(flow, kind, fm, to, { by, via, outcome, note, at, change })` is pure. It
     appends the entry when the type's table has the edge from the current status to `to` under
     `by`. The edge is one of `Flow.edges`: the verb's `during`, or a `success` or `failure`
-    branch. When the table has no such edge, it throws `FlowError` and leaves `fm` unchanged. A
-    `during` equal to the current status records nothing (null). So a review that starts on a
-    work unit that is already `in_review` does not count twice.
+    branch. When the table has no such edge, it throws `NoEdgeError` (a `FlowError`) and leaves
+    `fm` unchanged. A `during` equal to the current status records nothing (null). So a review
+    that starts on a work unit that is already `in_review` does not count twice.
+  - **No writer except `bl force` appends to a log that `bl validate` rejects (S-1580).** After
+    the edge check, `applyTransition` builds the frontmatter as its write leaves it
+    (`afterEntry`) and runs `findTransitionFindings`, the rules `bl validate` uses, on it. If an
+    error remains, it throws a `FlowError` (not `NoEdgeError`) that names the work unit and each
+    fault and says to run `bl validate`, and it leaves `fm` unchanged. A fault that the write
+    repairs does not refuse it: a missing `added:` or one that is not a date, a completed key
+    that the new entry sets or removes, and a stray `undefined:` key. `by: force` skips this
+    check, so `bl force` stays the way to move a work unit whose log is broken. A
+    `transitions:` that is not a list of entries refuses every writer, `bl force` too, because
+    a write would replace its entries.
   - `transition(backlogRoot, unit, to, opts)` is `updateSpecFile` around `applyTransition`, and
     it returns the entry. A caller that changes other fields in the same locked write calls
     `applyTransition` inside its own mutate.
@@ -1191,9 +1201,23 @@ An entry's `from` is the `to` of the entry before it.
   When the verb may start, a hold on its nominal path refuses it (`holdRefusal`, F-119 R4).
   This is the one hold check of every verb that calls `startOf`. `bl merge` checks the `when`
   guards and the holds in `mergeGates`, with their own messages (`guards: false`). So it names
-  a hold once. A malformed `transitions:` (`malformedLogRefusal`) refuses every verb.
-  `bl merge F-n` and `prepareFeatureWorktree` also refuse a feature whose story has a malformed
-  `transitions:`. They refuse it before the first repo step.
+  a hold once.
+
+  `startOf` checks the log too, so a verb refuses before a worktree, a merge or a tag, not at
+  its first log write (`logRefusal`, S-1580). The refusals come in this order:
+
+  1. A malformed `transitions:` refuses every verb. It has no status to start from.
+  2. The start state (`assertFrom`): `S-5 is done; merge starts from …`.
+  3. A log that the verb's first entry would leave with an error `bl validate` reports. That
+     entry goes to the first status of the verb's nominal path that is not the current one.
+     `logRefusal` makes the check of `applyTransition` with a stand-in entry `by: force`, whose
+     edge always holds. So it reports only the stored log's faults that the write does not
+     repair.
+  4. A hold on the verb's nominal path.
+
+  `bl merge F-n` and `prepareFeatureWorktree` check each open story of the feature with
+  `logRefusal` before the first repo step: with an entry to `done` at a merge, and to
+  `in_progress` at a start.
 
 - **A work unit with no log** (before `bl/scripts/migrate-transitions.js` runs) reads as the
   log that the migration would write, `legacyLog(kind, fm, change)`. That log is `draft` at
