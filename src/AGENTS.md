@@ -3886,17 +3886,19 @@ not append to the activity log.
 
 ### `bl refine`
 
-Launches an agent session **on main** to refine and plan a story:
+`bl refine` launches an agent session **on main** to refine and plan a story. Before the session,
+it takes the work unit locks of its targets. If another bl process holds the lock of a target,
+`bl refine` refuses (F-122 D4). The session:
 
-- Explores the codebase to understand scope
-- Refines acceptance criteria and resolves ambiguities
-- Creates a detailed execution plan with concrete steps
-- Can create child stories via `bl new` if the story should be split
-- Ends by writing its outcome file (F-68 D1); when the session ends, `bl refine` sets the
-  status from it (see **Refine outcomes** under **Session outcomes**), then commits and pushes
-  what the session left uncommitted in its work units' directories
-- Takes the work unit locks of its targets first; a target another bl process holds refuses the
-  refine (F-122 D4)
+- explores the codebase to understand the scope;
+- refines the acceptance criteria and resolves ambiguities;
+- creates a detailed execution plan with concrete steps;
+- can create child stories with `bl new` if the story should be split;
+- ends when it writes its outcome file (F-68 D1).
+
+When the session ends, `bl refine` sets the status from the outcome file (see **Refine
+outcomes** under **Session outcomes**). Then it commits and pushes what the session left
+uncommitted in the directories of its work units' `index.md` files.
 
 ```bash
 bl refine S34
@@ -3905,12 +3907,13 @@ bl refine -t S34              # detach into a new tmux window
 
 ### `bl implement`
 
-Starts from what `flow.json`'s `implement` row allows (`draft`, `refined`, `in_progress`,
-`escalated`), or, for a story whose review position is `fixing`, with the `fix` session
-(`implementVerbOf`, `startOf`), which records `fixing` first. Records `in_progress` by
-`implement` before the session (F-69 D3), creates a git worktree and launches an agent session to
-implement the story. Refused while an unmet `blockers.json` edge holds the
-story at its `run` gate (F-66 D3; see "The gate checks" above), naming each blocker.
+`bl implement` creates a git worktree and launches an agent session to implement the story.
+Before the session, it records `in_progress` by `implement` (F-69 D3). It starts from the
+statuses that the `implement` row of `flow.json` allows: `draft`, `refined`, `in_progress` and
+`escalated`. For a story whose review position is `fixing`, it starts the `fix` session instead
+(`implementVerbOf`, `startOf`), and that session records `fixing` first. If an unmet
+`blockers.json` edge holds the story at its `run` gate, `bl implement` refuses and names each
+blocker (F-66 D3; see "The gate checks" above).
 
 ```bash
 bl implement S34
@@ -3918,210 +3921,248 @@ bl implement S34
 
 ### `bl run` for a story
 
-`bl run S34` takes a `refined` or `in_progress` story with no `feature:`
-through the feature loop (`runFeature` in `feature-run.js`), nothing copied:
-`storyUnit` (`unit.js`) gives the story the field names the loop reads from
-a feature, with `kind: "story"`, and
-`prepareStoryRun` (`workon.js`) makes the story's own worktree and branch (its
-directory name, lower case) and returns `prepareFeatureWorktree`'s shape with
-`ordered: [story]` and the PR title `S34: <title>`. The implement step uses
-`prompts/story-run.md`; the gate, self-review, review passes, verifier and
-fix rounds use the feature prompts, which read `{{unitKind}}` and
-`{{premise}}`. The test gate layers the story's
-component under the story file's `plugins-test`.
+`bl run S34` takes a `refined` or `in_progress` story with no `feature:` through the same code as
+a feature (`runFeature` in `feature-run.js`). Nothing is copied:
 
-The first run writes `review_rounds_max` (2, or `--max-rounds`) to the story
-frontmatter and the branch and PR to the story's change document (its round
-is its log's); run state is `.bl/run/S-34.json`. An escalation goes to the story's
-`## Escalation`, and its log records `escalated` (F-69 D1): the open section is what blocks
-`bl run` and `bl merge`. If the stored-log check refuses the `escalated` entry (S-1580), the
-log has no such entry; a `warning` step `escalate` in the run state says so. `bl status S34`
-prints the status, branch, PR, review state and
-round, the last three transitions, the escalation and the run state. `--plan`, `--resume`, `--interactive` and
-`--max-rounds` behave as for a feature. A story's run computes and stores its
-execution plan too, a plan of one story, as `plan.yaml` in the story's
-directory (F-125 A5; see **The execution plan** above), so `--resume` and
-`--plan` take one code path for every unit. A story with `feature:` set is
-refused: run its feature. Like `bl run F-n` (whose gate also checks each of
-its stories), it is refused while an unmet `blockers.json` edge holds it at
-its `run` gate (F-66 D3; see "The gate checks" above), one line per edge
-naming the blocker, its status and `until`.
+- `storyUnit` (`unit.js`) gives the story the field names that `bl run` reads from a feature,
+  with `kind: "story"`.
+- `prepareStoryRun` (`workon.js`) makes the story's own worktree and branch (its directory name,
+  in lower case). It returns the shape of `prepareFeatureWorktree`, with `ordered: [story]` and
+  the PR title `S34: <title>`.
+- The implement step uses `prompts/story-run.md`. The gate, the self-review, the review passes,
+  the verifier and the fix rounds use the feature prompts, which read `{{unitKind}}` and
+  `{{premise}}`.
+- The test gate layers the story's component under the `plugins-test` of the story file.
 
-**A branch with no commits (S-1437).** Some stories change only the backlog.
-After the self-review passes, a story run whose branch has no commits ahead of
-main (`branchEmpty`: `git rev-list --count main..HEAD` is 0 in the worktree)
-and that has no pull request yet runs no push, no `change.open` and no review.
-The guard is the self-review: it passes such a branch only when each acceptance
-item already holds where the work landed. The run history gets a `pr` and a
-`review` entry with the note "skipped: no commits, nothing to review", the log
-records `in_review` and then `ready_for_merge` by `review`, and the run ends
-`clean`. A run resumed after a `pr` step that opened no pull request (the
-S-1379 escalation) takes the same path. The path is taken only by a story
-with no Review Log session, at a status the `review` verb starts from
-(flow.json). The run records the history entries after the log is at
-`ready_for_merge`, and escalates when the log could not record it. A resumed
-story that this path already took to `ready_for_merge` ends `clean` again and
-records nothing. A failed self-review escalates as
-always, a scripted story keeps its own path, and a feature run (`bl run F-n`)
-never takes this path.
+The first `bl run` writes `review_rounds_max` (2, or `--max-rounds`) to the story frontmatter. It
+writes the branch and the PR to the story's change document; the round of the story is its
+log's. The run state is `.bl/run/S-34.json`.
 
-**One repo per story (F-52 D1, D2).** A story's repo is its component's
-(`unitRepo`), and `reposForStory` returns that one repo; `primary_repo` and
-`secondary_repos` on a story are never read, and a story whose component has
-no `repo` makes `bl implement` / `bl run` / `bl merge` exit 1 naming the
-component (`storyRepoOrExit`, `story.js`). `bl implement`, `bl review`,
-`bl merge` and `bl run` refuse `--repo` (`-r`) on a story as an unknown option
-(`refuseStoryRepo`). Work in another repo is another story in a component of
-that repo, linked by an edge in `blockers.json` (`prompts/workon.md`, `story-run.md`,
-`workon-review.md`); in a feature, a repo no story of the feature is in is a
-missing story, which the agent escalates (`feature-story.md`,
-`feature-workon.md`).
+An escalation goes to the story's `## Escalation`, and the story's log records `escalated`
+(F-69 D1). The section, while it holds other text than `None.`, is what blocks `bl run` and
+`bl merge`. If the stored-log check refuses the `escalated` entry (S-1580), the log has no such
+entry. Then a `warning` step `escalate` in the run state says so.
 
-**Worktree preparation (S-862).** Every story worktree comes through one
-function, `prepareStoryRepo` (`workon.js`): the worktree on the story branch
-at `<root>/<branch>/<repo>` (`worktreePathFor`) with `ensureWorktree`'s guards, that repo's
-bootstrap (`installDeps` limited to the repo), and the `workon` stage plugins
-on a new worktree. It builds no prompt variables and launches no session;
-`bl implement` calls it and then launches its interactive session.
-`prepareStoryRun` (`bl run S-n`) calls it with `strict`: a guard refusal,
-unknown repo, failed bootstrap or failed `workon` plugin exits naming the
-repo, before any agent starts; its `otherWorktrees` is always empty. A
-headless session cannot make a worktree the `bl` way, so `bl run F-n` and
-`bl implement F-n` prepare every repo of the feature, strictly and in the
-feature's repo order (`featureRepoOrder`, F-52 D3), before the agent starts
-(`prepareFeatureWorktree`, through `prepareFeatureRepo`), and start the
-session in the lead repo's worktree (`targetRepoName`; the others are
-`otherWorktrees`). A story added after approval gets its worktree on the next
-run or `--resume` with no edit to the feature (or at once from `bl side`). A feature with no stories exits
-1 asking for them to be cut, and a story whose component has no repo, or a
-repo the config does not know, stops the prep naming the story.
-`bl implement F-n` and `bl run F-n` refuse `--repo` as an unknown option
-(`verbs.js`); `bl review F-n --repo <r>` still narrows a review to one PR.
+`bl status S34` prints the status, branch, PR, review state and round, the last three
+transitions, the escalation and the run state. `--plan`, `--resume`, `--interactive` and
+`--max-rounds` behave as for a feature.
 
-**Repos added during a run (F-48 D3).** After every agent session (each
-story and its retry, fix-tests, the self-review, each review round, the fix
-and its self-review) `bl run F-n` calls `refreshRepos` (`feature-run.js`):
-it re-reads the unit's stories (every story whose `feature:`, or a batch's
-`batch:`, names it), adds any new story to the stored execution plan
-(`replan` on `plan.yaml` as the session left it, so the session's own
-`changes` entries stay) after the stories the run has taken, puts those not
-taken yet in dependency order again (on the current `readEdges`, as at the
-start), writes and commits `plan.yaml`, and makes `prep.ordered` follow its
-`order`, so the implement loop reaches each after its prerequisites
-and skips it when its criteria are checked; and for each repo of
-`featureRepoOrder` the run has not
-prepared, takes that repo's worktree on the branch (`git worktree list` in its
-main checkout, where `bl side` put it), appends it to `prep.otherWorktrees`,
-adds its `repos:` entry to the change document, refreshes
-`{{otherWorktrees}}`, and records one `step: "repos"` history entry naming the
-repos and stories. From then on the gate, the repo guard, the push, the PR
-step and the review cover the repo: every push covers each prepared repo
-with commits ahead of main, and each such repo without a PR in the run gets
-one through `change.open` (or `change.find`), recorded on its `repos:` entry
-and passed to every later review round as `otherRepos`. Each review round
-covers and snapshots every prepared repo, PR or not (`reviewOtherRepos`).
-The lead repo and its worktree never change. A new repo with no worktree on
-the branch escalates, naming the story and the repo, before the gate;
-`--resume` prepares it. A story list the refresh cannot resolve (it does not
-parse, a story is missing, or a new story fails the checks
-`prepareFeatureWorktree` makes at start) escalates too, as does a change
-document that cannot name a new repo. After a session that is not an
-implementation, `rescope` implements any story it added; the self-review
-gates again when any repo moved or the scope grew; a round that ends
-`ready_for_merge` after adding scope is gated and reviewed again (in the closing
-round it escalates); and a resumed `ready_for_merge` run finishes without a round
-only when nothing was implemented and the last round's `reviewedScope`
-covers every current story and repo. `bl run S-n` has one repo and skips the
-refresh.
+`bl run` for a story computes and stores an execution plan too, a plan of one story. It stores
+it as `plan.yaml` in the story's directory (F-125 A5; see **The execution plan** above). So
+`--resume`
+and `--plan` take one code path for every work unit. `bl run` refuses a story with `feature:`
+set: run its feature. Like `bl run F-n`, it refuses while an unmet `blockers.json` edge holds the
+story at its `run` gate (F-66 D3; see "The gate checks" above). For `bl run F-n`, the gate also
+checks each story of the feature. The refusal prints one line per edge, which names the blocker,
+its status and `until`.
 
-`feature-story.md` prints the repos in order as `{{storyRepos}}` and the
-other paths as `{{otherWorktrees}}` under `Lead worktree:`, below
-`Unit dir :` (`{{unitDir}}`, the working directory) (`(none)` with one
-repo) and tells the agent to work
-only in the listed worktrees, commit each repo's changes there without
-pushing, and, for a repo that is not listed, use `bl side` for a drive-by
-change and escalate missing design scope (never a hand-made worktree). `story-run.md` names the one worktree. `{{storyRepos}}` is the
-story's repo, or a feature's derived set.
+**A branch with no commits (S-1437).** Some stories change only the backlog. For such a story,
+`bl run` runs no push, no `change.open` and no review when all of these hold:
 
-`bl merge S34` merges the story's one repo; a worktree on the story's branch
-in another repo is refused, naming the repo, before anything merges.
-`bl merge F-n` passes `isSecondary` to `cleanupOneRepo`
-for every repo but the lead. Such a worktree with uncommitted changes (tracked or
-untracked, the session lock aside) is refused before anything is touched. Its
-branch with no commits ahead of `origin/main` (local `main` when
-there is no origin) is not merged, pushed or recorded in `commit:`: the merge
-reports "no changes in <repo>" and removes the worktree and branch.
-`bl merge S34` passes `noCommits` for a story `mergeGates` let through with
-a branch with no commits (S-1437), and that story's repo takes the same path.
-If the branch has commits ahead when `cleanupOneRepo` counts again (a commit
-landed after the gate), it refuses and merges nothing: that commit had no
-review. The `## Merge` line names only the repos that took the no-changes path.
+- the self-review passed;
+- the story's branch has no commits ahead of main (`branchEmpty`:
+  `git rev-list --count main..HEAD` is 0 in the worktree);
+- the story has no pull request yet.
+
+The self-review is the guard: it passes such a branch only when each acceptance item already
+holds where the work landed. The run history gets a `pr` and a `review` entry with the note
+"skipped: no commits, nothing to review". The log records `in_review` and then `ready_for_merge`
+by `review`, and the run ends `clean`.
+
+- A run resumed after a `pr` step that opened no pull request (the S-1379 escalation) takes the
+  same path.
+- Only a story with no Review Log session takes the path, and only at a status that the `review`
+  verb starts from (flow.json).
+- `bl run` records the history entries after the log is at `ready_for_merge`. If the log could
+  not record `ready_for_merge`, `bl run` escalates.
+- If this path already took a resumed story to `ready_for_merge`, the run ends `clean` again and
+  records nothing.
+- A failed self-review escalates as always. A scripted story keeps its own path. A feature run
+  (`bl run F-n`) never takes this path.
+
+**One repo per story (F-52 D1, D2).** A story's repo is the repo of its component (`unitRepo`),
+and `reposForStory` returns that one repo. bl never reads `primary_repo` or `secondary_repos` on
+a story. If the story's component has no `repo`, `bl implement`, `bl run` and `bl merge` exit 1
+and name the component (`storyRepoOrExit`, `story.js`). `bl implement`, `bl review`, `bl merge`
+and `bl run` refuse `--repo` (`-r`) on a story as an unknown option (`refuseStoryRepo`).
+
+Work in another repo is another story, in a component of that repo, linked by an edge in
+`blockers.json` (`prompts/workon.md`, `story-run.md`, `workon-review.md`). In a feature, a repo
+that no story of the feature is in is a missing story, and the agent escalates it
+(`feature-story.md`, `feature-workon.md`).
+
+**Worktree preparation (S-862).** Every story worktree comes through one function,
+`prepareStoryRepo` (`workon.js`). It makes three things:
+
+- the worktree on the story branch at `<root>/<branch>/<repo>` (`worktreePathFor`), with the
+  guards of `ensureWorktree`;
+- that repo's bootstrap (`installDeps`, limited to the repo);
+- on a new worktree, the `workon` stage plugins.
+
+It builds no prompt variables and launches no session. `bl implement` calls it and then launches
+its interactive session. `prepareStoryRun` (`bl run S-n`) calls it with `strict`. Then a guard
+refusal, an unknown repo, a failed bootstrap or a failed `workon` plugin exits and names the
+repo, before any agent starts. Its `otherWorktrees` is always empty.
+
+A headless session cannot make a worktree the `bl` way. So `bl run F-n` and `bl implement F-n`
+prepare every repo of the feature before the agent starts (`prepareFeatureWorktree`, through
+`prepareFeatureRepo`). They prepare the repos strictly, in the feature's repo order
+(`featureRepoOrder`, F-52 D3). They start the session in the lead repo's worktree
+(`targetRepoName`); the other repos are `otherWorktrees`.
+
+- A story added after approval gets its worktree on the next `bl run` or `--resume`, with no
+  edit to the feature (or at once from `bl side`).
+- A feature with no stories exits 1 and asks for the stories to be cut.
+- A story whose component has no repo, or a repo that the config does not know, stops the
+  preparation and names the story.
+- `bl implement F-n` and `bl run F-n` refuse `--repo` as an unknown option (`verbs.js`).
+  `bl review F-n --repo <r>` still narrows a review to one PR.
+
+**Repos added during a run (F-48 D3).** `bl run F-n` calls `refreshRepos` (`feature-run.js`)
+after every agent session. These sessions are each story and its retry, fix-tests, the
+self-review, each review round, the fix and its self-review. `refreshRepos` does these steps:
+
+1. It reads the work unit's stories again: every story whose `feature:` names it, or whose
+   `batch:` names it for a story batch.
+2. It adds each new story to the stored execution plan, after the stories that `bl run` has
+   taken. It calls `replan` on `plan.yaml` as the session left it, so the session's own `changes`
+   entries stay.
+3. It puts the stories not taken yet in dependency order again, on the current `readEdges`, as
+   at the start.
+4. It writes and commits `plan.yaml`, and makes `prep.ordered` follow its `order`. So the
+   implement loop reaches each new story after its prerequisites, and skips it when its criteria
+   are checked.
+5. For each repo of `featureRepoOrder` that `bl run` has not prepared, it takes that repo's
+   worktree on the branch (`git worktree list` in its main checkout, where `bl side` put it). It
+   appends the worktree to `prep.otherWorktrees`, adds the repo's `repos:` entry to the change
+   document and refreshes `{{otherWorktrees}}`.
+6. It records one `step: "repos"` history entry that names the repos and the stories.
+
+From then on, the gate, the repo guard, the push, the PR step and the review cover the new repo:
+
+- Every push covers each prepared repo with commits ahead of main.
+- Each such repo without a PR in this `bl run` gets one through `change.open` (or
+  `change.find`). bl records the PR on the repo's `repos:` entry, and passes it to every later
+  review round as `otherRepos`.
+- Each review round covers and snapshots every prepared repo, with a PR or not
+  (`reviewOtherRepos`).
+
+The lead repo and its worktree never change. These cases escalate:
+
+- A new repo with no worktree on the branch escalates before the gate, and names the story and
+  the repo. `--resume` prepares it.
+- A story list that the refresh cannot resolve escalates: it does not parse, a story is missing,
+  or a new story fails the checks that `prepareFeatureWorktree` makes at the start.
+- A change document that cannot name a new repo escalates.
+
+After a session that is not an implementation, `rescope` implements any story that the session
+added. The self-review gates again when any repo moved or the scope grew. A round that ends
+`ready_for_merge` after it added scope is gated and reviewed again; in the closing round, it
+escalates. A resumed `ready_for_merge` run finishes without a round only when two things hold:
+nothing was implemented, and the last round's `reviewedScope` covers every current story and
+repo. `bl run S-n` has one repo and skips the refresh.
+
+`feature-story.md` prints the repos in order as `{{storyRepos}}`. It prints the other paths as
+`{{otherWorktrees}}` under `Lead worktree:`, below `Unit dir :` (`{{unitDir}}`, the working
+directory); with one repo, it prints `(none)`. It tells the agent these rules:
+
+- Work only in the listed worktrees.
+- Commit each repo's changes there, and do not push.
+- For a repo that is not listed, use `bl side` for a drive-by change, and escalate missing
+  design scope. Never make a worktree by hand.
+
+`story-run.md` names the one worktree. `{{storyRepos}}` is the story's repo, or the derived set
+of a feature.
+
+`bl merge S34` merges the story's one repo. If another repo has a worktree on the story's
+branch, `bl merge S34` refuses before anything merges, and names the repo. `bl merge F-n` passes
+`isSecondary` to `cleanupOneRepo` for every repo but the lead:
+
+- If such a worktree has uncommitted changes (tracked or untracked, the session lock aside), the
+  merge refuses before it touches anything.
+- If its branch has no commits ahead of `origin/main` (local `main` when there is no origin),
+  the merge does not merge or push it, and does not record it in `commit:`. The merge reports "no
+  changes in <repo>" and removes the worktree and the branch.
+
+`bl merge S34` passes `noCommits` for a story that `mergeGates` let through with a branch with no
+commits (S-1437). That story's repo takes the same path. When `cleanupOneRepo` counts again, the
+branch can have commits ahead (a commit landed after the gate). Then it refuses and merges
+nothing, because that commit had no review. The `## Merge` line names only the repos that took
+the no-changes path.
 
 ### `bl review`
 
-One review round on the review agent, the step `bl run` takes: two dimension
-passes (`review-correctness.md`, `review-failure-paths.md`) and the verifier
-(`review-verify.md`), one session in the Review Log and one verdict in the
-unit's transition log. For a story, the open PRs are found by title (`S34 in:title`) in every
-repo, each worktree is synced with main first (a conflict exits, pointing at
-`bl implement S34`), and every repo's PR is recorded on its `repos:` entry in
-the change document. With no
-open PR it says why, including a PR that merged before review.
+`bl review` runs one review round on the review agent: the step that `bl run` takes. The round
+has two dimension passes (`review-correctness.md`, `review-failure-paths.md`) and the verifier
+(`review-verify.md`). It writes one session in the Review Log and one verdict in the work unit's
+transition log.
 
-`bl review` ends with the round's outcome and, when there is one, the next
-command (`reviewEnd`, `src/feature-run.js`, S-1348). It reads the unit's
-review state from its transition log (`reviewOf`, F-69 D5): `<n>` is the
-rounds with a verdict.
+For a story, `bl review` finds the open PRs by title (`S34 in:title`) in every repo. It syncs
+each worktree with main first; a conflict exits and points at `bl implement S34`. It records
+every repo's PR on the repo's `repos:` entry in the change document. If there is no open PR,
+`bl review` says why, for example a PR that merged before the review.
 
-- Open items (`fixing`): `Review round <n> done: <k> open item(s) (<a> Must fix, <b> Should fix, <c> nit(s)).`
-  The counts come from the latest Review Log session, zero counts are left
-  out, and boxes under any other heading count as `<o> other`. A round in
-  `fixing` whose session has no open box says so with
+`bl review` ends with the round's outcome and, when there is one, the next command (`reviewEnd`,
+`src/feature-run.js`, S-1348). It reads the work unit's review state from its transition log
+(`reviewOf`, F-69 D5): `<n>` is the number of rounds with a verdict. The first line is the
+outcome:
+
+- Open items (`fixing`):
+  `Review round <n> done: <k> open item(s) (<a> Must fix, <b> Should fix, <c> nit(s)).` The
+  counts come from the latest Review Log session. The line leaves out zero counts, and counts
+  boxes under any other heading as `<o> other`. If a round is in `fixing` but its session has no
+  unchecked box, the line says so with
   `fixing, but the latest Review Log session has no open item`.
-- Nothing left (`ready_for_merge`): `Review round <n> done: nothing left to fix.`,
-  or `nothing left to fix (<c> open nit(s) left).` while the session has open nits.
-  If the session still has an open Must fix or Should fix box, the line is
+- Nothing left (`ready_for_merge`): `Review round <n> done: nothing left to fix.`, or
+  `nothing left to fix (<c> open nit(s) left).` while the session has unchecked nits. If the
+  session still has an unchecked Must fix or Should fix box, the line is
   `ready_for_merge, but the latest Review Log session has <k> open Must fix/Should fix item(s)`.
-- No verdict (a round open, or none yet): `Review round <n> done: no verdict recorded (<position>).`
-  (`never reviewed` when there is none), with no `Next:` line. Escalated:
-  `Review round <n>: escalated.`
-- A round that did not finish (an error and no escalation, for example a
-  verifier that failed): `The review round did not finish.`, then the error
-  line, with no `done` line and no `Next:` line. The round recorded no
-  verdict, so `bl review` builds no outcome from it. A verifier with no valid
-  outcome after its retry escalates (F-68 D5).
+- No verdict (a round has started and has no verdict yet, or there is no round yet):
+  `Review round <n> done: no verdict recorded (<position>).` (`never reviewed` when there is no
+  round), with no `Next:` line.
+- Escalated: `Review round <n>: escalated.`
+- A round that did not finish (an error and no escalation, for example a verifier that failed):
+  `The review round did not finish.`, then the error line. There is no `done` line and no
+  `Next:` line. The round recorded no verdict, so `bl review` builds no outcome from it. If the
+  verifier has no valid outcome after its retry, the round escalates (F-68 D5).
 
 The second line is `Next: <command>`:
 
-- `ready_for_merge`: `bl merge <id>`. If the session still has an open Must fix
-  or Should fix box, the merge gate (`featureReviewGate`) blocks the merge, so
-  the command is `bl review <id>`: a review checks the boxes again, and the
-  table's `implement` row does not start from `ready_for_merge`.
-  `bl status` prints no next command.
+- `ready_for_merge`: `bl merge <id>`. If the session still has an unchecked Must fix or Should
+  fix box, the merge gate (`featureReviewGate`) blocks the merge. Then the command is
+  `bl review <id>`: a review checks the boxes again, and the `implement` row of the table does
+  not start from `ready_for_merge`. `bl status` prints no next command.
 - Open items below the round cap: `bl run <id> --resume`.
 - Open items in the round that reached the cap: the outcome line adds
   ` The round cap (<cap>) is reached: the next run fixes these items and runs one closing round on them.`
-  and the command is `bl run <id> --resume`. If the session has no open box,
-  the outcome line adds only ` The round cap (<cap>) is reached.`.
+  and the command is `bl run <id> --resume`. If the session has no unchecked box, the outcome
+  line adds only ` The round cap (<cap>) is reached.`.
 - Open items past what the cap allows: the outcome line adds
-  ` The round cap (<cap>) is reached.` and the command is
+  ` The round cap (<cap>) is reached.`, and the command is
   `bl run <id> --resume --max-rounds <n+1>`.
 - Escalated: `read ## Escalation in <the unit's index.md>`.
 
-The cap cases come from `roundCapStanding`, the check by which `bl run`
-refuses a run at the cap, so the two cannot disagree. `bl status <id>` prints
-the unit's status, then the same outcome words on its `review:` line
-(`review: round <r>/<cap> done: <outcome>`; `review: round <r>/<cap>, <position>`
-for a round with no verdict; `review: none (round <r>/<cap>)` before the first
-review; each with `, latest session <date>` when the change document has a
-session; `<r>` is the log's round), then the last three entries of the
-transition log, one per line: `<at>  <to>  by <verb> via <capability>: <outcome> (<note>)`
-under `transitions (last 3 of <n>):` (a unit with no log shows the log
-`legacyLog` reads). With several targets, each child that exited 0 gets
-`<id>: reviewed, round <n> done: <outcome><pr> — next: <command>`, the review
-state read from the unit's log after the child ran (`its file cannot be read`
-when it cannot be). The exit codes are as before: 0 after a round that
-recorded a verdict with no error and no escalation, else 1.
+The cap cases come from `roundCapStanding`, the check by which `bl run` refuses a run at the
+cap. So the two cannot disagree.
+
+`bl status <id>` prints the work unit's status first. Then it prints the same outcome words on
+its `review:` line:
+
+- `review: round <r>/<cap> done: <outcome>` after a round with a verdict;
+- `review: round <r>/<cap>, <position>` for a round with no verdict;
+- `review: none (round <r>/<cap>)` before the first review.
+
+Each form adds `, latest session <date>` when the change document has a session. `<r>` is the
+log's round. Last, `bl status` prints the last three entries of the transition log, one per line,
+under `transitions (last 3 of <n>):`. Each line is
+`<at>  <to>  by <verb> via <capability>: <outcome> (<note>)`. For a work unit with no log,
+`bl status` shows the log that `legacyLog` reads.
+
+With several targets, each child that exited 0 gets the line
+`<id>: reviewed, round <n> done: <outcome><pr> — next: <command>`. `bl review` reads the review
+state from the work unit's log after the child ran. If it cannot read the file, the line says
+`its file cannot be read`. The exit codes are as before. `bl review` exits 0 after a round that
+recorded a verdict with no error and no escalation, and 1 otherwise.
 
 ```bash
 bl review S34                 # alias: bl pr S34
@@ -4129,25 +4170,27 @@ bl review S34                 # alias: bl pr S34
 
 ### Several targets
 
-`bl run` and `bl implement` take one target (F-125 Decision A3). `dispatch` (`verbs.js`)
-refuses two or more ids before it reads the backlog or checks a gate
-(`ONE_TARGET_VERBS`, `oneTargetRefusal`); the message names `bl batch`, the deliberate way to
-group stories. Every other id-dispatched verb takes several ids (`dispatchSeveral`):
+`bl run` and `bl implement` take one target (F-125 Decision A3). `dispatch` (`verbs.js`) refuses
+two or more ids before it reads the backlog or checks a gate (`ONE_TARGET_VERBS`,
+`oneTargetRefusal`). The message names `bl batch`, the deliberate way to group stories. Every
+other verb that `dispatch` sends by id takes several ids (`dispatchSeveral`):
 
-- `review`: each target runs as a child `bl review <id>` with its output in
-  `.bl/run/<id>.out` (`runChildren`); when all exit, one line each (outcome, PR, next step).
-  Exit 1 if any failed or escalated. `--interactive` takes one target.
-- `merge`: one at a time in dependency order (`dependencyOrder`, `execution-plan.js`),
-  stopping at the first failure.
-- `refine`: stories and components go to the refine batch; with a feature among the
-  targets, each opens its own tmux window.
-- `status`, `approve`, `done`: each target on its own; a component's status lists
-  its open stories.
+- `review`: each target runs as a child `bl review <id>`, with its output in `.bl/run/<id>.out`
+  (`runChildren`). When all children exit, `bl review` prints one line for each: the outcome, the
+  PR and the next step. It exits 1 if any child failed or escalated. `--interactive` takes one
+  target.
+- `merge`: one target at a time, in dependency order (`dependencyOrder`, `execution-plan.js`). It
+  stops at the first failure.
+- `refine`: stories and components go to the batch refine. If a feature is among the targets,
+  each feature opens its own tmux window.
+- `status`, `approve`, `done`: each target on its own. A component's status lists its stories
+  whose status does not meet `done`.
 
-Separate `bl` processes on one repo serialise the `main` sync (fetch, ahead-of-origin check,
-`merge --ff-only origin/main`) through `<git-common-dir>/bl-main-sync.lock` (`main-sync.js`),
-so none of them races the other's `FETCH_HEAD`; a failed fetch is a warning naming the local
-`main` commit the worktree is cut from, a failed fast-forward stops the process.
+Separate `bl` processes on one repo take turns at the `main` sync: the fetch, the
+ahead-of-origin check and `merge --ff-only origin/main`. They do this through
+`<git-common-dir>/bl-main-sync.lock` (`main-sync.js`), so none of them races the `FETCH_HEAD` of
+another. A failed fetch is a warning, which names the local `main` commit that the worktree is
+cut from. A failed fast-forward stops the process.
 
 ```bash
 bl run S-1 S-2                # refused: bl run takes one target; group stories with bl batch
@@ -4156,110 +4199,134 @@ bl merge S-2 S-1              # S-2 depends on S-1: S-1 merges first
 
 ### Tab titles (`src/tab-title.js`)
 
-Every title `bl` gives a terminal tab goes through `updateTabTitle`: the tmux window name
-under tmux (targeting the window `bl` started in, captured at startup), the OSC 2 window
-title when stderr is a terminal outside tmux, nothing otherwise. The title is rendered from
-named fields with the `BL_TAB_TITLE` format, default
-`{{feature}} : {{story}} : {{status}} {{next}}` (`next` is the step that the operator does
-next, arrow included, such as `→ bl merge`); an unset field renders as nothing and the result
-is trimmed. The placeholder is the `{{var}}`
-bl's prompts and plugin commands use, not a new format.
+Every title that `bl` gives a terminal tab goes through `updateTabTitle`:
+
+- under tmux, the tmux window name, in the window that `bl` started in (captured at startup);
+- outside tmux, when stderr is a terminal, the OSC 2 window title;
+- otherwise, nothing.
+
+`bl` renders the title from named fields with the `BL_TAB_TITLE` format. The default is
+`{{feature}} : {{story}} : {{status}} {{next}}`. `next` is the step that the operator does next,
+with its arrow, such as `→ bl merge`. An unset field renders as nothing, and `bl` trims the
+result. The placeholder is the `{{var}}` that bl's prompts and plugin commands use, not a new
+format.
 
 - Every command sets a start title (S-1412). `bl.js` calls `updateTabTitle(commandTitle(argv))`
   right after `captureTmuxWindowId()`, before the backlog pull, `settlePending` and dispatch.
-  `commandTitle` (`src/command-table.js`) gives the status: the canonical command name
-  (`ALIASES` maps `ls` to `list`), or `<command> <subcommand>` for a `COMMANDS` entry with
-  `subcommands: true` (`task`, `updates`, `inbox`, `block`) whose first argument is a word,
-  not a flag or a unit id (`updates run`, `inbox done`). It is `help` for no command, `help`,
-  `-h`, `--help`, or `-h`/`--help` among the arguments; an unknown command shows its word.
-  The `feature` and `story` fields are the unit ids the arguments name (`classifyId`, also
-  the value of `--name=value`), one through `unitTitleFields`, several as `<n> features` or
-  `<n> stories`. `bl.js` dispatches only through `COMMANDS` and `ALIASES`, so a new command
-  needs no title code of its own; `test/unit/tab-title.test.js` runs `bin/bl <name> --help`
-  for every key under a fake tmux and fails on a run that renames nothing.
-- A code path sets the fields it knows, by name, at any time: `updateTabTitle('story', 'S-34')`
-  or `updateTabTitle({ feature: 'F-56', status: 'testing' })`. Names are not checked. Its
-  fields replace the start title's.
-- `bl merge` shows its steps as the status: `integrate` (`integrateForMerge`), `test gate`
-  (before the integration's `runTestGate`), `pull` (before each repo's `syncMain` in
-  `cleanupOneRepo`), `check` (before `checkedMerge` runs the `check` plugins),
-  `pre-push gate + push` (`PUSH_STATUS`, before each `git push` of the integrated branch and
-  of `main`: git runs the pre-push gate inside `git push`, so bl cannot show the two apart),
-  `install` (before the main checkout's `installCommand`), `cleanup` (before the PR close),
-  `sync` (before the backlog sync) and `tag` (before a feature's tags are pushed). The statuses
-  inside the integration go through the runner's `title`, so the unit tests' fake runner
-  sets none.
-- `launchSession` sets the unit `parsed.id` names (`F-n` or a story batch's `B-n` the feature,
-  `S-n` the story; through `unitTitleFields`) and the mode as `status` (`workon` shows as
-  `implement`); a caller that knows more, such as a story's `feature:`, sets it first. The
-  `bl run` loop sets the unit's fields (`unitTitleFields`: a story unit is the `story` field),
-  the story in hand and the step in `setStep`, and the end state in `finish` and
-  `escalateIntegration` (`finalTitle`), through the runner's `title(fields, { final })`; `notify`
-  only rings the bell now.
-- A code path that reaches an end state sets it with `finalTabTitle`, which marks the title
-  final and sends it unpadded. It drops an earlier `next`, so the final title shows `next`
-  only when the code path sets it. The run loop's ends: `clean → bl merge`,
-  `escalated → fix, --resume` (`→ fix, bl review` under `bl review`, `→ fix, bl merge` under
-  `bl merge`), `done` for no change, `failed`. `bl updates run` ends with its outcome counts,
-  and `→ approve/drop` when an outcome is a decision; a run that throws sets no final title.
-  A later `updateTabTitle` or `clearTabTitle` clears the mark.
-- After a tool that had the terminal returns (the agent in `launchSession` and triage, the
-  editor in `runEditor`), the caller calls `reassertTabTitle`, because that tool may have set
-  its own title. What the tool set is not captured: it wrote to the terminal, not through bl.
-- A title is sent as plain text, because it holds text from the command line: `sendTabTitle`
-  removes control characters (ESC, BEL, newline) on both paths, and under tmux it doubles each
-  `#`, because tmux expands `#{…}` and `#(…)` in a window name.
+  - `commandTitle` (`src/command-table.js`) gives the status: the canonical command name
+    (`ALIASES` maps `ls` to `list`). For a `COMMANDS` entry with `subcommands: true` (`task`,
+    `updates`, `inbox`, `block`), the status is `<command> <subcommand>` when the first argument
+    is a word, not a flag or a work unit id (`updates run`, `inbox done`).
+  - The status is `help` for no command, for `help`, `-h` or `--help`, or for `-h` or `--help`
+    among the arguments. An unknown command shows its word.
+  - The `feature` and `story` fields are the work unit ids that the arguments name (`classifyId`,
+    also the value of `--name=value`). One id goes through `unitTitleFields`; several show as
+    `<n> features` or `<n> stories`.
+  - `bl.js` dispatches only through `COMMANDS` and `ALIASES`, so a new command needs no title
+    code of its own. `test/unit/tab-title.test.js` runs `bin/bl <name> --help` for every key
+    under a fake tmux. The test fails on a command that renames nothing.
+- A code path sets the fields it knows, by name, at any time:
+  `updateTabTitle('story', 'S-34')` or `updateTabTitle({ feature: 'F-56', status: 'testing' })`.
+  bl does not check the names. These fields replace the fields of the start title.
+- `bl merge` shows its steps as the status:
+  - `integrate` (`integrateForMerge`);
+  - `test gate` (before the integration's `runTestGate`);
+  - `pull` (before each repo's `syncMain` in `cleanupOneRepo`);
+  - `check` (before `checkedMerge` runs the `check` plugins);
+  - `pre-push gate + push` (`PUSH_STATUS`, before each `git push` of the integrated branch and
+    of `main`). git runs the pre-push gate inside `git push`, so bl cannot show the two apart;
+  - `install` (before the main checkout's `installCommand`);
+  - `cleanup` (before the PR close);
+  - `sync` (before the backlog sync);
+  - `tag` (before the tags of a feature are pushed).
+
+  The statuses inside the integration go through the runner's `title`, so the fake runner of
+  the unit tests sets none.
+
+- `launchSession` sets the work unit that `parsed.id` names, through `unitTitleFields`. `F-n`,
+  or the `B-n` of a story batch, is the feature; `S-n` is the story. It sets the mode as
+  `status`; `workon` shows as `implement`. A caller that knows more, such as a story's
+  `feature:`, sets it first.
+- `bl run` sets these fields through the runner's `title(fields, { final })`:
+  - the work unit's fields (`unitTitleFields`: a story fills the `story` field);
+  - the story in hand, and the step in `setStep`;
+  - the end state, in `finish` and `escalateIntegration` (`finalTitle`).
+
+  `notify` now only rings the bell.
+
+- A code path that reaches an end state sets it with `finalTabTitle`. `finalTabTitle` marks the
+  title final and sends it unpadded. It drops an earlier `next`, so the final title shows `next`
+  only when the code path sets it. A later `updateTabTitle` or `clearTabTitle` clears the mark.
+  The end states are these:
+  - `bl run`: `clean → bl merge`; `escalated → fix, --resume` (`→ fix, bl review` under
+    `bl review`, `→ fix, bl merge` under `bl merge`); `done` for no change; `failed`.
+  - `bl updates run`: its outcome counts, and `→ approve/drop` when an outcome is a decision. A
+    `bl updates run` that throws sets no final title.
+- A tool can have the terminal: the agent in `launchSession` and triage, or the editor in
+  `runEditor`. After the tool returns, the caller calls `reassertTabTitle`, because that tool may
+  have set its own title. bl does not capture what the tool set: the tool wrote to the terminal,
+  not through bl.
+- bl sends a title as plain text, because the title holds text from the command line.
+  `sendTabTitle` removes control characters (ESC, BEL, newline) on both paths. Under tmux, it
+  doubles each `#`, because tmux expands `#{…}` and `#(…)` in a window name.
 - A process waits for a hung tmux at most `TMUX_TIMEOUT_MS` (1 s) in all. Each `tmux` call has
-  that timeout, and after one call times out, every later call in the process (titles, the
-  reassert, the exit title) fails at once without tmux. `endTabTitle` clears that state.
-- An empty `BL_TAB_TITLE` (`TAB_TITLE_ENV`) turns titles off; `verbs.js` `childEnv` sets it for
-  the child processes that `bl review` starts in parallel for several targets
-  (`runChildren`), so the parent's window keeps the parent's title. `agentEnv` sets it for
-  every agent session (S-1388): the tab belongs to the `bl` that started the session,
-  so no `bl` the agent runs, and no test it starts, renames the window. Every `bl` started
-  for data runs with it too, so it does not end the parent's title `ended` mid-run:
-  `runBacklogSync`'s child `bl sync`, `bl side`'s child `bl new`, the `bl top` view (and
-  so every `bl` it runs in its window), and the `bl inbox --json` of
-  `_roost_inbox_task_ids` in the three completion files. The sequential children of
-  `mergeInOrder` and `eachInTurn` keep their titles: they run one at a time in the
-  operator's window and name the target in hand.
-  `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`,
-  `BL_TMUX_WINDOW_ID` and `BL_TAB_TITLE` for every `npm run test:*` script
-  (`test/unit/tmux-free-env.test.js` guards it). The same wrapper unsets `BL_BACKLOG_DIR`
-  and refuses a temporary directory (`os.tmpdir()`) inside a git repository, where git in a
-  test's temp dir would act on that repository (S-1394; `test/unit/repo-free-env.test.js`
-  guards both). It also sets `BL_CEILING_DIRECTORIES` to that temporary directory, so
-  `findBacklogRoot`'s walk never looks above it (S-1155; the same test guards it).
-  `openTmuxWindow` names a new window
-  with `renderTabTitle` of the fields the inner bl will set, so the shape never changes.
-- When `bl` exits, the last title stays (S-1393): under tmux `rename-window` turned the
-  window's `automatic-rename` off and bl leaves it off (`tmux set -w automatic-rename on`
-  gives tmux's name back); outside tmux bl never pushes or pops the terminal's title.
-  `endTabTitle`, the `exit` hook registered on the first title, sends nothing after a final
-  title, whatever the exit code (an `OutcomeError` after an escalation exits non-zero and
-  keeps the escalated title). Otherwise it sets the status from the exit code (`ended` for 0,
-  `interrupted` for 130 or 143, `failed (exit N)` otherwise), unsets `next` and sends the
-  title unpadded, so no tab keeps a working status after bl stops. The first title also calls `exitOnSignal`
-  (`signal-exit.js`), the SIGINT and SIGTERM handlers that `bl.js` registers when `bl` starts:
-  they end the process with `process.exit(130|143)`, so the hook sees an interrupt. They are
-  registered once per process. While the editor of `bl view` or `bl change` runs (`showReadOnly`),
-  `ignoreSignals` makes them return at once, so bl ignores the interrupt (S-1182). Since every
-  command sets a start title, the exit hook reaches every command. A process that loads `tab-title.js` without `bl.js` keeps Node's default
-  signal action until its first title, and for good with titles off.
-- The title width only grows while the process runs: `showTabTitle` pads a shorter title with
-  trailing spaces to the widest title shown, so the tmux status bar does not move. A final
-  title is not padded. `currentTabTitle` and `renderTabTitle` stay unpadded; `endTabTitle`
-  resets the width at exit.
+  that timeout. After one call times out, every later call in the process (titles, the reassert,
+  the exit title) fails at once without tmux. `endTabTitle` clears that state.
+- An empty `BL_TAB_TITLE` (`TAB_TITLE_ENV`) turns titles off. These set it:
+  - `childEnv` in `verbs.js`, for the child processes that `bl review` starts in parallel for
+    several targets (`runChildren`). So the parent's window keeps the parent's title.
+  - `agentEnv`, for every agent session (S-1388). The tab belongs to the `bl` that started the
+    session, so no `bl` that the agent runs, and no test that it starts, renames the window.
+  - Every `bl` started for data, so that it does not end the parent's title `ended` while the
+    parent works. These are the child `bl sync` of `runBacklogSync` and the child `bl new` of
+    `bl side`. They are also the `bl top` view (and so every `bl` it runs in its window), and
+    the `bl inbox --json` of `_roost_inbox_task_ids` in the three completion files.
+
+  The sequential children of `mergeInOrder` and `eachInTurn` keep their titles. They run one at
+  a time in the operator's window and name the target in hand.
+
+  `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`, `BL_TMUX_WINDOW_ID` and
+  `BL_TAB_TITLE` for every `npm run test:*` script (`test/unit/tmux-free-env.test.js` guards
+  it). The same wrapper unsets `BL_BACKLOG_DIR`. It also refuses a temporary directory
+  (`os.tmpdir()`) inside a git repository, where git in a test's temp dir would act on that
+  repository (S-1394; `test/unit/repo-free-env.test.js` guards both). It also sets
+  `BL_CEILING_DIRECTORIES` to that temporary directory, so the walk of `findBacklogRoot` never
+  looks above it (S-1155; the same test guards it).
+
+  `openTmuxWindow` names a new window with `renderTabTitle` of the fields that the inner bl will
+  set, so the shape never changes.
+
+- When `bl` exits, the last title stays (S-1393). Under tmux, `rename-window` turned the
+  window's `automatic-rename` off, and bl leaves it off; `tmux set -w automatic-rename on` gives
+  tmux's name back. Outside tmux, bl never pushes or pops the terminal's title.
+  - `endTabTitle` is the `exit` hook that the first title registers. After a final title, it
+    sends nothing, whatever the exit code. An `OutcomeError` after an escalation exits non-zero
+    and keeps the escalated title.
+  - Otherwise, `endTabTitle` sets the status from the exit code: `ended` for 0, `interrupted`
+    for 130 or 143, `failed (exit N)` otherwise. It unsets `next` and sends the title unpadded,
+    so no tab keeps a working status after bl stops.
+  - The first title also calls `exitOnSignal` (`signal-exit.js`): the SIGINT and SIGTERM
+    handlers that `bl.js` registers when `bl` starts. The handlers end the process with
+    `process.exit(130|143)`, so the hook sees an interrupt. bl registers them once per process.
+  - While the editor of `bl view` or `bl change` runs (`showReadOnly`), `ignoreSignals` makes
+    the handlers return at once, so bl ignores the interrupt (S-1182).
+  - Every command sets a start title, so the exit hook reaches every command. A process that
+    loads `tab-title.js` without `bl.js` keeps Node's default signal action until its first
+    title, and for good with titles off.
+- The title width only grows while the process runs. `showTabTitle` pads a shorter title with
+  trailing spaces to the widest title shown, so the tmux status bar does not move. A final title
+  is not padded. `currentTabTitle` and `renderTabTitle` stay unpadded. `endTabTitle` resets the
+  width at exit.
 
 ### Pre-task discussion (`-P, --prompt`)
 
-`bl refine` and `bl implement` accept a `-P, --prompt "<text>"` flag that
-prepends a short discussion preamble to the launched session. The agent
-reads the text, converses with you about it first, and only proceeds
-with the underlying task (refine / workon) after you explicitly say yes.
-If you say no, the agent exits without touching the story file or
-worktree. `bl review -P "<text>"` instead adds the text to every review
-session's prompt as instructions from the operator.
+`bl refine` and `bl implement` accept a `-P, --prompt "<text>"` flag. It puts a short discussion
+preamble before the prompt of the launched session. The agent reads the text and talks with you
+about it first. It goes on with the underlying task (refine or workon) only after you
+explicitly say yes.
+If you say no, the agent exits without a change to the story file or the worktree.
+`bl review -P "<text>"` works another way: it adds the text to the prompt of every review
+session, as instructions from the operator.
 
 ```bash
 bl implement -P "the AC may no longer match the auth refactor" S34
@@ -4267,24 +4334,27 @@ bl refine -t -P "it's risky — let's scope it down" S34
 bl review -P "focus on the retry logic, the rest looks fine" S34
 ```
 
-The preamble lives in `prompts/_pre-task-discussion.md` and is
-prepended by `session.js` so both launchers stay in lockstep.
-The preamble carries the collaboration rules (`_collaboration.md`, F-97 D2)
-unless the session prompt already has them, so a session has them once.
-Empty string (`--prompt ""`) behaves identically to omitting the flag.
+The preamble lives in `prompts/_pre-task-discussion.md`. `session.js` puts it before the prompt,
+so both launchers stay in step. The preamble carries the collaboration rules
+(`_collaboration.md`, F-97 D2), unless the session prompt already has them, so a session has
+them once. An empty string (`--prompt ""`) does the same as no flag.
 
 ### `bl capacity`
 
-Shows whether each agent configuration can take work now (F-64 D6): one row
-per configuration of `agent`, then `review_agent`, in list order, with its
-role, agent, model (`-` for the account's own), state (`available`,
-`unavailable`, `unknown`), each quota window's remaining percent and reset in
-local time, and the adapter's message. It calls each adapter's
-`capacity({ model, topLevel })`, the call the run loop makes, so it shows
-what the loop will see. An
-`account`-scoped answer (Codex) is asked once per agent, a `model`-scoped one
-once per model. It reports and does not gate: it exits 0 whatever the
-states, and 1 only when the backlog or its `backlog.json` cannot be loaded.
+`bl capacity` shows whether each agent configuration can take work now (F-64 D6). It prints one
+row per configuration of `agent`, then of `review_agent`, in list order. Each row has these
+columns:
+
+- the role, the agent, and the model (`-` for the account's own);
+- the state: `available`, `unavailable` or `unknown`;
+- the remaining percent of each quota window, and its reset in local time;
+- the adapter's message.
+
+`bl capacity` calls the `capacity({ model, topLevel })` of each adapter. `bl run` makes the same
+call, so `bl capacity` shows what `bl run` will see. bl asks an `account`-scoped answer (Codex)
+once per agent, and a `model`-scoped one once per model. `bl capacity` reports and does not
+gate. It exits 0 whatever the states, and 1 only when bl cannot load the backlog or its
+`backlog.json`.
 
 ```bash
 bl capacity
@@ -4295,42 +4365,45 @@ bl capacity --json   # {"schema":"bl-capacity-json/v1","configurations":[{role, 
                      #   state, scope, until, windows:[{name, remainingPercent, resetsAt}], message}]}
 ```
 
-Codex's reading comes from `codex app-server` (marked experimental), over
-the JSON-RPC requests `initialize`, `initialized` and
-`account/rateLimits/read`, the ones `~/codex-usage.py` sends.
-`src/agents/codex-capacity.js` holds the conversation with app-server, an
-asynchronous child with pipes, in the bl process, with a 20-second deadline,
-and stops app-server on every path;
-`codexCapacity()` in `codex.js` maps the answer. Every bucket of
-`rateLimitsByLimitId` (else `rateLimits`) gives its `primary` and
-`secondary` windows ("codex 5h", "codex 7d"). A window with nothing left, or
-`spendControlReached`, makes every Codex model `unavailable` until the latest
-such reset (none for a spend cap, which also sets `spend: true`). A timeout, an exit, a JSON-RPC error or an
-answer with no windows is `unknown`, with the reason.
+Codex's reading comes from `codex app-server` (marked experimental). bl sends the JSON-RPC
+requests `initialize`, `initialized` and `account/rateLimits/read`, the ones that
+`~/codex-usage.py` sends.
+
+- `src/agents/codex-capacity.js` holds the conversation with app-server in the bl process, as an
+  asynchronous child with pipes. It has a 20-second deadline, and it stops app-server on every
+  path.
+- `codexCapacity()` in `codex.js` maps the answer. Every bucket of `rateLimitsByLimitId` (else
+  `rateLimits`) gives its `primary` and `secondary` windows ("codex 5h", "codex 7d").
+- A window with nothing left, or `spendControlReached`, makes every Codex model `unavailable`
+  until the latest such reset. A spend cap gives no reset time, and it also sets `spend: true`.
+- A timeout, an exit, a JSON-RPC error or an answer with no windows is `unknown`, with the
+  reason.
 
 Claude's reading comes from Claude Code's OAuth usage endpoint,
 `GET https://api.anthropic.com/api/oauth/usage` (undocumented; S-1143).
-`src/agents/claude-capacity.js` reads the token from
-`$CLAUDE_CONFIG_DIR/.credentials.json` (else `~/.claude`) and asks within 10
-seconds; bl never refreshes the token, because Claude Code owns it.
-`claudeCapacity()` in `claude.js` maps the answer. Each entry of `limits`
-(else `five_hour` and `seven_day`) is a window: `claude 5h` for `session`,
-`claude 7d` for `weekly_all`, `claude 7d <model>` for `weekly_scoped`. A
-limit with no scope applies to every model. A model-scoped one applies only
-to the configuration whose model it names (its `id`, or its `display_name`
-as the model or one dash-separated part of it: `Fable` ↔ `claude-fable-5-2`).
-The reading is `account` only when no limit names a model, so Claude is
-asked once per model. A window at 0% makes the configuration `unavailable`
-until the latest such reset. `extra_usage` and `spend` are not read: bl never
-spends paid credits on its own. Missing credentials, an expired token, a
-non-200 answer, the deadline, a body that is not JSON, an answer with no
-windows, a percent that is not a number, a reset that is not a time, a
-`limits` that is not a list, or a `five_hour` / `seven_day` that is not an
-object or `null` is `unknown`, with the reason.
 
-The `local` row comes from the server's `/health` (see **The local
-provider**): `available` on a 200, `unavailable` when the connection is
-refused, `unknown` otherwise; the message names the URL.
+- `src/agents/claude-capacity.js` reads the token from `$CLAUDE_CONFIG_DIR/.credentials.json`
+  (else `~/.claude`), and asks within 10 seconds. bl never refreshes the token, because Claude
+  Code owns it.
+- `claudeCapacity()` in `claude.js` maps the answer. Each entry of `limits` (else `five_hour` and
+  `seven_day`) is a window: `claude 5h` for `session`, `claude 7d` for `weekly_all`, and
+  `claude 7d <model>` for `weekly_scoped`.
+- A limit with no scope applies to every model. A model-scoped limit applies only to the
+  configuration whose model it names. It names the model by its `id`, or by its `display_name`
+  as the model or as one dash-separated part of it: `Fable` ↔ `claude-fable-5-2`.
+- The reading is `account` only when no limit names a model, so bl asks Claude once per model.
+- A window at 0% makes the configuration `unavailable` until the latest such reset.
+- bl does not read `extra_usage` and `spend`: bl never spends paid credits on its own.
+- These answers are `unknown`, with the reason:
+  - missing credentials, an expired token, a non-200 answer or the deadline;
+  - a body that is not JSON, or an answer with no windows;
+  - a percent that is not a number, or a reset that is not a time;
+  - a `limits` that is not a list, or a `five_hour` or `seven_day` that is not an object or
+    `null`.
+
+The `local` row comes from the server's `/health` (see **The local provider**). It is
+`available` on a 200, `unavailable` when the connection is refused, and `unknown` otherwise. The
+message names the URL.
 
 ### `bl top`
 
