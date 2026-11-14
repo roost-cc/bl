@@ -5,7 +5,7 @@
  * run inside that worktree. The main repo is never logged.
  */
 
-import { appendFileSync, existsSync, readFileSync, mkdirSync } from 'fs';
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from 'fs';
 import { join } from 'path';
 import { gitOut } from './child.js';
 import { loadConfig, info } from './config.js';
@@ -60,6 +60,23 @@ function oneLine(s) {
   );
 }
 
+/**
+ * True when the log's last byte is not a line feed (S-1581): an earlier write
+ * failed after it wrote part of a line, so the next entry must start a new one.
+ * @param {string} file
+ */
+function endsMidLine(file) {
+  if (!existsSync(file)) return false;
+  const fd = openSync(file, 'r');
+  try {
+    const { size } = fstatSync(fd);
+    const last = Buffer.alloc(1);
+    return size > 0 && readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 0x0a;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** Append a command entry to the activity log — only runs inside a linked worktree. */
 export function append(command, args) {
   const root = linkedWorktreeRoot();
@@ -77,9 +94,10 @@ export function appendTo(worktreePath, command, args) {
   try {
     const logDir = join(worktreePath, LOG_DIR);
     mkdirSync(logDir, { recursive: true });
+    const file = join(logDir, LOG_FILE);
     const fields = [command, ...args].map(oneLine).join(' ');
-    const line = `${timestamp()}  bl ${fields}\n`;
-    appendFileSync(join(logDir, LOG_FILE), line);
+    const line = `${endsMidLine(file) ? '\n' : ''}${timestamp()}  bl ${fields}\n`;
+    appendFileSync(file, line);
   } catch {
     // logging is non-fatal
   }

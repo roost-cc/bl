@@ -12,7 +12,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import fs, { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { syncBuiltinESMExports } from 'module';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { appendTo } from '../../src/log.js';
@@ -178,6 +179,40 @@ test('appendTo keeps every line separator and terminal control on one activity l
       const want = field === 'command' ? `bl refine${escaped}${forged} S-1` : `bl refine S-1${escaped}${forged}`;
       assert.ok(text.endsWith(`  ${want}\n`), where);
     }
+  }
+});
+
+// S-1581: a log write that fails after a short write leaves part of a line.
+// The next entry starts on a line of its own, and earlier whole lines stay whole.
+test('appendTo keeps the next entry separate after a partial write', () => {
+  const realAppend = fs.appendFileSync;
+  const cases = {
+    'a short write, then an error': (dir) => {
+      fs.appendFileSync = (file, data) => {
+        realAppend(file, data.slice(0, 27));
+        throw new Error('injected failure after a short write');
+      };
+      syncBuiltinESMExports();
+      try {
+        appendTo(dir, 'refine', ['S-1']);
+      } finally {
+        fs.appendFileSync = realAppend;
+        syncBuiltinESMExports();
+      }
+    },
+    'a partial line already in the file': (dir) => {
+      writeFileSync(join(dir, '.bl', 'activity.log'), '2026-01-01 00:00:00  bl list\n2026-01-01 00:00:01  bl ref');
+    },
+  };
+  for (const [name, leavePartial] of Object.entries(cases)) {
+    const dir = mkTempDir('bl-log-partial-');
+    mkdirSync(join(dir, '.bl'));
+    leavePartial(dir);
+    appendTo(dir, 'workon', ['S-2']);
+    const lines = readFileSync(join(dir, '.bl', 'activity.log'), 'utf8').split('\n');
+    assert.equal(lines.at(-1), '', name);
+    assert.match(lines.at(-2), /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d {2}bl workon S-2$/, name);
+    assert.doesNotMatch(lines.at(-3), /bl workon/, name);
   }
 });
 
