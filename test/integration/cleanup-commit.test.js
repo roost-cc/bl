@@ -29,7 +29,6 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { main as cleanupMain } from '../../src/cleanup.js';
 import { endTabTitle } from '../../src/tab-title.js';
 import { fakeTmux, renamedTitles } from '../helpers/fake-tmux.js';
-import { withEnv } from '../helpers/fake-pagers.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { parseChange } from '../../src/change-doc.js';
 import { extractSection } from '../../src/feature.js';
@@ -310,11 +309,10 @@ test('bl merge shows check and install as statuses (S-1412)', async () => {
   try {
     out = await captureStderr(() => captureExit(() => cleanupMain(['S-99'])));
   } finally {
+    // Under the fake tmux: the exit hook that the first title registered must never reach a real one.
+    endTabTitle(0);
     restore();
   }
-  // The exit hook that the first title registered must never reach a real tmux.
-  withEnv(fakeEnv, () => endTabTitle(0));
-  process.env.BL_TAB_TITLE = '';
   assert.equal(out.result.exit, null, out.stderr);
   const statuses = renamedTitles(fake.calls())
     .map((title) => title.split(' : ').at(-1).trim())
