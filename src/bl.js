@@ -252,7 +252,9 @@ async function run() {
     const { loadConfig } = await import('./config.js');
     let config = null;
     try {
-      config = loadConfig();
+      // `bl init` pulls the directory it writes to, never one the walk finds.
+      config =
+        command === 'init' ? loadConfig({ backlogRoot: (await import('./init.js')).initBacklogDir() }) : loadConfig();
     } catch {
       // Not in a backlog: the command reports that itself.
     }
