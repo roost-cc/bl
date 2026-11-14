@@ -93,13 +93,15 @@ export function renderTabTitle(values, format = tabTitleFormat()) {
 }
 
 /**
- * The title fields a unit id stands for: `F-n` is the feature, `S-n` the
- * story. Any other id (a batch, a component) names no field.
+ * The title fields a unit id stands for: `F-n` is the feature, `B-n` (a story
+ * batch) takes the feature's field, `S-n` is the story. Any other id (a
+ * component, `refine-batch`) names no field.
  * @param {string | null | undefined} id
  * @returns {{ feature?: string, story?: string }}
  */
 export function unitTitleFields(id) {
   if (/^F-\d+$/.test(id ?? '')) return { feature: id };
+  if (/^B-\d+$/.test(id ?? '')) return { feature: id };
   if (/^S-\d+$/.test(id ?? '')) return { story: id };
   return {};
 }
