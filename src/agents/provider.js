@@ -13,7 +13,8 @@
  *   - spawn(): launch the agent; async, it resolves to a child_process
  *     SpawnSyncReturns-like result (F-128 D5). A headless session waits
  *     asynchronously (`runLongChild`), so bl's own signal listeners and timers
- *     run while it does, and `signal` can end it. An interactive session
+ *     run while it does, and `signal` sends it SIGTERM, then SIGKILL if it
+ *     still runs 10 s later (F-128 A6). An interactive session
  *     waits synchronously (`runChild`, F-128 A3): it holds the terminal, as
  *     the editor does, so bl never exits while the agent has it.
  *
@@ -218,8 +219,10 @@ export class AgentProvider {
    *                                       says, so followSession() can read
    *                                       them while it runs.
    * @param {AbortSignal} [opts.signal]  - Headless only: sends the agent
-   *                                       SIGTERM when it fires; the session
-   *                                       is then a failed one.
+   *                                       SIGTERM when it fires, then SIGKILL
+   *                                       if it still runs 10 s later (F-128
+   *                                       A6); the session is then a failed
+   *                                       one.
    * @param {Function} [opts.run]        - Test seam and process-scope hook:
    *                                       runs the agent's argv. Headless,
    *                                       `runLongChild` (or `scopedSpawn`'s

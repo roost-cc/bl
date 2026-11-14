@@ -1504,8 +1504,9 @@ interactive launch and calls `provider.spawn({ headless: true })`: `claude -p
 prompted) and `codex exec --json --output-last-message <file>` for Codex.
 `spawn()` is async (F-128 D5): a headless session is a long child (`runLongChild`, or
 `scopedSpawn(unit)`'s function in a process scope), so `bl`'s own listeners and timers run
-while it does, and `runHeadlessSession({ signal })` sends it SIGTERM when the signal fires
-(a failed session, its `error` the `AbortError`). An interactive session keeps a synchronous
+while it does, and `runHeadlessSession({ signal })` sends it SIGTERM when the signal fires,
+then SIGKILL if it still runs 10 s later (F-128 A6): a failed session, its `error` the
+`AbortError`. An interactive session keeps a synchronous
 wait (`runChild` with inherited stdio, F-128 A3): it holds the terminal, so `bl` never exits
 while the agent has it. Every caller awaits `spawn()`. The
 result carries the agent's final message, an error flag, token usage (which
@@ -4138,7 +4139,8 @@ without user systemd:
    loop honours only a request whose `holder` is its own pid.
 3. It sends SIGTERM to the holder (`stopRun`'s `kill` option, `process.kill` by default). The
    run takes it as a stop (**An interrupt during `bl run` is a stop**, above): it sends
-   SIGTERM to the current agent session or test-gate command. If the holder is already gone
+   SIGTERM to the current agent session or test-gate command, then SIGKILL if it still runs
+   10 s later (F-128 A6). If the holder is already gone
    (`ESRCH`), `bl stop` goes on to the wait. Any other failure prints
    `bl stop: could not signal pid <n>: <message>`, and the run stops at its next check.
 4. The loop's `checkStop()` (`src/feature-run.js`) finds the request for its own pid, so the

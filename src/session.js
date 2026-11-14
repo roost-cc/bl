@@ -759,8 +759,8 @@ function sessionModel(model, agent, config) {
  * CLI's stderr (S-1398), or `''`. `follow` is the adapter's follow handle
  * for this session (`followHandle()`, S-1272), or null; the spawn writes the
  * session's events where it says, for `bl watch`. When `signal` (an
- * `AbortSignal`) fires, the agent ends with SIGTERM and the session is a
- * failed one (F-128 D5).
+ * `AbortSignal`) fires, the agent gets SIGTERM, then SIGKILL if it still
+ * runs 10 s later, and the session is a failed one (F-128 D5, A6).
  *
  * @returns {Promise<{ status: number, output: string, isError: boolean,
  *             usage: object|null, sessionId: string|null, denials: string[],

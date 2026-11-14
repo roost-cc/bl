@@ -785,7 +785,8 @@ export class ClaudeProvider extends AgentProvider {
     if (headless) {
       // Capture stdout (the JSON result) and stderr. The stderr is copied to
       // bl's stderr when claude exits, and names the exit in a missing
-      // outcome's fault (S-1398). `signal` ends claude with SIGTERM.
+      // outcome's fault (S-1398). `signal` sends claude SIGTERM, then SIGKILL
+      // if it still runs 10 s later (F-128 A6).
       const r = await run('claude', claudeArgs, {
         cwd,
         env,

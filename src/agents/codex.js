@@ -945,7 +945,8 @@ export class CodexProvider extends AgentProvider {
           // stderr is captured, copied to bl's stderr when codex exits, and
           // names the exit in a missing outcome's fault (S-1398).
           stdio: ['ignore', eventsFd ?? 'pipe', 'pipe'],
-          // `signal` ends codex with SIGTERM.
+          // `signal` sends codex SIGTERM, then SIGKILL if it still runs 10 s
+          // later (F-128 A6).
           signal,
         });
         if (r.stderr) process.stderr.write(r.stderr);

@@ -806,7 +806,8 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         schema,
         sessionId: resume,
         follow,
-        // A headless session ends with SIGTERM when `signal` fires (F-128 D5).
+        // `signal` sends SIGTERM to a headless session, then SIGKILL if it
+        // still runs 10 s later (F-128 D5, A6).
         signal,
         // The agent and all it starts live in the step's scope (F-70 D4).
         run: scope ? processScope.scopedSpawn(scope) : undefined,
@@ -842,8 +843,9 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
     },
     /**
      * Run the test-gate command `cmd` as a long child (`gateMerged`, F-128
-     * D7): in user systemd scope `scope` when there is one (F-70 D4), ended
-     * with SIGTERM when `signal` fires.
+     * D7): in user systemd scope `scope` when there is one (F-70 D4). When
+     * `signal` fires, the command gets SIGTERM, then SIGKILL if it still runs
+     * 10 s later (F-128 A6).
      */
     async testGate(cmd, cwd, { scope = null, signal } = {}) {
       return gateMerged(cmd, cwd, { scope, signal });
@@ -1574,7 +1576,8 @@ export function shellMerged(cmd, cwd) {
 /**
  * Run the test-gate command `cmd` as `shellMerged` does, but as a long child
  * (`runLongChild`, F-128 D7): `sh -c <cmd>` inside user systemd scope `scope`
- * when there is one (F-70 D4), sent SIGTERM when `signal` fires. The
+ * when there is one (F-70 D4), sent SIGTERM when `signal` fires, then
+ * SIGKILL if it still runs 10 s later (F-128 A6). The
  * wait ends when the command exits, though a process it left still holds the
  * output file.
  */
@@ -5103,7 +5106,8 @@ function refuse(runner, feature, reason) {
  * While it holds the run, the first SIGINT or SIGTERM is a stop (F-128 D8,
  * `takeInterrupts`): the handler aborts the controller whose signal is
  * `ctx.stopSignal`, with the signal's name as its reason. That sends SIGTERM to
- * the long child, and `checkStop` records `stopped` after it exits. The
+ * the long child, then SIGKILL if it still runs 10 s later (F-128 A6), and
+ * `checkStop` records `stopped` after it exits. The
  * handler is set before the locks are taken, so a SIGTERM that `bl stop`
  * sends to the lock holder always finds it.
  */
