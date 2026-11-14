@@ -1731,7 +1731,7 @@ So a `## Gate` line from `bl merge S-n` and a write of `bl run` to the same docu
 
 `bl side`'s undo (`backlogUndo`) runs in a synchronous `exit` listener under the backlog lock. It
 puts back only the change documents of the feature directory. It never puts back the feature's
-`index.md`: `bl side` does not write it (F-79 D1), so a restore could only revert another
+`index.md`, which `bl side` does not write (F-79 D1). A restore of it could only revert another
 session's write (F-126 Decision A1). The undo takes each document's spec lock with one try
 (`writeBacklogPathNow`). If another process holds a document's lock, the undo leaves that
 document, and the undo's error names it.
@@ -1814,9 +1814,9 @@ changes: [] # each: { at, by, what, why }
      edges.
    - The integration's resolution agent may edit `merge_order`. So `bl merge` reads the plan
      again after the integration, and its final commit takes that edit.
-6. `bl run --plan` computes the plan and prints it: the dependencies, the work order, the
-   parallel groups, and the repo and merge order (or the cycle of merge edges). Then it prints
-   the step list (`formatPlan`, `planSteps`). It writes nothing.
+6. `bl run --plan` computes the plan and prints it. It prints the dependencies, the work order,
+   the parallel groups, and the repo and merge order (or the cycle of merge edges). Then it
+   prints the step list (`formatPlan`, `planSteps`). It writes nothing.
 
 `plan.yaml` does not store `merge_cycle`, which `computePlan` returns. If the plan proves wrong,
 the implementing agent or an escalation resolution edits `plan.yaml`. It adds a `changes` entry
@@ -1881,11 +1881,12 @@ The commands move a feature along this path:
   9. Review again. Steps 7 to 9 repeat until `ready_for_merge`.
 
   Items still open after the last full round (`review_rounds_max`) get one closing round
-  (`closingRound`): fix, fix self-review, the test gate, then `review-verify.md` alone, which
-  checks only those items. If anything is still open, the feature goes to `escalated`. Every
-  headless prompt ends with the headless rules (`withHeadlessRules`: no background commands,
-  commit before ending). The run state is in `.bl/run/F-3.json`. The options are `--resume`,
-  `--plan`, `--interactive` and `--max-rounds <n>`.
+  (`closingRound`). It takes four steps: fix, fix self-review, the test gate, then
+  `review-verify.md` alone, which checks only those items. If anything is still open, the
+  feature goes to `escalated`. Every headless prompt ends with the headless rules
+  (`withHeadlessRules`: no background commands, commit before ending). The run state is in
+  `.bl/run/F-3.json`. The options are `--resume`, `--plan`, `--interactive` and
+  `--max-rounds <n>`.
 
 - **`bl status F-3`** prints the stories in order-edge order, the review state, the `held:`
   lines, the deferred count, the escalation, and the state of the last `bl run`.
@@ -1920,9 +1921,9 @@ The commands move a feature along this path:
   4. **The release.** A release records the repos whose `backlog.json` `repos` entry sets
      `deployable: true`. Every entry must set it, and `loadConfig` refuses one that does not.
      After the last push:
-     - each touched repo's merge commit gets an annotated tag `F-3` (`F-3.2` for a second
-       change), with the title and the change document's path in its message;
-     - `bl merge` pushes the tags last;
+     - Each touched repo's merge commit gets an annotated tag `F-3` (`F-3.2` for a second
+       change). The tag's message holds the title and the change document's path.
+     - `bl merge` pushes the tags last.
      - `releases/F-3.json` records the `main` commit of every deployable repo, as its `origin`
        has it.
 
@@ -1944,515 +1945,570 @@ any listed story has a feature.
 
 ### Headless sessions
 
-`bl run` never attaches a terminal. `runHeadlessSession()` in
-`session.js` resolves the same allowlist, deny list, and directory scopes as an
-interactive launch and calls `provider.spawn({ headless: true })`: `claude -p
---output-format json` for Claude (a tool outside the allowlist is denied, not
-prompted) and `codex exec --json --output-last-message <file>` for Codex. The
-result carries the agent's final message, an error flag, token usage (which
-accumulates on the feature's `tokens_*` frontmatter and on `tokens_headless_*`;
-headless sessions leave no titled transcript, so the transcript re-read at
-`merge` adds the headless totals back instead of dropping them), and the tools the
-permission layer denied. A denial does not fail the session; the loop records
-it as a failed event on its step, and `bl status` lists failed events
-with their step. Gemini has no headless mode; `run --interactive` attaches
-every step instead.
+`bl run` never attaches a terminal. `runHeadlessSession()` in `session.js` resolves the same
+allowlist, deny list and directory scopes as an interactive launch. It then calls
+`provider.spawn({ headless: true })`:
+
+- for Claude, `claude -p --output-format json`, which denies a tool outside the allowlist and
+  does not prompt for it;
+- for Codex, `codex exec --json --output-last-message <file>`.
+
+The result carries these things:
+
+- the agent's final message;
+- an error flag;
+- the token usage, which adds up on the feature's `tokens_*` frontmatter and on
+  `tokens_headless_*`. A headless session leaves no titled transcript. So the transcript re-read
+  at `merge` adds the headless totals back, and does not drop them;
+- the tools that the permission layer denied.
+
+A denial does not fail the session. `bl run` records it as a failed event on its step, and
+`bl status` lists the failed events with their step. Gemini has no headless mode, so
+`run --interactive` attaches every step instead.
 
 #### The adapter interface (F-64 D1)
 
-`src/agents/provider.js` (`AgentProvider`) is the interface; `claude.js`,
-`codex.js`, `gemini.js` and `local.js` are its adapters, handed out by name by
-`getProvider()` in `src/agents/index.js`. `local` (S-1371) is Claude Code
-against a local model server; see **The local provider** below. Besides `spawn`,
-`translatePermissions`, `getToolHints`, `findSession`, `parseLogs`,
-`getTokens` and `supportsHeadless`, the contract has:
+`src/agents/provider.js` (`AgentProvider`) is the interface. `claude.js`, `codex.js`, `gemini.js`
+and `local.js` are its adapters, and `getProvider()` in `src/agents/index.js` hands them out by
+name. `local` (S-1371) is Claude Code against a local model server; see **The local provider**
+below. Besides `spawn`, `translatePermissions`, `getToolHints`, `findSession`, `parseLogs`,
+`getTokens` and `supportsHeadless`, the contract has these members:
 
 - `capacity({ model, topLevel })` → `{ state, scope, until, windows, message }`: whether a
-  configuration can take work now. Both callers (`capacityRows` in `src/capacity.js`, the runner's
-  `capacity` in `src/feature-run.js`) pass their config's `topLevel` (`backlog.json`'s top level
-  as that load read it), for an adapter that reads `backlog.json` (`local`); the base ignores it. `state` is `available`, `unavailable` or
-  `unknown`; `scope` is `account` (every model of the agent) or `model`;
-  `until` is when an `unavailable` one may be tried again, or null; `windows`
-  is `[{ name, remainingPercent, resetsAt }]`. It never throws: a failed read
-  is `unknown` with the reason in `message`. Codex reads its quota over
-  `codex app-server` (see `bl capacity`); Claude reads Claude Code's OAuth
-  usage endpoint, once per model (see `bl capacity`); `local` asks its
-  server's `/health`; Gemini answers the base `unknown` ("gemini cannot
-  report capacity"). Claude, Codex and `local` run their read as a Node child
-  (`runCapacityHelper`, `src/agents/capacity-helper.js`), because
-  `capacity()` is synchronous.
-- `checkConfiguration({ model }, { topLevel, raw })` → a reason string, or
-  null when the configuration is usable. `topLevel` is `backlog.json`'s top
-  level; `raw` is it with the repo's `overrides` merged over it. The config
-  loader calls it for each `agent` and `review_agent` entry and for -A, and
-  throws the reason after the entry's location (`backlog.json "agent"[2]:
-…`, `-A local: …`), so `config.js` names no agent. The base returns null;
-  `local` has rules of its own.
-- The headless result's `refusal`: `{ kind, scope, message, resetsAt }` or
-  null (see the usage-limit paragraph under `bl run`). `kind` is a usage
-  limit's (`session`, `weekly`, `spend`, `other`) or `capacity`.
-- The child's environment: `spawn({ headless: true })` runs the agent with
-  `BL_HEADLESS=1` (`HEADLESS_ENV`), built by `agentEnv({ headless,
-backlogRoot })`, which also sets `BL_BACKLOG_DIR` where the adapter passes
-  it; an interactive spawn adds no marker. `isHeadless()` reads it (F-78 D3,
-  see `bl rank`). `agentEnv` also sets `BL_TAB_TITLE=''` (`TAB_TITLE_ENV`)
-  for every spawn, headless or not, so titles are off in the agent session
-  (S-1388, see "Tab titles"). Every adapter's spawn passes an `env` built by
-  `agentEnv`. `ClaudeProvider.spawn()` takes it from
-  `spawnEnv({ headless, backlogRoot, model, topLevel })`, which `local`
-  overrides. Every caller of `spawn()` passes its config's `topLevel`.
-- `supportsModel()`: whether `spawn({ model })` selects the model (Claude's
-  `--model`, Codex's `-m`; Gemini no). The config loader refuses a
-  configuration that names a model for an adapter that does not, and `bl run`
-  moves a step to the second implementing configuration's model only on one
-  that does.
-- `supportsDeny()`: whether `spawn({ denied })` has a per-session refusal
-  mechanism (Claude's `--disallowedTools`, Gemini's policy deny rules); `bl
-review` prints the prompt-guidance note for one that does not (Codex).
-- `syncNativeApprovals(patterns, config, opts)`: `bl allow` hands every
-  agent the granted patterns; Codex installs them as prefix rules (see
-  **Codex native approvals**), the others do nothing.
-- The headless result's outcome, `structured` and `structuredError` (see
-  **Session outcomes** below).
+  configuration can take work now.
+  - Both callers pass their config's `topLevel`: `capacityRows` in `src/capacity.js`, and the
+    runner's `capacity` in `src/feature-run.js`. `topLevel` is `backlog.json`'s top level as
+    that load read it. It is there for an adapter that reads `backlog.json` (`local`), and the
+    base ignores it.
+  - `state` is `available`, `unavailable` or `unknown`.
+  - `scope` is `account` (every model of the agent) or `model`.
+  - `until` is when an `unavailable` configuration may be tried again, or null.
+  - `windows` is `[{ name, remainingPercent, resetsAt }]`.
+  - `capacity()` never throws: a failed read is `unknown`, with the reason in `message`.
+  - Codex reads its quota over `codex app-server` (see `bl capacity`). Claude reads Claude
+    Code's OAuth usage endpoint, once per model (see `bl capacity`). `local` asks its server's
+    `/health`. Gemini answers the base `unknown` ("gemini cannot report capacity").
+  - `capacity()` is synchronous. So Claude, Codex and `local` run their read as a Node child
+    (`runCapacityHelper`, `src/agents/capacity-helper.js`).
+- `checkConfiguration({ model }, { topLevel, raw })` → a reason string, or null when the
+  configuration is usable. `topLevel` is `backlog.json`'s top level, and `raw` is that top level
+  with the repo's `overrides` merged over it. The config loader calls it for each `agent` and
+  `review_agent` entry, and for -A. The loader throws the reason after the entry's location
+  (`backlog.json "agent"[2]: …`, `-A local: …`), so `config.js` names no agent. The base returns
+  null, and `local` has rules of its own.
+- The headless result's `refusal`: `{ kind, scope, message, resetsAt }` or null (see the
+  usage-limit paragraph under `bl run`). `kind` is the kind of a usage limit (`session`,
+  `weekly`, `spend`, `other`) or `capacity`.
+- The child's environment:
+  - `spawn({ headless: true })` runs the agent with `BL_HEADLESS=1` (`HEADLESS_ENV`).
+    `agentEnv({ headless, backlogRoot })` builds the environment. It also sets `BL_BACKLOG_DIR`
+    where the adapter passes it. An interactive spawn adds no marker. `isHeadless()` reads the
+    marker (F-78 D3, see `bl rank`).
+  - `agentEnv` also sets `BL_TAB_TITLE=''` (`TAB_TITLE_ENV`) for every spawn, headless or not.
+    So titles are off in the agent session (S-1388, see "Tab titles").
+  - Every adapter's spawn passes an `env` that `agentEnv` built. `ClaudeProvider.spawn()` takes
+    it from `spawnEnv({ headless, backlogRoot, model, topLevel })`, which `local` overrides.
+    Every caller of `spawn()` passes its config's `topLevel`.
+- `supportsModel()`: whether `spawn({ model })` selects the model (Claude's `--model`, Codex's
+  `-m`; Gemini has none). The config loader refuses a configuration that names a model for an
+  adapter that does not select one. `bl run` moves a step to the model of the second
+  implementing configuration only on an adapter that does.
+- `supportsDeny()`: whether `spawn({ denied })` has a refusal mechanism per session (Claude's
+  `--disallowedTools`, Gemini's policy deny rules). For an adapter without one (Codex),
+  `bl review` prints the prompt-guidance note.
+- `syncNativeApprovals(patterns, config, opts)`: `bl allow` hands every agent the granted
+  patterns. Codex installs them as prefix rules (see **Codex native approvals**), and the other
+  adapters do nothing.
+- The headless result's outcome, `structured` and `structuredError` (see **Session outcomes**
+  below).
 - `followHandle({ cwd, eventsPath, sessionId })` → `{ id, path }` or null, and
   `followSession(handle, { fromStart, signal })` → an async iterator of events (S-1272, see
-  `bl watch`). The handle says, before the spawn, where a headless session's events will be:
-  `path` is a JSON Lines file, `id` the session id when known. `spawn({ follow })` makes the
-  session write there. Claude: a new id passed as `--session-id` (a resume keeps its own), and
-  `path` the transcript, `<config dir>/projects/<slug of cwd>/<id>.jsonl`, which headless
-  `claude -p` sessions also write. Codex: `id` null and `path` the `eventsPath` the caller
-  gives (`.bl/run/<id>.<n>.<step>.events.jsonl`, `n` the run history's length); spawn gives
-  `codex exec --json` that file as its stdout, and reads the stream back from it when codex
-  exits. The base (Gemini) returns null and throws `<agent> cannot follow a session`. The
-  events are `{ kind: "text", at, text }` and `{ kind: "tool", at, tool, summary }`, `summary`
-  being the description, command, path or pattern on one line: a Claude text or `tool_use`
-  block of an assistant record (`claudeTranscriptEvents`), a Codex `agent_message`, command,
-  file change, MCP tool call or web search item (`codexStreamEvents`). Both adapters read
-  their file through `followJsonl` (`src/agents/follow.js`): the last 30 events first unless
-  `fromStart`, then every 500 ms, and once more when `signal` aborts. `src/agents/` imports an adapter file or compares
-  a value to an agent name (`===`, `!==`, `case`); it asks the adapter.
-  `test/unit/agent-boundary.test.js` fails on either and has no exception: the
-  verb alias `claude` for `bl agent` is an `ALIASES` key in
-  `src/command-table.js`, which is not a comparison. Passing a name as a literal
-  (a default argument, a prompt variant) is allowed.
+  `bl watch`).
+  - Before the spawn, the handle says where a headless session's events will be. `path` is a
+    JSON Lines file, and `id` is the session id when it is known. `spawn({ follow })` makes the
+    session write there.
+  - Claude: bl passes a new id as `--session-id`, and a resume keeps its own id. `path` is the
+    transcript, `<config dir>/projects/<slug of cwd>/<id>.jsonl`, which headless `claude -p`
+    sessions also write.
+  - Codex: `id` is null, and `path` is the `eventsPath` that the caller gives
+    (`.bl/run/<id>.<n>.<step>.events.jsonl`, where `n` is the length of the run history). The
+    spawn gives `codex exec --json` that file as its stdout. It reads the stream back from the
+    file when codex exits.
+  - The base (Gemini) returns null and throws `<agent> cannot follow a session`.
+  - The events are `{ kind: "text", at, text }` and `{ kind: "tool", at, tool, summary }`.
+    `summary` is the description, command, path or pattern, on one line. A Claude event comes
+    from a text or `tool_use` block of an assistant record (`claudeTranscriptEvents`). A Codex
+    event comes from an `agent_message`, command, file change, MCP tool call or web search item
+    (`codexStreamEvents`).
+  - Both adapters read their file through `followJsonl` (`src/agents/follow.js`). It reads the
+    last 30 events first unless `fromStart` is set. Then it reads every 500 ms, and once more
+    when `signal` aborts.
+
+Outside `src/agents/`, no module imports an adapter file or compares a value to an agent name
+(`===`, `!==`, `case`): it asks the adapter. `test/unit/agent-boundary.test.js` fails on either,
+and it has no exception. The verb alias `claude` for `bl agent` is an `ALIASES` key in
+`src/command-table.js`, which is not a comparison. Passing a name as a literal (a default
+argument, a prompt variant) is allowed.
 
 #### Session outcomes (F-68 D1, D5)
 
-A session's outcome is `{ structured, structuredError }`: the JSON object the
-agent returned, validated against the step's JSON Schema, or `null` with the
-fault named. `validateOutcome(schema, value)` in `src/outcome.js` does the
-validation, with `ajv` (draft 2020-12). It takes the object or the text that
-holds it, and its faults are `no output`, `not JSON: <parser message>` and
-`schema violation at <JSON path>: <rule>` (`$/stories/S-1/refined`). The parser
-message in `not JSON` and the JSON path in `schema violation` have their ANSI
-codes and control characters (except tab) removed and are cut to 500
-characters, as a stderr line is (`cleanStderrLine`, S-1404, S-1405). Every agent
-text field in `schemas/` refuses control characters: a one-line field keeps only
-tab, and a multi-line `reason` keeps tab, LF and CR. So a valid outcome carries
-none into a commit message (S-1405). A headless result replaces `no output`,
-and only that fault, with `<cli> exited <status>[: <last stderr line>]` when
-the agent CLI exited non-zero or wrote stderr (`withExitFault`, S-1398).
+A session's outcome is `{ structured, structuredError }`. `structured` is the JSON object that the
+agent returned, checked against the step's JSON Schema. Otherwise it is `null`, and
+`structuredError` names the fault. `validateOutcome(schema, value)` in `src/outcome.js` does the
+check, with `ajv` (draft 2020-12). It takes the object, or the text that holds it. Its faults are
+these:
+
+- `no output`;
+- `not JSON: <parser message>`;
+- `schema violation at <JSON path>: <rule>` (`$/stories/S-1/refined`).
+
+bl cleans the parser message in `not JSON` and the JSON path in `schema violation` as it cleans a
+stderr line (`cleanStderrLine`, S-1404, S-1405). It removes their ANSI codes and their control
+characters (except tab), and cuts them to 500 characters.
+
+Every agent text field in `schemas/` refuses control characters. A one-line field keeps only tab,
+and a multi-line `reason` keeps tab, LF and CR. So a valid outcome carries no control character
+into a commit message (S-1405).
+
+A headless result replaces the fault `no output`, and only that fault, with
+`<cli> exited <status>[: <last stderr line>]`. It does so when the agent CLI exited non-zero or
+wrote stderr (`withExitFault`, S-1398).
+
 Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
 
-| Session     | Carrier                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Read by                                 |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
-| headless    | `spawn({ headless: true, schema })`. claude: `--json-schema <json>` and the result's `structured_output`. codex: `--output-schema <file>`, a temp file beside the `--output-last-message` file (both removed after the run), and the last message parsed as JSON. Both capture the CLI's stderr, copy it to bl's stderr when the CLI exits, and return its last 20 non-empty lines as `stderrTail`, which the no-outcome escalation shows. gemini: no spawn, `structuredError: "provider has no structured output"`. | `runHeadlessSession`, then `runSession` |
-| interactive | `launchSession({ schema })`: the outcome file `<backlogRoot>/.bl/outcome/<unit id>.json` (`outcomePath`). The prompt names it as `{{outcomePath}}`, and the agent writes it as its last act.                                                                                                                                                                                                                                                                                                                         | `launchSession`, after the agent exits  |
+| Session     | Carrier                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Read by                                 |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------- |
+| headless    | `spawn({ headless: true, schema })`. claude: `--json-schema <json>` and the result's `structured_output`. codex: `--output-schema <file>`, a temp file beside the `--output-last-message` file (both removed after the session), and the last message parsed as JSON. Both capture the CLI's stderr, copy it to bl's stderr when the CLI exits, and return its last 20 non-empty lines as `stderrTail`, which the no-outcome escalation shows. gemini: no spawn, `structuredError: "provider has no structured output"`. | `runHeadlessSession`, then `runSession` |
+| interactive | `launchSession({ schema })`: the outcome file `<backlogRoot>/.bl/outcome/<unit id>.json` (`outcomePath`). The prompt names it as `{{outcomePath}}`, and the agent writes it as its last act.                                                                                                                                                                                                                                                                                                                             | `launchSession`, after the agent exits  |
 
-- **The outcome file.** It lives under the git-ignored `.bl/`, so nothing
-  commits it. `launchSession` removes a stale one before the spawn, and after
-  the agent exits reads and validates it (`readOutcomeFile`). It deletes a
-  valid file and keeps a faulty one for the operator to read; a missing file
-  is the fault `no outcome file at <path>`. With `returnOnExit`
-  and a schema, `launchSession` returns
-  `{ status, structured, structuredError }`; without a schema it returns the
-  bare exit status.
+- **The outcome file.** It lives under the git-ignored `.bl/`, so nothing commits it.
+  `launchSession` removes a stale one before the spawn. After the agent exits, `launchSession`
+  reads and checks the file (`readOutcomeFile`). It deletes a valid file, and keeps a faulty one
+  for the operator to read. A missing file is the fault `no outcome file at <path>`. With
+  `returnOnExit` and a schema, `launchSession` returns `{ status, structured, structuredError }`.
+  Without a schema, it returns the bare exit status.
 - **A step without a schema** reads no outcome: both fields are null.
-- **Schemas (D2).** `schemas/<step>.json`, one per prompt that ends a step,
-  loaded by `loadSchema(name)` in `session.js` beside `loadPrompt`. Each has
+- **Schemas (D2).** Each prompt that ends a step has one schema, `schemas/<step>.json`.
+  `loadSchema(name)` in `session.js`, beside `loadPrompt`, loads it. Each schema has
   `additionalProperties: false` and a one-line `summary`.
-- **One plain schema (S-1408).** Each outcome schema is the one schema that
-  ajv and every agent use, with no translation layer and no per-provider
-  form, so it is what OpenAI's strict mode accepts (Codex's
-  `--output-schema`). Every object's `required` lists every key of its
-  `properties`. A field that can be empty is nullable
-  (`anyOf: [<its schema>, { "type": "null" }]`), and its prompt example
-  shows `null`. A refine `reason` is never empty: it says why for every
-  verdict, as fix-tests' `reason` does, so it is a required string. No
-  outcome schema has a conditional keyword (`if`, `then`, `else`, `allOf`,
-  `oneOf`, `not`) or an object without fixed properties (`propertyNames`,
-  `patternProperties`: a map), so the batch's `stories` is an array. A
-  schema does not refuse an outcome whose fields contradict each other: each
-  reader decides from one field and only prints the others, so the deciding
-  field wins (`refined`; `premise_holds`, then `refined`; `fixed`;
-  `resolved` and bl's own checks; the story's criteria for implement).
-  `null` means no value is needed; a reader that needs one and gets `null`
-  prints a fallback, as merge-resolve's `(no reason given)` for
-  `resolved: false`. `test/unit/outcome-schemas.test.js` guards the schema
-  rules. `schemas/plan.json` is not an outcome schema: it is the shape of
-  `plan.yaml` (F-125), which only ajv reads and no agent receives, so it
-  keeps its `propertyNames` map.
-- **Refine outcomes (D3).** `bl refine` passes `schemas/refine.json`
-  (`{ summary, refined, reason }`), `refine-batch.json`
-  (`{ summary, stories: [{ id, refined, reason }] }`) or
-  `feature-refine.json` (`{ summary, premise_holds, refined, reason }`) to
-  `launchSession`, and `refineAndCommit` (`refine.js`) applies the outcome
-  before its backlog commit. `refineAndCommit(units, opts, message, apply)`
-  first takes the work unit locks of `units` (`takeUnitLocksOrExit`: the story,
-  each story of a batch, or the feature and its stories). If another process
-  holds one, the refine prints the refusal and exits 1 before its
-  `dirtySnapshot`: no outcome file, no status, no commit. It passes `units`
-  to `launchSession`, and `scope` to `commitChangedSince`, so the commit
-  holds only the units' directories, a story made for the feature during the
-  session included (F-122 D3). `refined: true` records the `refine` row's
-  success, `refined`; `premise_holds: false` records its failure, a feature's
-  `draft`; otherwise the status stays. `applyRefineStatus` prints `reason`
-  for every verdict. It indents each further line of `reason` (after LF, CR,
-  CRLF, U+2028 or U+2029), so no line reads as another unit's status line
-  (S-1408). When it records a status (through `transition`), the log entry's
-  `outcome` is `reason`, so the log says why a unit is refined.
-  A batch story takes the first entry with its id, and a batch story the
-  outcome does not name stays as it is. A session without a valid outcome
-  file records no outcome: each unit stays at the status the session started
-  it in (the `refine` row's `during`, `in_refinement`), and bl prints the
-  fault; the agent's own commit of the refinement is not affected. No refine
-  prompt asks the agent to write a status
-  (`test/unit/prompts-no-status-writes.test.js`).
-- **No valid outcome is an error, not a verdict (D5).** `runSession` in
-  `feature-run.js` takes `schema` and passes it through the runner. A session
-  with `structured: null` is recorded as a failed event,
-  `outcome error: <fault>`. The loop then resumes the same session once (`sessionId`: claude's
-  `--resume`, codex's `exec … resume <thread id>`) with the one-line note
-  `OUTCOME_RETRY_NOTE`. A session with no id starts again with the note after
-  its prompt. A second failure escalates with the fault and the last 20 lines
-  of the session's text, and throws `OutcomeError`. A step with a valid
-  outcome records `outcome: <summary>` in its note and the summary as the
-  history entry's `outcome` field (with `story` for an implement step); `bl
-status` prints the latest one of each step (`outcomeLines()` in
-  `feature-cmd.js`). A step without a schema (a review dimension pass)
-  records nothing of its text.
-- **Implement, fix-tests and merge-resolve outcomes (D2, D4).** The implement
-  step (`feature-story.md`, `story-run.md`) passes `schemas/implement.json`
-  (`{ summary, done, blocked }`); the loop still decides from the story's
-  criteria and `## Escalation`, and names `blocked` when it escalates unmet
-  criteria. fix-tests passes `fix-tests.json`
-  (`{ summary, outcome: fixed | rerun | unrelated, reason }`) and the
-  resolution `merge-resolve.json` (`{ summary, resolved, reason }`;
-  `resolved: false` is a resolution problem), `blocked` and the resolution's
-  `reason` nullable (**One plain schema** above). The prompts end
-  with `{{outcomeDelivery}}` and the object (`_implement-outcome.md` is
-  shared by the two implement prompts). No prompt asks for a verdict line
-  (`DONE S-n`, `ESCALATED`, `RESOLVED`, `FIXED`, `UNRELATED:`, `RERUN:`), and
-  `prompts-no-status-writes.test.js` guards it.
+- **One plain schema (S-1408).** Each outcome schema is the one schema that ajv and every agent
+  use. There is no translation layer and no form per provider. So each schema is one that
+  OpenAI's strict mode accepts (Codex's `--output-schema`).
+  - Every object's `required` lists every key of its `properties`.
+  - A field that can be empty is nullable (`anyOf: [<its schema>, { "type": "null" }]`), and its
+    prompt example shows `null`.
+  - A refine `reason` is never empty: it says why for every verdict, as fix-tests' `reason` does.
+    So it is a required string.
+  - No outcome schema has a conditional keyword (`if`, `then`, `else`, `allOf`, `oneOf`, `not`).
+    None has an object without fixed properties (`propertyNames`, `patternProperties`: a map). So
+    the batch's `stories` is an array.
+  - A schema does not refuse an outcome whose fields contradict each other. Each reader decides
+    from one field and only prints the others. So the deciding field wins: `refined`;
+    `premise_holds`, then `refined`; `fixed`; `resolved` and bl's own checks; the story's
+    criteria for implement.
+  - `null` means that no value is needed. A reader that needs a value and gets `null` prints a
+    fallback, such as merge-resolve's `(no reason given)` for `resolved: false`.
+  - `test/unit/outcome-schemas.test.js` guards the schema rules.
+  - `schemas/plan.json` is not an outcome schema. It is the shape of `plan.yaml` (F-125), which
+    only ajv reads and no agent receives. So it keeps its `propertyNames` map.
+- **Refine outcomes (D3).** `bl refine` passes one of three schemas to `launchSession`:
+  - `schemas/refine.json` (`{ summary, refined, reason }`);
+  - `refine-batch.json` (`{ summary, stories: [{ id, refined, reason }] }`);
+  - `feature-refine.json` (`{ summary, premise_holds, refined, reason }`).
+
+  `refineAndCommit` (`refine.js`) applies the outcome before its backlog commit.
+  `refineAndCommit(units, opts, message, apply)` works in these steps:
+  1. It takes the work unit locks of `units` (`takeUnitLocksOrExit`): the story, each story of a
+     batch refine, or the feature and its stories. If another process holds one, the refine
+     prints the refusal and exits 1 before its `dirtySnapshot`: no outcome file, no status, no
+     commit.
+  2. It passes `units` to `launchSession`, and `scope` to `commitChangedSince`. So the commit
+     holds only the directories of `units`, a story made for the feature during the session
+     included (F-122 D3).
+  3. It records the status from the outcome. `refined: true` records the success of the `refine`
+     row, `refined`. `premise_holds: false` records its failure, a feature's `draft`. Otherwise
+     the status stays.
+
+  `applyRefineStatus` prints `reason` for every verdict. It indents each further line of
+  `reason` (after LF, CR, CRLF, U+2028 or U+2029). So no line reads as the status line of another
+  work unit (S-1408). When it records a status (through `transition`), the log entry's `outcome`
+  is `reason`. So the log says why a work unit is refined.
+
+  In a batch refine of several stories, a story takes the first entry with its id. A story that
+  the outcome does not name stays as it is.
+
+  A session without a valid outcome file records no outcome. Each work unit stays at the status
+  that the session started it in (the `refine` row's `during`, `in_refinement`), and bl prints
+  the fault. The agent's own commit of the refinement stays. No refine prompt asks the agent to
+  write a status (`test/unit/prompts-no-status-writes.test.js`).
+
+- **No valid outcome is an error, not a verdict (D5).** `runSession` in `feature-run.js` takes
+  `schema` and passes it through the runner.
+  1. `bl run` records a session with `structured: null` as a failed event,
+     `outcome error: <fault>`.
+  2. `bl run` then resumes the same session once, with the one-line note `OUTCOME_RETRY_NOTE`
+     (`sessionId`: claude's `--resume`, codex's `exec … resume <thread id>`). A session with no
+     id starts again, with the note after its prompt.
+  3. A second failure escalates with the fault and the last 20 lines of the session's text, and
+     throws `OutcomeError`.
+
+  A step with a valid outcome records `outcome: <summary>` in its note. It records the summary
+  as the `outcome` field of the history entry too, with `story` for an implement step.
+  `bl status` prints the latest outcome of each step (`outcomeLines()` in `feature-cmd.js`). A
+  step without a schema (a review dimension pass) records nothing of its text.
+
+- **Implement, fix-tests and merge-resolve outcomes (D2, D4).**
+  - The implement step (`feature-story.md`, `story-run.md`) passes `schemas/implement.json`
+    (`{ summary, done, blocked }`). `bl run` still decides from the story's criteria and
+    `## Escalation`. It names `blocked` when it escalates unmet criteria.
+  - fix-tests passes `fix-tests.json` (`{ summary, outcome: fixed | rerun | unrelated, reason }`).
+  - The resolution passes `merge-resolve.json` (`{ summary, resolved, reason }`).
+    `resolved: false` is a resolution problem.
+  - `blocked` and the resolution's `reason` are nullable (**One plain schema** above).
+
+  The prompts end with `{{outcomeDelivery}}` and the object. The two implement prompts share
+  `_implement-outcome.md`. No prompt asks for a verdict line (`DONE S-n`, `ESCALATED`,
+  `RESOLVED`, `FIXED`, `UNRELATED:`, `RERUN:`), and `prompts-no-status-writes.test.js` guards
+  that.
 
 #### The local provider (S-1371)
 
-`local` runs the `claude` CLI against a model server on the workstation that
-speaks the Anthropic Messages API: llama-server, started by hand
-(`roost/llama/qwen38.sh` serves Qwen3.8-27B on port 8090 as `qwen3.8-27b`).
-bl does not start or stop the server.
+`local` runs the `claude` CLI against a model server on the workstation that speaks the
+Anthropic Messages API. The server is llama-server, started by hand (`roost/llama/qwen38.sh`
+serves Qwen3.8-27B on port 8090 as `qwen3.8-27b`). bl does not start or stop the server.
 
-- `LocalProvider` extends `ClaudeProvider` and overrides only `spawnEnv`,
-  `checkConfiguration` and `capacity`; the CLI, its arguments, the tool
-  names, the permissions, the hooks and the JSON result are claude's. Its
-  logic is in `src/agents/local.js`, which exports the class. The class
-  itself is in `claude.js`, below `ClaudeProvider`: a class in `local.js`
-  would extend `ClaudeProvider` while `local.js` loads, which a module that
-  imports `claude.js` first reaches before `ClaudeProvider` exists.
+- `LocalProvider` extends `ClaudeProvider` and overrides only `spawnEnv`, `checkConfiguration`
+  and `capacity`. The CLI, its arguments, the tool names, the permissions, the hooks and the JSON
+  result are claude's. Its logic is in `src/agents/local.js`, which exports the class. The class
+  itself is in `claude.js`, below `ClaudeProvider`. A class in `local.js` would extend
+  `ClaudeProvider` while `local.js` loads. A module that imports `claude.js` first loads
+  `local.js` before `ClaudeProvider` exists.
 - The server is `backlog.json`'s top-level `local` key,
-  `"local": { "url": "http://localhost:8090", "token": "local" }`. Both keys
-  are required non-empty strings, and no other key is allowed. bl reads it
-  from the top level only: `spawn()` knows the backlog, not the repo.
-- `spawnEnv` and `capacity` use the server in the `topLevel` that the caller
-  passes: the top level of the config the caller loaded, which that load
-  checked. They do not read `backlog.json` again and keep no state between
-  loads: a new read without the command's `-A` and `--model` fails on a role
-  list that `-A` replaced, a read after an edit could name a server that
-  nothing checked, and a later load (also a rejected one) of the same backlog
-  does not change the server of a config loaded before it.
-- `spawnEnv` sets `ANTHROPIC_BASE_URL` to `url`, `ANTHROPIC_AUTH_TOKEN` to
-  `token`, `ANTHROPIC_API_KEY` to the empty string (so the operator's real
-  key never reaches the server) and `ANTHROPIC_SMALL_FAST_MODEL` to the
-  configuration's model (so Claude Code's side requests stay on the server),
-  over claude's `agentEnv` (`localEnv`).
-- `checkConfiguration` refuses a `local` configuration with no model (the
-  model is the server's alias), a missing or wrong `local` key, and a repo
-  whose `overrides` set `local`. A backlog that names no `local`
-  configuration loads with or without the key.
-- `capacity` asks `<url>/health` within two seconds
-  (`src/agents/local-capacity.js`): a 200 is `available`; a refused
-  connection is `unavailable` with no `until`, so the walk skips the
-  configuration for the rest of the run; a timeout, another status (503
-  while the model loads) or another failure is `unknown`. Every answer has
-  scope `account` and names the URL.
-- A session whose `claude` cannot reach the server ends in error with
-  `refusal` null: a failed step, not a usage limit.
+  `"local": { "url": "http://localhost:8090", "token": "local" }`. Both keys are required strings
+  that are not empty, and no other key is allowed. bl reads the key from the top level only,
+  since `spawn()` knows the backlog, not the repo.
+- `spawnEnv` and `capacity` use the server in the `topLevel` that the caller passes. That is the
+  top level of the config that the caller loaded, which that load checked. They do not read
+  `backlog.json` again, and they keep no state between loads:
+  - a new read without the command's `-A` and `--model` fails on a role list that `-A` replaced;
+  - a read after an edit could name a server that nothing checked;
+  - a later load of the same backlog (a rejected one too) does not change the server of a config
+    loaded before it.
+- `spawnEnv` sets these variables over claude's `agentEnv` (`localEnv`):
+  - `ANTHROPIC_BASE_URL` to `url`;
+  - `ANTHROPIC_AUTH_TOKEN` to `token`;
+  - `ANTHROPIC_API_KEY` to the empty string, so the operator's real key never reaches the server;
+  - `ANTHROPIC_SMALL_FAST_MODEL` to the configuration's model, so Claude Code's side requests
+    stay on the server.
+- `checkConfiguration` refuses three things:
+  - a `local` configuration with no model (the model is the server's alias);
+  - a missing or wrong `local` key;
+  - a repo whose `overrides` set `local`.
+
+  A backlog that names no `local` configuration loads with or without the key.
+
+- `capacity` asks `<url>/health` within two seconds (`src/agents/local-capacity.js`):
+  - a 200 is `available`;
+  - a refused connection is `unavailable` with no `until`, so the walk skips the configuration
+    for the rest of `bl run`;
+  - a timeout, another status (503 while the model loads) or another failure is `unknown`.
+
+  Every answer has scope `account` and names the URL.
+
+- If a session's `claude` cannot reach the server, the session ends in error with `refusal`
+  null. That is a failed step, not a usage limit.
 
 #### Tokens per step (S-904)
 
-Each session's usage also goes into `tokens_by_step` on the unit's spec: a
-mapping of `<step>[.<round>]` to the four kinds (`input`, `output`,
-`cache_creation`, `cache_read`), written as strings like `tokens_*`.
-`tokensStepKey(step, round)` (`tokens.js`, re-exported by `feature-run.js`)
-gives the key: `implement`, `fix-tests`, `self-review`, `merge-resolve` as
-they are; every review session of round _n_ (each dimension and the
-verifier, whether `review`, `re-review` or `closing-review`) `review.<n>`;
-`fix.<n>` and `fix-self-review.<n>` with the run state's `round`. Repeated
-sessions of one key add up.
+Each session's usage also goes into `tokens_by_step` in the work unit's `index.md`. It is a
+mapping of `<step>[.<round>]` to the four kinds (`input`, `output`, `cache_creation`,
+`cache_read`), written as strings like `tokens_*`. `tokensStepKey(step, round)` (`tokens.js`,
+re-exported by `feature-run.js`) gives the key:
+
+- `implement`, `fix-tests`, `self-review` and `merge-resolve` as they are;
+- `review.<n>` for every review session of round _n_: each dimension and the verifier, whether
+  `review`, `re-review` or `closing-review`;
+- `fix.<n>` and `fix-self-review.<n>`, with the run state's `round`.
+
+Repeated sessions of one key add up.
 
 - **Headless** (`runSession` → `runner.session({ tokensStep })` →
-  `runHeadlessSession({ usageStep })`): `accumulateTokensOnFile` adds the
-  usage to `tokens_*`, `tokens_headless_*` and the map in one write, refusals
-  for a usage limit and failed sessions included.
+  `runHeadlessSession({ usageStep })`): `accumulateTokensOnFile` adds the usage to `tokens_*`,
+  `tokens_headless_*` and the map in one write. It adds the usage of refusals for a usage limit
+  and of failed sessions too.
 - **Interactive** (`bl implement S-n` / `F-n`, `bl run --interactive`):
-  `launchSession({ tokensStep, tokensIndexPath })` reads the provider's
-  transcript totals for the unit in that one worktree before and after the
-  session and adds the difference (each kind clamped at 0) to the map and to
-  `tokens_*` in one write with `accumulateStepTokensOnFile`, however the
-  spawn ended (nonzero status, error result, throw), before the totals
-  re-read. `bl implement`
-  records under `implement`, or `fix.<round>` (the log's round) while the
-  unit is in `fixing`.
-- **Run state** (F-87 D3b): `runSession` also writes the session's `usage`
-  (the four kinds, as numbers) on the history entry it records in
-  `.bl/run/<id>.json`, when the result has usage. An entry written before
-  F-87, or for a session with no usage, has no `usage` key and counts 0.
-  `bl top`'s `tokens` section reads it. The entry of a session with denied
-  tools also lists them in `denials` (strings, as its note's `denied:` part),
-  for `bl top`'s detail box (F-88 S-1334); an entry written before S-1334 has
-  none.
-- A session with no usage writes no entry; a `bl` killed mid-session records
-  nothing for it, so the map may sum to less than the totals, never more.
-  The writers read CRLF files and leave a file with no `---` block alone.
-  Every token writer of a spec (headless, interactive, the story and feature
-  totals re-reads, which read the transcripts in the same hold) reads and
-  writes it through `updateSpecFile` under `withSpecLock` (see **Spec
-  writes**), so overlapping sessions never drop each other's entries and a
-  failed write leaves the previous spec whole. Token bookkeeping stays
-  best-effort: a writer that cannot take the lock or write returns false.
-  `applyFeatureTokens` sums the transcript and `tokens_headless_*` totals as
-  BigInt counts (`tokenCount`), so a total past 2^53 is never rounded.
-  A transcript re-read with a kind that is not an exact count (an unsafe
-  number) writes no totals (`addUsageTotals` returns false), so it never
-  replaces stored usage with 0.
-- `applyTokensToFrontmatter` (the overwrite `bl done` and the re-read use)
-  never touches the map. `bl merge F-n` folds each story's map into the
-  feature's key by key (`mergeStepTokens`), as it folds `tokens_*`, both
-  only when the feature it re-reads under the backlog lock is not closed yet,
-  so a second merge that loaded the feature earlier folds nothing again. The
-  fold reads each story under its spec lock (`markFeatureMerged`, through
-  `updateSpecFile`) and sums `tokens_*` as BigInt counts (`addTokenTotals`),
-  so a total past 2^53 or 1e21 is written as its exact decimal string. The
-  feature totals re-read (`recordFeatureTokens`) leaves a closed feature's
-  totals alone, so it never replaces what the fold added.
-- `bl status <id>` prints a `tokens:` line with the totals and one indented
-  line per key (`feature-cmd.js` `tokensLines`); `bl report` and `bl retro`
-  read the map through `report.js` `stepTokens`. `bl validate` checks it
-  (`bad-tokens-by-step`).
+  `launchSession({ tokensStep, tokensIndexPath })` reads the provider's transcript totals for the
+  work unit in that one worktree, before and after the session. It adds the difference (each kind
+  clamped at 0) to the map and to `tokens_*` in one write, with `accumulateStepTokensOnFile`. It
+  does so however the spawn ended (nonzero status, error result, throw), before the totals
+  re-read. `bl implement` records under `implement`, or under `fix.<round>` (the log's round)
+  while the work unit is in `fixing`.
+- **Run state** (F-87 D3b): when the result has usage, `runSession` also writes the session's
+  `usage` (the four kinds, as numbers). It writes it on the history entry that it records in
+  `.bl/run/<id>.json`. An entry written before F-87, or for a session with no usage, has no
+  `usage` key and counts 0. `bl top`'s `tokens` section reads it. The entry of a session with
+  denied tools also lists them in `denials`, for `bl top`'s detail box (F-88 S-1334). They are
+  strings, as in the `denied:` part of the entry's note. An entry written before S-1334 has none.
+- A session with no usage writes no entry. If `bl` is killed during a session, it records nothing
+  for that session. So the map may sum to less than the totals, never more.
+  - The writers read CRLF files, and leave a file with no `---` block alone.
+  - Every token writer of a spec reads and writes it through `updateSpecFile` under
+    `withSpecLock` (see **Spec writes**). The writers are the headless one, the interactive one,
+    and the re-reads of the story and feature totals. The re-reads read the transcripts under
+    the same lock. So overlapping sessions never drop each other's entries, and a failed write
+    leaves the previous spec whole.
+  - Token bookkeeping stays best-effort: a writer that cannot take the lock or write returns
+    false.
+  - `applyFeatureTokens` sums the transcript and `tokens_headless_*` totals as BigInt counts
+    (`tokenCount`), so it never rounds a total past 2^53.
+  - A transcript re-read with a kind that is not an exact count (an unsafe number) writes no
+    totals (`addUsageTotals` returns false). So it never replaces stored usage with 0.
+- `applyTokensToFrontmatter` (the overwrite that `bl done` and the re-read use) never touches the
+  map.
+  - `bl merge F-n` folds each story's map into the feature's map, key by key
+    (`mergeStepTokens`), as it folds `tokens_*`. It does both only when the feature, which it
+    re-reads under the backlog lock, is not done or superseded yet. So a second `bl merge` that
+    loaded the feature earlier folds nothing again.
+  - The fold reads each story under its spec lock (`markFeatureMerged`, through
+    `updateSpecFile`). It sums `tokens_*` as BigInt counts (`addTokenTotals`), so it writes a
+    total past 2^53 or 1e21 as its exact decimal string.
+  - The re-read of the feature totals (`recordFeatureTokens`) leaves the totals of a done or
+    superseded feature alone. So it never replaces what the fold added.
+- `bl status <id>` prints a `tokens:` line with the totals, and one indented line per key
+  (`feature-cmd.js` `tokensLines`). `bl report` and `bl retro` read the map through `report.js`
+  `stepTokens`. `bl validate` checks it (`bad-tokens-by-step`).
 
-The loop reads outcomes from files, never from the agent's prose: a story is
-done when its `## Acceptance Criteria` section exists and every checkbox in it
-is checked, whatever the list marker (`-`, `*`, `+`, `1.`); a story without
-that section is never skipped as complete and never passes the
-post-implement check; a review round ends with the verdict bl records in the
-unit's transition log from the verifier's outcome (see **Review verdicts from outcomes** below); an
-agent stops the run by writing `## Escalation`. Machine-local run state lives under `<backlog>/.bl/run/`
-(self-ignored by a `.gitignore` inside it). `run` refuses while `## Escalation`
-has content. `--resume` skips completed stories; once the run has reached the
-PR it also skips self-review, fixes a review session left in `fixing` before
-reviewing again, and ends at once when the unit is already `ready_for_merge`.
-One run per feature: `run` holds `.bl/run/<id>.lock` (a kernel lock whose file
-stays; a killed run leaves no lock) and does not start while another live
-process holds the unit directory's session lock (F-60 D3). A session step
-never starts while another process holds that lock.
-The loop pushes the branch and checks that `origin/<branch>` contains HEAD
-before every review pass and before it ends `clean`; a failed push, or a
-forge that cannot open or find the PR, escalates. Having no forge configured
-at all is the one way to finish without a PR.
-Each verifier verdict is one entry in the unit's transition log, so the
-rounds with a verdict (`reviewOf`'s `reviewed`) only go up. A run that starts at the
-round cap with the last round's items in `fixing`, or fixed and not yet re-reviewed, runs the
-one closing round it is owed: it fixes that round's items (when in `fixing`), and the verifier
-checks only those items. A round that `bl merge`'s review of a merge
-resolution left open is owed the same, below, at or past the cap. Any other
-run that starts at or past the cap escalates at once instead of spending a
-round the cap does not allow (a resumed run already `ready_for_merge`
-ends clean without a review) — raise the cap with `--max-rounds <n>`.
-`roundCapStanding` (`src/feature-run.js`) holds this rule.
+`bl run` reads outcomes from files, never from the agent's prose:
 
-A session the agent refuses for a usage limit ("You've hit your session limit
-· resets 3:45pm", "… weekly limit · resets Mon 12:00am", "… monthly spend
-limit · … resets 6:10pm (America/Los_Angeles)") is not an attempt. Claude
-Code's headless JSON has no field for it, so `parseLimit()` in
-`src/agents/claude.js` reads the kind (`session`, `weekly`, `spend`, `other`)
-and the reset time out of the `result` text. Codex's refusal ("You've hit
-your usage limit. … or try again at Oct 15th, 2026 1:40 AM.") is the message
-of its `turn.failed` (or `error`) event, which `parseCodexLimit()` in
-`src/agents/codex.js` reads the same way: the kind is `other`, and the reset
-is either a full date and time, taken as is, or a time alone, meaning its
-next occurrence, both in this process's zone; "try again later" names no
-reset time. Codex's capacity refusal ("Selected model is at capacity. Please
-try a different model.", in the same events) is `parseCodexCapacity()`'s:
-kind `capacity`, scope `model`, no reset time. The field reaches `runSession()`, the one place every headless
-step goes through — the review dimension passes and the verifier included —
-as the result's `refusal`, whose `scope` says how far it reaches: `model` for
-Claude (its caps are per model), `account` for Codex (one quota for every
-model). Only a session that ended in error counts as refused: one that
-succeeded and merely quoted the message in its last line ran, and its result
-stands.
+- A story is done when its `## Acceptance Criteria` section exists and every checkbox in it is
+  checked, whatever the list marker (`-`, `*`, `+`, `1.`). A story without that section is never
+  skipped as done, and never passes the post-implement check.
+- A review round ends with a verdict. bl records it in the work unit's transition log from the
+  verifier's outcome (see **Review verdicts from outcomes** below).
+- An agent stops `bl run` by writing `## Escalation`.
 
-Every headless step walks its role's list (F-64 D3, **Agent configurations**):
-the review dimension passes and the verifier (`runSession({ role: "review" })`)
-walk `review_agent`, every other step (implement, fix-tests, self-review, the
-fix steps, the merge resolution) walks `agent`, each from the top:
+Machine-local run state lives under `<backlog>/.bl/run/`. A `.gitignore` inside that directory
+makes git ignore it. `bl run` refuses while `## Escalation` has content.
 
-1. A configuration on the run's out-list whose `until` has not passed is
-   skipped, as is one whose adapter has no headless mode and, for the review
-   role, one that implemented this run (**Review Cycle**, F-64 D4), each with a
-   log line `<step>: skipping <agent> <model>: <why>`. An entry whose `until` has
-   passed is dropped with a log line, so the run returns to the operator's
-   first choice at the next step.
-2. The runner's `capacity(agent, model, topLevel)` (the adapter's
-   `capacity({ model, topLevel })`) is asked; an `account`-scoped answer is kept for the rest of the walk, so
-   each agent is asked once. `unavailable` puts the configuration on the
-   out-list (kind `quota`) until the reading's `until` plus the margin below.
-   An `unavailable` reading whose `until` has passed reads as `unknown` (S-1444):
-   the clock may run ahead, or the reading may lag a reset, so the spawn decides.
-   `available` and `unknown`, and a read that throws, spawn.
-3. The spawn passes the configuration's `agent` and `model` (null: no model
-   flag; `runHeadlessSession` adds no default of its own). A refusal puts it
-   on the out-list until `resetsAt` plus a 60-second margin, or for the rest
-   of the run with no reset time, and the walk moves on. Either way the move
-   is an `unavailable` history event (`{ session, agent, model, kind, scope,
-until, message }`) and one log line. Any other result is the step's: its
-   history entry records `agent`, `model` and `effort`.
+`--resume` skips the stories that are done. Once `bl run` has reached the pull request,
+`--resume` also does these things:
+
+- it skips self-review;
+- it fixes a review session left in `fixing` before it reviews again;
+- it ends at once when the work unit is already `ready_for_merge`.
+
+One `bl run` per feature: `bl run` holds `.bl/run/<id>.lock`, a kernel lock whose file stays. A
+killed `bl run` leaves no lock. `bl run` does not start while another live process holds the
+session lock of the work unit's directory (F-60 D3). A session step never starts while another
+process holds that lock.
+
+`bl run` pushes the branch, and checks that `origin/<branch>` contains HEAD, before every review
+pass and before it ends `clean`. A failed push escalates, and so does a forge that cannot open or
+find the pull request. The one way to finish without a pull request is to have no forge
+configured at all.
+
+Each verifier verdict is one entry in the work unit's transition log. So the count of rounds
+with a verdict (`reviewOf`'s `reviewed`) only goes up. `roundCapStanding` (`src/feature-run.js`)
+holds the rules of the round cap:
+
+- A `bl run` can start at the round cap with the last round's items in `fixing`, or fixed and
+  not yet reviewed again. It is then owed one closing round. The closing round fixes that
+  round's items (when in `fixing`), and the verifier checks only those items.
+- A round that `bl merge`'s review of a merge resolution left open is owed the same closing
+  round. That is so whether the count is below, at or past the cap.
+- Any other `bl run` that starts at or past the cap escalates at once. It does not spend a round
+  that the cap does not allow. To go on, raise the cap with `--max-rounds <n>`.
+- A resumed `bl run` that is already `ready_for_merge` ends clean without a review.
+
+A session that the agent refuses for a usage limit is not an attempt. These are examples of such
+a refusal:
+
+- "You've hit your session limit · resets 3:45pm"
+- "… weekly limit · resets Mon 12:00am"
+- "… monthly spend limit · … resets 6:10pm (America/Los_Angeles)"
+
+- Claude Code's headless JSON has no field for the refusal. So `parseLimit()` in
+  `src/agents/claude.js` reads the kind (`session`, `weekly`, `spend`, `other`) and the reset
+  time out of the `result` text.
+- Codex's refusal ("You've hit your usage limit. … or try again at Oct 15th, 2026 1:40 AM.") is
+  the message of its `turn.failed` (or `error`) event. `parseCodexLimit()` in
+  `src/agents/codex.js` reads it the same way. The kind is `other`. The reset is either a full
+  date and time, taken as it is, or a time alone, which means its next occurrence. Both are in
+  the time zone of this process. "try again later" names no reset time.
+- Codex's capacity refusal ("Selected model is at capacity. Please try a different model.", in
+  the same events) is `parseCodexCapacity()`'s: kind `capacity`, scope `model`, no reset time.
+
+The field reaches `runSession()` as the result's `refusal`. `runSession()` is the one place that
+every headless step goes through, the review dimension passes and the verifier included. The
+refusal's `scope` says how far it reaches: `model` for Claude (its caps are per model), and
+`account` for Codex (one quota for every model). Only a session that ended in error counts as
+refused. A session that succeeded and only quoted the message in its last line ran, and its
+result stands.
+
+Every headless step walks its role's list (F-64 D3, **Agent configurations**), and each walk
+starts at the top:
+
+- the review dimension passes and the verifier (`runSession({ role: "review" })`) walk
+  `review_agent`;
+- every other step (implement, fix-tests, self-review, the fix steps, the merge resolution) walks
+  `agent`.
+
+The walk takes these steps for each configuration:
+
+1. The walk skips a configuration in these cases, each with a log line
+   `<step>: skipping <agent> <model>: <why>`:
+   - it is on the out-list of `bl run`, and its `until` has not passed;
+   - its adapter has no headless mode;
+   - for the review role, it implemented in this `bl run` (**Review Cycle**, F-64 D4).
+
+   The walk drops an out-list entry whose `until` has passed, with a log line. So `bl run`
+   returns to the operator's first choice at the next step.
+
+2. The walk asks the runner's `capacity(agent, model, topLevel)`, which calls the adapter's
+   `capacity({ model, topLevel })`. The walk keeps an answer with scope `account` for the rest
+   of the walk, so it asks each agent once.
+   - `unavailable` puts the configuration on the out-list (kind `quota`) until the reading's
+     `until`, plus the margin below.
+   - An `unavailable` reading whose `until` has passed reads as `unknown` (S-1444). The clock may
+     run ahead, or the reading may lag a reset, so the spawn decides.
+   - `available`, `unknown` and a read that throws all spawn.
+3. The spawn passes the configuration's `agent` and `model`. A null model means no model flag,
+   and `runHeadlessSession` adds no default of its own.
+   - A refusal puts the configuration on the out-list until `resetsAt` plus a 60-second margin.
+     With no reset time, it stays out for the rest of `bl run`. The walk then moves on.
+   - Either way, the move is an `unavailable` history event
+     (`{ session, agent, model, kind, scope, until, message }`) and one log line.
+   - Any other result is the step's. Its history entry records `agent`, `model` and `effort`.
 
 Each step runs at one effort level (F-85 D4, **Effort levels**).
-`sessionEffort(config, { mode, stories })` in `src/effort.js` picks it, and
-`runSession` calls it once, before the walk, so every configuration the walk
-reaches gets the same level. It reads each story's `effort:` from the story
-file at that moment (`withCurrentEffort`), so a level an earlier session
-changed applies to every later session. If a story file is missing or its
-frontmatter is not YAML, the run stops before the session:
+`sessionEffort(config, { mode, stories })` in `src/effort.js` picks it. `runSession` calls it
+once, before the walk, so every configuration that the walk reaches gets the same level. It reads
+each story's `effort:` from the story file at that moment (`withCurrentEffort`). So a level that
+an earlier session changed applies to every later session. If a story file is missing or its
+frontmatter is not YAML, `bl run` stops before the session:
 
-| Step                                                                   | Level                                                        |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `implement` of a story, and its retry (`runSession({ story })`)        | that story's `effort:`                                       |
-| `fix-tests`, `self-review`, `fix`, `fix-self-review`, `merge-resolve`  | the highest `effort:` of the unit's stories (`prep.ordered`) |
-| review passes and the verifier (`role: "review"`), also in `bl review` | `effort.review`                                              |
+| Step                                                                   | Level                                                             |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `implement` of a story, and its retry (`runSession({ story })`)        | that story's `effort:`                                            |
+| `fix-tests`, `self-review`, `fix`, `fix-self-review`, `merge-resolve`  | the highest `effort:` of the work unit's stories (`prep.ordered`) |
+| review passes and the verifier (`role: "review"`), also in `bl review` | `effort.review`                                                   |
 
-A story with no `effort:` counts as `effort.default` of its repo's config
-(`configForRepo`), so a repo override applies; `bl status` and `bl approve`
-show that level. A story's value outside
-the five levels stops the step with an error that names the story
-(`storyEffort` reads the key, `sessionEffort` refuses it). A story run's unit is
-its one story (`storyAsOrdered` carries its `effort`). `bl implement S-n`
-runs at the story's level, `bl implement F-n` at the highest level of the
-feature's stories. `runHeadlessSession` and `launchSession` take `effort`
-(null: none) and hand it to `provider.spawn`.
+A story with no `effort:` counts as `effort.default` of its repo's config (`configForRepo`), so a
+repo override applies. `bl status` and `bl approve` show that level. If a story's value is
+outside the five levels, the step stops with an error that names the story. `storyEffort` reads
+the key, and `sessionEffort` refuses the value. When `bl run` runs a story, the work unit is that
+one story (`storyAsOrdered` carries its `effort`). `bl implement S-n` runs at the story's level,
+and `bl implement F-n` at the highest level of the feature's stories. `runHeadlessSession` and
+`launchSession` take `effort` (null: none) and hand it to `provider.spawn`.
 
-An out-list entry with `scope: account` covers every configuration of its
-agent, one with `scope: model` that configuration only. The out-list is the
-run state's `unavailable` (`[{ agent, model, scope, kind, until, message }]`,
-checked by `loadRunState`), so `--resume` and `bl review` do not spawn a
-configuration refused an hour ago. An entry with no `until` holds only for the
-bl process that wrote it: `--resume`, `bl review` and `bl merge`'s integration
-drop it with a log line (`clearUntimedOut`), since its escalation asked the
-operator to raise the limit and resume, and a resume that kept it out would
-escalate again without spawning. A run state from before the walk may still
-carry S-880's `model`; it loads and is ignored.
+An out-list entry with `scope: account` covers every configuration of its agent. One with
+`scope: model` covers that configuration only. The out-list is the run state's `unavailable`
+(`[{ agent, model, scope, kind, until, message }]`, checked by `loadRunState`). So `--resume`
+and `bl review` do not spawn a configuration that was refused an hour ago.
 
-With the list exhausted and the earliest `until` inside
-`run.limit_wait_max_hours` (`backlog.json`, hours, default 8), the loop records
-a `waiting` event in the run history (`{ step: "waiting", until, note }`, saved
-before the first sleep so a Ctrl-C leaves the run resumable at that step),
-awaits a timer in slices of at most a second until it (Ctrl+C ends the wait at once), and walks the list again from
-the top, asking capacity afresh — so a refusal never spends a nudge retry, a
-fix-tests rerun or a review round, and a refused spawn gets no step record of
-its own. A step waits at most once: exhausted again, with no reset time on any
-refusal (a spend cap, a capacity refusal), or with the earliest reset
-past the cap, it escalates as `agent unavailable: <message>` (one
-configuration) or `agent unavailable: every <role> configuration is out (<list>)`,
-followed by ` — <cause line>`. `bl status <id>` shows a
-run that is waiting as `waiting until <local time> — <message>`, and each
-out-list entry still in force as `out: <configuration> until <local time> —
-<kind>: <message>`. An interactive run (`--interactive`, or a role with no
-headless entry under `bl review` and `bl merge`) does not walk: each step
-attaches to its role's first configuration (the review role's first one that
-did not implement). `bl run` refuses at start when a role has no headless
-entry.
+An entry with no `until` applies only to the bl process that wrote it. `--resume`, `bl review`
+and `bl merge`'s integration drop it with a log line (`clearUntimedOut`). The reason is that its
+escalation asked the operator to raise the limit and resume. A resume that kept the entry would
+escalate again without a spawn. A run state from before the walk may still carry S-880's
+`model`. It loads, and bl ignores the key.
+
+The list can run out. If the earliest `until` is inside `run.limit_wait_max_hours`
+(`backlog.json`, hours, default 8), `bl run` waits:
+
+1. It records a `waiting` event in the run history (`{ step: "waiting", until, note }`). It saves
+   the event before the first sleep, so a Ctrl-C leaves `bl run` resumable at that step.
+2. It awaits a timer in slices of at most a second, until the `until`. Ctrl+C ends the wait at
+   once.
+3. It walks the list again from the top, and asks for capacity again.
+
+So a refusal never spends a nudge retry, a fix-tests rerun or a review round. A refused spawn
+gets no step record of its own.
+
+A step waits at most once. It escalates in three cases:
+
+- the list runs out again;
+- no refusal has a reset time (a spend cap, a capacity refusal);
+- the earliest reset is past `run.limit_wait_max_hours`.
+
+The escalation reads `agent unavailable: <message>` for one configuration, or
+`agent unavailable: every <role> configuration is out (<list>)` for several. Either is followed
+by ` — <cause line>`. `bl status <id>` shows a waiting `bl run` as
+`waiting until <local time> — <message>`. It shows each out-list entry still in force as
+`out: <configuration> until <local time> — <kind>: <message>`.
+
+Interactive steps do not walk: those of `--interactive`, and those of a role with no headless
+entry under `bl review` and `bl merge`. Each step attaches to its role's first configuration.
+For the review role, that is the first configuration that did not implement. `bl run` refuses at
+start when a role has no headless entry.
 
 #### What a failed headless step's escalation says (S-1140)
 
-`describeFailure` (`src/agent-failure.js`, pure, no agent names) writes the
-details of every escalation for a failed headless step: `agent unavailable`
-(`waitOrEscalate`), a review round aborted by a failed pass or verifier (the
-loop, `bl review`, and the review of a merge resolution), a failed merge
-resolution session, and a failed fix self-review session. The details have
-four parts, in this order:
+`describeFailure` (`src/agent-failure.js`, pure, no agent names) writes the details of every
+escalation for a failed headless step:
 
-1. **The step line:** `Step: <step>, failed at <local time>.` The step is in
-   the operator's words (`stepLabel`): `implement S-n`, `fix-tests`,
-   `self-review`, `fix round N`, `fix self-review round N`, `review round N
-<pass>` (`correctness`, `failure-paths` or `verifier`), `merge resolution`.
-   The time is the runner's clock.
-2. **The configurations:** `Configurations (backlog.json "<agent|review_agent>",
-in priority order):`, one bullet each: `<agent> <model>` (`<agent> (agent
-default)` when `model` is null) with its out-list kind, message, scope and
-   reset time, or `not tried`, `excluded` (F-64 D4) or `no headless mode`.
-   Under each refused one, a capacity reading taken at escalation time
-   (`readCapacity`, an `account` reading asked once per agent): for an
-   `unknown` or `unavailable` reading, `capacity: <state> — <message>`; then
-   one line per window the adapter reports (`<name>: <n>% left, resets <local
-time>` or `no reset time`). An adapter that reports
-   no windows gets no window lines. A session that failed with no refusal
-   (`sessionFailure`) shows its configuration and `Error: <sessionError>`,
-   and no reading is taken.
-3. **The cause line:** `Cause: <cause>`, exactly one, the first that any
-   refused configuration has (`classifyCause`). A reading outranks a
-   `session` or `weekly` refusal: a reading `available` is never a used-up
-   window.
-   - `spend cap reached`: refusal `kind: spend`, or a reading `unavailable`
-     that says so (`spend: true`, which the Codex adapter sets);
-   - `quota window used up until <local time>`, or `quota window used up, no
-reset time` (with the windows at 0%): a reading `unavailable` with a window
-     at 0% or a reset time, or
-     refusal `kind` `session` or `weekly` with no reading or an `unknown` one;
-     the reset is the reading's `until` when it holds a time, else the
-     refusal's; with several, the earliest reset, and one with no reset time
-     last;
-   - `provider overloaded, your quota is fine`: refusal `kind: capacity` and
-     a reading `available`; `provider overloaded; quota could not be read`
-     when the reading is `unknown`;
-   - `unknown`: anything else, a reading `unavailable` that is neither (a
-     local server that refused the connection) among them. A session failure with no refusal is always
+- `agent unavailable` (`waitOrEscalate`);
+- a review round that a failed pass or verifier aborted, in `bl run`, in `bl review` and in the
+  review of a merge resolution;
+- a failed merge resolution session;
+- a failed fix self-review session.
+
+The details have four parts, in this order:
+
+1. **The step line:** `Step: <step>, failed at <local time>.` The step is in the operator's
+   words (`stepLabel`): `implement S-n`, `fix-tests`, `self-review`, `fix round N`,
+   `fix self-review round N`, `review round N <pass>` (`correctness`, `failure-paths` or
+   `verifier`), `merge resolution`. The time is the runner's clock.
+2. **The configurations:**
+   `Configurations (backlog.json "<agent|review_agent>", in priority order):`, then one bullet
+   per configuration.
+   - Each bullet is `<agent> <model>`, or `<agent> (agent default)` when `model` is null. It
+     shows the configuration's out-list kind, message, scope and reset time. Otherwise it shows
+     `not tried`, `excluded` (F-64 D4) or `no headless mode`.
+   - Under each refused configuration comes a capacity reading, taken at escalation time
+     (`readCapacity`; an `account` reading is asked once per agent). For an `unknown` or
+     `unavailable` reading, the line is `capacity: <state> — <message>`. Then comes one line per
+     window that the adapter reports: `<name>: <n>% left, resets <local time>`, or
+     `no reset time`. An adapter that reports no windows gets no window lines.
+   - A session that failed with no refusal (`sessionFailure`) shows its configuration and
+     `Error: <sessionError>`, and bl takes no reading.
+3. **The cause line:** `Cause: <cause>`, exactly one. It is the first cause that any refused
+   configuration has (`classifyCause`). A reading outranks a `session` or `weekly` refusal: a
+   reading `available` is never a used-up window. The causes are these:
+   - `spend cap reached`: a refusal with `kind: spend`, or a reading `unavailable` that says so
+     (`spend: true`, which the Codex adapter sets).
+   - `quota window used up until <local time>`, or `quota window used up, no reset time` (with
+     the windows at 0%). The cause is a reading `unavailable` with a window at 0% or a reset
+     time. It is also a refusal of `kind` `session` or `weekly` with no reading or an `unknown`
+     one. The reset is the reading's `until` when it holds a time, or else the refusal's. With
+     several resets, the line gives the earliest, and a reset with no time comes last.
+   - `provider overloaded, your quota is fine`: a refusal with `kind: capacity` and a reading
+     `available`. The line is `provider overloaded; quota could not be read` when the reading is
+     `unknown`.
+   - `unknown`: anything else, such as a reading `unavailable` that is neither (a local server
+     that refused the connection). A session failure with no refusal is always
      `unknown — not a capacity refusal bl recognised`.
-4. **The steps:** `Next steps:`, numbered in execution order. Each list ends
-   with "Clear `## Escalation` to `None.`." and then the resume command
-   (`ctx.resumeHint`, else `bl run <id> --resume`). A `bl review` round that a
-   failed session aborts writes no `## Escalation` (the run stops as
-   `failed`), so its list has no clear step (`failsWithoutEscalation`). The
-   steps before those depend on the cause:
+4. **The steps:** `Next steps:`, numbered in execution order. Each list ends with "Clear
+   `## Escalation` to `None.`." and then the resume command (`ctx.resumeHint`, or else
+   `bl run <id> --resume`). A `bl review` round that a failed session aborts writes no
+   `## Escalation`: `bl review` stops as `failed`. So its list has no clear step
+   (`failsWithoutEscalation`). The steps before those depend on the cause:
    - overloaded: wait about 30 minutes, then `bl capacity`;
-   - window: wait until the reset, then `bl capacity` (when the reset has
-     passed, check with `bl capacity`; with no reset time, `bl capacity`
-     alone);
-   - spend: raise the limit or buy credits on the adapter's `billingUrl`, then
-     `bl capacity`;
-   - unknown: `bl capacity` and the adapter's `checkCommand`, then fix what
-     that shows.
+   - window: wait until the reset, then `bl capacity`. When the reset has passed, check with
+     `bl capacity`. With no reset time, `bl capacity` alone;
+   - spend: raise the limit or buy credits on the adapter's `billingUrl`, then `bl capacity`;
+   - unknown: `bl capacity` and the adapter's `checkCommand`, then fix what that shows.
 
-   An `Alternative:` line follows for overloaded (another configuration in
-   the role's list), window (a configuration of another agent) and an
-   excluded implementer (a `review_agent` configuration that did not
-   implement this run).
+   An `Alternative:` line follows for three causes:
+   - overloaded: another configuration in the role's list;
+   - window: a configuration of another agent;
+   - an excluded implementer: a `review_agent` configuration that did not implement in this
+     `bl run`.
 
-The adapter's `remediation()` gives `{ checkCommand, billingUrl }`. Where one
-is null, the step names "the agent's own usage page". The reason line, and so
-`lastError` and `bl status`'s `run:` line, ends with ` — <cause line>`. An
-abort with no failed session (a lock held, a snapshot failed) keeps its text.
-Inside `bl merge`'s integration the escalation also carries the integration's
-own `Next:` paragraph, and the resume command is `bl merge <id>`.
+The adapter's `remediation()` gives `{ checkCommand, billingUrl }`. Where one is null, the step
+names "the agent's own usage page". The reason line ends with ` — <cause line>`, and so do
+`lastError` and the `run:` line of `bl status`. An abort with no failed session (a lock held, a
+snapshot failed) keeps its text. Inside `bl merge`'s integration, the escalation also carries
+the integration's own `Next:` paragraph, and the resume command is `bl merge <id>`.
 
 ### The repo guard
 
