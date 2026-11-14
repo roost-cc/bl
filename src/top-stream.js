@@ -136,24 +136,33 @@ export function createStream({ readers, now = Date.now, stamp }) {
  * Print one snapshot per line on `stdout` every `interval` ms, the first at
  * once, until `stdin` closes; then resolve. A `capacity` line on stdin reads
  * capacity at the next tick. A problem line (a section not read, an inbox
- * warning) goes to stderr when it first appears, not at every tick.
+ * warning) goes to stderr when it first appears, not at every tick. A tick
+ * that is still reading when stdin closes writes nothing.
  *
  * @param {object} config
  * @param {{ interval: number, stdin?: NodeJS.ReadableStream, stdout?: NodeJS.WritableStream,
- *   stderr?: NodeJS.WritableStream }} opts
+ *   stderr?: NodeJS.WritableStream, readers?: ReturnType<typeof sectionReaders> }} opts
+ *   `readers`: the section readers (a test passes its own)
  * @returns {Promise<void>}
  */
 export async function runStream(
   config,
-  { interval, stdin = process.stdin, stdout = process.stdout, stderr = process.stderr },
+  {
+    interval,
+    stdin = process.stdin,
+    stdout = process.stdout,
+    stderr = process.stderr,
+    readers = sectionReaders(config),
+  },
 ) {
   const stream = createStream({
-    readers: sectionReaders(config),
+    readers,
     stamp: () => backlogStamp(config),
   });
   let shown = new Set();
   // A tick that is still reading (a capacity read waits up to its deadline) skips the next one.
   let ticking = false;
+  let done = false;
   const emitSnapshot = async () => {
     if (ticking) return;
     ticking = true;
@@ -163,6 +172,7 @@ export async function runStream(
     } finally {
       ticking = false;
     }
+    if (done) return;
     let lines;
     try {
       lines = problemLines(snapshot);
@@ -177,7 +187,12 @@ export async function runStream(
   lines.on('line', (line) => {
     if (line.trim() === 'capacity') stream.requestCapacity();
   });
-  const closed = new Promise((resolve) => lines.on('close', resolve));
+  const closed = new Promise((resolve) =>
+    lines.on('close', () => {
+      done = true;
+      resolve();
+    }),
+  );
   // The reader went away (EPIPE): nobody is left to read a snapshot.
   stdout.on('error', () => lines.close());
   await emitSnapshot();

@@ -6,9 +6,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { PassThrough, Writable } from 'stream';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { STAGED_FILE } from '../../src/priority.js';
-import { RETRY_FIRST_MS, backlogStamp, createStream } from '../../src/top-stream.js';
+import { RETRY_FIRST_MS, backlogStamp, createStream, runStream } from '../../src/top-stream.js';
 import { SECTIONS } from '../../src/top-snapshot.js';
 
 const INTERVAL = 2000;
@@ -193,3 +194,47 @@ test('backlogStamp changes when a unit file, a change document, a new task or th
     before = backlogStamp(config);
   }
 });
+
+// Each row: the tick whose `runs` read is still pending when the reader goes
+// away, and how it goes: stdin closes, or stdout fails (EPIPE). That tick and
+// every one after it write nothing; the ticks before it wrote their lines.
+for (const at of [1, 2]) {
+  for (const how of ['stdin closes', 'stdout fails']) {
+    test(`runStream_stops_at_closed_stdin: ${how} during tick ${at}`, async () => {
+      const config = { backlogRoot: mkTempDir('bl-top-stream-') };
+      const stdin = new PassThrough();
+      const written = { stdout: 0, stderr: 0 };
+      const sink = (name) =>
+        new Writable({
+          write(_chunk, _enc, cb) {
+            written[name] += 1;
+            cb();
+          },
+        });
+      const stdout = sink('stdout');
+      const stderr = sink('stderr');
+      let calls = 0;
+      let settled;
+      const readers = Object.fromEntries(SECTIONS.map((name) => [name, () => ({ ok: true })]));
+      // A section that never reads: its problem line goes to stderr on the first tick.
+      readers.activity = () => {
+        throw new Error('activity broke');
+      };
+      readers.runs = async () => {
+        calls += 1;
+        if (calls !== at) return { ok: true };
+        settled = new Promise((resolve) => setTimeout(resolve, 50));
+        if (how === 'stdin closes') stdin.end();
+        else stdout.emit('error', new Error('write EPIPE'));
+        await settled;
+        return { ok: true };
+      };
+      await runStream(config, { interval: 10, stdin, stdout, stderr, readers });
+      // The pending read ends after runStream resolved; give its tick the turn it would write in.
+      await settled;
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(written, { stdout: at - 1, stderr: at - 1 });
+      assert.equal(calls, at, 'no tick after the reader went away');
+    });
+  }
+}
