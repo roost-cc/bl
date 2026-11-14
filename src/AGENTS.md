@@ -5913,8 +5913,8 @@ them.
   why a child could not start or was killed (F-124 D6). A caller never reads a child's
   `signal`. `test/unit/child-stdio-guard.test.js` fails on a `src/` import of `child_process` or
   `child-stdio.js` outside `src/child.js` (and `child-stdio.js`'s own import of `child_process`),
-  except the files its `ALLOWED` list names: the asynchronous children and the run loop's long
-  children, which F-128 moves (F-124 D7).
+  except the files its `ALLOWED` list names: `agents/codex-capacity.js` and `verbs.js`, whose
+  asynchronous `spawn` children talk over pipes (F-128 D10).
 - A call in `src/` to an async function of `src/` is awaited: it is the operand of `await`, or
   the value an async function returns outside a `try`. A missing `await` is silent, so
   `test/unit/awaited-calls.test.js` parses `src/` with `acorn` and checks this by name (F-105
