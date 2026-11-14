@@ -141,7 +141,8 @@ assert_contains "bl top --no-bell --no-desktop --version" "bl-top go" "$OUT"
 
 # The phone push (D8a). bl top reads backlog.json's "top" block before it starts the view: a bad
 # block exits 1 and names the key; --json and --stream do not read it. A good block reaches the
-# view as --push-argv; here a fake view, newer than every file under top/, prints its arguments.
+# view as --push-argv; here a fake view, newer than every file under top/, prints its arguments
+# and its BL_TAB_TITLE.
 CFG="$TMPDIR_ROOT/backlog.json"
 cp "$CFG" "$TMPDIR_ROOT/backlog.json.good"
 set_top() {
@@ -168,10 +169,10 @@ set -e
 assert_exit "bl top --version does not read the top block" 0 "$CODE"
 set_top '{"push": ["phone-push", "--topic", "bl top"]}'
 mv "$BL_ROOT/top/bin/bl-top" "$BL_ROOT/top/bin/bl-top.real"
-printf '#!/bin/sh\nprintf "%%s\\n" "$@"\n' > "$BL_ROOT/top/bin/bl-top"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@"\nprintf "title=[%%s]\\n" "${BL_TAB_TITLE-unset}"\n' > "$BL_ROOT/top/bin/bl-top"
 chmod +x "$BL_ROOT/top/bin/bl-top"
 set +e
-OUT=$("$BL" top 2>"$ERR")
+OUT=$(env -u BL_TAB_TITLE "$BL" top 2>"$ERR")
 NO_PUSH=$("$BL" top --no-push 2>"$ERR")
 INTERVAL=$("$BL" top --interval 1e3 --version 2>"$ERR")
 # A view that cannot start (not executable): exit 1, and stderr says why.
@@ -182,6 +183,8 @@ set -e
 # The real view goes back first, so a failed assert leaves no fake behind.
 mv "$BL_ROOT/top/bin/bl-top.real" "$BL_ROOT/top/bin/bl-top"
 assert_contains "bl top passes the push argv to the view" "$(printf -- '--push-argv\n["phone-push","--topic","bl top"]')" "$OUT"
+# The view and every bl it runs in this window run with tab titles off (S-1412).
+assert_contains "bl top starts the view with BL_TAB_TITLE empty" "title=[]" "$OUT"
 assert_contains "bl top --no-push passes --no-push to the view" "--no-push" "$NO_PUSH"
 assert_contains "bl top --interval 1e3 passes the checked number to the view" "$(printf -- '--interval\n1000\n')" "$INTERVAL"
 assert_exit "bl top with a view that cannot start" 1 "$NOT_RUN"

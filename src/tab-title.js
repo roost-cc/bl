@@ -19,11 +19,22 @@
  * result is trimmed: with the default format, a story with no feature shows
  * as `: S-210 : implement` and a feature with no story as `F-123 :  : refine`.
  * `{{name}}` is the placeholder bl already uses in its prompts and plugin
- * commands (F-63 row 2), not a new format. An empty `BL_TAB_TITLE` turns
- * titles off; `bl` sets it so for every agent session (`agentEnv`, S-1388)
- * and for the child processes that `bl run` and `bl review` start in
- * parallel for several targets. The tab belongs to the `bl` the
- * operator started, so nothing below an agent session renames the window.
+ * commands (F-63 row 2), not a new format.
+ *
+ * Every command sets a title (S-1412): `bl.js` sets a start title before it
+ * does anything else, from `commandTitle` in `src/command-table.js` (the
+ * command, its subcommand, the unit ids its arguments name), so a new
+ * command needs no title code of its own. A command that knows more sets
+ * its own fields later. So every `bl` owes the tab an end state and
+ * registers `exitOnSignal`.
+ *
+ * An empty `BL_TAB_TITLE` turns titles off. `bl` sets it so for every agent
+ * session (`agentEnv`, S-1388), for the child processes that `bl review`
+ * starts in parallel for several targets, and for every `bl` it starts for
+ * data: the `bl sync` of a merge (`runBacklogSync`), the `bl new` of
+ * `bl side`, the view of `bl top`, and the `bl inbox --json` that the shell
+ * completions run. The tab belongs to the `bl` the operator started, so
+ * nothing below it renames the window.
  *
  * The title's width only grows while the process runs (S-1389): a shorter
  * title is sent with trailing spaces up to the widest title shown so far, so
@@ -35,6 +46,10 @@
  * its own title. The code that ran it calls `reassertTabTitle` afterwards,
  * which sends bl's current title again. What the tool set is not captured:
  * the tool writes straight to the terminal, so bl never sees it.
+ *
+ * A title is sent as plain text (`sendTabTitle`): control characters are
+ * removed, and tmux gets each `#` as `##`. A process waits for a hung tmux
+ * at most `TMUX_TIMEOUT_MS` in all (`tmux`).
  *
  * When `bl` exits, the last title stays on the tab (S-1393, operator decision
  * 2026-11-09). The tab shows how the work ended until the next `bl` in that
@@ -185,10 +200,7 @@ export function reassertTabTitle() {
  */
 export function captureTmuxWindowId() {
   if (!process.env.TMUX || process.env.BL_TMUX_WINDOW_ID) return;
-  const res = runChild('tmux', ['display-message', '-p', '#{window_id}'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const res = tmux('display-message', '-p', '#{window_id}');
   if (res.status === 0 && res.stdout) {
     process.env.BL_TMUX_WINDOW_ID = res.stdout.trim();
   }
@@ -218,13 +230,19 @@ function showTabTitle() {
  * OSC 2 "set window title" sequence, which kitty, xterm, VTE and most other
  * terminals honour. With neither, nothing happens. Never throws: a title is
  * never worth a failed command.
+ *
+ * A title holds text from the command line (S-1412), so the title shows the
+ * words as typed and nothing in it is interpreted: control characters (ESC,
+ * BEL, newline) are removed in both branches, and tmux gets each `#` as `##`,
+ * because tmux expands `#{…}` and `#(…)` in a window name.
  */
 function sendTabTitle(title) {
   try {
+    const plain = title.replace(/\p{Cc}/gu, '');
     if (process.env.TMUX) {
-      tmux('rename-window', ...windowTarget(), '--', title);
+      tmux('rename-window', ...windowTarget(), '--', plain.replaceAll('#', '##'));
     } else if (process.stderr.isTTY) {
-      process.stderr.write(`\x1b]2;${title}\x07`);
+      process.stderr.write(`\x1b]2;${plain}\x07`);
     }
   } catch {
     // not fatal
@@ -250,6 +268,7 @@ export function endTabTitle(code) {
   shown = false;
   width = 0;
   final = false;
+  timedOut = null;
 }
 
 /** The title status for an exit code. */
@@ -265,6 +284,25 @@ function windowTarget() {
   return id ? ['-t', id] : [];
 }
 
+/**
+ * How long bl waits for a hung tmux, in milliseconds, in all for one
+ * process. Every command calls tmux at start and at exit, so a hung tmux
+ * server must not hold it back.
+ */
+export const TMUX_TIMEOUT_MS = 1000;
+
+/** The result of the first `tmux` call that timed out; `endTabTitle` clears it. */
+let timedOut = null;
+
+/**
+ * Run `tmux …args`; past `TMUX_TIMEOUT_MS` Node kills it and the call counts
+ * as failed. After one call times out, every later call returns that failed
+ * result at once, so a process waits for a hung tmux once, however many
+ * titles it sets.
+ */
 function tmux(...args) {
-  runChild('tmux', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  if (timedOut) return timedOut;
+  const res = runChild('tmux', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: TMUX_TIMEOUT_MS });
+  if (res.error?.code === 'ETIMEDOUT') timedOut = res;
+  return res;
 }

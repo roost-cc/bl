@@ -53,9 +53,13 @@ test('a branch behind main is merged in its worktree, gated and pushed', async (
     landOnMain(fx, 'other.txt', 'other\n', 'other work on main');
     const { config, unit, prep } = featureCtx(fx);
     const { runner, calls } = stubRunner('test -f other.txt');
+    // The tab title shows the gate, then the push that runs the pre-push gate (S-1412).
+    const statuses = [];
+    runner.title = (fields) => statuses.push(fields.status);
     const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, true, res.reason);
     assert.equal(res.repos[0].state, 'merged');
+    assert.deepEqual(statuses, ['test gate', 'pre-push gate + push']);
     assert.equal(calls.gates, 1);
     assert.equal(calls.sessions, 0);
     g(fx.repo, 'fetch', '-q', 'origin');

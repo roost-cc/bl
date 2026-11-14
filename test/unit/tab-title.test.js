@@ -1,13 +1,16 @@
 // tab-title.js: one code path for the terminal tab's title.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import { chmodSync, writeFileSync } from 'fs';
 import { delimiter, join } from 'path';
+import { fileURLToPath } from 'url';
 import { spawnToFiles } from '../helpers/spawn-files.js';
+import { fakeTmux, renamedTitles } from '../helpers/fake-tmux.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { withEnv } from '../helpers/fake-pagers.js';
 import {
   DEFAULT_TAB_TITLE_FORMAT,
+  TMUX_TIMEOUT_MS,
   captureTmuxWindowId,
   clearTabTitle,
   currentTabTitle,
@@ -19,22 +22,7 @@ import {
   unitTitleFields,
   updateTabTitle,
 } from '../../src/tab-title.js';
-
-/** A temp dir on PATH holding a fake `tmux` that appends its arguments, one per line, to `record`. */
-function fakeTmux() {
-  const dir = mkTempDir('bl-tmux-');
-  const record = join(dir, 'record');
-  writeFileSync(
-    join(dir, 'tmux'),
-    `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done >> '${record}'\nprintf '\\036\\n' >> '${record}'\n`,
-  );
-  chmodSync(join(dir, 'tmux'), 0o755);
-  return {
-    dir,
-    record,
-    calls: () => (existsSync(record) ? readFileSync(record, 'utf8').split('\x1e\n').filter(Boolean) : []),
-  };
-}
+import { ALIASES, COMMANDS } from '../../src/command-table.js';
 
 /** Run `fn` under a fake tmux: `TMUX` set, a captured window id, titles on. */
 function underFakeTmux(fn) {
@@ -50,11 +38,14 @@ function underFakeTmux(fn) {
   );
 }
 
-// The module keeps its fields, the end state it owes and the final mark for the process; every test starts with none.
-test.beforeEach(() => {
+/** Drop the fields, the end state owed and the final mark, without reaching a real tmux. */
+function resetTitles() {
   underFakeTmux(() => endTabTitle(0));
   withEnv({ BL_TAB_TITLE: '' }, () => clearTabTitle());
-});
+}
+
+// The module keeps its fields, the end state it owes and the final mark for the process; every test starts with none.
+test.beforeEach(resetTitles);
 // Titles off when the test process exits, so the exit hook never reaches the real tmux.
 test.after(() => {
   process.env.BL_TAB_TITLE = '';
@@ -223,6 +214,56 @@ test('a title starting with - is still a name, never a tmux option', () => {
       assert.deepEqual(fake.calls(), ['rename-window\n-t\n@7\n--\n-x\n']);
     });
   });
+});
+
+// Every field can hold command-line text: the status (an unknown command, a subcommand) and the ids.
+const UNTRUSTED = [
+  { name: 'tmux format #{…}', status: 'inbox #{session_name}', tmux: ':  : inbox ##{session_name}' },
+  { name: 'tmux command #(…)', status: 'task #(touch x)', tmux: ':  : task ##(touch x)' },
+  { name: 'a bare #', status: 'x#y', tmux: ':  : x##y' },
+  { name: 'newline', status: 'task line1\nline2', tmux: ':  : task line1line2' },
+  { name: 'ESC and BEL', status: 'a\x1b]2;evil\x07b', tmux: ':  : a]2;evilb' },
+];
+
+test('a title with #{…} or #(…) reaches tmux with the # doubled', () => {
+  for (const c of UNTRUSTED) {
+    for (const field of ['status', 'feature', 'story']) {
+      const fields = { feature: null, story: null, status: null, [field]: c.status };
+      underFakeTmux((fake) => {
+        updateTabTitle(fields);
+        finalTabTitle({});
+        const sent = fake.calls().map((call) => call.split('\n').slice(4, -1));
+        // One argument per call: no newline survived into the window name.
+        for (const args of sent) assert.equal(args.length, 1, `${c.name} in ${field}: ${JSON.stringify(args)}`);
+        const expected = renderTabTitle({ [field]: c.status }, DEFAULT_TAB_TITLE_FORMAT)
+          .replace(/\p{Cc}/gu, '')
+          .replaceAll('#', '##');
+        assert.equal(sent.at(-1)[0], expected, `${c.name} in ${field}`);
+        if (field === 'status') assert.equal(sent.at(-1)[0], c.tmux, c.name);
+      });
+      resetTitles();
+    }
+  }
+});
+
+test('a control character in a title never reaches the terminal', () => {
+  for (const c of UNTRUSTED) {
+    const out = underFakeTerminal(() => {
+      updateTabTitle({ status: c.status });
+      endTabTitle(1);
+    });
+    resetTitles();
+    for (const s of out) {
+      const inner = s.slice('\x1b]2;'.length, -1);
+      assert.ok(s.startsWith('\x1b]2;') && s.endsWith('\x07'), `${c.name}: ${JSON.stringify(s)}`);
+      assert.doesNotMatch(inner, /\p{Cc}/u, `${c.name}: ${JSON.stringify(s)}`);
+    }
+    // OSC 2 does not expand #, so it is sent as typed.
+    assert.equal(
+      out[0],
+      `\x1b]2;${renderTabTitle({ status: c.status }, DEFAULT_TAB_TITLE_FORMAT).replace(/\p{Cc}/gu, '')}\x07`,
+    );
+  }
 });
 
 test('a shorter title is padded to the widest title shown; a longer one raises the width', () => {
@@ -453,7 +494,7 @@ for (const [signal, number] of [
   ['SIGTERM', 143],
   ['SIGINT', 130],
 ]) {
-  test(`a command that sets no title still ends on ${signal} during spawnSync`, async () => {
+  test(`a process without bl.js that sets no title still ends on ${signal} during spawnSync`, async () => {
     // config.js is the import chain most commands load; it reaches tab-title.js.
     const r = await signalChild(
       `await import(src(config.js)); await import(src(tab-title.js));
@@ -497,6 +538,99 @@ for (const [signal, number] of [
     assert.deepEqual([r.exitCode, r.exitSignal], [number, null]);
   });
 }
+
+// ---------------------------------------------------------------------------
+// every command (S-1412)
+// ---------------------------------------------------------------------------
+
+const BL = fileURLToPath(new URL('../../bin/bl', import.meta.url));
+
+/**
+ * Run `bin/bl …args` in an empty directory that is not a backlog, under its
+ * own fake tmux with window `@7`; resolve with its exit status and the fake
+ * tmux's calls. `env` adds to or (undefined) removes from the environment.
+ */
+async function blUnderFakeTmux(args, env = {}) {
+  const fake = fakeTmux();
+  const childEnv = {
+    ...process.env,
+    PATH: `${fake.dir}${delimiter}${process.env.PATH}`,
+    TMUX: '/tmp/tmux-fake,1,0',
+    BL_TMUX_WINDOW_ID: '@7',
+    BL_BACKLOG_DIR: undefined,
+    BL_TAB_TITLE: undefined,
+    ...env,
+  };
+  for (const [k, v] of Object.entries(childEnv)) if (v === undefined) delete childEnv[k];
+  const { status } = await spawnToFiles(BL, args, { cwd: mkTempDir('bl-no-backlog-'), env: childEnv }).closed;
+  return { status, calls: fake.calls() };
+}
+
+const renamesWindow7 = (calls) => calls.some((c) => c.startsWith('rename-window\n-t\n@7\n'));
+
+test('every command in the command table, every alias and no command at all rename the window', async () => {
+  const names = [...Object.keys(COMMANDS), ...Object.keys(ALIASES)];
+  const runs = await Promise.all([
+    ...names.map(async (name) => ({ name, ...(await blUnderFakeTmux([name, '--help'])) })),
+    blUnderFakeTmux([]).then((r) => ({ name: '(no arguments)', ...r })),
+  ]);
+  const silent = runs.filter((r) => !renamesWindow7(r.calls)).map((r) => r.name);
+  assert.deepEqual(silent, [], `no rename-window -t @7 from: bl ${silent.join(', bl ')}`);
+});
+
+test('with an empty BL_TAB_TITLE, a command renames nothing', async () => {
+  const { calls } = await blUnderFakeTmux(['list', '--help'], { BL_TAB_TITLE: '' });
+  assert.deepEqual(calls, []);
+});
+
+test('a hung tmux does not hold a command back', async () => {
+  // Each tmux call hangs for 20 s. Without BL_TMUX_WINDOW_ID, bl calls tmux three
+  // times: display-message, the start title and the exit title.
+  const dir = mkTempDir('bl-tmux-hung-');
+  writeFileSync(join(dir, 'tmux'), '#!/bin/sh\nexec sleep 20\n');
+  chmodSync(join(dir, 'tmux'), 0o755);
+  for (const windowId of ['@7', undefined]) {
+    const env = { ...process.env, PATH: `${dir}${delimiter}${process.env.PATH}`, TMUX: '/tmp/tmux-fake,1,0' };
+    for (const k of ['BL_BACKLOG_DIR', 'BL_TAB_TITLE', 'BL_TMUX_WINDOW_ID']) delete env[k];
+    if (windowId) env.BL_TMUX_WINDOW_ID = windowId;
+    const started = Date.now();
+    const { status } = await spawnToFiles(BL, ['list', '--help'], { cwd: mkTempDir('bl-no-backlog-'), env }).closed;
+    const ms = Date.now() - started;
+    assert.equal(status, 0);
+    assert.ok(ms < 3 * TMUX_TIMEOUT_MS + 5000, `bl list --help took ${ms} ms (window id ${windowId})`);
+  }
+});
+
+test('a hung tmux costs one timeout in all, however many titles follow', () => {
+  // Each tmux call hangs for 20 s. The window id capture, eight titles, a
+  // reassert and the exit title wait for tmux once; the exit title clears the state.
+  const dir = mkTempDir('bl-tmux-hung-');
+  writeFileSync(join(dir, 'tmux'), '#!/bin/sh\nexec sleep 20\n');
+  chmodSync(join(dir, 'tmux'), 0o755);
+  const env = { PATH: `${dir}${delimiter}${process.env.PATH}`, TMUX: '/tmp/tmux-fake,1,0', BL_TAB_TITLE: undefined };
+  const started = Date.now();
+  withEnv({ ...env, BL_TMUX_WINDOW_ID: undefined }, () => captureTmuxWindowId());
+  withEnv({ ...env, BL_TMUX_WINDOW_ID: '@7' }, () => {
+    for (const status of ['integrate', 'test gate', 'pull', 'check', 'push', 'install', 'cleanup', 'sync']) {
+      updateTabTitle({ status });
+    }
+    reassertTabTitle();
+    endTabTitle(0);
+  });
+  const ms = Date.now() - started;
+  assert.ok(ms < 2 * TMUX_TIMEOUT_MS, `took ${ms} ms`);
+  // After the exit title, tmux is called again.
+  underFakeTmux((fake) => {
+    updateTabTitle({ status: 'next' });
+    assert.equal(fake.calls().length, 1);
+  });
+});
+
+test('bl --help starts with status help and ends with ended', async () => {
+  const { status, calls } = await blUnderFakeTmux(['--help']);
+  assert.equal(status, 0);
+  assert.deepEqual(renamedTitles(calls), [':  : help', ':  : ended']);
+});
 
 // ---------------------------------------------------------------------------
 // window id capture
