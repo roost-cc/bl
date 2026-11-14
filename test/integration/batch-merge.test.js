@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'child_process';
-import { readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -79,9 +79,23 @@ test('bl merge B-n tags B-<n>, writes releases/B-<n>.json, and marks the batch a
     g(dir, 'init', '-q', '-b', 'main');
     g(dir, 'add', '.');
     g(dir, 'commit', '-q', '-m', 'backlog');
+    // merge_batch_removes_its_and_its_stories_run_files (S-1112): the scratch
+    // directories and older gate logs of the batch and its stories go.
+    const run = join(dir, '.bl', 'run');
+    for (const scratch of ['B-3.S-1.scratch', 'S-2.r1.fix.scratch', 'S-9.S-9.scratch']) {
+      mkdirSync(join(run, scratch), { recursive: true });
+    }
+    for (const log of ['B-3.test-1.log', 'B-3.test-2.log', 'B-3.json']) writeFileSync(join(run, log), 'x\n');
 
     const r = runBl(['merge', 'B-3'], { cwd: dir, env: ENV });
     assert.equal(r.status, 0, r.stderr);
+    for (const gone of ['B-3.S-1.scratch', 'S-2.r1.fix.scratch', 'B-3.test-1.log']) {
+      assert.ok(!existsSync(join(run, gone)), `${gone} is removed`);
+    }
+    for (const kept of ['B-3.test-2.log', 'B-3.json', 'S-9.S-9.scratch']) {
+      assert.ok(existsSync(join(run, kept)), `${kept} stays`);
+    }
+    assert.match(r.stderr, /^Removed 3 run files of B-3, S-1, S-2 \(\d+ B\)\.$/m);
 
     assert.equal(g(origin, 'show', 'main:a.txt'), 'feature', 'the branch landed and is pushed');
     const mergeSha = g(code, 'rev-parse', 'main');

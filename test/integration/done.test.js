@@ -774,3 +774,33 @@ test(
     }
   },
 );
+
+test('done_superseded_removes_run_files: bl done --superseded removes the run files as bl done does', () => {
+  const { dir, cleanup } = backlogWithStory();
+  try {
+    const run = seedRunFiles(dir);
+    const r = runBl(['done', '--superseded', 'S-1', 'deadbeef'], { cwd: dir });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(readdirSync(run).sort(), ['S-1.json', 'S-1.test-2.log', 'S-2.S-2.scratch']);
+    assert.match(r.stderr, /^Removed 2 run files of S-1 \(\d+ B\)\.$/m);
+  } finally {
+    cleanup();
+  }
+});
+
+test('done_rerun_after_failed_commit_removes_run_files: the rerun that commits the earlier write removes them', () => {
+  const { dir, cleanup, hook } = failingDoneBacklog();
+  try {
+    const run = seedRunFiles(dir);
+    assert.equal(runBl(['done', 'S-1', 'deadbeef'], { cwd: dir, env: GIT_ENV }).status, 1);
+    rmSync(hook);
+    const r = runBl(['done', 'S-1'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(!existsSync(join(run, 'S-1.S-1.scratch')));
+    assert.ok(!existsSync(join(run, 'S-1.test-1.log')));
+    assert.ok(existsSync(join(run, 'S-1.test-2.log')));
+    assert.match(r.stderr, /^Removed 2 run files of S-1 \(\d+ B\)\.$/m);
+  } finally {
+    cleanup();
+  }
+});

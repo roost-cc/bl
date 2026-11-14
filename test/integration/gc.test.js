@@ -153,6 +153,29 @@ test('bl gc removes a closed work unit directory whose registered worktree was d
   }
 });
 
+test('gc_removes_clean_detached_worktree and gc_keeps_dirty_detached_worktree', () => {
+  const { dir, code, wt, cleanup } = gcBacklog();
+  try {
+    // `bl updates` makes detached worktrees under a story's directory.
+    const clean = join(wt, 's1-done', 'update');
+    const dirty = join(wt, 's2-gone', 'update');
+    git(code, 'worktree', 'add', '-q', '--detach', clean);
+    git(code, 'worktree', 'add', '-q', '--detach', dirty);
+    writeFileSync(join(dirty, 'draft.txt'), 'work in progress\n');
+    const r = runBl(['gc'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, new RegExp(`^removed ${join(wt, 's1-done')}$`, 'm'));
+    assert.match(r.stdout, new RegExp(`^kept ${dirty} \\(uncommitted changes in 1 paths\\)$`, 'm'));
+    assert.ok(!existsSync(join(wt, 's1-done')));
+    assert.ok(existsSync(join(dirty, 'draft.txt')), 'the dirty detached worktree stays');
+    const list = git(code, 'worktree', 'list');
+    assert.doesNotMatch(list, /s1-done/);
+    assert.match(list, /s2-gone\/update/);
+  } finally {
+    cleanup();
+  }
+});
+
 test('bl gc refuses an argument it does not take', () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
