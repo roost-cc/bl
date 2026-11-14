@@ -139,7 +139,9 @@ const ignored = new Set();
  * `exitOnSignal`'s listener returns at once for them. `bl view` ignores
  * SIGINT and SIGQUIT while its editor runs, as `system(3)` does, and SIGTERM,
  * as its synchronous wait did before S-1182: a Ctrl-C or Ctrl-\ meant for the
- * editor does not end `bl` and leave its copy behind.
+ * editor does not end `bl` and leave its copy behind. One holder at a time:
+ * the set of ignored signals is shared, so the first release of two
+ * overlapping calls for one signal would let `exitOnSignal` act on it again.
  * @param {readonly NodeJS.Signals[]} signals
  * @returns {() => void}
  */
