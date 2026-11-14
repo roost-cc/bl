@@ -820,11 +820,7 @@ export async function runHeadlessSession({
 
   let result;
   try {
-    try {
-      logAppendTo(worktreePath, logCommand ?? mode, [parsed.id, '--headless']);
-    } catch {
-      // logging is non-fatal
-    }
+    logAppendTo(worktreePath, logCommand ?? mode, [parsed.id, '--headless']);
 
     const allowedTools = await getAllowedTools(mode, {
       backlogRoot,
