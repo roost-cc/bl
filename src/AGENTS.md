@@ -3886,7 +3886,8 @@ frontmatter and the branch and PR to the story's change document (its round
 is its log's); run state is `.bl/run/S-34.json`. An escalation goes to the story's
 `## Escalation`, and its log records `escalated` (F-69 D1): the open section is what blocks
 `bl run` and `bl merge`. If the stored-log check refuses the `escalated` entry (S-1580), the
-log has no such entry; a `warning` step `escalate` in the run state says so. `bl status S34` prints the status, branch, PR, review state and
+log has no such entry; a `warning` step `escalate` in the run state says so. `bl status S34`
+prints the status, branch, PR, review state and
 round, the last three transitions, the escalation and the run state. `--plan`, `--resume`, `--interactive` and
 `--max-rounds` behave as for a feature. A story's run computes and stores its
 execution plan too, a plan of one story, as `plan.yaml` in the story's
