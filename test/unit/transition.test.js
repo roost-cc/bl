@@ -1101,9 +1101,15 @@ test('startOf refuses a stored log the verb’s first entry would leave rejected
   const cfg = { backlogRoot: root };
   const refusal = (fm, verb) =>
     startOf(cfg, 'story', { id: 'S-5', indexPath: file, fm }, verb, { guards: false }).refusal;
-  const noBy = at('story', 'ready_for_merge');
-  noBy.transitions = [...noBy.transitions.slice(0, -1), { at: T0, to: 'ready_for_merge' }];
-  assert.match(refusal(noBy, 'merge'), /^S-5 has a transitions: log that bl validate rejects/);
+  // bl merge of a story, a feature and a story batch refuses before its first step, not at its done write.
+  for (const kind of ['story', 'feature', 'batch']) {
+    const noBy = at(kind, 'ready_for_merge');
+    noBy.transitions = [...noBy.transitions.slice(0, -1), { at: T0, to: 'ready_for_merge' }];
+    const id = noBy[`${kind}_id`];
+    const start = startOf(cfg, kind, { id, indexPath: file, fm: noBy }, 'merge', { guards: false });
+    assert.match(start.refusal, new RegExp(`^${id} has a transitions: log that bl validate rejects`), kind);
+    assert.match(start.refusal, /transitions entry 2 has no "by" verb/, kind);
+  }
   // A stale completed: on an open log: merge's entry to done repairs it; run's to in_review does not.
   assert.equal(refusal({ ...at('story', 'ready_for_merge'), completed: '2026-10-01' }, 'merge'), null);
   assert.match(
