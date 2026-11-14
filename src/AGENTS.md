@@ -3383,31 +3383,35 @@ written into `## Deferred`, not into a session block.
 
 ## Tooling
 
-All backlog operations use the `bl` CLI (or equivalent agent skills).
-Run `bl --help` for the full command list, or `bl <command> --help` for details.
+All backlog operations use the `bl` CLI (or equivalent agent skills). For the full command
+list, run `bl --help`. For the details of one command, run `bl <command> --help`.
 
-To target a different repo, use `--repo` as the first argument:
+To target a different repo, give `--repo` as the first argument:
 
 ```bash
 bl --repo ../other-repo <command> [args...]
 ```
 
-Subcommands share one argument parser (`parseArgs` in `src/config.js`). A value given as the
-next token may not begin with `-` (a lone `-` is fine), for long and short flags alike:
-`--title -m msg` leaves `--title` without a value (the subcommand reports `requires a value`)
-and parses `-m msg` as its own option. A value that starts with `-` goes inline:
-`--title=-draft`, `--points=-1`. `bl sync` has its own parser with the same rule; `bl fix` has
-its own too and refuses any following `-` token, a lone `-` included.
+Subcommands share one argument parser (`parseArgs` in `src/config.js`). For long and short
+flags alike, a value given as the next token may not begin with `-`; a lone `-` is fine. So
+`--title -m msg` leaves `--title` without a value (the subcommand reports `requires a value`),
+and the parser reads `-m msg` as its own option. Give a value that starts with `-` inline:
+`--title=-draft`, `--points=-1`. `bl sync` has its own parser with the same rule. `bl fix` has
+its own parser too, and it refuses any next token that starts with `-`, a lone `-` included.
 
 ### `bl new`
 
-Creates a new story in `stories/S<n>-<slug>/` (or, with `--component` and no C-id, a component
-in `components/C<n>-<slug>/`; with `--theme <slug>` on its own, a theme in `themes/<slug>/`;
-with `--epic --theme <slug>`, an epic in `epics/E<n>-<slug>/`) with the correct next ID,
-today's `added` date, and a scaffolded `index.md`. Always use this instead of creating story,
-component, theme or epic files manually.
+`bl new` creates a new story in `stories/S<n>-<slug>/`. With other flags, it creates another
+kind of unit file:
 
-Parallel `bl new` calls are safe — a lockfile serializes ID assignment.
+- with `--component` and no C-id, a component in `components/C<n>-<slug>/`;
+- with `--theme <slug>` on its own, a theme in `themes/<slug>/`;
+- with `--epic --theme <slug>`, an epic in `epics/E<n>-<slug>/`.
+
+Each one gets the correct next ID, today's `added` date and a scaffolded `index.md`. Always use
+`bl new` to create a story, component, theme or epic file. Do not create one by hand.
+
+Parallel `bl new` calls are safe: a lockfile serializes ID assignment.
 
 ```bash
 bl new C00 --title "My Story" --points 3
@@ -3419,24 +3423,26 @@ bl new --epic --theme backlog --title "Backlog taxonomy" # a new epic, E50 upwar
 bl new --feature --title "Taxonomy" --theme backlog --epic E62   # a feature in both
 ```
 
-A story names its component (`C<nn>`, positionally or with `--component`); its repo is the
-component's `repo` (F-49 D4), and `bl new` writes no `primary_repo` on it (F-52 D1).
-With no component, `bl new` takes the `--plugins-from` story's, else the home component of
-`--repo`, else prompts on a terminal. A `--repo` that is not the component's repo is an error.
-An old component's id (E00–E49) is refused with the hint that components are C-ids; an
-`E50`-upward id where a component is meant is a plain invalid component id. `--epic-title` is
-gone; `--epic` names an epic (see **Themes and Epics**).
+A story names its component (`C<nn>`), positionally or with `--component`. The story's repo is
+the component's `repo` (F-49 D4), and `bl new` writes no `primary_repo` on the story (F-52 D1).
+If no component is named, `bl new` takes the component of the `--plugins-from` story. Else it
+takes the home component of `--repo`, and else it prompts on a terminal. A `--repo` that is not
+the component's repo is an error. `bl new` refuses an old component's id (E00–E49), with the
+hint that components are C-ids. An id from `E50` upward, where a component is meant, is a plain
+invalid component id. `--epic-title` is gone; `--epic` names an epic (see **Themes and
+Epics**).
 
-`--plugins-from S-<n>` copies the `plugins` / `plugins-<stage>` frontmatter keys (for example
-`plugins-test: [bl-tests]`) of story S-<n> into the new story when both have the same repo
-(their components'). With no component named, the new story takes S-<n>'s component, so the keys are
-copied; a component in another repo copies nothing and warns on stderr. An unknown id fails
-before anything is written. Nothing is inherited unless the caller names a source: one repo's
-components may use different test plugins, so there is no default. `bl merge` triage passes
-`--plugins-from <merged story>` on every `bl new` so follow-ups keep the parent's component and
-test gate, and names another component only for an item that belongs elsewhere.
+`--plugins-from S-<n>` copies the `plugins` and `plugins-<stage>` frontmatter keys of story
+S-<n> (for example `plugins-test: [bl-tests]`) into the new story. It copies them when both
+stories have the same repo (their components' repo). If no component is named, the new story
+takes the component of S-<n>, so the keys are copied. If the component is in another repo,
+nothing is copied and `bl new` warns on stderr. An unknown id fails before anything is written.
+Nothing is inherited unless the caller names a source. One repo's components may use different
+test plugins, so there is no default. `bl merge` triage passes `--plugins-from <merged story>`
+on every `bl new`, so the new stories keep the parent's component and test gate. Triage names
+another component only for a story that belongs elsewhere.
 
-The body of a story can be supplied from a file:
+A file can give the body of a story:
 
 ```bash
 bl new --print-template story > /tmp/s.md
@@ -3444,18 +3450,18 @@ $EDITOR /tmp/s.md          # fill in the sections, leave {{storyId}} etc.
 bl new C00 --title "My Story" --points 3 --body-file /tmp/s.md
 ```
 
-`--print-template story` (or `story-feature`, `component`, `feature`, `change`, `theme`, `epic`) writes the raw template to stdout — fill
-it in, leave `{{storyId}}`/`{{title}}` etc. as placeholders, and `bl`
-substitutes them on ingest. HTML comments outside fenced code blocks are
-stripped automatically. Use `--body-file -` to read from stdin (in stdin
-mode `--title`, `--points`, and a component or `--repo` must be passed on the command line).
+`--print-template story` writes the raw template to stdout. The other kinds are
+`story-feature`, `component`, `feature`, `change`, `theme` and `epic`. Fill the template in,
+and leave `{{storyId}}`, `{{title}}` and the other placeholders as they are: `bl` substitutes
+them on ingest. `bl` strips HTML comments outside fenced code blocks. Use `--body-file -` to
+read the body from stdin. In stdin mode, pass `--title`, `--points` and a component or `--repo`
+on the command line.
 
 #### `--json` output
 
-Pass `--json` to get a machine-readable description of the created story.
-A single JSON object is written to stdout (schema string `bl-new-json/v3`)
-and all other output (sync output, plugin output, "Created story" lines)
-is routed to stderr.
+Pass `--json` to get a machine-readable description of the created story. `bl new` writes a
+single JSON object to stdout (schema string `bl-new-json/v3`). It sends all other output (sync
+output, plugin output, "Created story" lines) to stderr.
 
 ```bash
 bl new --json C10 --title "My Story" --points 1
@@ -3476,17 +3482,17 @@ Schema (v3; v2 also had `project`, and v1 an `epic` object in place of `componen
 
 `bl new --component --json` writes `{"schema":"bl-new-component-json/v1","id","path","repo","home","paths"}`.
 `bl new --theme --json` writes `{"schema":"bl-new-theme-json/v1","id","path"}`, and
-`bl new --epic --json` `{"schema":"bl-new-epic-json/v1","theme","id","path"}`.
+`bl new --epic --json` writes `{"schema":"bl-new-epic-json/v1","theme","id","path"}`.
 
-On error (e.g. missing `--title`), `bl new --json` exits non-zero with a
-human-readable error on stderr; stdout is empty (no partial JSON).
+On an error (for example a missing `--title`), `bl new --json` exits non-zero with a
+human-readable error on stderr. stdout is then empty: no partial JSON.
 
 #### `--from <spec.json>` (batch mode)
 
-Create N stories (and optionally a new component) in one call from a JSON spec. Use this when a
-planning session has produced a coherent set of stories that should land
-together — the spec becomes a reviewable artifact and IDs are assigned
-atomically.
+`bl new --from` creates N stories, and optionally a new component, in one call from a JSON
+spec. Use it when a planning session has written stories that belong together and should land
+together. The spec is then a file that someone can review, and `bl new` assigns all the IDs in
+one step.
 
 ```bash
 bl new --from plan.json
@@ -3501,242 +3507,257 @@ edge stated as `required_for`, and a per-story component).
 
 Highlights:
 
-- `"component": "C<nn>"` names an existing component; an object
-  `{ "repo", "title", "paths", "body_file" }` creates one (`paths` an optional array of globs; left out, the component has no `paths:` key). A story's own `"component"`
-  overrides it, and every story's repo is its component's repo.
-  An `"epic"` block is refused.
-- `stories[].id` is a **placeholder** name (e.g. `bootstrap`), not a real ID.
-- Cross-refs in `depends_on` / `required_for` use `@<placeholder>` for
-  siblings in the spec, or bare `S-<n>` for already-existing stories.
-- `depends_on` and `required_for` are input only (F-111 D5): `bl new` writes
-  each as an edge in `blockers.json` once the batch is in place (an order edge
-  when both stories are in one feature, else a run edge), and `blockers.json`
-  joins the batch's commit; no story file gets `depends_on:` or
-  `required_for:`. The plan lists the edges. An unknown bare id warns and gets
-  no edge. A refused edge undoes the batch. `bl new --depends-on` and
+- `"component": "C<nn>"` names an existing component. An object
+  `{ "repo", "title", "paths", "body_file" }` creates one. `paths` is an optional array of
+  globs; without it, the component has no `paths:` key. A story's own `"component"` overrides
+  the spec's, and the repo of every story is its component's repo. `bl new` refuses an
+  `"epic"` block.
+- `stories[].id` is a **placeholder** name (for example `bootstrap`), not a real ID.
+- In `depends_on` and `required_for`, a cross-reference is `@<placeholder>` for a sibling in the
+  spec, or a bare `S-<n>` for a story that already exists.
+- `depends_on` and `required_for` are input only (F-111 D5). When every story of the spec is in
+  place, `bl new` writes each one as an edge in `blockers.json`. The edge is an order edge when
+  both stories are in one feature, else a run edge. `blockers.json` joins the commit of the new stories, and
+  no story file gets `depends_on:` or `required_for:`. The plan lists the edges. An unknown bare
+  id warns and gets no edge. A refused edge undoes the whole call. `bl new --depends-on` and
   `--required-for` do the same for one story.
-- `body_file` paths resolve against the spec file's directory. Body files
+- `bl new` resolves the `body_file` paths against the directory of the spec file. A body file
   must not contain frontmatter.
-- Validation errors exit **2** with messages keyed by spec path
-  (`stories[2].depends_on[0]: unknown placeholder '@foo'`); IO/system
-  errors exit 1.
-- `--from` rejects single-story flags (`--title`, `--component`, `--body-file`,
-  etc.) — the spec is the source of truth.
-- Atomic: every file is staged in the ignored `<backlogRoot>/.bl/tmp/new-<pid>/`
-  and moved into place at the end (`moveIntoBacklog`, under the backlog lock).
-  On any error mid-write nothing partial remains.
-- JSON output schema is `bl-new-batch-json/v2` (a `component` object in
-  place of v1's `epic`, and each story's `component`).
+- A spec that fails the check exits **2**, with messages keyed by spec path
+  (`stories[2].depends_on[0]: unknown placeholder '@foo'`). An IO or system error exits 1.
+- `--from` refuses the single-story flags (`--title`, `--component`, `--body-file` and the
+  others): the spec is the source of truth.
+- All or nothing: `bl new` stages every file in the ignored `<backlogRoot>/.bl/tmp/new-<pid>/`,
+  and moves the files into place at the end (`moveIntoBacklog`, under the backlog lock). If an
+  error happens part way through the writes, nothing partial remains.
+- The JSON output schema is `bl-new-batch-json/v2`: a `component` object in place of v1's
+  `epic`, and the `component` of each story.
 
 ### `bl side`
 
-A change to another repo, as a story with its worktree (F-48 D1):
+`bl side` makes a change to another repo as a story with its own worktree (F-48 D1):
 
 ```bash
 bl side <repo|C-id> --from <F-n|S-n> --title <t> --points <n> [--type chore|bug|feature] [--body-file <p>] [--json]
 ```
 
-- **Component.** A C-id is used as given; a repo name takes that repo's home
-  component (`homeComponent`), as `bl new --repo` does. An unknown repo or
-  component, or a component with no `repo`, exits 1 naming it.
-- **`--from` is required**: the unit the session is working on. There is no
-  "current unit". The story records it as `found_by:` (F-48 D2).
+- **Component.** `bl side` uses a C-id as given. A repo name takes that repo's home component
+  (`homeComponent`), as `bl new --repo` does. An unknown repo or component, or a component with
+  no `repo`, exits 1 and names it.
+- **`--from` is required.** It names the work unit that the session works on; there is no
+  "current" work unit. The story records it as `found_by:` (F-48 D2).
 - **Attach rule.** The story joins a feature when `--from` is a feature that
-  `isFeatureWorkable` accepts (`approved` up to `escalated`) or a story
-  of one: `feature:` is set (which makes it the feature's, F-77 D3), its
-  worktree is on the feature's branch (`prepareFeatureRepo`, prepared before
-  the story is written) and the feature's change document gets the repo, in
-  `featureRepoOrder`. Otherwise (a draft or refined feature, a standalone
-  story) it is a standalone story on its own branch (`prepareStoryRepo`) with
-  its own `change.md`. Neither switches a main checkout.
-- **Creation.** The story is written by `bl new [<F-n>] <C-id> … --no-sync
---json`, run as a child, so story creation keeps one implementation; `bl
-side` then records `in_progress` by `side` in its log and sets `found_by:`
-  through `updateSpecFile`. `--type` defaults to `chore`; the `--body-file`
-  text (stdin for `-`) is read and checked by `bl side` first, then given to
-  `bl new` on its stdin.
-- **Commit.** One hold of the backlog lock covers `bl new`, the marks, the
-  change document and one `syncAndCommit` of the story directory and the
-  change document: `chore: add S-<n> (bl side, found by <id>)`. The `bl new`
-  child works under the parent's lock: `bl side` passes the locked descriptor
-  as the child's fd 3 and names it in `BL_LOCK_FD`, and the child adopts it
-  (`lock.js`, F-104 D5). So no other bl commits a half-made story.
-- **No dependency edge** to the `--from` story: its run edge would then hold
-  `bl run <from> --resume` (`heldBy`) until the side story merged. If the source
-  cannot merge without the side change, that is an escalation.
-- Every refusal (no target, unknown repo or component, missing or unknown
-  `--from`, missing `--title` or `--points`, a bad `--points` or `--type`, a
-  `--body-file` that cannot be read or carries frontmatter, and a new
-  worktree's guards: uncommitted changes or an unpushed local `main` in the
-  repo's main checkout, `newWorktreeGuards`) exits 1 before anything is
-  written.
-- **Failures** leave the whole unit or none of it. Before the commit, a
-  failing step (the bootstrap of an attached worktree, `bl new`, the marks,
-  the change document, the sync) undoes only what this run made: a worktree
-  or branch it created, and backlog files no commit holds, the feature's
-  change document put back as it was when the lock was taken (earlier
-  uncommitted edits included); a story some commit already holds is left as it is, and an
-  undo that fails says what it left. A worktree it created stays when a
-  committed story of the feature is in its repo (a concurrent `bl side` took
-  it up), when it has changes in it, or when its branch has commits `main`
-  lacks; a `bl side` whose prepared worktree went while it waited for the lock
-  stops before writing anything. A failed
-  commit leaves the written files for a commit by hand. A standalone story's
-  branch is named after it, so its worktree comes after the commit; when that
-  fails (the bootstrap), the committed story stays and the message says
+  `isFeatureWorkable` accepts (`approved` up to `escalated`), or a story of one. Then:
+  1. `bl side` sets `feature:`, which makes the story the feature's (F-77 D3).
+  2. The story's worktree is on the feature's branch (`prepareFeatureRepo`, prepared before the
+     story is written).
+  3. The feature's change document gets the repo, in `featureRepoOrder`.
+
+  Otherwise, the new story is a standalone story on its own branch (`prepareStoryRepo`), with
+  its own `change.md`. That is the case when `--from` is a draft or refined feature, or a
+  standalone story. Neither case switches a main checkout.
+
+- **Creation.** `bl side` runs `bl new [<F-n>] <C-id> … --no-sync --json` as a child to write
+  the story, so story creation keeps one implementation. Then `bl side` records `in_progress`
+  by `side` in the story's log, and sets `found_by:` through `updateSpecFile`. `--type`
+  defaults to `chore`. `bl side` reads and checks the `--body-file` text (stdin for `-`) first.
+  Then it gives the text to `bl new` on its stdin.
+- **Commit.** `bl side` takes the backlog lock once, and holds it for `bl new`, the marks, the
+  change document and one `syncAndCommit`. That commit holds the story directory and the change
+  document: `chore: add S-<n> (bl side, found by <id>)`. The `bl new` child works under the
+  parent's lock. `bl side` passes the locked descriptor to the child as fd 3 and names it in
+  `BL_LOCK_FD`, and the child adopts it (`lock.js`, F-104 D5). So no other bl commits a
+  half-made story.
+- **No dependency edge** to the `--from` story. Its run edge would hold
+  `bl run <from> --resume` (`heldBy`) until the side story merged. If the source cannot merge
+  without the side change, that is an escalation.
+- Every refusal exits 1 before anything is written. The refusals are:
+  - no target;
+  - an unknown repo or component;
+  - a missing or unknown `--from`;
+  - a missing `--title` or `--points`, or a bad `--points` or `--type`;
+  - a `--body-file` that cannot be read or carries frontmatter;
+  - the guards of a new worktree (`newWorktreeGuards`): uncommitted changes, or an unpushed
+    local `main`, in the repo's main checkout.
+- **Failures** leave the whole change or none of it. Before the commit, a step may fail: the
+  bootstrap of an attached worktree, `bl new`, the marks, the change document or the sync. Such
+  a failure undoes only what this `bl side` made:
+  - a worktree or branch that it created;
+  - backlog files that no commit holds;
+  - the feature's change document, which it puts back as it was when the lock was taken
+    (earlier uncommitted edits included).
+
+  It leaves a story that some commit already holds as it is. An undo that fails says what it
+  left. A worktree that it created stays in three cases:
+  - a committed story of the feature is in its repo (a concurrent `bl side` took it up);
+  - the worktree has changes in it;
+  - its branch has commits that `main` lacks.
+
+  If its prepared worktree went away while `bl side` waited for the lock, `bl side` stops before
+  it writes anything. A failed commit leaves the written files for a commit by hand. A
+  standalone story's branch is named after the story, so its worktree comes after the commit.
+  If that step (the bootstrap) fails, the committed story stays. The message then says that
   `bl implement S-<n>` prepares the worktree, not another `bl side`.
-- A change across N repos is N `bl side` calls with the same `--from`, then
-  `bl run` on each story (it takes one target, F-125 A3) and
-  `bl merge S-a S-b …`.
+
+- A change across N repos is N `bl side` calls with the same `--from`. Then run `bl run` on
+  each story (`bl run` takes one target, F-125 A3), and `bl merge S-a S-b …`.
 
 ### `bl attach`
 
-Put an existing story in a feature (S-1095, `src/attach.js`):
+`bl attach` puts an existing story in a feature (S-1095, `src/attach.js`):
 
 ```bash
 bl attach <S-n> <F-n> [--no-sync] [--json]
 ```
 
-- **Membership.** A story's `feature:` is the only statement of membership
-  (F-77 D3): `bl run` runs, the feature's page lists and `bl merge` marks done the
-  stories naming the feature. `bl attach` sets it (an empty key filled in
-  place, a missing one last), the write `bl new F-<n>` makes for a story it
-  creates, and writes nothing to the feature. It does not change `status:`,
-  `found_by:` or the story's sections.
-- **Ids** in either order, in any form `normalizeId` / `normalizeFeatureId`
-  accept; anything other than one of each exits 1.
-- **Already in the feature.** A story that already names the feature (in any
-  form `normalizeFeatureId` accepts) keeps its file, but its run edges are
-  still turned (see **Order edges**), and `blockers.json` is written and
-  committed. With no edge to turn, it is a no-op: exit 0, nothing written or
-  committed, and stderr says so. `--json` `changed` is the `feature:` line
-  alone, so it is `false` for a rerun that turned edges.
-- **Refusals** (exit 1, nothing written), checked under the backlog lock on
-  the files as they are then: a missing story or feature; a feature file
-  whose `feature_id:` is not its directory's feature; a story whose
-  component names no repo, or is absent or unknown (`storyRepoOrExit`, in
-  every feature status); a `done` or
-  `superseded` feature (`closedFeatureRefusal`, as `bl new F-<n>`); a story
-  whose `feature:` names another feature, or that is not `draft` or
-  `refined` (`storyMoveRefusal`, as `bl new --feature … S-<n>`: an
-  `in_progress` story is someone's work in flight, and this feature's merge
-  would mark it done); a run edge with `active_when` between the story and a
-  story of the feature (`joinRefusal`: an order edge takes no `active_when`);
-  and, for a started feature (`isFeatureBranched`), a
-  story whose component's repo is not in `reposForFeature`. Only those have
-  branches and worktrees, so before the feature runs a story in a new repo
-  simply joins it. The message names `bl side <repo> --from F-<n>` as the way
-  to bring a repo in; attach prepares no worktree and stays a backlog edit.
-- **Order edges.** Each run edge in `blockers.json` between the story and a
-  story of the feature becomes an order edge (`orderJoinedEdges`, F-111 D5),
-  since a run edge inside one feature would hold the feature on itself. A
-  story already in the feature gets the same turn, so a rerun finishes what a
-  failure between the two writes left. If that write fails, the story gets
-  its old text back and attach exits 1. When `blockers.json` or the story
-  cannot be put back, attach also exits 1, and the message names each file
-  left changed (`left`, `unrecovered`).
-- **Commit.** `syncAndCommit` of the story directory, with `blockers.json`
-  when an edge changed: `chore: attach S-<n> to F-<n>`. `--no-sync` writes the
-  story and `blockers.json` under the lock and commits nothing, as
-  `bl new --no-sync` does.
-- **Failure.** Attach creates nothing, so there is no repair record
-  (`feature-links.js`): the story is written through `updateSpecFile`, and a
-  write that fails part way leaves it whole.
-- **In the blocked-by-bug prompt** (`prompts/_blocked-by-bug.md`), an agent
-  whose bug already has a story runs `bl attach S-<id> <F-n> --no-sync` in
-  place of `bl new`. A repo outside the feature goes through `bl side`
-  (naming the existing story); any other refusal or failure leaves the bug
-  fixed and recorded as an operator task (`bl task … --gate none`), never a
-  second story. None of attach's refusals is an escalation.
+- **Membership.** A story's `feature:` is the only statement of membership (F-77 D3). `bl run`
+  runs the stories that name the feature, the feature's page lists them, and `bl merge` marks
+  them done. `bl attach` sets the key: it fills an empty key in place, or adds a missing one
+  last. That is the same write that `bl new F-<n>` makes for a story it creates. `bl attach`
+  writes nothing to the feature. It does not change `status:`, `found_by:` or the story's
+  sections.
+- **Ids** come in either order, in any form that `normalizeId` and `normalizeFeatureId` accept.
+  Anything other than one story id and one feature id exits 1.
+- **Already in the feature.** A story that already names the feature (in any form that
+  `normalizeFeatureId` accepts) keeps its file. But `bl attach` still turns its run edges (see
+  **Order edges**), and writes and commits `blockers.json`. With no edge to turn, it is a no-op:
+  it exits 0, writes and commits nothing, and says so on stderr. The `changed` field of `--json`
+  covers the `feature:` line alone, so it is `false` for a rerun that turned edges.
+- **Refusals** exit 1 and write nothing. `bl attach` checks them under the backlog lock, on the
+  files as they are then:
+  - a missing story or feature;
+  - a feature file whose `feature_id:` is not its directory's feature;
+  - a story whose component names no repo, or is absent or unknown (`storyRepoOrExit`, in every
+    feature status);
+  - a `done` or `superseded` feature (`closedFeatureRefusal`, as `bl new F-<n>` refuses it);
+  - a story whose `feature:` names another feature, or whose status is not `draft` or `refined`
+    (`storyMoveRefusal`, as `bl new --feature … S-<n>` refuses it). An `in_progress` story is
+    someone's work in flight, and this feature's merge would mark it done.
+  - a run edge with `active_when` between the story and a story of the feature (`joinRefusal`):
+    an order edge takes no `active_when`;
+  - for a started feature (`isFeatureBranched`), a story whose component's repo is not in
+    `reposForFeature`. Only a started feature has branches and worktrees, so before the feature
+    runs, a story in a new repo joins it.
+
+  The message of the last refusal names `bl side <repo> --from F-<n>` as the way to bring a
+  repo in. `bl attach` prepares no worktree and stays a backlog edit.
+
+- **Order edges.** Each run edge in `blockers.json` between the story and a story of the
+  feature becomes an order edge (`orderJoinedEdges`, F-111 D5). A run edge inside one feature
+  would hold the feature on itself. A story already in the feature gets the same turn, so a
+  rerun finishes what a failure between the two writes left. If the write of `blockers.json`
+  fails, the story gets its old text back and `bl attach` exits 1. If `blockers.json` or the
+  story cannot be put back, `bl attach` also exits 1, and the message names each file left
+  changed (`left`, `unrecovered`).
+- **Commit.** `bl attach` runs `syncAndCommit` on the story directory, with `blockers.json`
+  when an edge changed: `chore: attach S-<n> to F-<n>`. With `--no-sync`, it writes the story
+  and `blockers.json` under the lock and commits nothing, as `bl new --no-sync` does.
+- **Failure.** `bl attach` creates nothing, so it has no repair record (`feature-links.js`). It
+  writes the story through `updateSpecFile`, and a write that fails part way leaves the story
+  whole.
+- **In the blocked-by-bug prompt** (`prompts/_blocked-by-bug.md`), an agent whose bug already
+  has a story runs `bl attach S-<id> <F-n> --no-sync` in place of `bl new`. If the story's repo
+  is outside the feature, the agent uses `bl side` and names the existing story. Any other
+  refusal or failure leaves the bug fixed and recorded as an operator task
+  (`bl task … --gate none`), never as a second story. No refusal of `bl attach` is an
+  escalation.
 
 ### `bl batch`
 
-Build a story batch (F-125 D1, `src/batch-cmd.js`):
+`bl batch` builds a story batch (F-125 D1, `src/batch-cmd.js`):
 
 ```bash
 bl batch <S-n> <S-n>… --title <t> [-A <agent>] [--model <m>]
 ```
 
-- **Refusals** (exit 1, nothing written), checked once before the backlog
-  lock and again under it: fewer than two stories, no `--title`, a story not
-  found, not refined and unstarted, in a feature, in a batch, or held at its
-  `run` gate by an edge whose blocker is not one of the stories
-  (`heldBy`); and a run edge with `active_when` between two of them
-  (`joinRefusal`). Each line names the story and the reason
-  (`batchRefusals`). Then bl takes each story's work unit lock and holds it
-  to its end; a story that another process holds refuses the batch, with
-  nothing written.
-- **Writes** under the backlog lock: `batches/B<n>-<slug>/index.md` from
-  `templates/batch.md`, with the flow's initial `batch` status (`approved`
-  by `new`); `batch: B-<n>` on each story; and each run edge between two of
-  them turned into an order edge (`orderJoinedEdges`). A repair record
-  (`.bl/run/B-<n>.links.json`, `feature-links.js`, as `bl new --feature`
-  writes) holds each story's bytes before the first write. A failed write
-  restores the stories and removes the directory (`settleFailedWrite`). When
-  a restore fails, the record stays, and the next bl command rolls the batch
-  back: a batch record settles as complete only when every story names the
-  batch and no run edge is left between two of them. Then `syncAndCommit`
-  commits them as `chore: add B-<n>`. A `flow.json` without the `batch` type
-  refuses with the `FlowError` that names it.
-- **The cross-story pass.** One headless session on `prompts/batch-build.md`
-  (mode `refine`, in the backlog root), under the work unit locks of the
-  batch and its stories (the stories' taken again, one depth deeper). It
-  carries `{{executionInputs}}`. It may correct the
-  stories' Implementation Plans and add order edges between them with
-  `bl block add` (which commits `blockers.json`), and nothing else. bl then
-  commits what changed in the batch's and the stories' directories
-  (`commitChangedSince`, `chore: B-<n> cross-story pass`). A session that
-  fails leaves the batch built and exits 1.
-- **stdout** is the new batch's `index.md`, relative to the backlog root.
+- **Refusals** exit 1 and write nothing. `bl batch` checks them once before it takes the
+  backlog lock, and again under the lock:
+  - fewer than two stories, or no `--title`;
+  - a story that is not found, is not both refined and unstarted, is in a feature, or is in a
+    story batch;
+  - a story held at its `run` gate by an edge whose blocker is not one of the stories
+    (`heldBy`);
+  - a run edge with `active_when` between two of the stories (`joinRefusal`).
+
+  Each line names the story and the reason (`batchRefusals`). Then bl takes the work unit lock
+  of each story, and holds it to the end of `bl batch`. If another process holds the lock of a
+  story, `bl batch` refuses, with nothing written.
+
+- **Writes**, under the backlog lock:
+  - `batches/B<n>-<slug>/index.md` from `templates/batch.md`, with the flow's initial `batch`
+    status (`approved` by `new`);
+  - `batch: B-<n>` on each story;
+  - each run edge between two of the stories, turned into an order edge (`orderJoinedEdges`).
+
+  Before the first write, a repair record holds the bytes of each story
+  (`.bl/run/B-<n>.links.json`, `feature-links.js`, as `bl new --feature` writes it). If a write
+  fails, `bl batch` restores the stories and removes the directory (`settleFailedWrite`). If a
+  restore fails, the record stays, and the next bl command rolls the story batch back. The record
+  settles as complete only when every story names the story batch, and no run edge is left
+  between two of the stories. After the writes, `syncAndCommit` commits them as
+  `chore: add B-<n>`. A `flow.json` without the `batch` type refuses with the `FlowError` that
+  names it.
+
+- **The cross-story pass.** bl runs one headless session on `prompts/batch-build.md` (mode
+  `refine`, in the backlog root). The session runs under the work unit locks of the story batch
+  and its stories; bl takes the stories' locks again, one depth deeper. The prompt carries
+  `{{executionInputs}}`. The session may correct the stories' Implementation Plans, and add
+  order edges between the stories with `bl block add` (which commits `blockers.json`). It may
+  do nothing else. bl then commits what changed in the directories of the story batch and its
+  stories (`commitChangedSince`, `chore: B-<n> cross-story pass`). If the session fails, the
+  story batch stays built and `bl batch` exits 1.
+- **stdout** is the path of the new story batch's `index.md`, relative to the backlog root.
 
 ### `bl move`
 
-Move backlog stories to another component (F-61 D5, `src/move.js`):
+`bl move` moves backlog stories to another component (F-61 D5, `src/move.js`):
 
 ```bash
 bl move <S-n>… <C-n> [--no-sync] [--json]
 ```
 
-- **What moves.** A story's component is its `component:` key, and its one
-  repo is that component's (F-52 D1), so re-homing a mis-filed story is that
-  key and nothing else. `bl move` rewrites it through `updateSpecFile` for
-  every story named; the story's status, feature and sections stay. A move to
-  a component in another repo moves the story to that repo, which is allowed
-  for any story nothing has branched.
-- **Ids** in any order, in any form `normalizeId` / `normalizeComponentId`
-  accept: exactly one component and at least one story (a repeat counts
-  once); anything else exits 1.
-- **Unchanged.** A story already in the component is left alone, whatever
-  its status, and stderr says so. With every story unchanged nothing is
-  written or committed.
-- **Refusals** (exit 1, nothing written, every offending story listed),
-  checked under the backlog lock on the files as they are then, before any
-  write: an unknown component, or one that names no repo; an unknown story;
-  a story that is not `draft` or `refined` (an `in_progress` story has a
-  worktree in its current repo); and a story whose repo would change while
-  its feature has started (`isFeatureBranched`: that feature's branches span a
-  fixed set of repos, as `bl attach` refuses a story in another repo). A
-  story is in the feature its `feature:` names (F-77 D3). A move within the
-  repo is fine there. A story whose
-  component is unknown is moved, not refused: `bl move` is how it is fixed.
-- **Commit.** `syncAndCommit` of the moved stories' directories:
-  `chore: move S-<a>, S-<b> to C<n>`. `--no-sync` writes the stories under
-  the lock and commits nothing.
-- **Failure.** When a write fails, the stories written before it get their
-  `component:` from before the move back through `updateSpecFile`, read
-  under the spec lock, so what another writer saved since (a token total, a
-  status, the body) stays, and the command exits 1 naming the failed story
-  and what was restored (or, when a restore fails too, which stories to set
-  back by hand).
-  `BL_INTERNAL_TEST_FAIL_ON_LINK=<S-n>` fails that story's write.
-- **`--json`** prints `{ schema: "bl-move-json/v1", component, moved,
-unchanged }`: the canonical component id and the story ids of each kind.
+- **What moves.** A story's component is its `component:` key, and its one repo is that
+  component's (F-52 D1). So to re-home a mis-filed story, `bl move` changes that key and
+  nothing else. It rewrites the key through `updateSpecFile` for every story named. The story's
+  status, feature and sections stay. A move to a component in another repo moves the story to
+  that repo. bl allows that for any story that nothing has branched.
+- **Ids** come in any order, in any form that `normalizeId` and `normalizeComponentId` accept.
+  There must be exactly one component and at least one story; a repeated story counts once.
+  Anything else exits 1.
+- **Unchanged.** `bl move` leaves a story that is already in the component alone, whatever its
+  status, and says so on stderr. If every story is unchanged, nothing is written or committed.
+- **Refusals** exit 1, write nothing and list every story at fault. `bl move` checks them under
+  the backlog lock, on the files as they are then, before any write:
+  - an unknown component, or one that names no repo;
+  - an unknown story;
+  - a story that is not `draft` or `refined` (an `in_progress` story has a worktree in its
+    current repo);
+  - a story whose repo would change while its feature has started (`isFeatureBranched`). The
+    branches of that feature span a fixed list of repos. `bl attach` refuses a story in another
+    repo for the same reason.
+
+  A story is in the feature that its `feature:` names (F-77 D3). A move within the repo is
+  allowed in a started feature. `bl move` moves a story whose component is unknown, and does not
+  refuse it: `bl move` is how that story is fixed.
+
+- **Commit.** `bl move` runs `syncAndCommit` on the directories of the moved stories:
+  `chore: move S-<a>, S-<b> to C<n>`. With `--no-sync`, it writes the stories under the lock
+  and commits nothing.
+- **Failure.** If a write fails, each story written before it gets back its `component:` from
+  before the move, through `updateSpecFile`. `updateSpecFile` reads the story under the spec
+  lock, so what another writer saved since (a token total, a status, the body) stays. The
+  command exits 1, and names the failed story and what it restored. If a restore fails too, the
+  message names the stories to set back by hand. `BL_INTERNAL_TEST_FAIL_ON_LINK=<S-n>` fails the
+  write of that story.
+- **`--json`** prints `{ schema: "bl-move-json/v1", component, moved, unchanged }`: the
+  canonical component id, and the story ids of each kind.
 
 ### `bl task`
 
-A task is an action with an owner and no branch (F-65 D1, `src/task.js`): run a migration
-between the run and the merge, re-mint a key, reinstall something on every machine. It is not
-a story: no repo, branch, change document, points or review.
+A task is an action with an owner and no branch (F-65 D1, `src/task.js`). Examples are a
+migration to run between `bl run` and `bl merge`, a key to re-mint, and something to reinstall
+on every machine. A task is not a story: it has no repo, branch, change document, points or
+review.
 
 ```bash
 bl task F-53 --gate merge --title "Run the tasks migration" --body-file b.md  # → T-7
@@ -3746,82 +3767,109 @@ bl task list [--open] [F-53]     # T-7  F-53  draft  Run the tasks migration
 bl task done T-7 "ran it, 13 tasks filed"                                     # operator only
 ```
 
-- **The file.** `tasks/T<n>-<slug>.md`, one flat file per task, never moved. YAML frontmatter
-  (`parseFrontmatter` / `serializeFrontmatter`), keys in this order: `task_id` (`T-<n>`),
-  `title`, `unit` (the `F-<n>` or `S-<n>` it belongs to), `owner` (`operator`, the only one so
-  far), `status` (`draft` or `done`, `flow.json`'s `task` type), `added`, and at done `done`
-  (the date) and `note` (what was done, or why it is moot). No `points`, no `gate`. The body
-  starts `# T-<n> · <title>` and holds the task: what to do, the exact commands as pasteable
-  blocks with their expected output, and why it is a task and not code.
-- **Ids** come from a global counter like stories': one past the highest `T<n>` file or
-  `task_id` (`bl next-id task`). `bl task` takes the next one under the backlog lock, so two
+- **The file.** `tasks/T<n>-<slug>.md` is one flat file per task, and it never moves. Its YAML
+  frontmatter (`parseFrontmatter` / `serializeFrontmatter`) has these keys, in this order:
+  - `task_id` (`T-<n>`);
+  - `title`;
+  - `unit`: the `F-<n>` or `S-<n>` that the task belongs to;
+  - `owner`: `operator`, the only value so far;
+  - `status`: `draft` or `done`, the `task` type of `flow.json`;
+  - `added`;
+  - when the task is done, `done` (the date) and `note` (what was done, or why the task is
+    moot).
+
+  A task has no `points` and no `gate`. The body starts `# T-<n> · <title>` and holds the task.
+  It says what to do, with the exact commands as pasteable blocks and their expected output. It
+  also says why it is a task and not code.
+
+- **Ids** come from a global counter, as story ids do: one past the highest `T<n>` file or
+  `task_id` (`bl next-id task`). `bl task` takes the next id under the backlog lock, so two
   calls in a row get consecutive ids.
 - **`bl task <F-n|B-n|S-n> --title <t> --gate <merge|next|none> [--body-file <path>|-] [--json]`**
-  checks the unit exists, takes the backlog lock, writes the file (the log's first entry,
-  `draft` by `new`; `owner: operator`; `added: <today>`), then the task's edge in `blockers.json` (below), and
-  commits the task file and `blockers.json` (with `.gitattributes` while HEAD lacks the merge
-  driver's line) in one commit: `chore: task T-<n> (<unit>)`. The unit's file is not
-  written: its `## Tasks` table is rendered when the page is read. stdout is `T-<n>`; `--json` prints
-  `{ schema: "bl-task-json/v1", id, path, unit, edges }`. An unknown unit, a missing `--title`,
-  a missing `--gate` or one outside the three, a `Decide:` title with a gate other than `merge`,
-  an unreadable body file or one with frontmatter is one `bl task: <reason>` line on stderr and exit 1, with nothing written. A
-  failure before the commit puts the files back.
-- **`--gate`** is a shorthand for the task's edge (F-65 D2), the one `bl block add` would file
-  and checked the same way (`writeEdge` in `src/block.js`, which `bl block add` shares:
-  `edgeProblems`, a duplicate, `wouldCycle`, the merge driver readied first). The holds are
-  F-66's checks (`mergeGates`, `dispatch`); `bl task` adds none.
+  does these steps:
+  1. It checks that the work unit exists, and takes the backlog lock.
+  2. It writes the task file: the log's first entry (`draft` by `new`), `owner: operator` and
+     `added: <today>`.
+  3. It writes the task's edge in `blockers.json` (see `--gate` below).
+  4. It commits the task file and `blockers.json` in one commit:
+     `chore: task T-<n> (<unit>)`. While HEAD lacks the line of the merge driver, the commit
+     also holds `.gitattributes`.
+
+  `bl task` does not write the work unit's file: bl renders its `## Tasks` table when the page
+  is read. stdout is `T-<n>`. `--json` prints
+  `{ schema: "bl-task-json/v1", id, path, unit, edges }`. Each of these errors prints one
+  `bl task: <reason>` line on stderr, exits 1 and writes nothing:
+  - an unknown work unit;
+  - a missing `--title`;
+  - a missing `--gate`, or one outside the three;
+  - a `Decide:` title with a gate other than `merge`;
+  - a body file that cannot be read, or that has frontmatter.
+
+  A failure before the commit puts the files back.
+
+- **`--gate`** is a shorthand for the task's edge (F-65 D2). It is the edge that `bl block add`
+  would file, and bl checks it the same way: `writeEdge` in `src/block.js`, which
+  `bl block add` shares (`edgeProblems`, a duplicate, `wouldCycle`, the merge driver readied
+  first). The holds are F-66's checks (`mergeGates`, `dispatch`); `bl task` adds none.
 
   - `merge`: `{ blocker: T-<n>, gate: done, unit: <unit>, until: done }`. `bl merge <unit>`
-    refuses until `bl task done`: a step between the run and the merge (F-53's migration).
-  - `next`: `{ blocker: T-<n>, gate: in_progress, unit: "*", until: done, active_when: … }` with
-    `active_when: { unit: <unit>, status: done }`. Nothing while the unit is open; once it is done, `bl run` and
-    `bl implement` of every unit refuse until `bl task done`. The `task` type has no
-    `in_progress`, so the wildcard never holds a task and is no `blockers-cycle`.
-  - `none`: no edge. Listed in the inbox, holds nothing: a dated reminder, or a fact the
-    operator must see once; `bl task done` is the acknowledgement.
+    refuses until `bl task done`. Use it for a step between `bl run` and `bl merge` (F-53's
+    migration).
+  - `next`: `{ blocker: T-<n>, gate: in_progress, unit: "*", until: done, active_when: … }`,
+    with `active_when: { unit: <unit>, status: done }`. It holds nothing until the work unit
+    is done. Then `bl run` and `bl implement` of every work unit refuse until `bl task done`.
+    The `task` type has no `in_progress`, so the wildcard never holds a task and is no
+    `blockers-cycle`.
+  - `none`: no edge. The inbox lists the task, and it holds nothing. Use it for a dated
+    reminder, or for a fact the operator must see once; `bl task done` is the acknowledgement.
 
-  An edge `writeEdge` refuses is `bl block add`'s reason on a `bl task: <reason>` line, exit 1,
-  with the task file removed and nothing committed. Any other hold (on another unit, at another
-  gate) is `bl block add T-<n> …`. There is no override flag: `bl task done` with a note saying
-  what was done, or why the hold is moot, is the record.
+  If `writeEdge` refuses an edge, `bl task` prints the reason that `bl block add` gives, on a
+  `bl task: <reason>` line, and exits 1. It removes the task file and commits nothing. For any
+  other hold (on another work unit, at another gate), use `bl block add T-<n> …`. There is no
+  override flag. The record is `bl task done` with a note that says what was done, or why the
+  hold is moot.
 
 - **A decision task** has a title that starts with `Decide:` (`DECISION_PREFIX` in
-  `src/task.js`, case as written) and takes `--gate merge` only, so no unit merges past an open
-  decision (S-1403); `bl task` refuses `none` and `next` for it.
+  `src/task.js`, case as written). It takes `--gate merge` only, so no work unit merges past a
+  decision task that is not done (S-1403). `bl task` refuses `none` and `next` for it.
 
-- **`bl task done <T-n> [note]`** records `done` by `done` (which sets `done: <today>`) and `note:`, syncs and
-  commits `chore: task T-<n> done[: <note>]`; a task already done refuses. Its edges stay in
-  `blockers.json`, met. It is the operator's: `MODE_DENY` in `src/allowed-tools.js` denies
-  `bl task done:*` in every mode (generator v15), beside `bl block remove:*`, since closing a
-  task lifts the holds its edges make. `bl task` and `bl task list` stay allowed through `bl:*`.
+- **`bl task done <T-n> [note]`** records `done` by `done`, which sets `done: <today>`, and
+  sets `note:`. Then it syncs and commits `chore: task T-<n> done[: <note>]`. It refuses a task
+  that is already done. The task's edges stay in `blockers.json`, met. The command is the
+  operator's: `MODE_DENY` in `src/allowed-tools.js` denies `bl task done:*` in every mode
+  (generator v15), beside `bl block remove:*`. The reason is that a task marked done lifts the
+  holds that its edges make. `bl task` and `bl task list` stay allowed through `bl:*`.
 
-- **`bl task list [--open] [<F-n|S-n>]`** prints one line per task,
-  `T-<n>  <unit>  <status>[ <done date>]  <title>`, in id order. `--open` keeps the tasks that
-  are not `done`.
-- **A unit lists no tasks.** A unit's page renders a `## Tasks` table (ID, Title, Holds,
-  Status, Done) from the task files' `unit:` when it is read (`renderPage`), after `## Stories`
-  in a feature and after `## Dependencies` in a story, only when the unit has a task; nothing
-  writes it into the unit's file. Holds names each edge the task is the blocker of in
-  `blockers.json` by the verbs whose nominal path enters its gate's status (`holdsText`,
-  `Flow.nominalPath`, less `UNHELD_VERBS`), for example `bl merge F-3` or
-  `bl run, bl implement (every unit) once F-54 is done`; `none` when it has none. A
-  `bl block add T-<n> …` shows there at the next read.
-- **A task is a unit in the graph** (`unitIndex`): it can be the `blocker` of an edge or its
-  `active_when` unit (`bl block add T-7 --gate done --unit F-53 --until done`). A hold on a
-  task can gate only a task status, `draft` or `done`; any other gate is `blockers-gate`.
-- `bl task` and `bl task done` pull the backlog first (`commandPullsBacklog`); `bl task list`
+- **`bl task list [--open] [<F-n|S-n>]`** prints one line per task, in id order:
+  `T-<n>  <unit>  <status>[ <done date>]  <title>`. `--open` keeps the tasks that are not
+  `done`.
+- **A work unit lists no tasks.** When a work unit's page is read, bl renders a `## Tasks`
+  table from the `unit:` of the task files (`renderPage`). Its columns are ID, Title, Holds,
+  Status and Done. The
+  table comes after `## Stories` in a feature and after `## Dependencies` in a story. It is
+  there only when the work unit has a task, and nothing writes it into the work unit's file.
+  The Holds column names each edge in `blockers.json` that the task is the blocker of. It names
+  the edge by the verbs whose nominal path enters the status of the edge's gate (`holdsText`,
+  `Flow.nominalPath`, less `UNHELD_VERBS`). Examples are `bl merge F-3` and
+  `bl run, bl implement (every unit) once F-54 is done`. The column says `none` when the task
+  is the blocker of no edge. A `bl block add T-<n> …` shows there at the next read.
+- **A task is a node in the graph** (`unitIndex`). It can be the `blocker` of an edge, or the
+  `unit` of its `active_when` (`bl block add T-7 --gate done --unit F-53 --until done`). A
+  hold on a task can gate only a task status, `draft` or `done`. Any other gate is a
+  `blockers-gate` problem.
+- `bl task` and `bl task done` pull the backlog first (`commandPullsBacklog`). `bl task list`
   does not.
-- `bl validate` checks the files: `task-unit` and `task-field` (see **`bl validate`**).
+- `bl validate` checks the task files: `task-unit` and `task-field` (see **`bl validate`**).
 
 ### `bl next-id`
 
-Print the next available story, component, epic or task ID(s) to stdout. Pure
-query — no reservation, no lockfile. Concurrent callers may receive the same
-answer; the reservation points are `bl new` and `bl task`, which hold the
-backlog lock during ID assignment.
+`bl next-id` prints the next available story, component, epic or task ID or IDs to stdout. It
+is a pure query: it reserves nothing and takes no lockfile. Concurrent callers may get the same
+answer. The reservation points are `bl new` and `bl task`, which hold the backlog lock while
+they assign the ID.
 
-Story, component, epic and task IDs are globally unique across the backlog repo.
-Epics are numbered from E50 (E00–E49 were components).
+Story, component, epic and task IDs are globally unique across the backlog repo. Epics are
+numbered from E50 (E00–E49 were components).
 
 ```bash
 bl next-id story                 # → S-391
@@ -3832,7 +3880,7 @@ bl next-id epic                  # → E69
 bl next-id task                  # → T-14
 ```
 
-`--count` defaults to 1 and must be a positive integer ≤ 1000. The first
+`--count` defaults to 1, and it must be a positive integer of at most 1000. The first
 positional argument must be exactly `story`, `component`, `epic` or `task`. `bl next-id` does
 not append to the activity log.
 
