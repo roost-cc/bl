@@ -8,24 +8,26 @@ Each repo's backlog location is configured in `backlog.json` at the repo root:
 }
 ```
 
-The `backlog` key is the relative path to the backlog directory. Stories, components and features are plain
-Markdown files with YAML frontmatter. No committed file holds a derived list: `bl report` and
-`bl view` render the index tables from the frontmatter when a page is read.
+The `backlog` key is the relative path to the backlog directory. Stories, components and
+features are plain Markdown files with YAML frontmatter. No committed file holds a derived list.
+`bl report` and `bl view` render the index tables from the frontmatter when a page is read.
 
-Run `bl agents` from any repo to print this file, the plain-writing guide, the collaboration rules
-(how a session works with the operator) and, inside a backlog, each dictionary its `backlog.json`
-`"dictionaries"` lists.
+Run `bl agents` from any repo to print these documents:
+
+1. this file;
+2. the plain-writing guide;
+3. the collaboration rules (how a session works with the operator);
+4. inside a backlog, each dictionary that its `backlog.json` lists under `"dictionaries"`.
 
 ### Stream policy
 
 `bl` follows the standard Unix split:
 
-- **stdout** carries the answer to the user's question — paths, IDs,
-  tables, JSON. Pipeable. One logical record per command.
-- **stderr** carries progress, status, warnings, and explanatory output.
-  Use `2>/dev/null` to suppress.
-- **exit code** is non-zero on error; an error message goes to stderr via
-  `console.error`.
+- **stdout** carries the answer to the caller's question: paths, IDs, tables, JSON. You can pipe
+  it. Each command writes one logical record.
+- **stderr** carries progress, status, warnings and explanatory output. Use `2>/dev/null` to
+  hide it.
+- **exit code** is non-zero on error. The error message goes to stderr through `console.error`.
 
 Per-command stdout contracts:
 
@@ -53,7 +55,7 @@ Per-command stdout contracts:
 | `bl force`           | nothing (skip list, question, progress → stderr)          |
 | `bl grep`            | match table                                               |
 | `bl what-next`       | one line: the suggested story ID (empty if no suggestion) |
-| `bl next`            | one line: the next unit ID, F-n or S-n (empty if none)    |
+| `bl next`            | one line: next work unit ID, F-n or S-n (empty if none)   |
 | `bl rank`            | no args: the order; an edit: nothing (progress → stderr)  |
 | `bl deps`            | one story ID per line, leaf-first                         |
 | `bl log`             | log lines                                                 |
@@ -94,41 +96,54 @@ Per-command stdout contracts:
 | `bl help`            | help text                                                 |
 | `bl <cmd> --help`    | help text                                                 |
 
-`bl done`, `bl new` (unless `--no-sync` or `--dry-run`), `bl side`, `bl attach`
-and `bl move` (each unless `--no-sync`), `bl batch`, and `bl merge`
-commit their own backlog changes on the backlog's current branch: the story
-they touched and a new component dir or appended feature file. No command
-writes an index or table (F-79). They commit through `syncAndCommit` (`src/sync.js`)
-in the same backlog-lock hold as their own writes, so other uncommitted or staged edits
-in the backlog stay out. The commit notice goes to stderr. When the backlog is
-not a git repo they skip the commit; when the commit fails they exit 1 and
-list the paths to commit by hand. `bl task` and `bl task done` commit the
-same way, with the task file and `blockers.json` among the paths.
-After a failed commit, a rerun of `bl done` or `bl approve` commits the file that the failed run
-left, if its content is the same (`commitAndRecord` and `failedCommitPending`, S-1347).
+Some commands commit their own backlog changes on the backlog's current branch:
 
-Feature `bl merge`, story `bl merge`'s triage, `bl refine` and `bl init` commit what changed in
-the backlog since they started instead (`commitChangedSince`, `src/backlog-commit.js`, S-1330):
-a `dirtySnapshot` taken before they write, compared with one taken at the end. With the `scope`
-option (a function that returns backlog-relative directories or files, F-122 D8), only a changed
-path equal to or under an entry is committed. `commitChangedSince` calls it after the command
-wrote; if it throws, nothing is committed and every changed path goes to the owner's record, as
-for a failed commit (`recordChangedSince`). A record that cannot be read stays as it is and is
-named, and bl says it recorded the paths only after it wrote the record. Each changed path
-outside the scope stays uncommitted and is named in one line,
-`Left uncommitted, outside <owner>'s work units: <paths>`. A path carried from a failed commit's
-record (`readFailedCommit`) and outside the scope stays in the record. Without `scope`
-(`bl init`), every changed path is committed. Feature `bl merge`'s scope is its work units'
-directories (`scope()`), its release manifest (`writeReleaseManifest`) and its theme's `index.md`
-(`recordThemeState`), with the owner `merge F-n`. `bl batch`'s cross-story pass commits the same
-way, with the owner `batch B-n` and its work units' directories as the scope. The triage's scope is the merged story's
-directory, with the owner `triage S-n`, so the agent commits the stories it creates itself
-(`prompts/cleanup-triage.md`). `bl refine`'s scope is its work units' directories.
+- `bl done`, `bl batch` and `bl merge`;
+- `bl new`, unless `--no-sync` or `--dry-run` is given;
+- `bl side`, `bl attach` and `bl move`, each unless `--no-sync` is given.
 
-When adding a new command, ask: "what is the one piece of information
-the caller needs?" That goes on stdout. Everything else goes through
-the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
-`console.error`.
+The commit holds the story they touched, and a new component directory or an appended feature
+file. No command writes an index or table (F-79). The commands commit through `syncAndCommit`
+(`src/sync.js`), in the same backlog-lock hold as their own writes. So other uncommitted or
+staged edits in the backlog stay out of the commit. The commit notice goes to stderr. If the
+backlog is not a git repo, they skip the commit. If the commit fails, they exit 1 and list the
+paths to commit by hand. `bl task` and `bl task done` commit the same way, with the task file and
+`blockers.json` among the paths. After a failed commit, a rerun of `bl done` or `bl approve`
+commits the file that the failed run left, if its content is the same (`commitAndRecord` and
+`failedCommitPending`, S-1347).
+
+Four commands commit what changed in the backlog since they started instead: feature
+`bl merge`, story `bl merge`'s triage, `bl refine` and `bl init` (`commitChangedSince`,
+`src/backlog-commit.js`, S-1330). Each one takes a `dirtySnapshot` before it writes, and compares
+it with one taken at the end.
+
+- **The scope.** The `scope` option is a function that returns backlog-relative directories or
+  files (F-122 D8). With it, bl commits only a changed path that is equal to an entry or under
+  one. Without `scope` (`bl init`), bl commits every changed path.
+- **A scope that throws.** `commitChangedSince` calls `scope` after the command wrote. If `scope`
+  throws, bl commits nothing, and every changed path goes to the owner's record, as for a failed
+  commit (`recordChangedSince`). If bl cannot read the record, it leaves the record as it is and
+  names it. bl says that it recorded the paths only after it wrote the record.
+- **Paths outside the scope.** Each changed path outside the scope stays uncommitted. bl names
+  them in one line: `Left uncommitted, outside <owner>'s work units: <paths>`. A path that came
+  from a failed commit's record (`readFailedCommit`) and is outside the scope stays in the
+  record.
+
+Each command's owner and scope:
+
+- Feature `bl merge`: the owner is `merge F-n`. The scope is its work units' directories
+  (`scope()`), its release manifest (`writeReleaseManifest`) and its theme's `index.md`
+  (`recordThemeState`).
+- `bl batch`'s cross-story pass commits the same way. The owner is `batch B-n`, and the scope is
+  its work units' directories.
+- Story `bl merge`'s triage: the owner is `triage S-n`, and the scope is the merged story's
+  directory. So the agent commits the stories that it creates itself
+  (`prompts/cleanup-triage.md`).
+- `bl refine`: the scope is its work units' directories.
+
+When you add a new command, ask: "What is the one piece of information that the caller needs?"
+That goes on stdout. Everything else goes through the `info(…)` / `warn(…)` helpers in
+`src/config.js`. Errors go through `console.error`.
 
 ## Directory Layout
 
@@ -144,8 +159,8 @@ the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
                                   bl's seed, curated by the project (F-82)
   flow.json                     ← per type the statuses and the verbs between
                                   them (F-66 D1, F-69 D1); no gates (F-119 D4)
-  blockers.json                 ← every hold between units, one edge per line,
-                                  sorted, written only by bl block (F-66 D2)
+  blockers.json                 ← every hold between work units, one edge per
+                                  line, sorted, written only by bl block (F-66 D2)
   tasks/
     T3-re-mint-the-key.md       ← task: an action for the operator, one flat
                                   file, no branch (F-65 D1; see bl task)
@@ -169,21 +184,19 @@ the `info(…)` / `warn(…)` helpers in `src/config.js`. Errors go through
                                   registry and every per-repo setting (F-51 D4)
 ```
 
-Taxonomy lives in frontmatter, never in paths (F-49 D3): a unit's directory
-never moves, whatever its status, and bl reads only `stories/`, `components/`
-and `features/`; nothing under a `.completed/` directory is read. A story's
-component is its `component:`, and its repo that component's `repo`. Its theme is
-its feature's `theme:`; a story with no feature is in every theme whose `repos`
-list its component's repo (F-51 D1). No command takes a project: `--theme`
-filters by value (F-51 D5). On a `backlog.json` that still has the pre-F-51
-`projects` block, `loadConfig` throws, saying the settings now live in
-`repos`, so every command refuses (F-51's `migrate-value-axis.js` moved them;
-F-62 removed it once it had run).
+Taxonomy lives in frontmatter, never in paths (F-49 D3). A unit file's directory never moves,
+whatever its status. bl reads only `stories/`, `components/` and `features/`, and it reads
+nothing under a `.completed/` directory. A story's component is its `component:`, and its repo is
+that component's `repo`. Its theme is its feature's `theme:`. A story with no feature is in
+every theme whose `repos` lists its component's repo (F-51 D1). No command takes a project:
+`--theme` filters by value (F-51 D5). If a `backlog.json` still has the pre-F-51 `projects`
+block, `loadConfig` throws and says that the settings now live in `repos`. So every command
+refuses. (F-51's `migrate-value-axis.js` moved the settings; F-62 removed the script once it had
+run.)
 
 ### `backlog.json` `repos` (F-51 D4)
 
-`repos`, keyed by repo name, is the only list of repos and the home of every
-per-repo setting:
+`repos`, keyed by repo name, is the only list of repos. It holds every per-repo setting:
 
 ```json
 "repos": {
@@ -199,147 +212,158 @@ per-repo setting:
 }
 ```
 
-- `path` (relative to the backlog) and `deployable` (a release manifest
-  records the repo, `bl merge F-n`) are required. `loadConfig` fails naming
-  the repo and the key, and has no defaults. `update_tests` (the `plugins:`
-  the deprecated `bl updates sync` writes on the repo's update stories) is
-  optional since F-80 G3, `[]` when absent. Any other key but
-  `plugins-<stage>` and `overrides` is an error.
-- `plugins-<stage>` is the repo layer of the plugin cascade (see
-  **Activation via Frontmatter**); there is no generic `plugins:` form here.
-- `overrides` is merged over the top level by `mergeConfig` for work in that
-  repo: `configForRepo(config, repoName)`. Repo attributes and overrides stay
-  apart, because `mergeConfig` replaces every key but `plugins` and
-  `language_dispatch` wholesale.
-- A story's one repo is its component's `repo` (`unitRepo` from
-  `placeStory`, F-52 D1); a story whose component has no `repo` has none,
-  and the story verbs exit naming the component. A leftover `primary_repo`
-  or `secondary_repos` on a story is never read; `bl validate` reports it as
-  `repo-key`. A feature's repos are its
-  stories' (`featureRepoOrder`, F-52 D3); a feature run takes each
-  worktree's repo, the lead's config for the review. A plain
-  `loadConfig()` is the top level only: the cwd finds the backlog and never
-  picks a repo, so a unit resolves the same from any directory.
+- `path` (relative to the backlog) and `deployable` are required. `deployable` means that a
+  release manifest records the repo (`bl merge F-n`). If one is missing, `loadConfig` fails and
+  names the repo and the key; it has no defaults.
+- `update_tests` is optional since F-80 G3, and `[]` when absent. It holds the `plugins:` that
+  the deprecated `bl updates sync` writes on the repo's update stories.
+- `plugins-<stage>` is the repo layer of the plugin cascade (see **Activation via
+  Frontmatter**). There is no generic `plugins:` form here.
+- `overrides` is merged over the top level by `mergeConfig` for work in that repo:
+  `configForRepo(config, repoName)`. Repo attributes and overrides stay apart, because
+  `mergeConfig` replaces every key but `plugins` and `language_dispatch` wholesale.
+- Any other key is an error.
+
+How a work unit gets its repos:
+
+- A story's one repo is its component's `repo` (`unitRepo` from `placeStory`, F-52 D1). If the
+  story's component has no `repo`, the story has none, and the story verbs exit and name the
+  component.
+- bl never reads a leftover `primary_repo` or `secondary_repos` on a story. `bl validate` reports
+  it as `repo-key`.
+- A feature's repos are its stories' repos (`featureRepoOrder`, F-52 D3). In a feature run, each
+  worktree takes its own repo's config, and the review takes the lead's config.
+- A plain `loadConfig()` gives the top level only. The cwd finds the backlog and never picks a
+  repo, so a work unit resolves the same from any directory.
 
 ### `backlog.json` `title`: the backlog's display name (S-581)
 
-`title` is the name `bl init` gives a new top-level `index.md`: its frontmatter
-`title:` and its `# ` heading, written once, when the file is missing (F-79 D3).
-After that the title is hand-written like the rest of the page, so a change to
-the key does not reach it. It is optional; unset, the name is
-`Backlog` (`DEFAULT_BACKLOG_TITLE`), and a value that is not a one-line,
-non-empty string makes `loadConfig` throw. `config.title` carries the resolved
-value. `bl init` writes `"title": "Backlog"` into a new `backlog.json`.
+`title` is the name that `bl init` gives a new top-level `index.md`: its frontmatter `title:`
+and its `# ` heading. `bl init` writes it once, when the file is missing (F-79 D3). After that,
+the title is hand-written like the rest of the page, so a change to the key does not reach it.
+
+The key is optional. If it is unset, the name is `Backlog` (`DEFAULT_BACKLOG_TITLE`). If the
+value is not a one-line, non-empty string, `loadConfig` throws. `config.title` carries the
+resolved value. `bl init` writes `"title": "Backlog"` into a new `backlog.json`.
 
 ### `backlog.json` `worktrees`: the worktree root (F-60 D1)
 
-`worktrees` names the **worktree root**, a directory relative to the backlog
-(`"../worktrees"`). A unit's directory is `<root>/<branch>` and each of its
-repos' worktree is `<root>/<branch>/<repo>`: a feature's, a story's, a side
-story's and an update story's alike. The layout is fixed in code, built only by
-`config.js` `worktreeRoot(config)`, `unitDirFor(config, branch)` and
-`worktreePathFor(config, repo, branch)`; no other code joins a worktree path. The
-unit directory is not a git repository, so every git command in it names its
-repo (`git -C <repo>`).
+`worktrees` names the **worktree root**, a directory relative to the backlog (`"../worktrees"`).
+A work unit's directory is `<root>/<branch>`, and each of its repos' worktree is
+`<root>/<branch>/<repo>`. This holds for a feature, a story, a side story and an update story
+alike. The layout is fixed in code. Only `config.js` builds it, with `worktreeRoot(config)`,
+`unitDirFor(config, branch)` and `worktreePathFor(config, repo, branch)`; no other code joins a
+worktree path. The work unit's directory is not a git repository, so every git command in it
+names its repo (`git -C <repo>`).
 
-- `loadConfig` requires `worktrees`, a non-empty string, with no default; `bl
-init` writes `"../worktrees"` into a new `backlog.json`. One that still holds
-  `{repo}` (the old per-repo template, `../worktrees/{repo}`) throws, naming
-  `scripts/migrate-worktree-layout.js`, which moves the worktrees; only the
-  migration loads it, through `loadConfig({ legacyWorktrees: true })`. A
-  repo's `overrides.worktrees` throws: a repo outside the unit directory
-  would split the unit.
-- A bl worktree is `<root>/<branch>/bl[/…]` (`isBlBranchPath(root, path)`):
-  `foreignCheckout` and the Codex branch-bl approval read it, never a
-  substring of the path.
-- Removing a worktree (`bl merge`'s cleanup, a `bl side` undo, an update
-  story's run) removes its unit directory too when it is empty (`story.js`
-  `removeUnitDirIfEmpty`). One that still holds another worktree stays. A
-  session's lock file is not in the unit directory: it is in the backlog's
-  `.bl/lock/` (S-1495).
-- **F-60's migration**
-  (`node scripts/migrate-worktree-layout.js [--dry-run] [--backlog <dir>]`,
-  logic in `src/migrate-worktree-layout.js`, D4) moves, for every registered repo, each linked worktree under `<root>/<repo>/` to
-  `<root>/<branch>/<repo>` with `git worktree move` (a detached update worktree
-  uses its directory name as the branch). Right after each move it points every
-  string in a `.bl/run/*.json` that is the old path or inside it (compared with
-  its links resolved) at the new one. A path that reaches a worktree through
-  a link, or leaves it through a link inside it, is first pinned to its real
-  path, before the first move, so it still matches once the link dangles,
-  in a rerun too. The moves are journaled first in
-  `.bl/migrate-worktree-layout.json`, removed once the commit lands, so a rerun
-  after a failure part-way also points the run states at the moves already
-  done. It removes the
-  `<root>/<repo>/` directories the moves emptied, leaves and lists anything
-  else in them, sets `backlog.json` `worktrees` to the root (the template with
-  `/{repo}` cut; unset meant `../worktrees/{repo}`) and commits once through
-  `migration-txn.js`. It refuses before anything moves when a live session
-  holds a worktree to move (`isSessionRunning`), a target exists or two moves share one, a file
-  or link stands where a target's parent would be made, a target lies inside a
-  worktree to move or another target, another registered repo checkout or
-  worktree lies inside a worktree to move (it would lose its git
-  registration), the journal records a move that is neither done nor still
-  planned, a run state or the journal cannot be
-  read, or (the transaction's own refusals) a `bl` run is active or the backlog is not clean
-  at `origin/main`. A dry run prints the plan, then any refusal. The moves are
-  outside the backlog, so a failed run's git rollback does not undo them; a
-  rerun moves the rest, and once done plans nothing. The operator runs it after
-  `bl merge F-60` has merged `bl` (task T-14).
+- `loadConfig` requires `worktrees`, a non-empty string, with no default. `bl init` writes
+  `"../worktrees"` into a new `backlog.json`.
+- If `worktrees` still holds `{repo}` (the old per-repo template, `../worktrees/{repo}`),
+  `loadConfig` throws. The error names `scripts/migrate-worktree-layout.js`, which moves the
+  worktrees. Only the migration loads such a config, through
+  `loadConfig({ legacyWorktrees: true })`.
+- A repo's `overrides.worktrees` throws: a repo outside the work unit's directory would split the
+  work unit.
+- A bl worktree is `<root>/<branch>/bl[/…]` (`isBlBranchPath(root, path)`). `foreignCheckout` and
+  the Codex branch-bl approval read it that way, never as a substring of the path.
+- Some steps remove a worktree: `bl merge`'s cleanup, a `bl side` undo and an update story's run.
+  Each one also removes the work unit's directory when it is empty (`story.js`
+  `removeUnitDirIfEmpty`). A work unit's directory that still holds another worktree stays. A
+  session's lock file is not in the work unit's directory: it is in the backlog's `.bl/lock/`
+  (S-1495).
+- **F-60's migration** (`node scripts/migrate-worktree-layout.js [--dry-run] [--backlog <dir>]`,
+  logic in `src/migrate-worktree-layout.js`, D4) works in these steps:
+  1. Before the first move, it pins to its real path each path that reaches a worktree through
+     a link, or leaves it through a link inside it. So the path still matches once the link
+     dangles, in a rerun too.
+  2. It records the moves in a journal, `.bl/migrate-worktree-layout.json`, before it makes
+     them. So a rerun after a failure part-way also points the run states at the moves already
+     done.
+  3. For every registered repo, it moves each linked worktree under `<root>/<repo>/` to
+     `<root>/<branch>/<repo>` with `git worktree move`. A detached update worktree uses its
+     directory name as the branch.
+  4. Right after each move, it points each string in a `.bl/run/*.json` at the new path, if the
+     string is the old path or inside it. It compares the paths with their links resolved.
+  5. It removes the `<root>/<repo>/` directories that the moves emptied. It leaves and lists
+     anything else in them.
+  6. It sets `backlog.json` `worktrees` to the root: the template with `/{repo}` cut (unset meant
+     `../worktrees/{repo}`).
+  7. It commits once through `migration-txn.js`, and removes the journal once the commit lands.
+
+  It refuses before anything moves in each of these cases:
+
+  - a live session holds a worktree to move (`isSessionRunning`);
+  - a target exists, or two moves share one;
+  - a file or link stands where a target's parent would be made;
+  - a target lies inside a worktree to move or inside another target;
+  - another registered repo checkout or worktree lies inside a worktree to move (it would lose
+    its git registration);
+  - the journal records a move that is neither done nor still planned;
+  - it cannot read a run state or the journal;
+  - the transaction's own refusals: a `bl` run is active, or the backlog is not clean at
+    `origin/main`.
+
+  A dry run prints the plan, then any refusal. The moves are outside the backlog, so a failed
+  run's git rollback does not undo them. A rerun moves the rest, and once all is done it plans
+  nothing. The operator runs the migration after `bl merge F-60` has merged `bl` (task T-14).
 
 ### Every agent session starts in its unit directory (F-60 D3)
 
-Every agent session of a unit (implement, story, fix-tests, self-review, fix,
-fix self-review, review passes and verifier, merge-resolve, and `bl implement`'s
-interactive one) is spawned with `cwd` = the unit directory, `unitDir`.
-`prepareFeatureWorktree` and `prepareStoryRun` return it beside the lead
-`worktreePath` and put it in `baseVars`; `bl review`'s and `bl merge`'s preps
-take it from the lead worktree (`unitDirOf`). `feature-run.js` `runSession`
-passes `prepUnitDir(prep)` to every session as `unitDir` and as the
-`{{unitDir}}` prompt variable (a prep with none, a test's, runs in its lead
-worktree).
+bl starts every agent session of a work unit with `cwd` set to the work unit's directory,
+`unitDir`. These sessions are implement, story, fix-tests, self-review, fix, fix self-review,
+the review passes and the verifier, merge-resolve, and `bl implement`'s interactive session.
 
-- `runHeadlessSession` / `launchSession` take `unitDir` and give the provider
-  `spawn({ cwd: unitDir, worktreePath, … })`; each provider's `spawn` runs its
-  CLI in `cwd` (default `worktreePath`). Codex runs `-C <cwd>` and adds the git
-  metadata of every repo worktree under it (`codexRepoWorktrees`) as write
-  roots, so it can commit in each. Its branch-bl approval is `./bl/bin/bl` in a
-  unit directory that holds a bl worktree, `./bin/bl` in a bl worktree.
-- Write roots are `resolvePermissionScopes(config, { unitDir })`:
-  `[unitDir, backlogRoot, …permissions.write]`, so every repo worktree under
-  the unit directory is writable; `{{worktree}}` in `permissions` is the unit
-  directory. The `Bash(rm <dir>/*)` grant names it too.
-- The session lock is one file per unit directory in the backlog's
-  `.bl/lock/` (`story.js` `sessionLockPath`, S-1495). It is a kernel lock (`kernel-lock.js`, F-104): the kernel frees it when its
-  holder ends, and its file stays. `runHeadlessSession` and `launchSession`
-  take it with one try-lock (`session.js` `takeSessionLock`): a lock this
-  process holds is reused, and a lock another process holds refuses the
-  session with that process's PID, the interactive launch included. The
-  session lock and the work unit lock (`unit-lock.js`, F-122 D2, below) take
-  through one helper, `lock.js` `takeDirLock` (F-122 D6). A session in the
-  backlog root (a refine) takes no session lock (`session.js` `sessionLock`,
-  F-122 D7): its verb took the work unit locks of its targets first, and the
-  launch needs them as `units` and checks with `holds` that this process
-  holds each one's lock. A missing or empty `units`, or a lock this process
-  does not hold, throws before the session starts. So two refines of
-  different work units run at once. A review
-  round's `holdReviewLocks` takes it the same way (the unit directory, plus
-  any reviewed worktree outside it). Every other check asks `holderOf` (D6):
-  `isSessionRunning(backlogRoot, unitDir)` and `bl merge`'s cleanup. A check that leaves
-  out this process's own lock asks `otherHolder`, which decides "this
-  process" from its own handles (`holds`), never from the PID in the file:
-  `runFeature`'s refusal and the migrations' live-session checks
-  (`liveSessionLocks`).
-- Resume (`findSession`) and transcript token totals read the unit directory's
-  transcripts; `transcriptDirs` adds each worktree's for sessions that started
-  there before.
-- Plugins, the test gate, review commands, the activity log and git keep
-  running in each repo's worktree.
-- The tool guide's working-directory line (`{{workingDirectory}}`) is
-  `_working-dir-unit.md` when `unitDir` is set: the unit directory is the
-  working directory and each repo's worktree is `{{unitDir}}/<repo>`.
-  Sessions with no unit (refine, triage) get `_working-dir.md`. The unit
-  prompts head with `Unit dir :` and name the lead repo's worktree
-  `Lead worktree:` (`Worktree :` for a story), never "this worktree".
+- `prepareFeatureWorktree` and `prepareStoryRun` return `unitDir` beside the lead
+  `worktreePath`, and put it in `baseVars`. The preps of `bl review` and `bl merge` take it from
+  the lead worktree (`unitDirOf`).
+- `feature-run.js` `runSession` passes `prepUnitDir(prep)` to every session, as `unitDir` and as
+  the `{{unitDir}}` prompt variable. A prep with no `unitDir`, such as a test's, runs in its lead
+  worktree.
+
+How the session uses the work unit's directory:
+
+- **The spawn.** `runHeadlessSession` / `launchSession` take `unitDir` and give the provider
+  `spawn({ cwd: unitDir, worktreePath, … })`. Each provider's `spawn` runs its CLI in `cwd`
+  (default `worktreePath`). Codex runs `-C <cwd>`. It adds the git metadata of every repo
+  worktree under `cwd` as write roots (`codexRepoWorktrees`), so it can commit in each one. Its
+  branch-bl approval is `./bl/bin/bl` in a work unit's directory that holds a bl worktree, and
+  `./bin/bl` in a bl worktree.
+- **Write roots.** The write roots are `resolvePermissionScopes(config, { unitDir })`:
+  `[unitDir, backlogRoot, …permissions.write]`. So every repo worktree under the work unit's
+  directory is writable. `{{worktree}}` in `permissions` is the work unit's directory, and the
+  `Bash(rm <dir>/*)` grant names it too.
+- **The session lock.** The session lock is one file per work unit's directory, in the
+  backlog's `.bl/lock/` (`story.js` `sessionLockPath`, S-1495). It is a kernel lock
+  (`kernel-lock.js`, F-104): the kernel frees it when its holder ends, and its file stays.
+  - `runHeadlessSession` and `launchSession` take it with one try-lock (`session.js`
+    `takeSessionLock`). If this process holds the lock, bl reuses it. If another process holds
+    it, bl refuses the session and names that process's PID. This holds for the interactive
+    launch too.
+  - bl takes the session lock and the work unit lock (`unit-lock.js`, F-122 D2, below) through
+    one helper, `lock.js` `takeDirLock` (F-122 D6).
+  - A session in the backlog root (a refine) takes no session lock (`session.js` `sessionLock`,
+    F-122 D7). Its verb took the work unit locks of its targets first. The launch needs them as
+    `units`, and checks with `holds` that this process holds each one's lock. If `units` is
+    missing or empty, or this process does not hold a lock, the launch throws before the
+    session starts. So two refines of different work units run at once.
+  - A review round's `holdReviewLocks` takes the lock the same way: the work unit's directory,
+    plus any reviewed worktree outside it.
+  - Every other check asks `holderOf` (D6): `isSessionRunning(backlogRoot, unitDir)` and
+    `bl merge`'s cleanup.
+  - A check that leaves out this process's own lock asks `otherHolder`. `otherHolder` decides
+    "this process" from its own handles (`holds`), never from the PID in the file. These checks
+    are `runFeature`'s refusal and the migrations' live-session checks (`liveSessionLocks`).
+- **Transcripts.** Resume (`findSession`) and the transcript token totals read the transcripts of
+  the work unit's directory. `transcriptDirs` adds each worktree's transcripts, for sessions
+  that started there before.
+- **Per-repo work.** Plugins, the test gate, review commands, the activity log and git still run
+  in each repo's worktree.
+- **The prompts.** If `unitDir` is set, the tool guide's working-directory line
+  (`{{workingDirectory}}`) is `_working-dir-unit.md`. It says that the work unit's directory is
+  the working directory, and that each repo's worktree is `{{unitDir}}/<repo>`. Sessions with no
+  work unit (refine, triage) get `_working-dir.md`. The work unit prompts start with `Unit dir :`.
+  They name the lead repo's worktree `Lead worktree:` (`Worktree :` for a story), never "this
+  worktree".
 
 ## Frontmatter is YAML
 
