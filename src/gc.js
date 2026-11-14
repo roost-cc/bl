@@ -249,7 +249,8 @@ export function removeRunFiles(config, ids) {
 /**
  * @typedef {{ removed: { path: string, bytes: number }[],
  *   kept: { path: string, reason: string, failed?: boolean }[] }} Sweep
- * `kept` entries with `failed` are paths `removePaths` could not remove.
+ * `kept` entries with `failed` are paths `removePaths` could not remove, or
+ * paths kept because a git command failed.
  */
 
 /**
@@ -298,10 +299,13 @@ export function sweepRunFiles(config, graph, { dryRun }) {
  * lowercased (its branch). For a closed one, each registered worktree in it
  * is removed with `git worktree remove` (no `--force`) when it has no
  * uncommitted changes; one that git cannot read, that has changes or that
- * git refuses to remove is kept, and so is the directory. Otherwise the
- * directory goes with everything in it, reported as one path. A directory
- * that names no work unit is kept; an open work unit's is left out. Unless
- * `dryRun`, `git worktree prune` runs in each repo afterwards.
+ * git refuses to remove is kept, and so is the directory. The worktrees are
+ * listed again just before the directory goes; one registered since the
+ * first listing is kept, and so is the directory. A directory whose
+ * worktrees git cannot list is kept. Otherwise the directory goes with
+ * everything in it, reported as one path. A directory that names no work
+ * unit is kept; an open work unit's is left out. Unless `dryRun`, `git
+ * worktree prune` runs in each repo afterwards; a failed prune keeps the repo.
  *
  * @param {object} config
  * @param {import('./backlog-graph.js').BacklogGraph} graph
@@ -417,7 +421,7 @@ export function sweepWorktrees(config, graph, { dryRun }) {
 /**
  * `bl gc [--dry-run]`: sweep the run files and the worktree directories of
  * every closed work unit, print one line per path, and exit 1 when a path
- * could not be removed.
+ * could not be removed or a git command failed.
  *
  * @param {string[]} argv
  */
