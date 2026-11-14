@@ -283,6 +283,80 @@ test('gc_reports_partial_cleanup_and_prune_failure: each failed step is a failed
   });
 });
 
+/**
+ * A backlog with a done feature F-7 (its story S-5 done), a done story batch
+ * B-3 (its story S-6 done), their run files, and a worktree root `wt/` with a
+ * directory per branch, plus `F7-feat` (the branch with its case kept).
+ */
+function featureBatchBacklog() {
+  const t = mkTempBacklog({
+    config: { worktrees: './wt' },
+    stories: [
+      { id: 'S-5', title: 'In feature', dirSuffix: 'in-feature', status: 'done', feature: 'F-7' },
+      { id: 'S-6', title: 'In batch', dirSuffix: 'in-batch', status: 'done', batch: 'B-3' },
+    ],
+    features: [{ id: 'F-7', title: 'Feat', dirSuffix: 'feat', status: 'done' }],
+    batches: [
+      {
+        id: 'B-3',
+        title: 'Batch',
+        transitions: [
+          { at: '2026-11-12T00:00:00Z', to: 'approved', by: 'new' },
+          { at: '2026-11-13T00:00:00Z', to: 'done', by: 'merge' },
+        ],
+      },
+    ],
+  });
+  const run = join(t.dir, '.bl', 'run');
+  mkdirSync(run, { recursive: true });
+  for (const name of [
+    'F-7.S-5.scratch',
+    'B-3.r1.fix.scratch',
+    'S-6.S-6.scratch',
+    'F7.S-5.scratch',
+    'f-7.S-5.scratch',
+  ]) {
+    mkdirSync(join(run, name));
+  }
+  for (const name of ['F-7.test-1.log', 'F-7.test-2.log', 'B-3.test-1.log', 'B-3.test-2.log', 'F-7.json']) {
+    writeFileSync(join(run, name), '{}\n');
+  }
+  const wt = join(t.dir, 'wt');
+  for (const d of ['f7-feat', 'b3-batch', 's5-in-feature', 's6-in-batch', 'F7-feat']) {
+    mkdirSync(join(wt, d, '.codex'), { recursive: true });
+  }
+  return { ...t, run, wt };
+}
+
+test('gc_matches_story_feature_and_batch_branch_names and gc_selects_feature_and_batch_run_files', async (t) => {
+  for (const [mode, verb] of [
+    ['--dry-run', 'would remove'],
+    ['remove', 'removed'],
+  ]) {
+    await t.test(mode, () => {
+      const { dir, run, wt, cleanup } = featureBatchBacklog();
+      try {
+        const r = runBl(mode === 'remove' ? ['gc'] : ['gc', mode], { cwd: dir });
+        assert.equal(r.status, 0, r.stderr);
+        const removed = ['F-7.S-5.scratch', 'B-3.r1.fix.scratch', 'S-6.S-6.scratch', 'F-7.test-1.log', 'B-3.test-1.log']
+          .map((n) => join(run, n))
+          .concat(['f7-feat', 'b3-batch', 's5-in-feature', 's6-in-batch'].map((d) => join(wt, d)));
+        const kept = [join(run, 'F7.S-5.scratch'), join(run, 'f-7.S-5.scratch'), join(wt, 'F7-feat')];
+        assert.deepEqual(
+          lines(r.stdout),
+          [...removed.map((p) => `${verb} ${p}`), ...kept.map((p) => `kept ${p} (names no work unit)`)].sort(),
+        );
+        for (const p of removed) assert.equal(existsSync(p), mode === '--dry-run', p);
+        for (const p of [...kept, join(run, 'F-7.test-2.log'), join(run, 'B-3.test-2.log'), join(run, 'F-7.json')]) {
+          assert.ok(existsSync(p), `${p} stays`);
+        }
+      } finally {
+        cleanup();
+      }
+    });
+  }
+});
+
 test('gc_rejects_or_honors_inline_dry_run_values: a valued boolean flag is refused and removes nothing', () => {
   const { dir, cleanup } = mkTempBacklog({
     config: { worktrees: './wt' },

@@ -23,6 +23,7 @@ import { join, sep } from 'path';
 import { git } from './child.js';
 import { info, loadConfig, parseArgs, worktreeRoot } from './config.js';
 import { loadBacklog } from './backlog-graph.js';
+import { featureBranchName } from './feature.js';
 import { flowForHelp } from './flow.js';
 import { realOrResolved } from './real-path.js';
 import { RUN_DIR } from './run-lock.js';
@@ -324,7 +325,7 @@ export function sweepWorktrees(config, graph, { dryRun }) {
 
   const byBranch = new Map();
   for (const kind of RUN_KINDS) {
-    for (const u of graph.list(kind)) if (u.id) byBranch.set(u.entry.toLowerCase(), u);
+    for (const u of graph.list(kind)) if (u.id) byBranch.set(featureBranchName(u.entry), u);
   }
   const repoPaths = [...new Set(Object.values(config.repos ?? {}).map((r) => r.path))];
   // The worktrees registered in the directory `real`, listed now from every

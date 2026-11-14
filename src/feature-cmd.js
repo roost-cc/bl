@@ -1476,7 +1476,7 @@ export async function cmdReviewStory(args, baseConfig, story, opts = {}) {
   reviewAgentOrExit(config);
   // As `cmdReview`: held to the end of the round, taken before any write.
   takeUnitLocksOrExit(config, [unit], `review ${unit.id}`);
-  const branchName = unit.branch || unit.featureEntry.toLowerCase();
+  const branchName = unit.branch || featureBranchName(unit.featureEntry);
   const ordered = [storyAsOrdered(unit)];
   const found = findUnitPRs(config, { ...unit, branch: branchName });
   openMissingPRs(config, unit, found, branchName, ordered);
