@@ -2683,57 +2683,61 @@ not reasons to stop.
 
 ### Escalations for the operator
 
-An escalation stops the loop until the operator decides, so it is written for
-someone who has not read the code. Every prompt that can escalate carries
-`prompts/_escalation.md` in its `{{escalationGuide}}` slot (`PROMPT_PARTIALS`):
-`feature-story`, `feature-workon`, `feature-self-review`,
-`feature-workon-review`, `feature-fix-self-review`, `feature-fix-tests` and
-`review-verify`. The guide sets the shape, with these bold headings:
+An escalation stops `bl run` until the operator decides. So it is written for someone who has not
+read the code. Every prompt that can escalate carries `prompts/_escalation.md` in its
+`{{escalationGuide}}` slot (`PROMPT_PARTIALS`). These prompts are `feature-story`,
+`feature-workon`, `feature-self-review`, `feature-workon-review`, `feature-fix-self-review`,
+`feature-fix-tests` and `review-verify`. The guide sets the shape, with these bold headings:
 
-1. **The rule at stake:** one plain sentence.
-2. **How it works:** a few numbered steps in plain words.
-3. **The problem:** a concrete scenario, as a short timeline table with named
-   people (Alice, Bob, Chad) when order or timing matters, and the bad result
-   in one sentence.
-4. **Why the agents can't fix it.**
-5. **The decision:** lettered options, each with its cost and consequence, a
-   recommendation, and the exact question for the operator.
-6. **Details:** repros, test names, file paths, SHAs and review items, kept
-   out of the explanation.
+1. **The rule at stake:** the rule or promise at risk, in one plain sentence.
+2. **How it works:** what the code does today, as a few numbered steps in plain words.
+3. **The problem:** a concrete scenario. When order or timing matters, it is a short timeline
+   table with named people (Alice, Bob, Chad); otherwise it is a concrete example. Then comes the
+   bad result, in one sentence.
+4. **Why the agents can't fix it:** what stands in the way, and why another attempt would not
+   help.
+5. **The decision:** lettered options, each with its cost and what follows from it. One option
+   is marked as recommended, with the reason. The block ends with the exact question for the
+   operator.
+6. **Details:** a short list at the end for repro commands, test names, file paths, commit SHAs
+   and review items. They stay out of the steps 1 to 5.
 
-No unexplained jargon; a code identifier only when needed, explained in
-passing; about one screen; one block per separate decision. Once the operator
-decides, the outcome goes in the Review Log or the Design and `## Escalation`
-goes back to exactly `None.`, never a "resolved" note. The guide ends with a
-worked example. `feature-refine` does not carry the guide; it has its own rule
-that a refine records operator decisions in the Design and leaves
-`## Escalation` at `None.`.
+The guide also gives these rules:
+
+- The escalation follows the plain-writing guide (`prompts/_plain-writing.md`), which sets the
+  rules on jargon. It names a code identifier only when the operator needs it, and explains the
+  identifier in a few words where it first appears.
+- It is about one screen long. Each separate decision gets its own block in the same shape.
+- When the operator decides, the outcome goes in the Review Log or as a dated decision in the
+  Design. `## Escalation` then goes back to exactly `None.`, never to a "resolved" note. Any other
+  text there blocks `bl run`.
+
+The guide ends with a worked example. `feature-refine` does not carry the guide. It has its own
+rule: a refine records operator decisions in the Design and leaves `## Escalation` at `None.`.
 
 Where the text comes from:
 
-- Implement, self-review, review-fix, fix self-review and interactive workon
-  sessions write `## Escalation` in the feature file themselves. The loop sees
-  it (`escalationOpen()`) and `writeEscalation()` leaves it as written; its own
-  reason (`agent escalated while …`) goes only into the commit message and the
-  run state.
-- The closing-round verifier (`review-verify`) writes `## Escalation` itself
-  in the same shape: one block per decision, its code / design /
-  test-infrastructure diagnosis under **Why the agents can't fix it**, and the
-  open items under **Details**.
-- fix-tests returns `unrelated` with a short reason, so its explanation
-  goes to `<scratch>/escalation.md`, which the loop copies in (see **The test
-  gate**).
-- Escalations the loop raises on its own (a gate that failed twice, a forge
-  failure, a round-cap or verdict mismatch) are mechanical: a one-line reason
-  and the raw details. A failed push and a failed scripted story are the
-  exceptions: under the reason line they use the `_escalation.md` shape,
-  rendered by `escalationText()` (`escalation.js`); a push's comes from the
-  gate's check record, with the push output as the fallback (see **The test
-  gate**). When the latest Review Log session has open
-  items, the details list each one whole as `- [ ] <claim>`: the item's lines
-  joined, cut before its ` — Repro:` or `Class:` tail, rewrapped at 100
-  columns (`openItemsSummary()`). The repro, test and class stay in the
-  Review Log.
+- Implement, self-review, review-fix, fix self-review and interactive workon sessions write
+  `## Escalation` in the feature file themselves. `bl run` sees it (`escalationOpen()`), and
+  `writeEscalation()` leaves it as the session wrote it. The reason that `bl run` gives
+  (`agent escalated while …`) goes only into the commit message and the run state.
+- The verifier of the closing round (`review-verify`) writes `## Escalation` itself, in the same
+  shape. It writes one block per decision, and puts its diagnosis (code, design or test
+  infrastructure) under **Why the agents can't fix it** and the open items under **Details**.
+- fix-tests returns `unrelated` with a short reason. So its explanation goes to
+  `<scratch>/escalation.md`, which `bl run` copies in (see **The test gate**).
+- `bl run` raises some escalations on its own: a gate that failed twice, a forge failure, a round
+  cap or a verdict mismatch. These are mechanical: a one-line reason and the raw details.
+
+  A failed push and a failed scripted story are the exceptions. Under the reason line they use
+  the `_escalation.md` shape, which `escalationText()` (`escalation.js`) renders. For a push,
+  the text comes from the gate's check record, and the push output is the fallback (see **The
+  test gate**).
+
+  If the latest Review Log session has open items, the details list each item whole, as
+  `- [ ] <claim>`. `openItemsSummary()` joins the item's lines, cuts them before the ` — Repro:`
+  or `Class:` tail, and rewraps them at 100 columns. The repro, the test and the class stay in
+  the Review Log.
 
 ### Scratch directories
 
