@@ -94,6 +94,24 @@ test('a failed story write in the fold leaves the previous story and feature, an
   assert.equal(fm(feature.indexPath).tokens_input, '1000009007199254741000');
 });
 
+test('a story log that breaks after the merge started refuses the fold at its done write, named, and leaves the feature (S-1580)', async () => {
+  // Entry 2 has no by: bl validate rejects the log, so applyMerged writes no done entry.
+  const noBy =
+    '---\nstory_id: S-1\nadded: 2026-11-01\ntransitions:\n  - at: 2026-11-01T00:00:00Z\n    to: draft\n    by: new\n  - at: 2026-11-02T00:00:00Z\n    to: in_progress\n---\n\n## Summary\n\nS-1.\n';
+  const { config, feature, stories } = backlog({ a: noBy });
+  const feature0 = readFileSync(feature.indexPath, 'utf8');
+  await assert.rejects(
+    async () => markFeatureMerged(config, feature, stories, MERGE),
+    /flow\.json: S-1 has a transitions: log that bl validate rejects[^]*has no "by" verb/,
+  );
+  assert.equal(readFileSync(stories[0].indexPath, 'utf8'), noBy);
+  assert.equal(
+    readFileSync(feature.indexPath, 'utf8'),
+    feature0,
+    'the feature is not marked done past a refused story',
+  );
+});
+
 test('a failed updateFeature write leaves the previous feature and no staging file, and a retry writes it', async () => {
   const { dir, config, feature } = backlog();
   const before = readFileSync(feature.indexPath, 'utf8');

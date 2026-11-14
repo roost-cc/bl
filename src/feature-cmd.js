@@ -144,7 +144,8 @@ import {
   enterVerb,
   implementVerbOf,
   logOf,
-  malformedLogRefusal,
+  logRefusal,
+  logShape,
   nowAt,
   reviewOf,
   startOf,
@@ -258,12 +259,24 @@ function exitOnStoryWithoutRepo(feature, stories) {
 }
 
 /**
- * Exit when a story of the feature has a malformed `transitions:`
- * (`malformedLogRefusal`): its log is written later (its start, its merge),
- * after a worktree, a merge or a tag that the refusal would not undo.
+ * Exit when a story of the feature has a log that the command's entry to
+ * `to` would leave with an error `bl validate` reports (`logRefusal`,
+ * S-1580): that entry is written after a worktree, a merge or a tag that
+ * the refusal would not undo. `writes(flow, status)` says which stories get
+ * the entry: at a start, `in_progress` on an unstarted story only
+ * (`startStory`, `cmdWorkon`); at a merge, `done` on a story that is not
+ * done (`applyMerged`). A story that gets no entry is not checked. A
+ * malformed `transitions:` has no status, so it is always checked.
  */
-function exitOnMalformedStoryLog(stories) {
-  const refusal = malformedLogRefusal(stories.map((s) => ({ id: s.id, fm: s.frontmatter })));
+function exitOnStoryLogFault(config, stories, to, writes) {
+  const flow = loadFlow(config.backlogRoot);
+  const written = stories.filter(
+    (s) => logShape(s.frontmatter) === 'malformed' || writes(flow, statusOf('story', s.frontmatter)),
+  );
+  const refusal = logRefusal(
+    flow,
+    written.map((s) => ({ id: s.id, kind: 'story', fm: s.frontmatter, to })),
+  );
   if (refusal) {
     console.error(refusal);
     process.exit(1);
@@ -1142,7 +1155,7 @@ export async function prepareFeatureWorktree(config, feature, verb = 'run') {
     process.exit(1);
   }
   exitOnStoryWithoutRepo(feature, stories);
-  exitOnMalformedStoryLog(stories);
+  exitOnStoryLogFault(config, stories, 'in_progress', (flow, status) => flow.isUnstarted('story', status));
   const names = featureRepoOrder(stories);
   for (const name of names) {
     if (!config.reposByName[name]) {
@@ -1775,9 +1788,12 @@ export async function cmdMerge(args, config, feature) {
 
   const all = readAllStories(config);
   const { stories } = resolveFeatureStories(feature, config, all);
-  // Before any repo lands: every story is merged and marked done below.
+  // Before any repo lands: every story is merged and marked done below. The
+  // log check sees the faults present now; `markFeatureMerged` reads the
+  // stories again after the merges and tags, so a fault made meanwhile
+  // refuses its done write then.
   exitOnStoryWithoutRepo(feature, stories);
-  exitOnMalformedStoryLog(stories);
+  exitOnStoryLogFault(config, stories, 'done', (flow, status) => !flow.meets('story', status, 'done'));
 
   // The release manifest written after the merge records every deployable
   // repo (`deployable: true` in `repos`, which every entry must set).

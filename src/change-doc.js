@@ -284,7 +284,7 @@ export async function applyFixOutcome(
   try {
     if (!(await transition(backlogRoot, { kind, indexPath, change }, 'in_review', opts))) return false;
   } catch (e) {
-    // The unit moved during the session (`NoEdgeError`), or its log is malformed.
+    // The unit moved during the session (`NoEdgeError`), or bl validate rejects its log.
     if (!(e instanceof FlowError)) throw e;
     warn(`${id}: the fix is not recorded in the transition log: ${e.message}`);
     return false;
