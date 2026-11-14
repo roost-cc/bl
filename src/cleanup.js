@@ -1341,7 +1341,7 @@ the main checkout as it was.`);
         backlogRoot: config.backlogRoot,
         worktreePath: config.backlogRoot,
       });
-      const triageResult = provider.spawn({
+      const triageResult = await provider.spawn({
         mode: 'triage',
         name: triageName,
         prompt: triagePrompt,

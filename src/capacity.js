@@ -50,20 +50,20 @@ Exit codes:
  *
  * @param {{ topLevel: object, agents: {agent: string, model: string|null}[],
  *           reviewAgents: {agent: string, model: string|null}[] }} config
- * @param {(agent: string, model: string|null) => object} [ask]
- * @returns {object[]}
+ * @param {(agent: string, model: string|null) => object | Promise<object>} [ask]
+ * @returns {Promise<object[]>}
  */
-export function capacityRows(
+export async function capacityRows(
   config,
-  ask = (agent, model) => getProvider(agent).capacity({ model, topLevel: config.topLevel }),
+  ask = async (agent, model) => getProvider(agent).capacity({ model, topLevel: config.topLevel }),
 ) {
   const byAgent = new Map();
   const byConfiguration = new Map();
-  const read = (agent, model) => {
+  const askOnce = async (agent, model) => {
     if (byAgent.has(agent)) return byAgent.get(agent);
     const key = JSON.stringify([agent, model]);
     if (!byConfiguration.has(key)) {
-      const answer = ask(agent, model);
+      const answer = await ask(agent, model);
       byConfiguration.set(key, answer);
       if (answer.scope === 'account') byAgent.set(agent, answer);
     }
@@ -75,7 +75,7 @@ export function capacityRows(
     ['review', config.reviewAgents ?? []],
   ]) {
     for (const { agent, model } of list) {
-      rows.push({ role, agent, model: model ?? null, ...read(agent, model ?? null) });
+      rows.push({ role, agent, model: model ?? null, ...(await askOnce(agent, model ?? null)) });
     }
   }
   return rows;
@@ -139,7 +139,7 @@ export async function main(argv) {
     console.error(`bl capacity: takes no arguments (got ${args.positional.join(' ')})`);
     process.exit(1);
   }
-  const rows = capacityRows(loadConfig());
+  const rows = await capacityRows(loadConfig());
   if (args.json) {
     process.stdout.write(
       `${JSON.stringify({ schema: CAPACITY_SCHEMA, configurations: rows.map(capacityJson) }, null, 2)}\n`,

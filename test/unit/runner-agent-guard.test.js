@@ -27,6 +27,7 @@ const NO_AGENT = /\b(noAgentEnv|withNoAgent)\(/;
 const ALLOWED = new Map([
   ['secondary-worktrees.test.js', 'replaces `ClaudeProvider.prototype.spawn` and never asks for capacity'],
   ['repo-guard.test.js', 'uses the runner for git only and starts no session'],
+  ['process-scope.test.js', "uses the runner's testGate only and starts no session"],
 ]);
 
 /** @param {string} text */

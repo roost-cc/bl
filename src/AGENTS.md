@@ -1955,6 +1955,14 @@ allowlist, deny list and directory scopes as an interactive launch. It then call
   does not prompt for it;
 - for Codex, `codex exec --json --output-last-message <file>`.
 
+`spawn()` is async (F-128 D5). A headless session is a long child: `runLongChild`, or the
+function of `scopedSpawn(unit)` in a process scope. So `bl`'s own listeners and timers run while
+the session runs. When the signal of `runHeadlessSession({ signal })` fires, `bl` sends the
+session SIGTERM, then SIGKILL if it still runs 10 s later (F-128 A6). The session then fails, and
+its `error` is the `AbortError`. An interactive session keeps a synchronous wait (`runChild` with
+inherited stdio, F-128 A3). It holds the terminal, so `bl` never exits while the agent has it.
+Every caller awaits `spawn()`.
+
 The result carries these things:
 
 - the agent's final message;
@@ -1986,12 +1994,14 @@ below. Besides `spawn`, `translatePermissions`, `getToolHints`, `findSession`, `
   - `scope` is `account` (every model of the agent) or `model`.
   - `until` is when an `unavailable` configuration may be tried again, or null.
   - `windows` is `[{ name, remainingPercent, resetsAt }]`.
-  - `capacity()` never throws: a failed read is `unknown`, with the reason in `message`.
+  - `capacity()` is async and never rejects: a failed read is `unknown`, with the reason in
+    `message`.
   - Codex reads its quota over `codex app-server` (see `bl capacity`). Claude reads Claude
     Code's OAuth usage endpoint, once per model (see `bl capacity`). `local` asks its server's
     `/health`. Gemini answers the base `unknown` ("gemini cannot report capacity").
-  - `capacity()` is synchronous. So Claude, Codex and `local` run their read as a Node child
-    (`runCapacityHelper`, `src/agents/capacity-helper.js`).
+  - Claude, Codex and `local` await their reader in the bl process (`readClaudeUsage`,
+    `readCodexRateLimits`, `probeLocalServer`; F-128 D6), with no helper process. The reader is
+    each adapter's test seam (`read`).
 - `checkConfiguration({ model }, { topLevel, raw })` → a reason string, or null when the
   configuration is usable. `topLevel` is `backlog.json`'s top level, and `raw` is that top level
   with the repo's `overrides` merged over it. The config loader calls it for each `agent` and
@@ -2418,9 +2428,9 @@ The list can run out. If the earliest `until` is inside `run.limit_wait_max_hour
 (`backlog.json`, hours, default 8), `bl run` waits:
 
 1. It records a `waiting` event in the run history (`{ step: "waiting", until, note }`). It saves
-   the event before the first sleep, so a Ctrl-C leaves `bl run` resumable at that step.
-2. It awaits a timer in slices of at most a second, until the `until`. Ctrl+C ends the wait at
-   once.
+   the event before the first sleep, so a stop leaves `bl run` resumable at that step.
+2. It awaits a timer in slices of at most a second, until the `until`. Each slice checks for a
+   stop, so a `bl stop` or an interrupt stops the run within a second.
 3. It walks the list again from the top, and asks for capacity again.
 
 So a refusal never spends a nudge retry, a fix-tests rerun or a review round. A refused spawn
@@ -2561,9 +2571,10 @@ overwrites the log of an earlier attempt. In the log:
 The change document's `## Gate` gets one line for each repo that the attempt reached:
 `<date> · <repo> · <command> · <verdict>`. A failed result names the repo and its worktree. The
 fix-tests session gets them as `{{testRepo}}` and `{{testWorktree}}`, and fixes and commits
-there. The session still starts in the run's own worktree. A plugin runs with stdout and stderr
-on one file descriptor (`shellMerged()`), so its errors stay in the order it printed them. The
-logs stay with the rest of `.bl/run/`, and nothing prunes them.
+there. The session still starts in the run's own worktree. A plugin runs as a long child
+(`runner.testGate()`, through `runLongChild`, F-128 D7). Its stdout and stderr share one file
+descriptor (`mergedOutput()`, which `shellMerged()` shares), so its errors stay in the order it
+printed them. The logs stay with the rest of `.bl/run/`, and nothing prunes them.
 
 A failed attempt reaches the fix-tests session and the escalation in three views: the log path,
 a failure excerpt and the last 30 lines. `failureExcerpt()` in `test-excerpt.js` takes the
@@ -4204,8 +4215,9 @@ bl capacity --json   # {"schema":"bl-capacity-json/v1","configurations":[{role, 
 Codex's reading comes from `codex app-server` (marked experimental), over
 the JSON-RPC requests `initialize`, `initialized` and
 `account/rateLimits/read`, the ones `~/codex-usage.py` sends.
-`src/agents/codex-capacity.js` holds the conversation in a child process
-with a 20-second deadline and stops app-server on every path;
+`src/agents/codex-capacity.js` holds the conversation with app-server, an
+asynchronous child with pipes, in the bl process, with a 20-second deadline,
+and stops app-server on every path;
 `codexCapacity()` in `codex.js` maps the answer. Every bucket of
 `rateLimitsByLimitId` (else `rateLimits`) gives its `primary` and
 `secondary` windows ("codex 5h", "codex 7d"). A window with nothing left, or
@@ -4662,12 +4674,48 @@ the transcript record's time for Claude, the time `watch` read the event for Cod
 thinking and no tool output is printed. A session with no live feed (interactive, or Gemini,
 which has no headless mode) gets its header and one stderr line that says so.
 
+### An interrupt during `bl run` is a stop
+
+While `bl run`'s loop holds the run, the first SIGINT or SIGTERM stops the run cleanly, as
+`bl stop` does (F-128 D8, Decisions A1 and A2). `bl run <id> --resume` continues it from the
+step it stopped in.
+
+1. `runFeature` (`src/feature-run.js`) makes an `AbortController` and calls
+   `takeInterrupts(handler)` (`src/signal-exit.js`) before `takeRunLocks`. It releases it after
+   it releases the locks. So a SIGTERM that `bl stop` sends to the run lock's holder always
+   finds the handler.
+2. While the handler is set, `exitOnSignal`'s listener calls it for the first interrupt and does
+   not exit. The handler aborts the controller with the signal's name as its reason.
+   `takeInterrupts` registers `exitOnSignal`'s listeners itself, so a process that never ran
+   `bl.js` (a test) gets them too.
+3. The controller's signal is `ctx.stopSignal`. Each long child of the loop gets it: the session
+   in `runSession` (`runner.session({ signal })`) and each test-gate command
+   (`runner.testGate(cmd, cwd, { signal })`). When it fires, the child gets SIGTERM, then SIGKILL
+   if it still runs 10 s later (F-128 A6), and its wait returns when the child exits.
+4. `checkStop` stops the run when it finds a stop request for this process or when
+   `ctx.stopSignal` has fired. It runs where it ran before: at each step start, after each long
+   child, and in each one-second slice of a usage-limit wait. With a request, the note is
+   `stopped by bl stop at <step>` and `stoppedBy` lists the requests' pids. Without one, the
+   note is `stopped by SIGINT at <step>` or `stopped by SIGTERM at <step>`, and `stoppedBy` is
+   `[]`. The run records `stopped`, releases its locks, and `bl run` exits 130 (`runExitCode`).
+5. A second interrupt exits at once with 130 or 143, as `exitOnSignal` does without a handler.
+   The `exit` listener of `src/child.js` sends SIGTERM to the long child.
+
+`bl review` and `bl merge` (`reviewFeature`, `integrateUnit`) take no interrupts: an interrupt
+exits 130 or 143, and the `exit` listener of `src/child.js` sends SIGTERM to their long child.
+An interactive session (`bl run -i`) keeps a synchronous wait (F-128 A3). A SIGINT that `bl` gets during it runs
+the handler when the session ends, and the run stops at its next check. If the same SIGINT ended
+the agent, `src/child.js` raises it at once instead (F-114 D2). Known limits: an
+interrupt that ends a short synchronous child during `bl run` (a git child that got the same
+Ctrl-C) still raises at once (F-114 D2), and `bl` exits 130 with the run state `running`. A first
+interrupt during a lock wait is taken at the next check after the wait.
+
 ### `bl stop`
 
 `bl stop <F-id|B-id|S-id>` (`src/stop.js`, S-1335, F-87 D7a) stops a running `bl run` cleanly, so
 that `bl run <id> --resume` continues it from the step it stopped in. `bl top`'s stop action
-runs it. The run loop is synchronous (agent sessions start through `spawnSync`), so a signal
-to its bl would be handled only after the run ends. `bl stop` never sends one:
+runs it. `bl stop` writes a stop request and sends SIGTERM to the run's bl (F-128 D9), with or
+without user systemd:
 
 1. It reads the run state. With none, or one that is not `running`, it exits 1 with
    `no running run for <id>`, whoever holds the run lock: a live holder is then a `bl review`
@@ -4685,20 +4733,20 @@ to its bl would be handled only after the run ends. `bl stop` never sends one:
    own pid, the time and the pid of the run it stops. So two `bl stop`s never write or delete
    each other's request, and a write that fails deletes only its own file and exits 1. The
    loop honours only a request whose `holder` is its own pid.
-3. It stops each process scope of the holder (`scopesOf()` in `src/process-scope.js`, the scopes
-   named `bl-<unit>-<holder pid>-<n>`) with `stopScope()`. That ends the current agent session
-   or test-gate command, and the loop's spawn returns. Without user systemd there is no scope,
-   and the run stops when its current session ends.
-4. The loop checks the request (`checkStop()` in `src/feature-run.js`) at each step start
-   (`setStep`) and after each spawn in `newScope(ctx)` returns (the session in `runSession`,
-   each test-gate command in `runTestGateInner`), before it reads the result, and in each
-   one-second slice of a usage-limit wait, which has no scope to stop. So the stopped
-   session is not an attempt and does not escalate, and its tokens are lost, as for a killed
-   bl (**Tokens per step**). With the request there, the loop records a `{ step: "stopped" }`
-   history entry, writes `status: stopped`, `stoppedAt` and `stoppedBy` (the pids of the
-   `bl stop`s whose requests it read; `markStopped`), deletes the
-   requests for its own pid and throws a `StopRequestError`. Its step cleanups run, `runFeature` releases the
-   run lock and the work unit locks, and `bl run` exits 130.
+3. It sends SIGTERM to the holder (`stopRun`'s `kill` option, `process.kill` by default). The
+   run takes it as a stop (**An interrupt during `bl run` is a stop**, above): it sends
+   SIGTERM to the current agent session or test-gate command, then SIGKILL if it still runs
+   10 s later (F-128 A6). If the holder is already gone
+   (`ESRCH`), `bl stop` goes on to the wait. Any other failure prints
+   `bl stop: could not signal pid <n>: <message>`, and the run stops at its next check.
+4. The loop's `checkStop()` (`src/feature-run.js`) finds the request for its own pid, so the
+   note is `stopped by bl stop at <step>`, not the signal's. The stopped session is not an
+   attempt and does not escalate, and its tokens are lost, as for a killed bl (**Tokens per
+   step**). The loop records a `{ step: "stopped" }` history entry, writes `status: stopped`,
+   `stoppedAt` and `stoppedBy` (the pids of the `bl stop`s whose requests it read;
+   `markStopped`), deletes the requests for its own pid and throws a `StopRequestError`. Its
+   step cleanups run, `runFeature` releases the run lock and the work unit locks, and `bl run`
+   exits 130.
 5. `bl stop` waits up to 30 s for that holder to let the run lock go, then prints
    `stopped <id> at <step>; resume: bl run <id> --resume` on stderr and exits 0. If the lock is
    still held, it exits 1 with `stop requested: <id> (pid <n>) stops at its next check`
@@ -5171,7 +5219,8 @@ The prepare-lock wait (`session.js` `prepareWorktreeOnce`) says so the same way 
 deadline, because the lock is held while bootstrap and `workon` plugins run. Every lock wait is
 awaited: the backlog, spec, main sync and prepare lock waits all go through `awaitLock`, so one
 Ctrl+C during any of them runs the SIGINT listener (`exitOnSignal`, which `bl.js` registers
-when `bl` starts) at once and exits 130. The main sync and prepare locks are kernel locks too,
+when `bl` starts) at once and exits 130. During `bl run` the first Ctrl+C is a stop instead,
+taken at the next check after the wait (F-128 D8). The main sync and prepare locks are kernel locks too,
 taken with `tryLockOnce`: they are not re-entrant, so two callers in one process take turns as
 two processes do. A `bl` that ends while it holds one, even by Ctrl+C or SIGKILL,
 leaves no lock, and the next taker gets it at once. Every bl lock is a kernel lock now:
@@ -5241,7 +5290,9 @@ rerun commits what a failed run wrote, and a `.gitignore` with any other change 
 uncommitted and the migration says so. A rerun tries a skipped file again. A
 `bl` from before F-104 holds its locks as PID files, which the migration cannot see, so it runs
 only when no older `bl` runs (task T-76).
-The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer too, so Ctrl+C ends it at once (F-105 A2). A function that calls a lock wait is async, and every
+The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer too (F-105 A2); during `bl
+run` the first Ctrl+C is a stop that its next one-second slice takes, and a second one exits at
+once (**An interrupt during `bl run` is a stop**). A function that calls a lock wait is async, and every
 caller awaits it (`test/unit/awaited-calls.test.js`).
 
 Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogFiles`) over
@@ -6432,7 +6483,7 @@ them.
   protocol with a Node child (the fake `codex app-server`) uses `fs.readSync(0)` and
   `fs.writeSync(1)` in the child. `test/unit/child-stdio-guard.test.js` parses `src/` and
   `test/` with `acorn` and fails on each of these shapes at a `child_process` call.
-- **A synchronous child runs through `src/child.js`** (F-114 D1): `runChild(command, args)` for an
+- **A child runs through `src/child.js`** (F-114 D1): `runChild(command, args)` for an
   argv command, `runCommandLine(line)` for a configured command line (through a shell),
   `runBl(entry, args)` for a `bl` child, and `git(cwd, args)`. Each runs its child through `spawnSyncFiles` and
   returns the `spawnSync` result. `gitOut(cwd, args)` is `git()` for a git command that must
@@ -6446,13 +6497,26 @@ them.
   (D2a): the child's result returns to it, and the interrupt is raised when the outermost
   `raiseAfter` ends. While `bl` exits, an interrupt that ends a child of an `exit` listener is
   printed, not raised, so `bl` keeps its exit code and the other listeners run.
+  A long child (a headless agent session, a test-gate command) runs through the fifth entry
+  point, `runLongChild(command, args, opts)` (F-128 D3): an argv with no shell, through
+  `spawnFiles` (`src/child-stdio.js`), the asynchronous counterpart of `spawnSyncFiles`. It
+  resolves to the same result shape on the child's `exit` event, so a leftover process that
+  holds the output file cannot hold the wait open. It never raises an interrupt: during an
+  asynchronous wait `bl`'s own signal listeners run, and a child that a signal ended is a failed
+  child for its caller. `opts.signal` (an `AbortSignal`) sends SIGTERM to the child, then
+  SIGKILL if the child still runs 10 s later (`SIGKILL_AFTER_MS`, F-128 A6, the same time as a
+  process scope's `TimeoutStopSec`). The wait returns when the child exits; the result then
+  carries Node's `AbortError` as `error`.
+  The module's `exit` listener sends SIGTERM to every long child that still runs. `bl` does not
+  wait for those children and sends no SIGKILL, so a child that handles or ignores SIGTERM can
+  outlive `bl`.
   `describeExit(r, what)` words a failed child, `exitStatus(r)` is the exit status a child's
   result stands for (127, 128 + a signal's number, or its status), and `reportExit(cmd, r)` says
   why a child could not start or was killed (F-124 D6). A caller never reads a child's
   `signal`. `test/unit/child-stdio-guard.test.js` fails on a `src/` import of `child_process` or
   `child-stdio.js` outside `src/child.js` (and `child-stdio.js`'s own import of `child_process`),
-  except the files its `ALLOWED` list names: the asynchronous children and the run loop's long
-  children, which F-128 moves (F-124 D7).
+  except the files its `ALLOWED` list names: `agents/codex-capacity.js` and `verbs.js`, whose
+  asynchronous `spawn` children talk over pipes (F-128 D10).
 - A call in `src/` to an async function of `src/` is awaited: it is the operand of `await`, or
   the value an async function returns outside a `try`. A missing `await` is silent, so
   `test/unit/awaited-calls.test.js` parses `src/` with `acorn` and checks this by name (F-105

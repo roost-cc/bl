@@ -556,14 +556,6 @@ const ALLOWED = new Map([
   // Asynchronous children (F-114 Out of Scope).
   ['src/agents/codex-capacity.js', ['spawn']],
   ['src/verbs.js', ['spawn']],
-  // The run loop's long children: each adapter's agent session, the capacity
-  // helper and the process scope. They move to an asynchronous calling
-  // pattern in F-128 (F-124 Decision A1).
-  ['src/agents/capacity-helper.js', ['spawnSyncFiles']],
-  ['src/agents/claude.js', ['spawnSync']],
-  ['src/agents/codex.js', ['spawnSync']],
-  ['src/agents/gemini.js', ['spawnSync']],
-  ['src/process-scope.js', ['spawnSyncFiles']],
 ]);
 
 /**
@@ -673,14 +665,14 @@ const IMPORT_CASES = [
   },
   {
     name: 'a listed file with an unlisted name',
-    rel: 'src/agents/claude.js',
-    src: `import { spawn } from 'child_process';`,
+    rel: 'src/verbs.js',
+    src: `import { spawnSync } from 'child_process';`,
     hits: 1,
   },
   {
     name: 'a listed file with a listed name',
-    rel: 'src/agents/claude.js',
-    src: `import { spawnSync } from 'child_process';`,
+    rel: 'src/verbs.js',
+    src: `import { spawn } from 'child_process';`,
     hits: 0,
   },
   { name: 'src/child.js', rel: 'src/child.js', src: `import { spawnSyncFiles } from './child-stdio.js';`, hits: 0 },
@@ -707,8 +699,8 @@ const IMPORT_CASES = [
   },
   {
     name: 'a listed file re-exporting a listed name',
-    rel: 'src/agents/claude.js',
-    src: `export { spawnSync } from 'child_process';`,
+    rel: 'src/verbs.js',
+    src: `export { spawn } from 'child_process';`,
     hits: 0,
   },
   { name: 'a local export', rel: 'src/x.js', src: `const spawnSync = 1;\nexport { spawnSync };`, hits: 0 },

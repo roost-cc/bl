@@ -2,23 +2,19 @@
  * claude-capacity.js — read the Claude account's quota from Claude Code's
  * OAuth usage endpoint (S-1143).
  *
- * `ClaudeProvider.capacity()` runs this file with `runCapacityHelper`
- * (`capacity-helper.js`): `capacity()` is synchronous, and `fetch` is not.
- * It reads the OAuth token Claude Code stores in
+ * `ClaudeProvider.capacity()` awaits `readClaudeUsage` in the bl process. It
+ * reads the OAuth token Claude Code stores in
  * `$CLAUDE_CONFIG_DIR/.credentials.json`, asks `GET /api/oauth/usage` with
- * the headers Claude Code's own usage display sends, and prints one JSON
- * line: `{ "ok": true, "body": <the answer> }`, or `{ "ok": false, "error":
- * "..." }` with the reason. `claudeCapacity()` in claude.js maps the body.
+ * the headers Claude Code's own usage display sends, and resolves to
+ * `{ ok: true, body: <the answer> }`, or `{ ok: false, error: "..." }` with
+ * the reason. `claudeCapacity()` in claude.js maps the body.
  *
  * The endpoint is undocumented. The token is never refreshed: Claude Code
  * owns it, and a refresh would rotate it under a running session. No error
  * message holds the token.
- *
- * Usage: node claude-capacity.js --credentials <path> [--timeout <ms>]
  */
 
 import { readFile } from 'fs/promises';
-import { helperArg, isMainModule } from './capacity-helper.js';
 
 /** Claude Code's OAuth usage endpoint. */
 export const CLAUDE_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
@@ -105,13 +101,4 @@ export async function readClaudeUsage({
     const cause = String(error?.cause?.message ?? error?.message ?? error).replaceAll(token, '<token>');
     return fail(`the Claude usage endpoint could not be reached: ${cause}`);
   }
-}
-
-if (isMainModule(import.meta.url)) {
-  const timeoutMs = Number(helperArg('--timeout'));
-  const out = await readClaudeUsage({
-    credentials: helperArg('--credentials'),
-    timeoutMs: timeoutMs > 0 ? timeoutMs : CLAUDE_CAPACITY_TIMEOUT_MS,
-  });
-  process.stdout.write(`${JSON.stringify(out)}\n`);
 }

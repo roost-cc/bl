@@ -3,23 +3,29 @@ import assert from 'node:assert/strict';
 import { CodexProvider, codexCapacity } from '../../src/agents/codex.js';
 import { capacityJson } from '../../src/capacity.js';
 
-// The cases that read the fake `codex app-server` through the helper process
-// are in test/integration/codex-capacity.test.js.
+// The cases that read the fake `codex app-server` are in
+// test/integration/codex-capacity.test.js.
 
-test('Codex capacity is unknown when the helper itself fails or prints something else', () => {
+test('Codex capacity is unknown with the message of a reader that rejects, and asks with the timeout', async () => {
   const c = new CodexProvider();
-  const fake = (r) => () => r;
-  assert.match(c.capacity({ run: fake({ error: new Error('spawnSync node ETIMEDOUT') }) }).message, /ETIMEDOUT/);
-  assert.equal(c.capacity({ run: fake({ status: null, signal: 'SIGTERM', stdout: '' }) }).state, 'unknown');
-  assert.match(c.capacity({ run: fake({ status: 0, stdout: 'not json' }) }).message, /exit 0/);
-  assert.equal(
-    c.capacity({
-      run: () => {
+  assert.deepEqual(
+    await c.capacity({
+      read: async () => {
         throw new Error('boom');
       },
-    }).state,
-    'unknown',
+    }),
+    { state: 'unknown', scope: 'account', until: null, windows: [], message: 'boom' },
   );
+  let asked;
+  await c.capacity({
+    env: { PATH: '/x' },
+    timeoutMs: 400,
+    read: async (opts) => {
+      asked = opts;
+      return {};
+    },
+  });
+  assert.deepEqual(asked, { env: { PATH: '/x' }, timeoutMs: 400 });
 });
 
 test('codexCapacity maps buckets, windows and resets per F-64 D5', () => {
@@ -57,7 +63,7 @@ test('codexCapacity maps buckets, windows and resets per F-64 D5', () => {
   }
 });
 
-test('codex_capacity_invalid_epoch_returns_unknown_and_json_never_throws', () => {
+test('codex_capacity_invalid_epoch_returns_unknown_and_json_never_throws', async () => {
   const ok = 1793260374;
   // Every finite epoch no Date can hold, in either window, open or used up,
   // in either bucket format: the reading is unknown, and --json prints it.
@@ -72,12 +78,10 @@ test('codex_capacity_invalid_epoch_returns_unknown_and_json_never_throws', () =>
           assert.equal(c.state, 'unknown', at);
           assert.equal(c.until, null, at);
           assert.match(c.message, /not a time/, at);
-          const viaHelper = new CodexProvider().capacity({
-            run: () => ({ status: 0, stdout: JSON.stringify({ ok: true, result }) }),
-          });
-          assert.equal(viaHelper.state, 'unknown', at);
+          const viaAdapter = await new CodexProvider().capacity({ read: async () => result });
+          assert.equal(viaAdapter.state, 'unknown', at);
           assert.doesNotThrow(
-            () => JSON.stringify(capacityJson({ role: 'agent', agent: 'codex', model: null, ...viaHelper })),
+            () => JSON.stringify(capacityJson({ role: 'agent', agent: 'codex', model: null, ...viaAdapter })),
             at,
           );
         }

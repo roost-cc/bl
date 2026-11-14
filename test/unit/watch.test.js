@@ -127,7 +127,7 @@ test('a follow waits for its file, yields lines as they are written and reads on
   assert.deepEqual(seen, ['one', 'two', 'three']);
 });
 
-test('Claude: the follow handle names the transcript of a new session id, which spawn passes as --session-id', () => {
+test('Claude: the follow handle names the transcript of a new session id, which spawn passes as --session-id', async () => {
   const cfg = mkTempDir('bl-claude-cfg-');
   const prev = process.env.CLAUDE_CONFIG_DIR;
   process.env.CLAUDE_CONFIG_DIR = cfg;
@@ -140,7 +140,7 @@ test('Claude: the follow handle names the transcript of a new session id, which 
     assert.equal(resumed.id, 'abc', 'a resume follows the session it continues');
 
     let seen = null;
-    claude.spawn({
+    await claude.spawn({
       prompt: 'p',
       worktreePath: '/wt',
       headless: true,
@@ -160,13 +160,13 @@ test('Claude: the follow handle names the transcript of a new session id, which 
   assert.ok(!buildClaudeArgs({ newSessionId: 'new' }).includes('--session-id'), 'interactive: no --session-id');
 });
 
-test('Codex: spawn writes the --json event stream to the follow handle file and still reads it', () => {
+test('Codex: spawn writes the --json event stream to the follow handle file and still reads it', async () => {
   const dir = mkTempDir('bl-watch-');
   const codex = getProvider('codex');
   const handle = codex.followHandle({ cwd: dir, eventsPath: join(dir, 'F-1.0.implement.events.jsonl') });
   assert.deepEqual(handle, { id: null, path: join(dir, 'F-1.0.implement.events.jsonl') });
   let stdio = null;
-  const r = codex.spawn({
+  const r = await codex.spawn({
     prompt: 'p',
     worktreePath: dir,
     headless: true,

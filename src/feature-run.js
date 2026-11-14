@@ -50,7 +50,8 @@ import {
 import { tmpdir } from 'os';
 import { join, relative, dirname } from 'path';
 import { isDeepStrictEqual } from 'util';
-import { exitStatus, runChild, runCommandLine } from './child.js';
+import { exitStatus, runChild, runCommandLine, runLongChild } from './child.js';
+import { EXIT_CODES, takeInterrupts } from './signal-exit.js';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
@@ -718,9 +719,10 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
     interactive,
     /**
      * The adapter's capacity reading for one configuration (F-64 D1), with
-     * the run config's `backlog.json` top level `topLevel`; never throws.
+     * the run config's `backlog.json` top level `topLevel`; async, never
+     * rejects.
      */
-    capacity(agent, model, topLevel) {
+    async capacity(agent, model, topLevel) {
       return getProvider(agent).capacity({ model, topLevel });
     },
     /** The adapter's `{ checkCommand, billingUrl }` for an escalation's steps (S-1140). */
@@ -745,6 +747,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
       schema = null,
       retry = null,
       follow = null,
+      signal,
     }) {
       // An interactive session returns its outcome in the outcome file (F-68 D1).
       const promptVars = interactive && schema ? { ...vars, outcomeCarrier: 'file' } : vars;
@@ -810,6 +813,9 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         schema,
         sessionId: resume,
         follow,
+        // `signal` sends SIGTERM to a headless session, then SIGKILL if it
+        // still runs 10 s later (F-128 D5, A6).
+        signal,
         // The agent and all it starts live in the step's scope (F-70 D4).
         run: scope ? processScope.scopedSpawn(scope) : undefined,
       });
@@ -827,13 +833,12 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         stderrTail: r.stderrTail ?? '',
       };
     },
-    /** `scope`: run `cmd` as `sh -c <cmd>` inside that user systemd scope (F-70 D4). */
-    shell(cmd, cwd, { mergeStreams = false, scope = null } = {}) {
-      if (mergeStreams) return shellMerged(cmd, cwd, { scope });
-      const r = spawnShell(cmd, scope, {
+    shell(cmd, cwd, { mergeStreams = false } = {}) {
+      if (mergeStreams) return shellMerged(cmd, cwd);
+      const r = spawnShell(cmd, {
         cwd,
         encoding: 'utf8',
-        env: { CI: 'true', ...process.env },
+        env: shellEnv(),
         stdout: 'pipe',
         stderr: 'pipe',
         maxBuffer: 64 * 1024 * 1024,
@@ -842,6 +847,15 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         status: exitStatus(r),
         output: `${r.stdout ?? ''}${r.stderr ?? ''}`,
       };
+    },
+    /**
+     * Run the test-gate command `cmd` as a long child (`gateMerged`, F-128
+     * D7): in user systemd scope `scope` when there is one (F-70 D4). When
+     * `signal` fires, the command gets SIGTERM, then SIGKILL if it still runs
+     * 10 s later (F-128 A6).
+     */
+    async testGate(cmd, cwd, { scope = null, signal } = {}) {
+      return gateMerged(cmd, cwd, { scope, signal });
     },
     forge(op, vars, { config, repoPath }) {
       return runForgeOp(op, vars, { config, repoPath });
@@ -972,23 +986,27 @@ export function markStopped(state, note, by) {
 }
 
 /**
- * Stop the run when `bl stop` has written its stop request (F-87 D7a):
- * called at each step start (`setStep`), in each slice of a usage-limit wait,
- * and after each spawn in `newScope(ctx)` returns, before the loop reads its
- * result, so the stopped session is not an attempt and does not escalate.
- * Marks the state stopped
+ * Stop the run when `bl stop` has written its stop request (F-87 D7a), or when
+ * an interrupt fired `ctx.stopSignal` (F-128 D8, A2): called at each step
+ * start (`setStep`), in each slice of a usage-limit wait, and after each long
+ * child returns, before the loop reads its result, so the stopped session is
+ * not an attempt and does not escalate. Marks the state stopped
  * (`markStopped`), saves it, deletes the requests for this process and throws a
  * StopRequestError, which unwinds the step's cleanups to `runFeature`. The
  * locks go with it, and `bl run` exits 130. The unit's `status:` does not
  * change. Only a request for this process counts (its `holder`, the run lock
  * holder `bl stop` saw): a request for an earlier holder is not for this run,
  * and it stays for its own `bl stop` or the next `takeRunLocks` to delete.
+ * With a request, the note is `stopped by bl stop at <step>` and `stoppedBy`
+ * lists the requests' pids; without one, the note names the interrupt
+ * (`stopped by SIGTERM at <step>`) and `stoppedBy` is empty.
  */
 function checkStop(ctx) {
   const mine = stopRequests(ctx.config, ctx.feature.id).filter(({ request }) => request.holder === process.pid);
-  if (mine.length === 0) return;
+  const interrupt = ctx.stopSignal?.aborted ? ctx.stopSignal.reason : null;
+  if (mine.length === 0 && interrupt == null) return;
   const { state } = ctx;
-  const reason = `stopped by bl stop at ${state.step}`;
+  const reason = `stopped by ${mine.length > 0 ? 'bl stop' : interrupt} at ${state.step}`;
   markStopped(
     state,
     reason,
@@ -1536,17 +1554,13 @@ async function reapStaleScopes(ctx) {
 }
 
 /**
- * Run the shell command `cmd`: through `runCommandLine` (`src/child.js`),
+ * Run the shell command `cmd` through `runCommandLine` (`src/child.js`),
  * which raises the SIGINT or SIGTERM that ends it, or its exit 130 or 143
- * (F-114 D2); with `scope`, as `sh -c <cmd>` inside that user systemd scope
- * (F-70 D4). stdin is 'ignore'; `stdout` and `stderr` are the other two
+ * (F-114 D2). stdin is 'ignore'; `stdout` and `stderr` are the other two
  * streams.
  */
-function spawnShell(cmd, scope, { stdout, stderr, ...options }) {
-  const stdio = ['ignore', stdout, stderr];
-  if (!scope) return runCommandLine(cmd, { ...options, stdio });
-  // Through the scope's files, so a leftover holding stdout cannot hang it.
-  return processScope.scopedSpawn(scope)('sh', ['-c', cmd], { ...options, stdio });
+function spawnShell(cmd, { stdout, stderr, ...options }) {
+  return runCommandLine(cmd, { ...options, stdio: ['ignore', stdout, stderr] });
 }
 
 /**
@@ -1557,24 +1571,76 @@ function spawnShell(cmd, scope, { stdout, stderr, ...options }) {
  * A command ended by a signal that does not stop `bl` has `status` 128 + the
  * signal's number (`exitStatus`).
  */
-export function shellMerged(cmd, cwd, { scope = null } = {}) {
+export function shellMerged(cmd, cwd) {
+  const out = mergedOutput();
+  try {
+    return out.result(spawnShell(cmd, { cwd, env: shellEnv(), stdout: out.fd, stderr: out.fd }));
+  } finally {
+    out.close();
+  }
+}
+
+/**
+ * Run the test-gate command `cmd` as `shellMerged` does, but as a long child
+ * (`runLongChild`, F-128 D7): `sh -c <cmd>` inside user systemd scope `scope`
+ * when there is one (F-70 D4), sent SIGTERM when `signal` fires, then
+ * SIGKILL if it still runs 10 s later (F-128 A6). The
+ * wait ends when the command exits, though a process it left still holds the
+ * output file.
+ */
+async function gateMerged(cmd, cwd, { scope = null, signal } = {}) {
+  const run = scope ? processScope.scopedSpawn(scope) : runLongChild;
+  const out = mergedOutput();
+  try {
+    const r = await run('sh', ['-c', cmd], {
+      cwd,
+      env: shellEnv(),
+      stdio: ['ignore', out.fd, out.fd],
+      signal,
+    });
+    return out.result(r);
+  } finally {
+    out.close();
+  }
+}
+
+/** The environment of a shell or test-gate command: bl's, with `CI=true`. */
+function shellEnv() {
+  return { CI: 'true', ...process.env };
+}
+
+/**
+ * One file for a command's stdout and stderr together, for `shellMerged` and
+ * `gateMerged`: `fd` to pass as both streams; `result(r)` reads the file into
+ * the runner's `{ status, output }` for child result `r`, a launch error's
+ * message after the output; `close()` closes `fd` and removes the file.
+ */
+function mergedOutput() {
   const dir = mkdtempSync(join(tmpdir(), 'bl-gate-'));
   const file = join(dir, 'output');
   let fd = null;
+  const close = () => {
+    if (fd != null) closeSync(fd);
+    fd = null;
+    rmSync(dir, { recursive: true, force: true });
+  };
   try {
     fd = openSync(file, 'a');
-    const r = spawnShell(cmd, scope, { cwd, env: { CI: 'true', ...process.env }, stdout: fd, stderr: fd });
-    closeSync(fd);
-    fd = null;
-    const output = readFileSync(file, 'utf8');
-    return {
-      status: exitStatus(r),
-      output: r.error ? `${output}${output && !output.endsWith('\n') ? '\n' : ''}${r.error.message}\n` : output,
-    };
-  } finally {
-    if (fd != null) closeSync(fd);
-    rmSync(dir, { recursive: true, force: true });
+  } catch (e) {
+    close();
+    throw e;
   }
+  return {
+    fd,
+    result(r) {
+      const output = readFileSync(file, 'utf8');
+      return {
+        status: exitStatus(r),
+        output: r.error ? `${output}${output && !output.endsWith('\n') ? '\n' : ''}${r.error.message}\n` : output,
+      };
+    },
+    close,
+  };
 }
 
 /**
@@ -1845,20 +1911,24 @@ function recordSession(ctx, { step, story, configuration: c, startedAt, cwd, ses
  * The adapter's capacity reading for `c` (F-64 D1), through the runner. An
  * `account`-scoped answer is the agent's for every model, so `asked` keeps
  * it and the agent is asked once per walk. A runner without `capacity`, or
- * one that throws or answers nothing usable, reads `unknown`: a broken read
- * costs at most a refused spawn. An `unavailable` reading whose reset has
- * passed also reads `unknown`. `topLevel` is the run config's
+ * one that throws, rejects or answers nothing usable, reads `unknown`: a
+ * broken read costs at most a refused spawn. An `unavailable` reading whose
+ * reset has passed also reads `unknown`. `topLevel` is the run config's
  * `backlog.json` top level, which an adapter may read its settings from
- * (`local`).
+ * (`local`). A stop that came during the read stops the run here
+ * (`checkStop`), before a caller acts on the reading.
  */
-function readCapacity(runner, c, asked, topLevel) {
+async function readCapacity(ctx, c, asked) {
+  const { runner, config } = ctx;
   if (asked.has(c.agent)) return asked.get(c.agent);
   let reading = null;
   try {
-    reading = typeof runner.capacity === 'function' ? runner.capacity(c.agent, c.model ?? null, topLevel) : null;
+    reading =
+      typeof runner.capacity === 'function' ? await runner.capacity(c.agent, c.model ?? null, config.topLevel) : null;
   } catch (e) {
     reading = { state: 'unknown', scope: 'model', until: null, message: describeThrown(e) };
   }
+  checkStop(ctx);
   if (reading == null || typeof reading !== 'object')
     reading = { state: 'unknown', scope: 'model', until: null, message: '' };
   // An `until` that is not a time would read as "out for the rest of the run".
@@ -1967,11 +2037,12 @@ export async function runSession(
       model: c.model ?? null,
       effort,
       scope: newScope(ctx),
+      signal: ctx.stopSignal,
       ...(schema ? { schema } : {}),
       ...(retry ? { retry } : {}),
       ...(follow ? { follow } : {}),
     });
-    // A session `bl stop` ended is no attempt: the loop stops before it reads it.
+    // A session a stop ended is no attempt: the loop stops before it reads it.
     checkStop(ctx);
     // Usage first, on every spawn: the provider has already added it to the
     // unit file, and the run state must agree even when the spawn was a
@@ -2056,7 +2127,7 @@ export async function runSession(
               runner.log(`  ${step}: skipping ${name}: ${skip}`);
               continue;
             }
-            const reading = readCapacity(runner, c, asked, config.topLevel);
+            const reading = await readCapacity(ctx, c, asked);
             if (reading.state === 'unavailable') {
               const until = reading.until == null ? NaN : new Date(reading.until).getTime();
               markOut(ctx, {
@@ -2237,20 +2308,24 @@ async function waitOrEscalate(ctx, { step, story = null, role, list, excluded = 
       : `agent unavailable: every ${roleName} configuration is out (${list.map(configurationLabel).join(', ')})`;
     // A fresh reading of each refused configuration; an account-wide one is asked once.
     const asked = new Map();
+    const configurations = [];
+    for (const { c, out, headless, implemented } of rows) {
+      configurations.push({
+        agent: c.agent,
+        model: c.model ?? null,
+        out,
+        reading: out && headless && !implemented ? await readCapacity(ctx, c, asked) : null,
+        remediation: remediationOf(runner, c.agent),
+        excluded: implemented?.steps ?? null,
+        headless,
+      });
+    }
     const failure = describeFailure({
       step: stepLabel(ctx, step, story),
       failedAt: now,
       roleKey: roleKey(role),
       resumeHint: resumeCommand(ctx),
-      configurations: rows.map(({ c, out, headless, implemented }) => ({
-        agent: c.agent,
-        model: c.model ?? null,
-        out,
-        reading: out && headless && !implemented ? readCapacity(runner, c, asked, config.topLevel) : null,
-        remediation: remediationOf(runner, c.agent),
-        excluded: implemented?.steps ?? null,
-        headless,
-      })),
+      configurations,
     });
     const reason = `${unavailable} — ${failure.causeLine}`;
     const details = `The ${step} session found every ${roleName} configuration out: ${why}.\n\n${failure.text}`;
@@ -2259,7 +2334,7 @@ async function waitOrEscalate(ctx, { step, story = null, role, list, excluded = 
   }
   const until = untilMs(next.out);
   const note = `${step}: ${next.out.kind} limit — ${next.out.message} — waiting until ${localTime(until)}`;
-  // Saved before the first slice: a Ctrl-C during the wait leaves the run
+  // Saved before the first slice: a stop during the wait leaves the run
   // resumable at this step, and `bl status` shows what it is waiting for.
   record(ctx, {
     step: 'waiting',
@@ -2275,9 +2350,9 @@ async function waitOrEscalate(ctx, { step, story = null, role, list, excluded = 
   runner.log(`  (${note})`);
   // Slices of at most a second, re-reading the clock each time: a machine
   // suspended through the deadline sees that it has passed instead of
-  // sleeping the whole stretch again. The wait awaits a timer, so Ctrl-C ends it.
-  // A wait has no scope for `bl stop` to stop, so each slice checks its stop
-  // request: the run stops within a second, not after a session past the wait.
+  // sleeping the whole stretch again. Each slice checks for a stop (a `bl stop`
+  // request or an interrupt, `checkStop`): the run stops within a second, not
+  // after a session past the wait.
   const sleep = typeof runner.sleep === 'function' ? async (ms) => runner.sleep(ms) : delay;
   for (;;) {
     checkStop(ctx);
@@ -2617,7 +2692,7 @@ function notRestored(ctx, wt, snap) {
 async function runTestGate(ctx) {
   // The gate's test commands run in user systemd scopes too (decision D4-b).
   const gate = await withContainerCleanup(ctx, 'test gate', async () =>
-    withProcessCleanup(ctx, 'test gate', () => runTestGateInner(ctx)),
+    withProcessCleanup(ctx, 'test gate', async () => runTestGateInner(ctx)),
   );
   await recordGateLine(ctx, gate);
   return gate;
@@ -3288,7 +3363,7 @@ function repoGuard(ctx) {
 
 const GIT_STATUS_COMMAND = 'git status --porcelain --untracked-files=all';
 
-function runTestGateInner(ctx) {
+async function runTestGateInner(ctx) {
   const { runner, prep, config } = ctx;
   const targets = gateTargets(ctx);
   const multi = targets.length > 1;
@@ -3426,9 +3501,9 @@ function runTestGateInner(ctx) {
     }
     for (const { name, cmd } of t.commands) {
       runner.log(`  ${t.repo} · test plugin ${name}: ${cmd}`);
-      // Merged streams: an error printed on stderr stays next to the stdout
-      // lines around it (runners without the option ignore it).
-      const r = runner.shell(cmd, t.worktreePath, { mergeStreams: true, scope: newScope(ctx) });
+      // A long child with merged streams: an error printed on stderr stays
+      // next to the stdout lines around it (F-128 D7).
+      const r = await runner.testGate(cmd, t.worktreePath, { scope: newScope(ctx), signal: ctx.stopSignal });
       checkStop(ctx);
       const output = String(r.output ?? '');
       log += `── ${t.repo} · ${name}: ${cmd}\n${output}${output.endsWith('\n') || !output ? '' : '\n'}`;
@@ -5036,6 +5111,14 @@ function refuse(runner, feature, reason) {
  * locks of the unit and its stories (`takeRunLocks`) for its whole length,
  * and does not start while another live process holds the unit directory's
  * session lock (`sessionLockPath`).
+ *
+ * While it holds the run, the first SIGINT or SIGTERM is a stop (F-128 D8,
+ * `takeInterrupts`): the handler aborts the controller whose signal is
+ * `ctx.stopSignal`, with the signal's name as its reason. That sends SIGTERM to
+ * the long child, then SIGKILL if it still runs 10 s later (F-128 A6), and
+ * `checkStop` records `stopped` after it exits. The
+ * handler is set before the locks are taken, so a SIGTERM that `bl stop`
+ * sends to the lock holder always finds it.
  */
 export async function runFeature({ feature, config, prep, runner, opts = {} }) {
   const sessionLock = sessionLockPath(config.backlogRoot, prepUnitDir(prep));
@@ -5043,17 +5126,35 @@ export async function runFeature({ feature, config, prep, runner, opts = {} }) {
   if (wtHolder != null) {
     return refuse(runner, feature, `a live session (pid ${wtHolder}) holds ${sessionLock}`);
   }
-  const lock = takeRunLocks(config, feature, `run ${feature.id}`);
-  if (lock.refused != null) return refuse(runner, feature, lock.refused);
+  const stop = new AbortController();
+  const releaseInterrupts = takeInterrupts((signal) => stop.abort(signal));
   try {
-    return await driveFeature({ feature, config, prep, runner, opts });
-  } catch (e) {
-    // Already escalated and saved by withContainerCleanup or waitOrEscalate.
-    if (e instanceof RunStoppedError) return e.state;
-    throw e;
+    const lock = takeRunLocks(config, feature, `run ${feature.id}`);
+    if (lock.refused != null) return refuse(runner, feature, lock.refused);
+    try {
+      return await driveFeature({ feature, config, prep, runner, opts, stopSignal: stop.signal });
+    } catch (e) {
+      // Already escalated and saved by withContainerCleanup or waitOrEscalate.
+      if (e instanceof RunStoppedError) return e.state;
+      throw e;
+    } finally {
+      lock.release();
+    }
   } finally {
-    lock.release();
+    releaseInterrupts();
   }
+}
+
+/**
+ * The exit code of `bl run` for its final run state: 0 when the run ended
+ * clean or with no change, 130 when it stopped (`bl stop` or an interrupt,
+ * as an interrupted command exits, F-87 D7a), else 1.
+ * @param {{ status: string }} state
+ * @returns {number}
+ */
+export function runExitCode(state) {
+  if (state.status === 'clean' || state.status === 'no-change') return 0;
+  return state.status === 'stopped' ? EXIT_CODES.SIGINT : 1;
 }
 
 /**
@@ -5156,7 +5257,7 @@ export function reviewEnd({ id, unitRelPath, maxRounds, review, body, state, esc
   };
 }
 
-async function driveFeature({ feature, config, prep, runner, opts }) {
+async function driveFeature({ feature, config, prep, runner, opts, stopSignal }) {
   const cfg = prep.cfg ?? config;
   const maxRounds = opts.maxRounds ?? feature.reviewRoundsMax;
   let state = null;
@@ -5194,6 +5295,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     implementPrompt,
     implemented: new Set(),
     implementedThisRun: false,
+    stopSignal,
   };
   clearUntimedOut(ctx);
   const started = [];

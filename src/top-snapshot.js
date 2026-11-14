@@ -77,15 +77,16 @@ const prOf = (pr) =>
 
 /**
  * One read of a section at `now`: the reader's value with `read_at`, or,
- * when it throws, the last good value `prev` (none: `read_at: null`) with
- * `error`.
+ * when it throws or rejects, the last good value `prev` (none:
+ * `read_at: null`) with `error`. A reader may be async (`capacity`, F-128 D6).
  * @param {object | undefined} prev
- * @param {() => object} read
+ * @param {() => object | Promise<object>} read
  * @param {number} now
+ * @returns {Promise<object>}
  */
-export function readSection(prev, read, now) {
+export async function readSection(prev, read, now) {
   try {
-    return { read_at: iso(now), ...read() };
+    return { read_at: iso(now), ...(await read()) };
   } catch (e) {
     const { error, ...last } = prev ?? { read_at: null };
     return { ...last, error: e?.message ?? String(e) };
@@ -619,8 +620,8 @@ function readNext(config) {
 }
 
 /** `capacity`: the rows `bl capacity --json` prints. */
-function readCapacity(config) {
-  return { configurations: capacityRows(config).map(capacityJson) };
+async function readCapacity(config) {
+  return { configurations: (await capacityRows(config)).map(capacityJson) };
 }
 
 /**
@@ -651,8 +652,8 @@ function readHistory(config, now) {
 /**
  * One reader per section, each `(now) => value`. The `runs`, `activity` and
  * `tokens` readers share one run-state parse cache, so a stream keeps one set
- * for its whole life.
- * @returns {Record<string, (now: number) => object>}
+ * for its whole life. The `capacity` reader is async.
+ * @returns {Record<string, (now: number) => object | Promise<object>>}
  */
 export function sectionReaders(config) {
   const states = runStatesReader(config);
@@ -660,7 +661,7 @@ export function sectionReaders(config) {
     runs: runsReader(config, states),
     attention: (now) => readAttention(config, now),
     next: () => readNext(config),
-    capacity: () => readCapacity(config),
+    capacity: async () => readCapacity(config),
     history: (now) => readHistory(config, now),
     activity: overRunStates(states, (list) => readActivity(list)),
     tokens: overRunStates(states, (list, now) => readTokens(list, now)),
@@ -689,9 +690,9 @@ export function problemLines(snapshot) {
 }
 
 /** `bl top --json`: every section read once, at `now`. */
-export function topSnapshot(config, now = Date.now()) {
+export async function topSnapshot(config, now = Date.now()) {
   const readers = sectionReaders(config);
   const sections = {};
-  for (const name of SECTIONS) sections[name] = readSection(undefined, () => readers[name](now), now);
+  for (const name of SECTIONS) sections[name] = await readSection(undefined, () => readers[name](now), now);
   return snapshotOf(sections, now);
 }

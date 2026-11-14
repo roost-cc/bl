@@ -7,7 +7,7 @@ import { mkTempDir } from '../helpers/tempdir.js';
 import { ClaudeProvider } from '../../src/agents/claude.js';
 import { readClaudeUsage } from '../../src/agents/claude-capacity.js';
 
-// S-1143: the Claude capacity helper against a local HTTP server, never the
+// S-1143: the Claude capacity reader against a local HTTP server, never the
 // real endpoint.
 
 const TOKEN = 'sk-ant-oat01-test-token';
@@ -119,9 +119,9 @@ test('no credentials file, or an expired token, gives the reason and sends no re
   }
 });
 
-test('ClaudeProvider.capacity runs the helper: no credentials under CLAUDE_CONFIG_DIR is unknown with the reason', () => {
+test('ClaudeProvider.capacity reads in process: no credentials under CLAUDE_CONFIG_DIR is unknown with the reason', async () => {
   const dir = mkTempDir('bl-claude-config-');
-  const r = new ClaudeProvider().capacity({ model: 'opus', env: { ...process.env, CLAUDE_CONFIG_DIR: dir } });
+  const r = await new ClaudeProvider().capacity({ model: 'opus', env: { ...process.env, CLAUDE_CONFIG_DIR: dir } });
   assert.deepEqual(r, {
     state: 'unknown',
     scope: 'model',

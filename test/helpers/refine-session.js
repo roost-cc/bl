@@ -7,8 +7,8 @@
  * exists (at most 60 s) when they are set, appends a line to each file in
  * `STUB_WRITE`, writes `STUB_OUTCOME` to `STUB_OUTCOME_PATH` when its prompt
  * names that path (the outcome file, F-68 D1), appends its arguments to
- * `STUB_ARGV` when it is set, and exits with `STUB_EXIT` (`TERM` ends it by
- * that signal).
+ * `STUB_ARGV` when it is set, and exits with `STUB_EXIT` (a signal name such
+ * as `KILL` or `TERM` ends it by that signal).
  */
 
 import { chmodSync, existsSync, readFileSync, symlinkSync, writeFileSync } from 'fs';
@@ -39,7 +39,7 @@ function writingClaude() {
       `[ -n "$STUB_ARGV" ] && printf '%s' "$*" >> "$STUB_ARGV"\n` +
       `if [ -n "$STUB_OUTCOME" ]; then case "$*" in *"$STUB_OUTCOME_PATH"*) ` +
       `printf '%s' "$STUB_OUTCOME" > "$STUB_OUTCOME_PATH";; esac; fi\n` +
-      `[ "$STUB_EXIT" = TERM ] && kill -TERM $$\nexit \${STUB_EXIT:-0}\n`,
+      `case "$STUB_EXIT" in [A-Z]*) kill -"$STUB_EXIT" $$;; esac\nexit \${STUB_EXIT:-0}\n`,
   );
   chmodSync(bin, 0o755);
   return dir;

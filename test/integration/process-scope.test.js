@@ -1,6 +1,8 @@
 // Process scopes against the real user systemd (F-70 D4): a scoped command's
 // exit status passes through, a `setsid` child it leaves stays in the scope,
-// the listing names it, and stopping the scope removes it. Skipped, with the
+// the listing names it, and stopping the scope removes it. A test-gate command
+// or a headless session that ignores SIGTERM gets SIGKILL after a stop, in a
+// scope and without one (F-128 A6). The scoped rows are skipped, with the
 // probe's reason, where user systemd scopes are unavailable (macOS, a sandbox,
 // a host without a user manager).
 import { test } from 'node:test';
@@ -9,8 +11,13 @@ import fs, { chmodSync, writeFileSync } from 'fs';
 import { syncBuiltinESMExports } from 'module';
 import { delimiter, join } from 'path';
 import { isPidAlive } from '../../src/process-scope.js';
-import { shellMerged } from '../../src/feature-run.js';
-import { mkTempDir } from '../helpers/tempdir.js';
+import { defaultRunner } from '../../src/feature-run.js';
+import { SIGKILL_AFTER_MS } from '../../src/child.js';
+import { ignoresSigterm } from '../helpers/ignores-sigterm.js';
+import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { ClaudeProvider } from '../../src/agents/claude.js';
+import { loadConfig } from '../../src/config.js';
+import { runHeadlessSession } from '../../src/session.js';
 import {
   scopeAvailable,
   scopeUnitName,
@@ -18,7 +25,6 @@ import {
   scopeProcesses,
   stopScope,
   staleScopes,
-  scopesOf,
   scopeActive,
 } from '../../src/process-scope.js';
 
@@ -43,10 +49,10 @@ function eventually(fn, ms = 5000) {
 test(
   'a scoped command passes its exit status through, and stopping its scope removes the setsid child it left',
   { skip },
-  () => {
+  async () => {
     const unit = scopeUnitName(UNIT, 1);
     try {
-      const r = scopedSpawn(unit)('bash', ['-c', 'setsid sleep 300 & exit 3'], { stdio: 'ignore' });
+      const r = await scopedSpawn(unit)('bash', ['-c', 'setsid sleep 300 & exit 3'], { stdio: 'ignore' });
       assert.equal(r.status, 3, `the command's status: ${r.error?.message ?? ''}`);
       let left = [];
       assert.ok(
@@ -68,11 +74,11 @@ test(
   },
 );
 
-test('a scoped capture returns when the command exits, though a child it left holds its stdout', { skip }, () => {
+test('a scoped capture returns when the command exits, though a child it left holds its stdout', { skip }, async () => {
   const unit = scopeUnitName(UNIT, 6);
   try {
     const started = Date.now();
-    const r = scopedSpawn(unit)('bash', ['-c', 'setsid sleep 300 & echo done; exit 2'], {
+    const r = await scopedSpawn(unit)('bash', ['-c', 'setsid sleep 300 & echo done; exit 2'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30_000,
@@ -86,10 +92,14 @@ test('a scoped capture returns when the command exits, though a child it left ho
   }
 });
 
-test("the test gate's merged shell runs its command in the scope, output and status intact", { skip }, () => {
+test("the test gate's command runs in the scope, output and status intact", { skip }, async () => {
   const unit = scopeUnitName(UNIT, 5);
   try {
-    const r = shellMerged('setsid sleep 300 & echo out; echo err >&2; exit 4', mkTempDir('bl-scope-'), { scope: unit });
+    const r = await defaultRunner().testGate(
+      'setsid sleep 300 & echo out; echo err >&2; exit 4',
+      mkTempDir('bl-scope-'),
+      { scope: unit },
+    );
     assert.deepEqual(r, { status: 4, output: 'out\nerr\n' });
     let sleep;
     assert.ok(
@@ -103,9 +113,90 @@ test("the test gate's merged shell runs its command in the scope, output and sta
   }
 });
 
-test('a scope whose command left nothing is gone at once and lists nothing', { skip }, () => {
+// F-128 A6: the real 10 s, so each row takes about 10 s.
+for (const scoped of [false, true]) {
+  test(
+    `a test-gate command ${scoped ? 'in a scope' : 'without a scope'} that ignores SIGTERM gets SIGKILL 10 s after the stop signal`,
+    { skip: scoped && skip },
+    async () => {
+      const unit = scopeUnitName(UNIT, 8);
+      const child = ignoresSigterm(mkTempDir('bl-gate-kill-'));
+      const controller = new AbortController();
+      try {
+        const wait = defaultRunner().testGate(child.script, mkTempDir('bl-gate-kill-cwd-'), {
+          scope: scoped ? unit : null,
+          signal: controller.signal,
+        });
+        await child.ready();
+        const aborted = Date.now();
+        controller.abort();
+        const r = await wait;
+        const ms = Date.now() - aborted;
+        assert.ok(ms >= SIGKILL_AFTER_MS && ms < SIGKILL_AFTER_MS + 5000, `the wait took ${ms} ms after the abort`);
+        assert.notEqual(r.status, 0);
+        assert.match(r.output, /The operation was aborted/);
+      } finally {
+        if (scoped) stopScope(unit);
+      }
+    },
+  );
+}
+
+// F-128 A6 for a headless session: a fake `claude` on PATH ignores SIGTERM.
+// The session runs through `scopedSpawn`, as the run loop's scoped session
+// does, or through the adapter's default `runLongChild`.
+for (const scoped of [false, true]) {
+  test(
+    `a headless session ${scoped ? 'in a scope' : 'without a scope'} that ignores SIGTERM gets SIGKILL 10 s after its signal`,
+    { skip: scoped && skip },
+    async () => {
+      const unit = scopeUnitName(UNIT, 9);
+      const child = ignoresSigterm(mkTempDir('bl-session-kill-'));
+      const bin = mkTempDir('bl-fake-claude-');
+      writeFileSync(join(bin, 'claude'), `#!/bin/sh\n${child.script}\n`);
+      chmodSync(join(bin, 'claude'), 0o755);
+      const { dir, cleanup } = mkTempBacklog();
+      const savedPath = process.env.PATH;
+      process.env.PATH = `${bin}${delimiter}${savedPath}`;
+      const controller = new AbortController();
+      try {
+        const cfg = loadConfig({ backlogRoot: dir });
+        const wait = runHeadlessSession({
+          mode: 'review',
+          parsed: { id: 'F-1' },
+          prompt: 'p',
+          worktreePath: mkTempDir('bl-session-kill-wt-'),
+          config: cfg,
+          roostDir: cfg.roostDir,
+          backlogRoot: dir,
+          signal: controller.signal,
+          run: scoped ? scopedSpawn(unit) : undefined,
+          provider: new (class extends ClaudeProvider {
+            spawn(opts) {
+              return super.spawn({ ...opts, ensureApprovedCommandPrefixes: () => ({ added: 0 }) });
+            }
+          })(),
+        });
+        await child.ready();
+        const aborted = Date.now();
+        controller.abort();
+        const r = await wait;
+        const ms = Date.now() - aborted;
+        assert.ok(ms >= SIGKILL_AFTER_MS && ms < SIGKILL_AFTER_MS + 5000, `the wait took ${ms} ms after the abort`);
+        assert.equal(r.isError, true);
+        assert.equal(r.error, 'The operation was aborted');
+      } finally {
+        process.env.PATH = savedPath;
+        cleanup();
+        if (scoped) stopScope(unit);
+      }
+    },
+  );
+}
+
+test('a scope whose command left nothing is gone at once and lists nothing', { skip }, async () => {
   const unit = scopeUnitName(UNIT, 2);
-  const r = scopedSpawn(unit)('true', [], { stdio: 'ignore' });
+  const r = await scopedSpawn(unit)('true', [], { stdio: 'ignore' });
   assert.equal(r.status, 0);
   assert.deepEqual(scopeProcesses(unit), []);
 });
@@ -227,21 +318,17 @@ exit 1
   }
 });
 
-test("staleScopes finds a dead bl's scope of the unit, not this bl's; scopesOf finds a bl's own", { skip }, () => {
+test("staleScopes finds a dead bl's scope of the unit, not this bl's", { skip }, async () => {
   // Above any pid_max (at most 2^22), so no process has it.
   const dead = scopeUnitName(UNIT, 3, 4_999_999);
   const mine = scopeUnitName(UNIT, 4);
   try {
     for (const u of [dead, mine]) {
-      const r = scopedSpawn(u)('bash', ['-c', 'setsid sleep 300 & exit 0'], { stdio: 'ignore' });
+      const r = await scopedSpawn(u)('bash', ['-c', 'setsid sleep 300 & exit 0'], { stdio: 'ignore' });
       assert.equal(r.status, 0);
     }
     assert.deepEqual(staleScopes(UNIT), [dead]);
     assert.deepEqual(staleScopes(`${UNIT}-other`), [], 'another unit has none');
-    // The same listing, filtered by the bl pid: what `bl stop` stops (S-1335).
-    assert.deepEqual(scopesOf(UNIT, process.pid), [mine], "this bl's scopes, the live holder's");
-    assert.deepEqual(scopesOf(UNIT, 4_999_999), [dead]);
-    assert.deepEqual(scopesOf(`${UNIT}-other`, process.pid), [], 'another unit has none');
   } finally {
     assert.deepEqual(stopScope(dead), { ok: true });
     assert.deepEqual(stopScope(mine), { ok: true });

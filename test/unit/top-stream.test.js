@@ -6,9 +6,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { PassThrough, Writable } from 'stream';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { STAGED_FILE } from '../../src/priority.js';
-import { RETRY_FIRST_MS, backlogStamp, createStream } from '../../src/top-stream.js';
+import { RETRY_FIRST_MS, backlogStamp, createStream, runStream } from '../../src/top-stream.js';
 import { SECTIONS } from '../../src/top-snapshot.js';
 
 const INTERVAL = 2000;
@@ -20,7 +21,7 @@ const TICKS = (10 * 60 * 1000) / INTERVAL;
  * second call on, `failOnce` one that throws on its second call only.
  * `times` holds the clock of each call of each reader.
  */
-function simulate({ before = () => {}, throwing = null, failOnce = null } = {}) {
+async function simulate({ before = () => {}, throwing = null, failOnce = null } = {}) {
   let t = 0;
   let stamp = 'a';
   const counts = Object.fromEntries(SECTIONS.map((s) => [s, 0]));
@@ -46,14 +47,14 @@ function simulate({ before = () => {}, throwing = null, failOnce = null } = {}) 
         stamp += 'x';
       },
     });
-    snapshots.push(stream.tick());
+    snapshots.push(await stream.tick());
     t += INTERVAL;
   }
   return { counts, times, snapshots };
 }
 
-test('with no change, runs, activity and tokens are read every tick, attention and next every 30 s, capacity and history every 5 min', () => {
-  const { counts, snapshots } = simulate();
+test('with no change, runs, activity and tokens are read every tick, attention and next every 30 s, capacity and history every 5 min', async () => {
+  const { counts, snapshots } = await simulate();
   assert.equal(TICKS, 300);
   assert.deepEqual(counts, {
     runs: 300,
@@ -71,31 +72,31 @@ test('with no change, runs, activity and tokens are read every tick, attention a
   assert.equal(last.capacity.read_at, new Date(300000).toISOString());
 });
 
-test('a backlog change reads attention and next at the next tick, and their 30 s restart from it', () => {
-  const { counts } = simulate({ before: (i, { change }) => i === 10 && change() });
+test('a backlog change reads attention and next at the next tick, and their 30 s restart from it', async () => {
+  const { counts } = await simulate({ before: (i, { change }) => i === 10 && change() });
   // t=0, then t=20 s (the change), then every 30 s from it to t=590 s.
   assert.equal(counts.attention, 21);
   assert.equal(counts.next, 21);
   assert.equal(counts.runs, 300);
 });
 
-test('a capacity request reads capacity at the next tick, once', () => {
-  const { counts, snapshots } = simulate({ before: (i, { stream }) => i === 5 && stream.requestCapacity() });
+test('a capacity request reads capacity at the next tick, once', async () => {
+  const { counts, snapshots } = await simulate({ before: (i, { stream }) => i === 5 && stream.requestCapacity() });
   // t=0, t=10 s (the request, read at tick 5), then t=310 s.
   assert.equal(counts.capacity, 3);
   assert.equal(snapshots[5].capacity.read_at, new Date(10000).toISOString());
   assert.equal(snapshots[6].capacity.read_at, new Date(10000).toISOString());
 });
 
-test('a reader that throws keeps its last good value with error, and the stream goes on', () => {
-  const { counts, snapshots } = simulate({ throwing: 'runs' });
+test('a reader that throws keeps its last good value with error, and the stream goes on', async () => {
+  const { counts, snapshots } = await simulate({ throwing: 'runs' });
   assert.equal(counts.runs, 300);
   assert.deepEqual(snapshots[0].runs, { read_at: new Date(0).toISOString(), n: 1, now: 0 });
   assert.deepEqual(snapshots.at(-1).runs, { read_at: new Date(0).toISOString(), n: 1, now: 0, error: 'runs broke' });
   assert.equal(snapshots.at(-1).attention.error, undefined);
 });
 
-test('a failed read of a due section is read again RETRY_FIRST_MS later, not after its period', () => {
+test('a failed read of a due section is read again RETRY_FIRST_MS later, not after its period', async () => {
   // name, the clock of its second read (which fails), its read count with no failure.
   for (const [name, second, reads] of [
     ['attention', 30000, 20],
@@ -103,7 +104,7 @@ test('a failed read of a due section is read again RETRY_FIRST_MS later, not aft
     ['capacity', 300000, 2],
     ['history', 300000, 2],
   ]) {
-    const { counts, times, snapshots } = simulate({ failOnce: name });
+    const { counts, times, snapshots } = await simulate({ failOnce: name });
     assert.equal(times[name][1], second, name);
     assert.equal(times[name][2], second + RETRY_FIRST_MS, `${name}: read again after the retry`);
     const failed = snapshots[second / INTERVAL][name];
@@ -117,7 +118,7 @@ test('a failed read of a due section is read again RETRY_FIRST_MS later, not aft
   }
 });
 
-test('a stamp that throws ends no tick: its first throw counts as a change, and the next throws do not', () => {
+test('a stamp that throws ends no tick: its first throw counts as a change, and the next throws do not', async () => {
   const readers = Object.fromEntries(SECTIONS.map((name) => [name, () => ({ ok: true })]));
   const times = { attention: [], next: [] };
   for (const name of Object.keys(times)) {
@@ -132,12 +133,12 @@ test('a stamp that throws ends no tick: its first throw counts as a change, and 
       throw new Error('git is gone');
     },
   });
-  for (let i = 0; i < 30; i++, t += INTERVAL) assert.equal(stream.tick().attention.error, undefined);
+  for (let i = 0; i < 30; i++, t += INTERVAL) assert.equal((await stream.tick()).attention.error, undefined);
   // t=0 (the first tick), t=2 s (the stamp went: a change), then every 30 s from it.
   for (const name of Object.keys(times)) assert.deepEqual(times[name], [0, 2000, 32000], name);
 });
 
-test('a section that keeps failing is not read at every tick', () => {
+test('a section that keeps failing is not read at every tick', async () => {
   const period = { attention: 30000, next: 30000, capacity: 300000, history: 300000 };
   // The usual read count of each section over the 10 minutes, with no failure.
   const usual = { attention: 20, next: 20, capacity: 2, history: 2 };
@@ -145,7 +146,7 @@ test('a section that keeps failing is not read at every tick', () => {
     // A backlog that changes at every tick reads attention and next at every tick, unless they fail.
     for (const changing of [false, true]) {
       const what = `${name}${changing ? ', the backlog changing at every tick' : ''}`;
-      const { counts, times } = simulate({ throwing: name, before: (i, { change }) => changing && change() });
+      const { counts, times } = await simulate({ throwing: name, before: (i, { change }) => changing && change() });
       // After the first failure, each retry waits twice as long as the one before, up to the period.
       for (let i = 2; i < times[name].length; i++) {
         const want = Math.min(period[name], RETRY_FIRST_MS * 2 ** (i - 2));
@@ -193,3 +194,87 @@ test('backlogStamp changes when a unit file, a change document, a new task or th
     before = backlogStamp(config);
   }
 });
+
+// Each row: the tick whose `runs` read is still pending when the reader goes
+// away, and how it goes: stdin closes, or stdout fails (EPIPE). That tick and
+// every one after it write nothing; the ticks before it wrote their lines.
+for (const at of [1, 2]) {
+  for (const how of ['stdin closes', 'stdout fails']) {
+    test(`runStream_stops_at_closed_stdin: ${how} during tick ${at}`, async () => {
+      const config = { backlogRoot: mkTempDir('bl-top-stream-') };
+      const stdin = new PassThrough();
+      const written = { stdout: 0, stderr: 0 };
+      const sink = (name) =>
+        new Writable({
+          write(_chunk, _enc, cb) {
+            written[name] += 1;
+            cb();
+          },
+        });
+      const stdout = sink('stdout');
+      const stderr = sink('stderr');
+      let calls = 0;
+      let settled;
+      const readers = Object.fromEntries(SECTIONS.map((name) => [name, () => ({ ok: true })]));
+      // A section that never reads: its problem line goes to stderr on the first tick.
+      readers.activity = () => {
+        throw new Error('activity broke');
+      };
+      readers.runs = async () => {
+        calls += 1;
+        if (calls !== at) return { ok: true };
+        settled = new Promise((resolve) => setTimeout(resolve, 50));
+        if (how === 'stdin closes') stdin.end();
+        else stdout.emit('error', new Error('write EPIPE'));
+        await settled;
+        return { ok: true };
+      };
+      await runStream(config, { interval: 10, stdin, stdout, stderr, readers });
+      // The pending read ends after runStream resolved; give its tick the turn it would write in.
+      await settled;
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(written, { stdout: at - 1, stderr: at - 1 });
+      assert.equal(calls, at, 'no tick after the reader went away');
+    });
+  }
+}
+
+// Each row: the section whose read never ends, the tick it hangs in, and how
+// the reader goes away during that read. runStream resolves all the same, and
+// writes nothing after the close.
+for (const [section, at] of [
+  ['runs', 1],
+  ['capacity', 1],
+  ['runs', 2],
+]) {
+  for (const how of ['stdin closes', 'stdout fails']) {
+    test(`run_stream_first_tick_close_resolves_before_capacity_read: ${section} hangs in tick ${at}, ${how}`, async () => {
+      const config = { backlogRoot: mkTempDir('bl-top-stream-') };
+      const stdin = new PassThrough();
+      let lines = 0;
+      const stdout = new Writable({
+        write(_chunk, _enc, cb) {
+          lines += 1;
+          cb();
+        },
+      });
+      const stderr = new Writable({ write: (_chunk, _enc, cb) => cb() });
+      let calls = 0;
+      const readers = Object.fromEntries(SECTIONS.map((name) => [name, () => ({ ok: true })]));
+      readers[section] = () => {
+        calls += 1;
+        if (calls !== at) return { ok: true };
+        if (how === 'stdin closes') stdin.end();
+        else stdout.emit('error', new Error('write EPIPE'));
+        return new Promise(() => {});
+      };
+      // No row hangs capacity in tick 2: only tick 1 reads it.
+      const result = await Promise.race([
+        runStream(config, { interval: 10, stdin, stdout, stderr, readers }).then(() => 'resolved'),
+        new Promise((resolve) => setTimeout(() => resolve('still waiting'), 500)),
+      ]);
+      assert.equal(result, 'resolved');
+      assert.equal(lines, at - 1, 'only the ticks before the hung read wrote');
+    });
+  }
+}

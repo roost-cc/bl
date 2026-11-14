@@ -27,10 +27,15 @@ const EXCEPTIONS = new Map([
   ['credential-helper.js run', "a local synchronous `run`, not bl.js's"],
   ['release.js run', "a local synchronous `run`, not bl.js's"],
   ['report.js scoped', "a local synchronous `scoped`, not feature-run.js's"],
-  ['agents/capacity-helper.js run', "a local synchronous `run`, not bl.js's"],
-  ['agents/claude.js run', "a local synchronous `run`, not bl.js's"],
+  ['agents/codex-capacity.js spawn', "child_process's `spawn`, which returns the child, not an adapter's `spawn()`"],
+  ['child-stdio.js spawn', "child_process's `spawn`, which returns the child, not an adapter's `spawn()`"],
+  ['verbs.js spawn', "child_process's `spawn`, which returns the child, not an adapter's `spawn()`"],
   ['agents/codex.js run', "a local synchronous `run`, not bl.js's"],
   ['agents/gemini.js run', "a local synchronous `run`, not bl.js's"],
+  [
+    'top-stream.js emitSnapshot',
+    'the first tick: `Promise.race([first, closed])` awaits it, so a close ends the wait while it still reads',
+  ],
   ['tree.js addEdge', "a local synchronous `addEdge`, not block.js's"],
   ['what-next.js addEdge', "a local synchronous `addEdge`, not block.js's"],
 ]);

@@ -215,6 +215,11 @@ export function fakeRunner({
       }
       return { status: 0, output: '' };
     },
+    // A gate command answers as `shell` does, through the runner it is called
+    // on, so a test that replaces `shell` answers the gate too.
+    async testGate(cmd, cwd) {
+      return this.shell(cmd, cwd);
+    },
     forge(op, vars) {
       calls.push({ type: 'forge', op, vars });
       return { configured: true, status: 0, stdout: 'https://github.com/x/y/pull/7\n' };

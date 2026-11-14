@@ -201,7 +201,7 @@ test('runs: a run state is parsed again only when its mtime changes', () => {
   assert.equal(read(NOW).rows[0].step, 'test');
 });
 
-test("runs, activity, tokens: a run state that cannot be read is skipped and named in the section's error, and the other rows stay", () => {
+test("runs, activity, tokens: a run state that cannot be read is skipped and named in the section's error, and the other rows stay", async () => {
   const cases = [
     ['truncated JSON (a killed bl)', (run) => writeFileSync(join(run, 'F-8.json'), '{"feature":"F-8","hist')],
     ['not a run state', (run) => writeFileSync(join(run, 'F-8.json'), '{"x":1}')],
@@ -223,9 +223,9 @@ test("runs, activity, tokens: a run state that cannot be read is skipped and nam
     writeFileSync(join(run, 'F-1.json'), JSON.stringify(f1));
     breakIt(run);
     const readers = sectionReaders(config);
-    const runs = readSection(undefined, () => readers.runs(NOW), NOW);
-    const activity = readSection(undefined, () => readers.activity(NOW), NOW);
-    const tokens = readSection(undefined, () => readers.tokens(NOW), NOW);
+    const runs = await readSection(undefined, () => readers.runs(NOW), NOW);
+    const activity = await readSection(undefined, () => readers.activity(NOW), NOW);
+    const tokens = await readSection(undefined, () => readers.tokens(NOW), NOW);
     for (const [name, section] of [
       ['runs', runs],
       ['activity', activity],
@@ -513,10 +513,10 @@ test('an activity entry with a year above 9999 or below 0 is left out', () => {
   assert.equal(readTokens(states, NOW).today.output, 5);
 });
 
-test('readSection: a read that throws keeps the last good value and carries error; the next good read clears it', () => {
-  let s = readSection(undefined, () => ({ rows: [1] }), NOW);
+test('readSection: a read that throws keeps the last good value and carries error; the next good read clears it', async () => {
+  let s = await readSection(undefined, () => ({ rows: [1] }), NOW);
   assert.deepEqual(s, { read_at: '2026-11-07T12:00:00.000Z', rows: [1] });
-  s = readSection(
+  s = await readSection(
     s,
     () => {
       throw new Error('disk on fire');
@@ -524,10 +524,10 @@ test('readSection: a read that throws keeps the last good value and carries erro
     NOW + 1000,
   );
   assert.deepEqual(s, { read_at: '2026-11-07T12:00:00.000Z', rows: [1], error: 'disk on fire' });
-  s = readSection(s, () => ({ rows: [2] }), NOW + 2000);
+  s = await readSection(s, () => ({ rows: [2] }), NOW + 2000);
   assert.deepEqual(s, { read_at: '2026-11-07T12:00:02.000Z', rows: [2] });
   // A first read that throws has no value to keep.
-  s = readSection(
+  s = await readSection(
     undefined,
     () => {
       throw new Error('no backlog');
@@ -535,6 +535,17 @@ test('readSection: a read that throws keeps the last good value and carries erro
     NOW,
   );
   assert.deepEqual(s, { read_at: null, error: 'no backlog' });
+  // An async read (capacity) is awaited: its value, or its rejection as error.
+  s = await readSection(undefined, async () => ({ rows: [3] }), NOW);
+  assert.deepEqual(s, { read_at: '2026-11-07T12:00:00.000Z', rows: [3] });
+  s = await readSection(
+    s,
+    async () => {
+      throw new Error('read timed out');
+    },
+    NOW + 1000,
+  );
+  assert.deepEqual(s, { read_at: '2026-11-07T12:00:00.000Z', rows: [3], error: 'read timed out' });
 });
 
 test('snapshotOf holds every section with read_at; problemLines names the failed ones and the inbox warnings', () => {
