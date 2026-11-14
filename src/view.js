@@ -126,7 +126,7 @@ const SETTLE_MS = 100;
  * A staging file that a failed rename left behind is read-only, so it is
  * removed first.
  * @param {string} copy
- * @param {string | Buffer} content
+ * @param {Buffer} content
  */
 function placeCopy(copy, content) {
   const staging = join(dirname(copy), `.${basename(copy)}.next`);

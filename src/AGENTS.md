@@ -4160,9 +4160,9 @@ bl's prompts and plugin commands use, not a new format.
   title unpadded, so no tab keeps a working status after bl stops. The first title also calls `exitOnSignal`
   (`signal-exit.js`), the SIGINT and SIGTERM handlers that `bl.js` registers when `bl` starts:
   they end the process with `process.exit(130|143)`, so the hook sees an interrupt. They are
-  registered once per process. While `bl view`'s editor runs, `ignoreSignals` makes them return
-  at once, so bl ignores the interrupt (S-1182). Since every command sets a start title, the exit hook reaches
-  every command. A process that loads `tab-title.js` without `bl.js` keeps Node's default
+  registered once per process. While the editor of `bl view` or `bl change` runs (`showReadOnly`),
+  `ignoreSignals` makes them return at once, so bl ignores the interrupt (S-1182). Since every
+  command sets a start title, the exit hook reaches every command. A process that loads `tab-title.js` without `bl.js` keeps Node's default
   signal action until its first title, and for good with titles off.
 - The title width only grows while the process runs: `showTabTitle` pads a shorter title with
   trailing spaces to the widest title shown, so the tmux status bar does not move. A final
