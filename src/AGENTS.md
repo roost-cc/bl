@@ -967,8 +967,13 @@ someone reads a page.
 ## Statuses and gates (`flow.json`, F-66 D1, F-69 D1)
 
 `flow.json`, at the backlog root, names three things for each type (story, feature, batch,
-task): its statuses in lifecycle order, its terminal statuses, and the verbs that move a work
-unit between them. A hold in `blockers.json` can keep a work unit out of any status of its type
+task):
+
+- its statuses, in lifecycle order;
+- its terminal statuses;
+- the verbs that move a work unit between them.
+
+A hold in `blockers.json` can keep a work unit out of any status of its type
 (F-119 D4). So the file has no gates of its own.
 
 One document describes the file's format: `bl/templates/flow.schema.md` (`FLOW_DOC`, F-119 R7).
@@ -1071,8 +1076,11 @@ document. This section holds the notes on the code.
   - the set of `escalation-not-none` (`Flow.isRunnable`, short of `escalated`).
 
   The start-state check of every verb handler is the table's (`startOf`, F-69 D3). Two things
-  still live in code: comparisons that name the one status that a line acts on
-  (`s.status === 'superseded'` in `progress()`), and the closing write of `src/updates.js`.
+  still live in code:
+  - comparisons that name the one status that a line acts on (`s.status === 'superseded'` in
+    `progress()`);
+  - the closing write of `src/updates.js`.
+
   `test/unit/status-literals.test.js` counts every set of story statuses in `src/`. The status
   names in this document are the shipped flow's. Messages and help name the current backlog's.
 
@@ -1226,8 +1234,8 @@ An entry's `from` is the `to` of the entry before it.
 
   The migration skips these work units and lists them:
   - a work unit whose run lock (`.bl/run/<id>.lock`) or session lock (`liveSessionLocks`, by the
-    worktree's branch) another process holds (`otherHolder`), with the stories of such a
-    feature. The PID in a lock file decides nothing, so the lock of a parent `bl` run counts
+    worktree's branch) another process holds (`otherHolder`). The migration skips the
+    stories of such a feature too. The PID in a lock file decides nothing, so the lock of a parent `bl` run counts
     too.
   - a work unit whose `transitions:` is malformed (`logShape`).
 
@@ -1254,8 +1262,8 @@ An entry's `from` is the `to` of the entry before it.
   - `fixed`: the open round follows a fix, so its review is a re-review.
 
   The roles are `REVIEW` in `flow.js`. A verdict is an entry to `fixing` or `ready_for_merge`.
-  The review's own entry to `escalated` (`via: review`) is a verdict too: the closing round left
-  items open, and the entry leaves the items in `fixing`.
+  The review's own entry to `escalated` (`via: review`) is a verdict too. There, the closing
+  round left items open, and the entry leaves the items in `fixing`.
 
   An entry into `in_review` opens a round, with two exceptions. One is a return to a round that
   has no verdict yet. The other is the return of a resumed `bl run` (`by: run`) to open items. A
@@ -1283,9 +1291,9 @@ An entry's `from` is the `to` of the entry before it.
 
 ## Holds between units (`blockers.json`, F-66 D2)
 
-`blockers.json`, at the backlog root, holds every edge: a unit kept out of a status (the
-edge's gate) until another unit's status meets a status. Unit files hold none; `bl block list`
-derives each unit's view.
+`blockers.json`, at the backlog root, holds every edge. An edge keeps a work unit out of a status
+(the edge's gate) until the status of another work unit meets a given status. Unit files hold no
+edges. `bl block list` derives the view of each work unit.
 
 ```json
 {
@@ -1304,170 +1312,225 @@ derives each unit's view.
 }
 ```
 
-- **An edge** (a hold) keeps `unit` out of the status `gate` until `blocker`'s status meets
+- **An edge** (a hold) keeps `unit` out of the status `gate` until the status of `blocker` meets
   `until` (`Flow.meets`, so `superseded` meets `done`), F-119 D4. The gate is a status of the
-  unit's type; any status can be one, for example `in_refinement` to hold a refinement session.
-  Its identity is (`blocker`, `gate`, `unit`): no id, no duplicates. `unit: "*"` holds every
-  unit of every type that has the status; `blocker` is never `*`. `active_when` (optional)
-  keeps the edge from holding anything until that unit's status meets that status.
-- **The gate names from before F-119** (R3). A hold's gate was `run` or `merge`, a name in
-  `flow.json`'s old `gates` table. The reader (`parseBlockers`, through `holdGate`) reads them as
-  the statuses they stand for, `OLD_GATES`: `run` as `in_progress` (what `run` and `implement`
-  enter), `merge` as `done` (what `merge` enters). A merge edge and an order edge keep their
-  gates, and so does a hold whose gate is a status of its unit's type (`typeOfId`, by the id's
-  prefix): an admin may name a status `run` or `merge` (`gateStatus`, which reads the flow
-  through `flowOrNull`). A status of that name in another type does not count. A wildcard edge
-  (`unit: "*"`) has no single type, so it keeps the name when any type has that status, and
-  then holds the units of each type that has it. With no
-  readable `flow.json`, every gate stays as written, so a writer (`bl block remove`,
-  `bl block list --fix`, `bl attach`, the merge driver) puts back the gates it read, and
-  `bl block add` refuses (`loadFlow`). So every reader sees statuses only, and the next write of the file stores them;
-  `bl block list --fix` rewrites it at once, and until then `bl validate` gives a
-  `blockers-order` warning that names the old names. `bl block add` and `bl block remove` read
-  `--gate run` and `--gate merge` the same way, and the `gate_free:<gate>` guard its argument
-  (`gateStatus`).
-- **A merge edge** (F-111 D1) joins two repos of one feature, each end `<feature>:<repo>`
-  (`repoEnd`): `bl merge` merges the blocker's repo before the unit's (see `mergeOrder` under
-  **Feature frontmatter**). Its gate is `merge` and its `until` is `merged` (`MERGE_EDGE`); neither
-  is in `flow.json`, because no verb checks a merge edge as a gate. It is an edge inside one feature
-  (`inFeature`), so it is never a hold (`heldBy`, `heldAt`, `heldLines` skip it) and adds no arc
-  to `holdGraph`. `edgeProblems` checks it by its own rules (`blockers-unit`: an end that is
-  `*`, not `<feature>:<repo>`, not a feature, or a repo no story of the feature names, or ends in
-  two features; `blockers-gate`: a gate other than `merge`; `blockers-status`: an `until` other
-  than `merged`). A cycle of one feature's merge edges (`featureGraph`) is `blockers-cycle`
-  (`merge order cycle: …`); `bl block add` refuses the edge that would close one, a repo on
-  itself too. `bl block list F-1` lists F-1's merge edges as
-  `merge edge F-1:ci-cd → F-1:bl: bl merges after ci-cd`. Add one when one repo's tests or push
-  gate run another repo's new code: `bl block add F-1:ci-cd --gate merge --unit F-1:bl --until merged`.
-- **An order edge** (F-111 D1) joins two stories of one feature:
+  work unit's type. Any status can be a gate, for example `in_refinement` to hold a refine
+  session. An edge's identity is (`blocker`, `gate`, `unit`): an edge has no id, and the file
+  has no duplicates. `unit: "*"` holds every work unit of every type that has the status.
+  `blocker` is never `*`. `active_when` (optional) keeps the edge from holding anything until
+  that work unit's status meets that status.
+- **The gate names from before F-119** (R3). A hold's gate was `run` or `merge`, a name in the
+  old `gates` table of `flow.json`. The reader (`parseBlockers`, through `holdGate`) reads them
+  as the statuses they stand for (`OLD_GATES`): `run` as `in_progress` (what `run` and
+  `implement` enter), and `merge` as `done` (what `merge` enters). These edges keep their gates
+  as written:
+  - a merge edge and an order edge;
+  - a hold whose gate is a status of its work unit's type (`typeOfId`, by the id's prefix). An
+    admin may name a status `run` or `merge` (`gateStatus`, which reads the flow through
+    `flowOrNull`). A status of that name in another type does not count;
+  - a wildcard edge (`unit: "*"`), when any type has a status of that name. Such an edge has no
+    single type. It then holds the work units of each type that has that status.
+
+  So every reader sees statuses only, and the next write of the file stores them.
+  `bl block list --fix` rewrites the file at once. Until then, `bl validate` gives a
+  `blockers-order` warning that names the old names.
+
+  With no readable `flow.json`, every gate stays as written. So each writer puts back the gates
+  that it read: `bl block remove`, `bl block list --fix`, `bl attach` and the merge driver.
+  `bl block add` refuses (`loadFlow`). `bl block add` and `bl block remove` read `--gate run`
+  and `--gate merge` the same way. The `gate_free:<gate>` guard reads its argument the same way
+  too (`gateStatus`).
+
+- **A merge edge** (F-111 D1) joins two repos of one feature. Each end is `<feature>:<repo>`
+  (`repoEnd`). `bl merge` merges the repo of `blocker` before the repo of `unit` (see
+  `mergeOrder` under **Feature frontmatter**). Its gate is `merge` and its `until` is `merged`
+  (`MERGE_EDGE`). Neither is in `flow.json`, because no verb checks a merge edge as a gate. A
+  merge edge is an edge inside one feature (`inFeature`). So it is never a hold: `heldBy`,
+  `heldAt` and `heldLines` skip it, and it adds no arc to `holdGraph`.
+
+  `edgeProblems` checks a merge edge by its own rules:
+  - `blockers-unit`: an end that is `*`, is not `<feature>:<repo>`, is not a feature, or is a
+    repo that no story of the feature names. It is also an edge whose ends are in two features;
+  - `blockers-gate`: a gate other than `merge`;
+  - `blockers-status`: an `until` other than `merged`.
+
+  A cycle of one feature's merge edges (`featureGraph`) is `blockers-cycle`
+  (`merge order cycle: …`). `bl block add` refuses the edge that would close one, and an edge
+  from a repo to itself too. `bl block list F-1` lists F-1's merge edges as
+  `merge edge F-1:ci-cd → F-1:bl: bl merges after ci-cd`. Add a merge edge when the tests or the
+  push gate of one repo run the new code of another repo:
+  `bl block add F-1:ci-cd --gate merge --unit F-1:bl --until merged`.
+
+- **An order edge** (F-111 D1) joins two stories of one feature.
   `{"blocker":"S-1446","gate":"order","unit":"S-1448","until":"implemented"}` says "implement
-  S-1446 before S-1448". Its gate is `order` and its `until` is `implemented` (`ORDER_EDGE`);
-  neither is in `flow.json`. It is an edge inside one feature (`inFeature`), so like a merge
-  edge it is never a hold and adds no arc to `holdGraph`. `orderStoriesByDeps(stories, edges)`
-  (`execution-plan.js`, F-125 D2) orders a list of stories by the run and order edges between
-  two of them, ties by number, and
-  `resolveFeatureStories`, `bl status F-n`, the implement loop and the graph's feature stories
-  use that order. `edgeProblems` checks it (`blockers-unit`: an end that is `*`, not a story,
-  in no feature, or ends in two features; `blockers-status`: an `until` other than
-  `implemented`). A cycle of one feature's order edges is `blockers-cycle`
-  (`story order cycle: …`); `bl block add` refuses the edge that would close one.
-  `bl block list F-1` lists them as `order edge S-1 → S-2: S-2 is implemented after S-1`.
-- **Story dependencies are edges** (F-111 D4, D5). `blockers.json` is the one place for
-  holds and order; a unit file holds no `depends_on:` and no `required_for:`. "Story `S-a`
-  waits for `S-b`" is `dependencyEdge(S-b, S-a, featureOf)`: the order edge `S-b → S-a` when
-  both are in one feature, else the run edge (`RUN_EDGE`)
-  `{"blocker":"S-b","gate":"in_progress","unit":"S-a","until":"done"}`, which keeps `S-a` (and
-  its feature) out of `in_progress` until `S-b` is done.
+  S-1446 before S-1448". Its gate is `order` and its `until` is `implemented` (`ORDER_EDGE`).
+  Neither is in `flow.json`. An order edge is an edge inside one feature (`inFeature`). So, like
+  a merge edge, it is never a hold and adds no arc to `holdGraph`.
+
+  `orderStoriesByDeps(stories, edges)` (`execution-plan.js`, F-125 D2) orders a list of stories
+  by the run and order edges between two of them, with ties by number. `resolveFeatureStories`,
+  `bl status F-n`, the implement loop and the graph's feature stories use that order.
+
+  `edgeProblems` checks an order edge by these rules:
+  - `blockers-unit`: an end that is `*`, is not a story, or is in no feature. It is also an
+    edge whose ends are in two features;
+  - `blockers-status`: an `until` other than `implemented`.
+
+  A cycle of one feature's order edges is `blockers-cycle` (`story order cycle: …`).
+  `bl block add` refuses the edge that would close one. `bl block list F-1` lists order edges as
+  `order edge S-1 → S-2: S-2 is implemented after S-1`.
+
+- **Story dependencies are edges** (F-111 D4, D5). `blockers.json` is the one place for holds
+  and order. A unit file holds no `depends_on:` and no `required_for:`. "Story `S-a` waits for
+  `S-b`" is `dependencyEdge(S-b, S-a, featureOf)`. When both stories are in one feature, it is
+  the order edge `S-b → S-a`. Else it is the run edge (`RUN_EDGE`)
+  `{"blocker":"S-b","gate":"in_progress","unit":"S-a","until":"done"}`. The run edge keeps `S-a`
+  (and its feature) out of `in_progress` until `S-b` is done.
   - **The writers.** `bl new --depends-on` / `--required-for` and a spec's `depends_on` /
-    `required_for` (input only) write these edges once the new stories are in place, through
-    `writeEdges` (`block.js`: `writeEdge`'s checks for each, all or nothing), under the lock
-    that wrote the stories, and `blockers.json` joins their commit. An unknown id warns and
-    gets no edge. A refused edge (a deadlock) or a failed write puts `blockers.json` back and
-    removes the new stories, so the same `bl new` runs again with the same ids. When
-    `blockers.json` cannot be put back, `bl new` keeps the new stories, since an edge in it may
-    name them, and the message names the file (`writeNewEdges`). When stories join a feature
-    (`bl new --feature … S-n`, `bl attach`), `orderJoinedEdges` turns each run edge between
-    one of them and a story of that feature into an order edge, in the same commit. A run edge
-    with `active_when` is not turned, since an order edge takes none: both commands refuse
-    the join before they write anything (`joinRefusal`). The story templates have no
-    `depends_on:`.
-  - **The read adapter (R4).** Until `scripts/migrate-depends-on.js` moves them, each
-    `depends_on:` entry still in a story file is read as its `dependencyEdge`
-    (`dependsOnEdges`). An entry that names no story still gives a run edge, so it holds, and
-    the graph reports it `dangling-dep`. `readEdges(config)` is the one call every reader
-    makes: the file's edges, then the keys' edges whose identity the file lacks
-    (`withDependsOn`, an edge in the file wins), as the backlog graph holds them (`edges`).
-    `bl validate` warns `depends-on-key` for each story file that still holds the key, empty
-    or not. `bl block add` and `bl block list` read and write the file's edges alone;
-    `bl block add` checks a cycle against `readEdges`.
+    `required_for` (input only) write these edges once the new stories are in place. They write
+    through `writeEdges` (`block.js`: the checks of `writeEdge` for each edge, all or nothing),
+    under the lock that wrote the stories. `blockers.json` joins the commit of the stories. An
+    unknown id warns and gets no edge.
+
+    A refused edge (a deadlock) or a failed write puts `blockers.json` back and removes the new
+    stories. So the same `bl new` runs again with the same ids. If bl cannot put
+    `blockers.json` back, `bl new` keeps the new stories, since an edge in the file may name
+    them. The message names the file (`writeNewEdges`).
+
+    When stories join a feature (`bl new --feature … S-n`, `bl attach`), `orderJoinedEdges`
+    turns run edges into order edges, in the same commit. It turns each run edge between one of
+    them and a story of that feature. A run edge with `active_when` is not turned, since an order
+    edge takes no `active_when`. Both commands refuse such a join before they write anything
+    (`joinRefusal`). The story templates have no `depends_on:`.
+
+  - **The read adapter (R4).** Until `scripts/migrate-depends-on.js` moves them, bl reads each
+    `depends_on:` entry still in a story file as its `dependencyEdge` (`dependsOnEdges`). An
+    entry that names no story still gives a run edge, so it holds, and the graph reports it
+    `dangling-dep`. `readEdges(config)` is the one call that every reader makes. It gives the
+    file's edges, then the edges of the keys whose identity the file lacks (`withDependsOn`: an
+    edge in the file wins). The backlog graph holds the result as `edges`. `bl validate` warns
+    `depends-on-key` for each story file that still holds the key, empty or not. `bl block add`
+    and `bl block list` read and write the file's edges alone. `bl block add` checks a cycle
+    against `readEdges`.
   - **The migration** (`scripts/migrate-depends-on.js`, `src/migrate-depends-on.js`, Decision
-    A3; the operator runs it after `bl merge F-111`, task T-72). It writes each entry's edge
-    that `blockers.json` lacks, and lists an entry `bl block add` would refuse (an id that is
-    no story). It then re-reads the file and removes a story's `depends_on:` only when every
-    edge the key gives is there; a story that does not match keeps its key and is listed in
-    MIGRATION.md with the missing edges, and a later run removes the key once that is fixed.
-    It removes `required_for:` and an empty `depends_on:` from every story, closed ones too,
-    through `planText` (`migrate-derived-keys.js`), and commits once
-    (`migration-txn.js`). `--dry-run` prints the counts; it is refused on a backlog that a real
-    run refuses (a dirty work tree, a backlog behind `origin/main`, an active `bl run`). Since
-    `readEdges` gives the file's edge where a key gave the same identity, every verb reads the
-    same edges after it.
+    A3). The operator runs it after `bl merge F-111` (task T-72). It works in these steps:
+    1. It writes each entry's edge that `blockers.json` lacks. It lists each entry that
+       `bl block add` would refuse (an id that is no story).
+    2. It re-reads the file. It removes a story's `depends_on:` only when every edge that the
+       key gives is in the file. A story that does not match keeps its key, and MIGRATION.md
+       lists it with the missing edges. A later migration removes the key once someone fixes
+       that.
+    3. It removes `required_for:` and an empty `depends_on:` from every story, done or
+       superseded ones too, through `planText` (`migrate-derived-keys.js`).
+    4. It commits once (`migration-txn.js`).
+
+    `--dry-run` prints the counts. bl refuses a dry run wherever it refuses the migration: a dirty work tree, a backlog behind `origin/main`, or a `bl run` that is
+    running. `readEdges` gives the file's edge where a key gave the same identity. So after the
+    migration, every verb reads the same edges.
+
 - **The schema.** bl reads `bl-blockers/v1` (the same shape, with no merge or order edge) and
-  `bl-blockers/v2`, and writes `v2` (`BLOCKERS_SCHEMA`, `BLOCKERS_SCHEMAS`); the merge driver
-  reads either side. A sorted `v1` file is no `blockers-order` finding.
-- **The layout.** Written only by bl (`writeBlockers`, through `atomicWriteFile`): sorted by
-  `unit`, then `blocker`, then `gate` in code point order (`F-10` before `F-2`), one edge per
-  line in `JSON.stringify` form, keys in that order. Reading and writing it back is
-  byte-identical. Not formatted by prettier. A missing file is an empty graph.
-- **Merging.** Git merges by line, and two adds in one gap of the sorted list (or both at its
-  end, where the last line gains a comma) touch the same lines. So git merges the file with a
-  driver, `src/blockers-merge.js`: `.gitattributes` maps `/blockers.json` to `bl-blockers`
-  (`GITATTRIBUTES_LINE`), and the clone's git config names the script with bl's node
-  (`configureMergeDriver`). `bl block add`, `remove` and `list --fix` set both before they
-  write the file, committing `.gitattributes` with it while HEAD's copy lacks the line, and
-  `pullBacklog` sets the config before it rebases. The driver writes
-  `mergeEdges(base, ours, theirs)` sorted: an edge either side added is kept, one either side
-  removed is dropped, one side's change wins over the other leaving it. Two different versions
-  of one edge, or a change on one side and a remove on the other, leave git's conflict markers,
-  as does a side that lists one edge twice or is blank (only a zero-byte base, a file both
-  sides added, is an empty graph). A merge can close a deadlock neither side had; `bl validate`
-  reports it (`blockers-cycle`).
-- **Met edges stay** as history; nothing prunes them.
-- **A feature's hold check** also checks the edges on each of its stories, since it runs and
-  merges as one unit (`gateIds`: the feature, and every story whose feature it is).
-- **The hold checks** (F-66 D3, F-119 D6). `heldBy(config, id, verb)` is the one check: every
-  active, unmet edge on a member of `gateIds(units, id)` or on `*`, at a status on the nominal
-  path of `verb` in that member's own type (`Flow.nominalPath`), so a feature honours its
-  stories' holds with the story type's row of the verb, each edge once with its line,
-  `<unit> is held at <gate> by <blocker> (<status>, needs <until>)` (`heldLine`; a wildcard edge
-  is named on the unit asked about). So a hold at `in_progress` holds `run` and `implement`, one
-  at `in_review` holds `run` and not `implement`, and one at `done` holds `merge` and not `run`.
+  `bl-blockers/v2`. It writes `v2` (`BLOCKERS_SCHEMA`, `BLOCKERS_SCHEMAS`). The merge driver
+  reads either side. A sorted `v1` file gives no `blockers-order` finding.
+- **The layout.** Only bl writes the file (`writeBlockers`, through `atomicWriteFile`). bl sorts
+  the edges by `unit`, then `blocker`, then `gate`, in code point order (`F-10` before `F-2`).
+  Each edge is one line in `JSON.stringify` form, with the keys in that order. A read and a
+  write back give the same bytes. Prettier does not format the file. A missing file is an empty
+  graph.
+- **Merging.** Git merges by line. Two adds in one gap of the sorted list touch the same lines.
+  So do two adds at its end, where the last line gains a comma. So git merges the file with a
+  driver, `src/blockers-merge.js`:
+  - `.gitattributes` maps `/blockers.json` to `bl-blockers` (`GITATTRIBUTES_LINE`);
+  - the clone's git config names the script with bl's node (`configureMergeDriver`).
+
+  `bl block add`, `remove` and `list --fix` set both before they write the file. They commit
+  `.gitattributes` with the file while HEAD's copy lacks the line. `pullBacklog` sets the
+  config before it rebases.
+
+  The driver writes `mergeEdges(base, ours, theirs)`, sorted:
+  - it keeps an edge that either side added;
+  - it leaves out an edge that either side removed;
+  - when one side changed an edge and the other side left it as it was, the change wins.
+
+  These merges leave git's conflict markers:
+  - two different versions of one edge;
+  - a change on one side and a remove on the other;
+  - a side that lists one edge twice, or is blank.
+
+  Only a
+  zero-byte base, a file that both sides added, is an empty graph. A merge can close a deadlock
+  that neither side had. `bl validate` reports it (`blockers-cycle`).
+
+- **Met edges stay** as history. Nothing prunes them.
+- **A feature's hold check** also checks the edges on each of its stories. The reason is that
+  the feature runs and merges as one work unit. `gateIds` gives the feature and every story
+  whose feature it is.
+- **The hold checks** (F-66 D3, F-119 D6). `heldBy(config, id, verb)` is the one check. It finds
+  every active, unmet edge on a member of `gateIds(units, id)` or on `*`. The edge must be at a
+  status on the nominal path of `verb`, in that member's own type (`Flow.nominalPath`). So a feature honours
+  the holds of its stories with the story type's row of the verb. The check gives each edge
+  once, with its line `<unit> is held at <gate> by <blocker> (<status>, needs <until>)`
+  (`heldLine`). It names a wildcard edge on the work unit that it was asked about. So:
+  - a hold at `in_progress` holds `run` and `implement`;
+  - a hold at `in_review` holds `run` and not `implement`;
+  - a hold at `done` holds `merge` and not `run`.
+
   `heldAt(config, id, status)` is the same check for one status. A file with no edges holds
-  nothing and reads neither `flow.json` nor the units; with edges, a missing `flow.json` stops
-  the verb with its `FlowError`.
-  - Every verb checks its holds when it starts (F-119 D6, R4), and only then: a hold added
-    while it runs does not stop it. `holdRefusal(config, id, verb)` is the refusal: one line per
-    edge, then `next: bl status <blocker>` per blocker. `startOf` checks it for the verb that
-    starts, so `bl run`, `bl implement`, `bl review`, `bl refine` (a story or a feature) and
-    `bl approve` refuse a held unit in their handler. `bl run` also checks `run`'s path in
-    `runUnit` before anything else, so `--plan` is held too. `bl done S-n` checks `done`
-    (`--superseded`: `supersede`), and `bl task done T-n` checks the task's `done`.
-  - Several ids: `dispatch` (`verbs.js`) checks nothing itself, so each target refuses in its
-    own handler (a child `bl <verb> <id>`, or a `bl refine` story batch that skips a held story
-    with a notice), and the others start. `bl run` and `bl implement` take one target
-    (`ONE_TARGET_VERBS`, F-125 Decision A3).
-  - `bl merge`: `mergeGates` adds the finding `blocker` first, one per unmet edge on the unit or
-    its stories, before any repo is touched, for a story and a feature alike (`startOf` with
-    `guards: false` adds none).
-  - No hold check: `bl new` and `bl side` make a new unit, which no edge can name yet
-    (`UNHELD_VERBS`), and `bl status` only reads.
-  - No override flag: the blocker moving on (its status meets `until`) or `bl block remove`
-    lifts the hold.
-  - `bl status <id>` prints a `held: <line>` for each active, unmet edge on the unit (and a
-    feature's stories) at any status of its type (`heldLines`), before its deferred count.
-- **`src/blockers.js`.** `readBlockers(backlogRoot)` (a `BlockersError` naming the file for one
-  that is there but cannot be read, such as a directory or a dangling symlink, or that is not
-  JSON, a wrong `schema`, or an edge of the wrong shape; only a missing file is an empty graph),
-  `formatBlockers`,
-  `writeBlockers`, `edgeKey`, `unitIndex` / `readUnits` (every story, feature and task by id, a
-  story with the feature it runs with and its `unitRepo`), `isActive`, `isMet`, `unmetEdges`,
-  `gateIds`, `heldBy`, `holdRefusal`, `UNHELD_VERBS`, `heldAt`, `heldLines`, `OLD_GATES`,
-  `gateStatus`, `holdGate`, `edgeProblems` (the per-edge checks `bl block add`
-  and `bl validate` share), `holdGraph`, `findHoldCycles`, `wouldCycle`, `findBlockersFindings`,
-  for merge and order edges `repoEnd`, `edgeArrow`, `inFeature`, `featureMergeEdges` and
-  `featureGraph`, and for story dependencies `dependencyEdge` (the edge "S-a waits for S-b"
-  stands for, `RUN_EDGE` or `ORDER_EDGE`), `dependsOnEdges`, `withDependsOn`, `readEdges` and
-  `storyDependencies` (each story's dependencies from the run and order edges between two
-  stories, which the graph's `dependsOn`, `computePlan` and `dependencyOrder` read).
-- **The deadlock graph** (`holdGraph`, D5). Nodes are features (each standing for its stories)
-  and standalone stories; an arc says one node cannot pass a gate until another moves on.
-  Arcs come from every active, unmet edge of `readEdges` (so from a `depends_on:` outside a
-  feature too), a wildcard expanded to every open unit (status not meeting `done`) whose type
-  has the gate's status. A cycle is a deadlock: two features whose stories depend on each other
-  across them (with no story cycle), two standalone stories that depend on each other, an edge
-  and a `depends_on:`, or a wildcard edge whose blocker's type has the status itself (it holds
-  its own blocker). A task has no `in_progress`, so a wildcard edge at `in_progress` from a task
-  (`bl task --gate next`) never holds the task, and is no cycle.
+  nothing, and the check then reads neither `flow.json` nor the unit files. If the file has
+  edges, a missing `flow.json` stops the verb with its `FlowError`.
+  - Every verb checks its holds when it starts (F-119 D6, R4), and only then. A hold that
+    someone adds while the verb runs does not stop it. `holdRefusal(config, id, verb)` is the
+    refusal: one line per edge, then `next: bl status <blocker>` per blocker. `startOf` checks
+    it for the verb that starts. So `bl run`, `bl implement`, `bl review`, `bl refine` (a story
+    or a feature) and `bl approve` refuse a held work unit in their handler. `bl run` also
+    checks the path of `run` in `runUnit` before anything else, so `--plan` is held too.
+    `bl done S-n` checks `done` (with `--superseded`: `supersede`), and `bl task done T-n`
+    checks the task's `done`.
+  - Several ids: `dispatch` (`verbs.js`) checks nothing itself. So each target refuses in its
+    own handler, and the others start. The handler is a child `bl <verb> <id>`, or a batch
+    refine of several stories, which skips a held story with a notice. `bl run` and
+    `bl implement` take one target (`ONE_TARGET_VERBS`, F-125 Decision A3).
+  - `bl merge`: `mergeGates` adds the finding `blocker` first, one per unmet edge on the work
+    unit or its stories. It does this before it touches any repo, for a story and a feature
+    alike. (`startOf` with `guards: false` adds none.)
+  - No hold check: `bl new` and `bl side` make a new work unit, which no edge can name yet
+    (`UNHELD_VERBS`). `bl status` only reads.
+  - No override flag: the hold lifts when the blocker moves on (its status meets `until`), or
+    when `bl block remove` removes the edge.
+  - `bl status <id>` prints a `held: <line>` for each active, unmet edge on the work unit, and
+    on a feature's stories (`heldLines`). An edge at any status of the type counts. It prints
+    these lines before its deferred count.
+
+- **`src/blockers.js`** exports these:
+  - `readBlockers(backlogRoot)`. It throws a `BlockersError` that names the file when the file
+    is there but bl cannot read it. Examples are a directory and a dangling symlink. It throws too
+    when the file is not JSON, has a wrong `schema`, or has an edge of the wrong shape. Only a
+    missing file is an empty graph.
+  - `formatBlockers`, `writeBlockers` and `edgeKey`.
+  - `unitIndex` / `readUnits`: every story, feature and task by id. A story comes with the
+    feature that it runs with, and with its `unitRepo`.
+  - `isActive`, `isMet`, `unmetEdges`, `gateIds`, `heldBy`, `holdRefusal`, `UNHELD_VERBS`,
+    `heldAt`, `heldLines`, `OLD_GATES`, `gateStatus` and `holdGate`.
+  - `edgeProblems`: the checks on each edge that `bl block add` and `bl validate` share.
+  - `holdGraph`, `findHoldCycles`, `wouldCycle` and `findBlockersFindings`.
+  - For merge and order edges: `repoEnd`, `edgeArrow`, `inFeature`, `featureMergeEdges` and
+    `featureGraph`.
+  - For story dependencies: `dependencyEdge` (the edge that "S-a waits for S-b" stands for,
+    `RUN_EDGE` or `ORDER_EDGE`), `dependsOnEdges`, `withDependsOn`, `readEdges` and
+    `storyDependencies`. `storyDependencies` gives the dependencies of each story, from the run
+    and order edges between two stories. The graph's `dependsOn`, `computePlan` and
+    `dependencyOrder` read it.
+- **The deadlock graph** (`holdGraph`, D5). Its nodes are features (each one stands for its
+  stories) and standalone stories. An arc says that one node cannot pass a gate until another
+  node moves on. The arcs come from every active, unmet edge of `readEdges`, so from a
+  `depends_on:` outside a feature too. A wildcard edge expands to every work unit whose status
+  does not meet `done` and whose type has the gate's status. A cycle is a deadlock. A cycle can be:
+  - two features whose stories depend on each other across them (with no story cycle);
+  - two standalone stories that depend on each other;
+  - an edge and a `depends_on:`;
+  - a wildcard edge whose blocker's type has the status itself: the edge holds its own blocker.
+
+  A task has no `in_progress`. So a wildcard edge at `in_progress` from a task
+  (`bl task --gate next`) never holds the task, and it is no cycle.
 
 ## Features
 
