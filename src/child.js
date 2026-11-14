@@ -181,6 +181,8 @@ export function git(cwd, args, opts = {}) {
  * `env` with its `BL_CEILING_DIRECTORIES` entries added to
  * `GIT_CEILING_DIRECTORIES` (S-1560): git's search for a repository stops
  * where bl's walk for a backlog stops. A value already set is kept first.
+ * The raw `BL_CEILING_DIRECTORIES` string goes to git unchanged, so git reads
+ * an empty entry (for example `:/tmp`) by its own rules.
  * @param {NodeJS.ProcessEnv} env
  * @returns {NodeJS.ProcessEnv}
  */
