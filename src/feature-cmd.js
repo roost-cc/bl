@@ -26,7 +26,6 @@
 import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { basename, join, relative, dirname } from 'path';
 import { gitOut } from './child.js';
-import { EXIT_CODES } from './signal-exit.js';
 import {
   configForRepo,
   configurationLabel,
@@ -1655,7 +1654,7 @@ export async function cmdRunStory(args, baseConfig, story) {
 
 /** The run both kinds share: flags, gates, prep, the loop, the exit code. */
 async function runUnit(args, config, unit, { ordered, prepare }) {
-  const { planSteps, formatPlan, runFeature, defaultRunner, escalationOpen, runLockPath, parseMaxRounds } =
+  const { planSteps, formatPlan, runFeature, runExitCode, defaultRunner, escalationOpen, runLockPath, parseMaxRounds } =
     await import('./feature-run.js');
   const kind = unitLabel(unit);
   // A hold on `run`'s nominal path refuses the run, its --plan too, before
@@ -1734,9 +1733,7 @@ async function runUnit(args, config, unit, { ordered, prepare }) {
   if (interactive) await recordFeatureTokens(unit, prep.cfg);
   const { printInboxCount } = await import('./inbox.js');
   printInboxCount(config);
-  // A run `bl stop` stopped exits 130, as an interrupted command does (F-87 D7a).
-  const failed = state.status === 'stopped' ? EXIT_CODES.SIGINT : 1;
-  process.exit(state.status === 'clean' || state.status === 'no-change' ? 0 : failed);
+  process.exit(runExitCode(state));
 }
 
 // ---------------------------------------------------------------------------

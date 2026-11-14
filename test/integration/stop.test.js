@@ -2,9 +2,11 @@
 // in a real user systemd scope, a `bl stop` process that stops the scope, the
 // loop that records `stopped`, and a `--resume` that continues the run.
 // Skipped, with the probe's reason, where user systemd scopes are unavailable.
-// And the `bl stop` binary against a run lock that a child process holds.
+// A SIGINT or SIGTERM to the run's own process is a stop too (S-1540, F-128
+// D8). And the `bl stop` binary against a run lock that a child process holds.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { setTimeout as delay } from 'timers/promises';
 import { loadConfig } from '../../src/config.js';
@@ -12,6 +14,7 @@ import { markStopped, newRunState, runFeature, saveRunState } from '../../src/fe
 import { holderOf } from '../../src/kernel-lock.js';
 import { scopeAvailable, scopedSpawn, scopeProcesses, staleScopes, stopScope } from '../../src/process-scope.js';
 import { runLockPath, stopRequests } from '../../src/run-lock.js';
+import { EXIT_CODES } from '../../src/signal-exit.js';
 import { unitLockPath } from '../../src/unit-lock.js';
 import { fakeRunner, setup } from '../helpers/feature-run-fixture.js';
 import { withNoAgent } from '../helpers/fake-agent.js';
@@ -98,6 +101,129 @@ test(
     }
   },
 );
+
+const SRC = (f) => new URL(`../../src/${f}`, import.meta.url).href;
+const HELPER = (f) => new URL(`../helpers/${f}`, import.meta.url).href;
+
+/**
+ * Start `runFeature` in a Node process of its own (F-128 D8), as `bl run` runs
+ * it. S-1's implement session is a fake headless agent: a long child
+ * (`runLongChild`) that writes its pid to `pidFile` and sleeps, with the
+ * session's stop signal; `trap` runs first in it (`trap '' TERM` makes it
+ * ignore SIGTERM). The process prints the saved run state's fields, the run
+ * lock's holder and the state of a `--resume` as one JSON line, and exits
+ * with `bl run`'s code (`runExitCode`).
+ */
+function startRun(pidFile, trap = '') {
+  const agent = `${trap}echo $$ > '${pidFile}'; exec sleep 300`;
+  const script = [
+    `import { runExitCode, runFeature, loadRunState } from ${JSON.stringify(SRC('feature-run.js'))};`,
+    `import { runLongChild } from ${JSON.stringify(SRC('child.js'))};`,
+    `import { holderOf } from ${JSON.stringify(SRC('kernel-lock.js'))};`,
+    `import { runLockPath } from ${JSON.stringify(SRC('run-lock.js'))};`,
+    `import { fakeRunner, setup } from ${JSON.stringify(HELPER('feature-run-fixture.js'))};`,
+    'const { dir, config, feature, prep } = setup();',
+    'const base = fakeRunner({ dir, feature });',
+    'const runner = { ...base, async session(o) {',
+    "  if (o.promptName !== 'feature-story') return base.session(o);",
+    `  const r = await runLongChild('sh', ['-c', ${JSON.stringify(agent)}], { stdio: 'ignore', signal: o.signal });`,
+    "  return { ok: false, isError: true, output: '', error: r.error?.message ?? '', usage: null, denials: [] };",
+    '} };',
+    'const ended = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });',
+    "const state = loadRunState(config, 'F-1');",
+    "const lock = holderOf(runLockPath(config, 'F-1'));",
+    'const again = fakeRunner({ dir, feature });',
+    'const resumed = await runFeature({ feature, config, prep, runner: again, opts: { resume: true, maxRounds: 2 } });',
+    "const first = again.calls.find((c) => c.type === 'session');",
+    'console.log(JSON.stringify({ status: state.status, step: state.step, note: state.history.at(-1).note,',
+    '  stoppedBy: state.stoppedBy, lock, resumed: resumed.status, resumedAt: [first.prompt, first.story] }));',
+    'process.exit(runExitCode(ended));',
+  ].join('\n');
+  return spawnToFiles(process.execPath, ['--input-type=module', '-e', script], {
+    env: withNoAgent({ ...process.env }),
+  });
+}
+
+/** Wait until the fake agent has written its pid, or the run has closed; the pid, or null. */
+async function agentPid(run, pidFile) {
+  let closed = false;
+  run.closed.then(() => (closed = true));
+  for (;;) {
+    if (existsSync(pidFile)) {
+      const text = readFileSync(pidFile, 'utf8');
+      if (text.endsWith('\n')) return Number(text);
+    }
+    if (closed) return null;
+    await delay(20);
+  }
+}
+
+/** Whether process `pid` is gone, waiting up to 5 s for it to end. */
+async function gone(pid) {
+  for (let i = 0; i < 250; i++) {
+    try {
+      process.kill(pid, 0);
+    } catch (e) {
+      if (e.code === 'ESRCH') return true;
+      throw e;
+    }
+    await delay(20);
+  }
+  return false;
+}
+
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  test(`run_interrupt_stop: a ${signal} to bl run during a headless session ends it, records stopped and exits 130`, async () => {
+    const pidFile = join(mkTempDir('bl-interrupt-'), 'agent.pid');
+    const run = startRun(pidFile);
+    let pid = null;
+    try {
+      pid = await agentPid(run, pidFile);
+      assert.ok(pid, `the agent started: ${run.read().stderr}`);
+      run.child.kill(signal);
+      const r = await run.closed;
+      assert.equal(r.status, EXIT_CODES.SIGINT, `${r.signal}: ${r.stderr}`);
+      assert.deepEqual(JSON.parse(r.stdout), {
+        status: 'stopped',
+        step: 'implement',
+        note: `stopped by ${signal} at implement`,
+        stoppedBy: [],
+        lock: null,
+        resumed: 'clean',
+        resumedAt: ['feature-story', 'S-1'],
+      });
+      assert.ok(await gone(pid), 'the agent is gone');
+    } finally {
+      if (pid && !(await gone(pid))) process.kill(pid, 'SIGKILL');
+      run.child.kill('SIGKILL');
+      await run.closed;
+    }
+  });
+}
+
+test('run_interrupt_stop: a second SIGTERM during the stop exits 143 at once', async () => {
+  const pidFile = join(mkTempDir('bl-interrupt-'), 'agent.pid');
+  // The agent ignores SIGTERM, so the stop waits for it until the second SIGTERM.
+  const run = startRun(pidFile, "trap '' TERM; ");
+  let pid = null;
+  try {
+    pid = await agentPid(run, pidFile);
+    assert.ok(pid, `the agent started: ${run.read().stderr}`);
+    run.child.kill('SIGTERM');
+    await delay(500);
+    assert.equal(run.child.exitCode, null, 'the first SIGTERM is a stop, not an exit');
+    const t0 = Date.now();
+    run.child.kill('SIGTERM');
+    const r = await run.closed;
+    assert.equal(r.status, EXIT_CODES.SIGTERM, `${r.signal}: ${r.stderr}`);
+    assert.ok(Date.now() - t0 < 5_000, 'at once, not after the agent');
+    assert.equal(r.stdout, '');
+  } finally {
+    if (pid) process.kill(pid, 'SIGKILL');
+    run.child.kill('SIGKILL');
+    await run.closed;
+  }
+});
 
 test('stop_short_command: bl stop goes ahead while another process holds the work unit lock and the run lock', async () => {
   const { dir, cleanup } = mkTempBacklog({

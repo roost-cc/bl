@@ -51,6 +51,7 @@ import { tmpdir } from 'os';
 import { join, relative, dirname } from 'path';
 import { isDeepStrictEqual } from 'util';
 import { exitStatus, runChild, runCommandLine, runLongChild } from './child.js';
+import { EXIT_CODES, takeInterrupts } from './signal-exit.js';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
@@ -976,23 +977,27 @@ export function markStopped(state, note, by) {
 }
 
 /**
- * Stop the run when `bl stop` has written its stop request (F-87 D7a):
- * called at each step start (`setStep`), in each slice of a usage-limit wait,
- * and after each spawn in `newScope(ctx)` returns, before the loop reads its
- * result, so the stopped session is not an attempt and does not escalate.
- * Marks the state stopped
+ * Stop the run when `bl stop` has written its stop request (F-87 D7a), or when
+ * an interrupt fired `ctx.stopSignal` (F-128 D8, A2): called at each step
+ * start (`setStep`), in each slice of a usage-limit wait, and after each long
+ * child returns, before the loop reads its result, so the stopped session is
+ * not an attempt and does not escalate. Marks the state stopped
  * (`markStopped`), saves it, deletes the requests for this process and throws a
  * StopRequestError, which unwinds the step's cleanups to `runFeature`. The
  * locks go with it, and `bl run` exits 130. The unit's `status:` does not
  * change. Only a request for this process counts (its `holder`, the run lock
  * holder `bl stop` saw): a request for an earlier holder is not for this run,
  * and it stays for its own `bl stop` or the next `takeRunLocks` to delete.
+ * With a request, the note is `stopped by bl stop at <step>` and `stoppedBy`
+ * lists the requests' pids; without one, the note names the interrupt
+ * (`stopped by SIGTERM at <step>`) and `stoppedBy` is empty.
  */
 function checkStop(ctx) {
   const mine = stopRequests(ctx.config, ctx.feature.id).filter(({ request }) => request.holder === process.pid);
-  if (mine.length === 0) return;
+  const interrupt = ctx.stopSignal?.aborted ? ctx.stopSignal.reason : null;
+  if (mine.length === 0 && interrupt == null) return;
   const { state } = ctx;
-  const reason = `stopped by bl stop at ${state.step}`;
+  const reason = `stopped by ${mine.length > 0 ? 'bl stop' : interrupt} at ${state.step}`;
   markStopped(
     state,
     reason,
@@ -2018,11 +2023,12 @@ export async function runSession(
       model: c.model ?? null,
       effort,
       scope: newScope(ctx),
+      signal: ctx.stopSignal,
       ...(schema ? { schema } : {}),
       ...(retry ? { retry } : {}),
       ...(follow ? { follow } : {}),
     });
-    // A session `bl stop` ended is no attempt: the loop stops before it reads it.
+    // A session a stop ended is no attempt: the loop stops before it reads it.
     checkStop(ctx);
     // Usage first, on every spawn: the provider has already added it to the
     // unit file, and the run state must agree even when the spawn was a
@@ -2314,7 +2320,7 @@ async function waitOrEscalate(ctx, { step, story = null, role, list, excluded = 
   }
   const until = untilMs(next.out);
   const note = `${step}: ${next.out.kind} limit — ${next.out.message} — waiting until ${localTime(until)}`;
-  // Saved before the first slice: a Ctrl-C during the wait leaves the run
+  // Saved before the first slice: a stop during the wait leaves the run
   // resumable at this step, and `bl status` shows what it is waiting for.
   record(ctx, {
     step: 'waiting',
@@ -2330,9 +2336,9 @@ async function waitOrEscalate(ctx, { step, story = null, role, list, excluded = 
   runner.log(`  (${note})`);
   // Slices of at most a second, re-reading the clock each time: a machine
   // suspended through the deadline sees that it has passed instead of
-  // sleeping the whole stretch again. The wait awaits a timer, so Ctrl-C ends it.
-  // A wait has no scope for `bl stop` to stop, so each slice checks its stop
-  // request: the run stops within a second, not after a session past the wait.
+  // sleeping the whole stretch again. Each slice checks for a stop (a `bl stop`
+  // request or an interrupt, `checkStop`): the run stops within a second, not
+  // after a session past the wait.
   const sleep = typeof runner.sleep === 'function' ? async (ms) => runner.sleep(ms) : delay;
   for (;;) {
     checkStop(ctx);
@@ -5089,6 +5095,13 @@ function refuse(runner, feature, reason) {
  * locks of the unit and its stories (`takeRunLocks`) for its whole length,
  * and does not start while another live process holds the unit directory's
  * session lock (`sessionLockPath`).
+ *
+ * While it holds the run, the first SIGINT or SIGTERM is a stop (F-128 D8,
+ * `takeInterrupts`): the handler aborts the controller whose signal is
+ * `ctx.stopSignal`, with the signal's name as its reason. That ends the long
+ * child, and `checkStop` records `stopped`. The handler is set before the
+ * locks are taken, so a SIGTERM that `bl stop` sends to the lock holder
+ * always finds it.
  */
 export async function runFeature({ feature, config, prep, runner, opts = {} }) {
   const sessionLock = sessionLockPath(config.backlogRoot, prepUnitDir(prep));
@@ -5096,17 +5109,35 @@ export async function runFeature({ feature, config, prep, runner, opts = {} }) {
   if (wtHolder != null) {
     return refuse(runner, feature, `a live session (pid ${wtHolder}) holds ${sessionLock}`);
   }
-  const lock = takeRunLocks(config, feature, `run ${feature.id}`);
-  if (lock.refused != null) return refuse(runner, feature, lock.refused);
+  const stop = new AbortController();
+  const releaseInterrupts = takeInterrupts((signal) => stop.abort(signal));
   try {
-    return await driveFeature({ feature, config, prep, runner, opts });
-  } catch (e) {
-    // Already escalated and saved by withContainerCleanup or waitOrEscalate.
-    if (e instanceof RunStoppedError) return e.state;
-    throw e;
+    const lock = takeRunLocks(config, feature, `run ${feature.id}`);
+    if (lock.refused != null) return refuse(runner, feature, lock.refused);
+    try {
+      return await driveFeature({ feature, config, prep, runner, opts, stopSignal: stop.signal });
+    } catch (e) {
+      // Already escalated and saved by withContainerCleanup or waitOrEscalate.
+      if (e instanceof RunStoppedError) return e.state;
+      throw e;
+    } finally {
+      lock.release();
+    }
   } finally {
-    lock.release();
+    releaseInterrupts();
   }
+}
+
+/**
+ * The exit code of `bl run` for its final run state: 0 when the run ended
+ * clean or with no change, 130 when it stopped (`bl stop` or an interrupt,
+ * as an interrupted command exits, F-87 D7a), else 1.
+ * @param {{ status: string }} state
+ * @returns {number}
+ */
+export function runExitCode(state) {
+  if (state.status === 'clean' || state.status === 'no-change') return 0;
+  return state.status === 'stopped' ? EXIT_CODES.SIGINT : 1;
 }
 
 /**
@@ -5209,7 +5240,7 @@ export function reviewEnd({ id, unitRelPath, maxRounds, review, body, state, esc
   };
 }
 
-async function driveFeature({ feature, config, prep, runner, opts }) {
+async function driveFeature({ feature, config, prep, runner, opts, stopSignal }) {
   const cfg = prep.cfg ?? config;
   const maxRounds = opts.maxRounds ?? feature.reviewRoundsMax;
   let state = null;
@@ -5247,6 +5278,7 @@ async function driveFeature({ feature, config, prep, runner, opts }) {
     implementPrompt,
     implemented: new Set(),
     implementedThisRun: false,
+    stopSignal,
   };
   clearUntimedOut(ctx);
   const started = [];

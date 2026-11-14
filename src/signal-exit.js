@@ -9,7 +9,8 @@
  * session's lock file). `tab-title.js` calls it on the first title too (to
  * end the title as `interrupted`, S-1393). The backlog lock needs none: the
  * kernel frees it when the process ends (F-104). The handlers are registered
- * once per process.
+ * once per process. `takeInterrupts` lets `bl run`'s loop take the first
+ * interrupt as a stop instead (F-128 D8).
  *
  * `INTERRUPT_SIGNALS` names the signals that interrupt `bl`, and
  * `raiseSignal` raises one of them again after a synchronous child ended on
@@ -93,5 +94,32 @@ export function raiseSignal(signal) {
 export function exitOnSignal() {
   if (registered) return;
   registered = true;
-  for (const signal of INTERRUPT_SIGNALS) process.on(signal, () => process.exit(EXIT_CODES[signal]));
+  for (const signal of INTERRUPT_SIGNALS) {
+    process.on(signal, () => {
+      const handler = interruptHandler;
+      if (!handler) process.exit(EXIT_CODES[signal]);
+      interruptHandler = null;
+      handler(signal);
+    });
+  }
+}
+
+/** The handler that `takeInterrupts` set and no interrupt has called yet. */
+let interruptHandler = null;
+
+/**
+ * Take the first interrupt as a stop (F-128 D8): while `handler` is set, the
+ * first SIGINT or SIGTERM calls `handler(signal)` and the process goes on. A
+ * second one exits 130 or 143, as `exitOnSignal` does without a handler.
+ * Registers `exitOnSignal`'s listeners itself. `bl run`'s loop is the one
+ * caller. Returns the release function, which unsets `handler`.
+ * @param {(signal: string) => void} handler
+ * @returns {() => void}
+ */
+export function takeInterrupts(handler) {
+  exitOnSignal();
+  interruptHandler = handler;
+  return () => {
+    if (interruptHandler === handler) interruptHandler = null;
+  };
 }

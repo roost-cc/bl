@@ -1900,8 +1900,9 @@ carry S-880's `model`; it loads and is ignored.
 With the list exhausted and the earliest `until` inside
 `run.limit_wait_max_hours` (`backlog.json`, hours, default 8), the loop records
 a `waiting` event in the run history (`{ step: "waiting", until, note }`, saved
-before the first sleep so a Ctrl-C leaves the run resumable at that step),
-awaits a timer in slices of at most a second until it (Ctrl+C ends the wait at once), and walks the list again from
+before the first sleep so a stop leaves the run resumable at that step),
+awaits a timer in slices of at most a second until it (each slice checks for a stop, so a
+`bl stop` or an interrupt stops the run within a second), and walks the list again from
 the top, asking capacity afresh — so a refusal never spends a nudge retry, a
 fix-tests rerun or a review round, and a refused spawn gets no step record of
 its own. A step waits at most once: exhausted again, with no reset time on any
@@ -4076,6 +4077,42 @@ the transcript record's time for Claude, the time `watch` read the event for Cod
 thinking and no tool output is printed. A session with no live feed (interactive, or Gemini,
 which has no headless mode) gets its header and one stderr line that says so.
 
+### An interrupt during `bl run` is a stop
+
+While `bl run`'s loop holds the run, the first SIGINT or SIGTERM stops the run cleanly, as
+`bl stop` does (F-128 D8, Decisions A1 and A2). `bl run <id> --resume` continues it from the
+step it stopped in.
+
+1. `runFeature` (`src/feature-run.js`) makes an `AbortController` and calls
+   `takeInterrupts(handler)` (`src/signal-exit.js`) before `takeRunLocks`. It releases it after
+   it releases the locks. So a SIGTERM that `bl stop` sends to the run lock's holder always
+   finds the handler.
+2. While the handler is set, `exitOnSignal`'s listener calls it for the first interrupt and does
+   not exit. The handler aborts the controller with the signal's name as its reason.
+   `takeInterrupts` registers `exitOnSignal`'s listeners itself, so a process that never ran
+   `bl.js` (a test) gets them too.
+3. The controller's signal is `ctx.stopSignal`. Each long child of the loop gets it: the session
+   in `runSession` (`runner.session({ signal })`) and each test-gate command
+   (`runner.testGate(cmd, cwd, { signal })`). When it fires, the child gets SIGTERM and its wait
+   returns.
+4. `checkStop` stops the run when it finds a stop request for this process or when
+   `ctx.stopSignal` has fired. It runs where it ran before: at each step start, after each long
+   child, and in each one-second slice of a usage-limit wait. With a request, the note is
+   `stopped by bl stop at <step>` and `stoppedBy` lists the requests' pids. Without one, the
+   note is `stopped by SIGINT at <step>` or `stopped by SIGTERM at <step>`, and `stoppedBy` is
+   `[]`. The run records `stopped`, releases its locks, and `bl run` exits 130 (`runExitCode`).
+5. A second interrupt exits at once with 130 or 143, as `exitOnSignal` does without a handler.
+   The `exit` listener of `src/child.js` sends SIGTERM to the long child.
+
+`bl review` and `bl merge` (`reviewFeature`, `integrateUnit`) take no interrupts: an interrupt
+exits 130 or 143, and the `exit` listener of `src/child.js` ends their long child. An interactive
+session (`bl run -i`) keeps a synchronous wait (F-128 A3). A SIGINT that `bl` gets during it runs
+the handler when the session ends, and the run stops at its next check. If the same SIGINT ended
+the agent, `src/child.js` raises it at once instead (F-114 D2). Known limits: an
+interrupt that ends a short synchronous child during `bl run` (a git child that got the same
+Ctrl-C) still raises at once (F-114 D2), and `bl` exits 130 with the run state `running`. A first
+interrupt during a lock wait is taken at the next check after the wait.
+
 ### `bl stop`
 
 `bl stop <F-id|B-id|S-id>` (`src/stop.js`, S-1335, F-87 D7a) stops a running `bl run` cleanly, so
@@ -4585,7 +4622,8 @@ The prepare-lock wait (`session.js` `prepareWorktreeOnce`) says so the same way 
 deadline, because the lock is held while bootstrap and `workon` plugins run. Every lock wait is
 awaited: the backlog, spec, main sync and prepare lock waits all go through `awaitLock`, so one
 Ctrl+C during any of them runs the SIGINT listener (`exitOnSignal`, which `bl.js` registers
-when `bl` starts) at once and exits 130. The main sync and prepare locks are kernel locks too,
+when `bl` starts) at once and exits 130. During `bl run` the first Ctrl+C is a stop instead,
+taken at the next check after the wait (F-128 D8). The main sync and prepare locks are kernel locks too,
 taken with `tryLockOnce`: they are not re-entrant, so two callers in one process take turns as
 two processes do. A `bl` that ends while it holds one, even by Ctrl+C or SIGKILL,
 leaves no lock, and the next taker gets it at once. Every bl lock is a kernel lock now:
@@ -4655,7 +4693,9 @@ rerun commits what a failed run wrote, and a `.gitignore` with any other change 
 uncommitted and the migration says so. A rerun tries a skipped file again. A
 `bl` from before F-104 holds its locks as PID files, which the migration cannot see, so it runs
 only when no older `bl` runs (task T-76).
-The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer too, so Ctrl+C ends it at once (F-105 A2). A function that calls a lock wait is async, and every
+The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer too (F-105 A2); during `bl
+run` the first Ctrl+C is a stop that its next one-second slice takes, and a second one exits at
+once (**An interrupt during `bl run` is a stop**). A function that calls a lock wait is async, and every
 caller awaits it (`test/unit/awaited-calls.test.js`).
 
 Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogFiles`) over
