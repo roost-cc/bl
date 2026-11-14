@@ -446,7 +446,6 @@ test('the exit hook does nothing before a title or with titles off', () => {
       finalTabTitle({ status: 'clean' });
       endTabTitle(1);
     });
-    resetTitles();
     assert.deepEqual(fake.calls(), ['rename-window\n-t\n@7\n--\n:  : x\n']);
   });
 });
