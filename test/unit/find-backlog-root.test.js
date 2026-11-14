@@ -63,7 +63,7 @@ test('a backlog.json that is not a regular file does not qualify', () => {
   const root = mkTempDir('bl-find-');
   const mid = dirAt(root, 'mid');
   const pipe = dirAt(mid, 'pipe');
-  execFileSync('mkfifo', [join(pipe, 'backlog.json')]);
+  execFileSync('mkfifo', [join(pipe, 'backlog.json')], { stdio: 'ignore' });
   dirAt(mid, 'dir/backlog.json');
   const real = backlogAt(root, 'real');
   assert.equal(findBacklogRoot(mid), real);
