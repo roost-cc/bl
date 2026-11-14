@@ -525,7 +525,7 @@ test('exit 0 with no change: the story is done with a note and nothing is pushed
     runner.calls.findLast((c) => c.type === 'title'),
     {
       type: 'title',
-      fields: { feature: 'S-3', story: '', status: 'done', next: '' },
+      fields: { feature: '', story: 'S-3', status: 'done', next: '' },
       final: true,
     },
   );

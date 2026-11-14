@@ -84,7 +84,7 @@ import { tokensStepKey } from './tokens.js';
 import { readSpecText, specText, updateSpecFile, withSpecFileLock } from './spec-file.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { readComponents, sessionLockPath } from './story.js';
-import { finalTabTitle, updateTabTitle } from './tab-title.js';
+import { finalTabTitle, unitTitleFields, updateTabTitle } from './tab-title.js';
 import { sessionEffort, storyEffort } from './effort.js';
 import { otherWorktreesLine } from './workon.js';
 import {
@@ -922,13 +922,23 @@ function record(ctx, entry) {
   saveRunState(ctx.config, ctx.state);
 }
 
+/**
+ * The tab-title fields for the run's unit and the story in hand (`unitTitleFields`):
+ * a feature or story batch is `feature` with `story` the story in hand, a story unit
+ * is `story`. A field the unit does not name is set empty, so a field from an
+ * earlier title is cleared.
+ */
+function unitTitle(ctx, story = '') {
+  return { feature: '', story, ...unitTitleFields(ctx.feature.id) };
+}
+
 /** Enter `step` and save it; a stop request stops the run here, before the step does anything. */
 function setStep(ctx, step, extra = {}) {
   ctx.state.step = step;
   Object.assign(ctx.state, extra);
   saveRunState(ctx.config, ctx.state);
   // A runner without `title` (the unit tests' fake) sets no tab title.
-  ctx.runner.title?.({ feature: ctx.feature.id, story: extra.story ?? '', status: step });
+  ctx.runner.title?.({ ...unitTitle(ctx, extra.story), status: step });
   ctx.runner.log(
     `\n── ${ctx.feature.id} ▸ ${step}${extra.story ? ` ${extra.story}` : ''}${extra.round ? ` (round ${extra.round})` : ''}`,
   );
@@ -1125,7 +1135,7 @@ function finalTitle(ctx, status) {
     next = `→ fix, ${hint.endsWith(' --resume') ? '--resume' : hint.replace(` ${ctx.feature.id}`, '')}`;
   }
   const shown = status === 'no-change' ? 'done' : status;
-  ctx.runner.title?.({ feature: ctx.feature.id, story: '', status: shown, next }, { final: true });
+  ctx.runner.title?.({ ...unitTitle(ctx), status: shown, next }, { final: true });
 }
 
 async function finish(ctx, status, reason = null, details = '') {

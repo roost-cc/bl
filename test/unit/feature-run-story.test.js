@@ -12,7 +12,15 @@ import { parseChange } from '../../src/change-doc.js';
 import { unitVars } from '../../src/unit.js';
 import { cmdStatusStory } from '../../src/feature-cmd.js';
 import { computePlan, readPlan } from '../../src/execution-plan.js';
-import { CH, creates, editFile, fakeRunner, storySetup, captureLog } from '../helpers/feature-run-fixture.js';
+import {
+  CH,
+  creates,
+  editFile,
+  fakeRunner,
+  lastTitle,
+  storySetup,
+  captureLog,
+} from '../helpers/feature-run-fixture.js';
 import { reviewOutcome } from '../helpers/outcomes.js';
 import { reviewOf, statusOf as logStatusOf } from '../../src/transition.js';
 
@@ -65,6 +73,16 @@ test('a story run: implement, gate, self-review, one PR titled S-n: <title>, rev
     const runner = fakeRunner({ dir: config.backlogRoot, feature: unit });
     const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2 } });
     assert.equal(state.status, 'clean');
+    const titles = runner.calls.filter((c) => c.type === 'title');
+    assert.ok(titles.length > 1, 'the loop set step titles');
+    for (const t of titles) assert.deepEqual([t.fields.feature, t.fields.story], ['', 'S-5'], t.fields.status);
+    assert.deepEqual(lastTitle(runner), {
+      feature: '',
+      story: 'S-5',
+      status: 'clean',
+      next: '→ bl merge',
+      final: true,
+    });
     const prompts = runner.calls.filter((c) => c.type === 'session').map((c) => c.prompt);
     assert.deepEqual(prompts, [
       'story-run',
