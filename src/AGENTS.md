@@ -1584,9 +1584,10 @@ review` prints the prompt-guidance note for one that does not (Codex).
   their file through `followJsonl` (`src/agents/follow.js`): the last 30 events first unless
   `fromStart`, then every 500 ms, and once more when `signal` aborts. `src/agents/` imports an adapter file or compares
   a value to an agent name (`===`, `!==`, `case`); it asks the adapter.
-  `test/unit/agent-boundary.test.js` fails on either and names its one
-  exception, `bl.js`'s `case "claude":` (a verb alias for `bl agent`). Passing
-  a name as a literal (a default argument, a prompt variant) is allowed.
+  `test/unit/agent-boundary.test.js` fails on either and has no exception: the
+  verb alias `claude` for `bl agent` is an `ALIASES` key in
+  `src/command-table.js`, which is not a comparison. Passing a name as a literal
+  (a default argument, a prompt variant) is allowed.
 
 #### Session outcomes (F-68 D1, D5)
 

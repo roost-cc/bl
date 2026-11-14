@@ -13,20 +13,26 @@
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { append as logAppend } from './log.js';
-import { info, warn, editorCommand, openTmuxWindow } from './config.js';
-import { captureTmuxWindowId, renderTabTitle, unitTitleFields } from './tab-title.js';
+import { warn, editorCommand } from './config.js';
+import { captureTmuxWindowId, updateTabTitle } from './tab-title.js';
 import { flowForHelp } from './flow.js';
 import { exitOnSignal } from './signal-exit.js';
+import { ALIASES, COMMANDS, HELP_WORDS, commandTitle } from './command-table.js';
+
+const argv = process.argv.slice(2);
 
 // Grab the window id the moment bl starts, before any async work, so later
 // tab titles (tab-title.js) target this window even if the user has switched
 // tabs in the meantime.
 captureTmuxWindowId();
+// Every command names the tab before it does anything else (S-1412): the
+// command and the unit ids its arguments name. A command that knows more
+// sets its own fields later; the exit sets the end state (`endTabTitle`).
+updateTabTitle(commandTitle(argv));
 // Ctrl+C and SIGTERM end bl with 130 and 143 through `process.exit`, so its
 // `exit` listeners run (signal-exit.js).
 exitOnSignal();
 
-const argv = process.argv.slice(2);
 const command = argv[0];
 const subArgv = argv.slice(1);
 
@@ -282,219 +288,15 @@ async function run() {
     await settlePending();
   }
 
-  switch (command) {
-    case 'init': {
-      const { main } = await import('./init.js');
-      return main(subArgv);
-    }
-    case 'new': {
-      const { main } = await import('./new.js');
-      return main(subArgv);
-    }
-    case 'next-id': {
-      const { main } = await import('./next-id.js');
-      return main(subArgv);
-    }
-    case 'side': {
-      const { main } = await import('./side.js');
-      return main(subArgv);
-    }
-    case 'attach': {
-      const { main } = await import('./attach.js');
-      return main(subArgv);
-    }
-    case 'move': {
-      const { main } = await import('./move.js');
-      return main(subArgv);
-    }
-    case 'batch': {
-      const { main } = await import('./batch-cmd.js');
-      return main(subArgv);
-    }
-    case 'task': {
-      const { main } = await import('./task.js');
-      return main(subArgv);
-    }
-    case 'run':
-    case 'implement':
-    case 'merge':
-    case 'status':
-    case 'approve':
-    case 'done': {
-      const { dispatch } = await import('./verbs.js');
-      return dispatch(command, subArgv);
-    }
-    case 'force': {
-      const { main } = await import('./force.js');
-      process.exitCode = await main(subArgv);
-      return;
-    }
-    case 'flow': {
-      const { main } = await import('./flow-cmd.js');
-      process.exitCode = await main(subArgv);
-      return;
-    }
-    case 'refine': {
-      const detach = subArgv.includes('-t');
-      const filteredArgv = subArgv.filter((a) => a !== '-t');
-
-      if (detach) {
-        if (!process.env.TMUX) {
-          console.error('bl refine -t requires tmux.');
-          process.exit(1);
-        }
-        const storyArgs = filteredArgv.filter((a) => !a.startsWith('-'));
-        const multi = storyArgs.length > 1;
-        const target = multi ? storyArgs.join(', ') : (storyArgs[0] ?? '');
-        // The window's name until the detached bl sets its own title, in the same shape.
-        const unit = unitTitleFields(target);
-        const fields = multi ? { story: `${storyArgs.length} stories` } : unit.feature ? unit : { story: target };
-        const windowName = renderTabTitle({ ...fields, status: 'refine' });
-        // The detached `bl refine` owns the new window's title.
-        openTmuxWindow(windowName, ['refine', ...filteredArgv]);
-        info(`Started refine for ${target} in new tmux window.`);
-        return;
-      }
-
-      const { dispatch } = await import('./verbs.js');
-      return dispatch('refine', filteredArgv);
-    }
-    case 'review':
-    case 'pr': {
-      const { dispatch } = await import('./verbs.js');
-      return dispatch('review', subArgv);
-    }
-    case 'edit': {
-      const { main } = await import('./edit.js');
-      return main(subArgv);
-    }
-    case 'view':
-    case 'show': {
-      const { main } = await import('./view.js');
-      return main(subArgv);
-    }
-    case 'change': {
-      const { main } = await import('./change-cmd.js');
-      return main(subArgv);
-    }
-    case 'which': {
-      const { main } = await import('./which.js');
-      return main(subArgv);
-    }
-    case 'grep': {
-      const { main } = await import('./grep.js');
-      return main(subArgv);
-    }
-    case 'list':
-    case 'ls': {
-      const { main } = await import('./list.js');
-      return main(subArgv);
-    }
-    case 'tree': {
-      const { main } = await import('./tree.js');
-      return main(subArgv);
-    }
-    case 'history': {
-      const { main } = await import('./history-cmd.js');
-      return main(subArgv);
-    }
-    case 'report': {
-      const { main } = await import('./report-cmd.js');
-      return main(subArgv);
-    }
-    case 'what-next': {
-      const { main } = await import('./what-next.js');
-      return main(subArgv);
-    }
-    case 'next': {
-      const { main } = await import('./next.js');
-      return main(subArgv);
-    }
-    case 'rank': {
-      const { main } = await import('./rank-cmd.js');
-      return main(subArgv);
-    }
-    case 'deps': {
-      const { main } = await import('./deps.js');
-      return main(subArgv);
-    }
-    case 'updates': {
-      const { main } = await import('./updates.js');
-      return main(subArgv);
-    }
-    case 'inbox': {
-      const { main } = await import('./inbox.js');
-      return main(subArgv);
-    }
-    case 'block': {
-      const { main } = await import('./block.js');
-      return main(subArgv);
-    }
-    case 'sync':
-    case 's': {
-      const { main } = await import('./sync.js');
-      return main(subArgv);
-    }
-    case 'format': {
-      const { main } = await import('./format.js');
-      return main(subArgv);
-    }
-    case 'lint': {
-      const { main } = await import('./lint.js');
-      return main(subArgv);
-    }
-    case 'validate': {
-      const { main } = await import('./validate.js');
-      return main(subArgv);
-    }
-    case 'fix': {
-      const { main } = await import('./fix.js');
-      return main(subArgv);
-    }
-    case 'log': {
-      const { main } = await import('./log.js');
-      return main(subArgv);
-    }
-    case 'allow': {
-      const { main } = await import('./allow.js');
-      return main(subArgv);
-    }
-    case 'agents': {
-      const { main } = await import('./agents.js');
-      return main(subArgv);
-    }
-    case 'capacity': {
-      const { main } = await import('./capacity.js');
-      return main(subArgv);
-    }
-    case 'top': {
-      const { main } = await import('./top.js');
-      return main(subArgv);
-    }
-    case 'watch': {
-      const { main } = await import('./watch.js');
-      return main(subArgv);
-    }
-    case 'stop': {
-      const { main } = await import('./stop.js');
-      return main(subArgv);
-    }
-    case 'claude':
-    case 'agent': {
-      const { main } = await import('./agent-run.js');
-      return main(subArgv);
-    }
-    case 'help':
-    case '-h':
-    case '--help':
-    case undefined:
-      printHelp();
-      break;
-    default:
-      console.error(`bl: unknown command '${command}'`);
-      console.error("Run 'bl help' for usage.");
-      process.exit(1);
+  if (command === undefined || HELP_WORDS.has(command)) {
+    printHelp();
+    return;
   }
+  const entry = COMMANDS[ALIASES[command] ?? command];
+  if (entry) return entry.run(subArgv);
+  console.error(`bl: unknown command '${command}'`);
+  console.error("Run 'bl help' for usage.");
+  process.exit(1);
 }
 
 run().catch((err) => {
