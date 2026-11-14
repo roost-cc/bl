@@ -1,7 +1,9 @@
 /**
  * F-114 S-1472: `src/child.js` runs a synchronous child, raises the SIGINT or
  * SIGTERM that ends one (D2), keeps it inside `raiseAfter` until the undo ran
- * (D2a), and words a failed child (`describeExit`, D1).
+ * (D2a), and words a failed child (`describeExit`, D1). F-128 S-1536:
+ * `runLongChild` returns every result, raises nothing, and its child gets
+ * SIGTERM when `bl` exits (D3).
  *
  * An interrupt row runs a Node child that calls `exitOnSignal()` (as `bl.js`
  * does), then the entry point, then prints `after`. The raise ends that child,
@@ -10,11 +12,21 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, writeFileSync } from 'fs';
+import { chmodSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
-import { BL_PATH, describeExit, exitStatus, git, gitOut, runBl, runChild, runCommandLine } from '../../src/child.js';
+import {
+  BL_PATH,
+  describeExit,
+  exitStatus,
+  git,
+  gitOut,
+  runBl,
+  runChild,
+  runCommandLine,
+  runLongChild,
+} from '../../src/child.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
 const CHILD = fileURLToPath(new URL('../../src/child.js', import.meta.url));
@@ -26,7 +38,7 @@ const SIGNAL_EXIT = fileURLToPath(new URL('../../src/signal-exit.js', import.met
  */
 function runScript(body, { env = process.env, listen = true } = {}) {
   const script = [
-    `import { git, gitOut, raiseAfter, runBl, runChild, runCommandLine } from ${JSON.stringify(CHILD)};`,
+    `import { git, gitOut, raiseAfter, runBl, runChild, runCommandLine, runLongChild } from ${JSON.stringify(CHILD)};`,
     `import { exitOnSignal } from ${JSON.stringify(SIGNAL_EXIT)};`,
     listen ? 'exitOnSignal();' : '',
     `process.on('exit', (code) => process.stderr.write('exit listener ' + code + '\\n'));`,
@@ -357,6 +369,91 @@ test('a raiseAfter with no interrupt returns what fn returns', () => {
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, '2\nafter\n');
 });
+
+// runLongChild, the asynchronous entry for long children (F-128 D3, S-1536).
+test('runLongChild resolves to the status, stdout and stderr of an argv command', async () => {
+  const r = await runLongChild('sh', ['-c', 'echo out; echo err >&2; exit 3'], { encoding: 'utf8' });
+  assert.equal(r.status, 3);
+  assert.equal(r.signal, null);
+  assert.equal(r.stdout, 'out\n');
+  assert.equal(r.stderr, 'err\n');
+});
+
+test('runLongChild runs no shell, whatever opts.shell says', async () => {
+  for (const shell of [undefined, false, true, '/bin/sh']) {
+    const r = await runLongChild('nonexistent; printf SHELL', [], { shell, encoding: 'utf8' });
+    assert.equal(r.error?.code, 'ENOENT', `shell=${shell}`);
+    assert.ok(!String(r.stdout ?? '').includes('SHELL'), `shell=${shell}`);
+  }
+});
+
+for (const [signal, line] of [
+  ['SIGTERM', `const r = await runLongChild('sh', ['-c', 'kill -TERM $$']);`],
+  ['SIGINT', `const r = await runLongChild('sh', ['-c', 'kill -INT $$']);`],
+]) {
+  test(`runLongChild returns a child that ${signal} ended to its caller, and raises nothing`, () => {
+    const r = runScript(`${line}\nconsole.log(r.signal, r.status);`);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, `${signal} null\nafter\n`);
+    assert.ok(!r.stderr.includes('bl: '), r.stderr);
+  });
+}
+
+test('runLongChild returns exit 130 and 143 to its caller as exits', () => {
+  const r = runScript(
+    [
+      `const a = await runLongChild('sh', ['-c', 'exit 130']);`,
+      `const b = await runLongChild('sh', ['-c', 'exit 143']);`,
+      `console.log(a.status, b.status);`,
+    ].join('\n'),
+  );
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, '130 143\nafter\n');
+});
+
+test('runLongChild ends its child with SIGTERM when opts.signal fires', async () => {
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 100);
+  const r = await runLongChild('sleep', ['30'], { signal: controller.signal });
+  assert.equal(r.signal, 'SIGTERM');
+  assert.equal(r.error?.name, 'AbortError');
+});
+
+test('when bl exits 143 while a long child runs, the exit listener ends the child with SIGTERM', () => {
+  // The child writes its pid, then becomes `sleep 30`; the parent exits 143
+  // once the pid is there.
+  const dir = mkTempDir('bl-child-long-');
+  const pidFile = join(dir, 'pid');
+  const r = runScript(
+    [
+      `import { readFileSync } from 'fs';`,
+      `const pidFile = ${JSON.stringify(pidFile)};`,
+      `runLongChild('sh', ['-c', 'echo $$ > "$1.tmp" && mv "$1.tmp" "$1" && exec sleep 30', 'sh', pidFile]);`,
+      `await new Promise(() => setInterval(() => {`,
+      `  try { readFileSync(pidFile); } catch { return; }`,
+      `  process.exit(143);`,
+      `}, 20));`,
+    ].join('\n'),
+  );
+  assert.equal(r.status, 143, r.stderr);
+  assert.ok(r.stderr.includes('exit listener 143\n'), r.stderr);
+  const pid = Number(readFileSync(pidFile, 'utf8').trim());
+  assert.ok(pid > 0);
+  // The parent is gone, so init reaps the child once SIGTERM ends it.
+  const deadline = Date.now() + 5000;
+  while (alive(pid) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  assert.ok(!alive(pid), `sleep (pid ${pid}) still runs after bl exited`);
+});
+
+/** Whether the process `pid` still runs. */
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // (h) describeExit words a failed child, never "exited null".
 test('describeExit words each kind of failed child', () => {

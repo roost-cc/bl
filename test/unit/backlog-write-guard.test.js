@@ -117,7 +117,16 @@ const GIT_READS = new Set([
 const GIT_VALUE_OPTIONS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace']);
 
 /** The imported callees that take a command and its argument list. */
-const ARGV_CALLS = new Set(['runChild', 'spawnSyncFiles', 'spawnSync', 'spawn', 'execFileSync', 'execFile']);
+const ARGV_CALLS = new Set([
+  'runChild',
+  'runLongChild',
+  'spawnSyncFiles',
+  'spawnFiles',
+  'spawnSync',
+  'spawn',
+  'execFileSync',
+  'execFile',
+]);
 /** The imported callees that take a command line. A runner's `shell` method is matched by name. */
 const LINE_CALLS = new Set(['runCommandLine', 'execSync', 'exec']);
 
@@ -183,7 +192,7 @@ const ALLOWED = new Map([
   ['agents/gemini.js spawn unlinkSync', TMP],
   ['child-stdio.js fileFor writeFileSync', TMP],
   ['child-stdio.js fileFor openSync', TMP],
-  ['child-stdio.js spawnSyncFiles rmSync', TMP],
+  ['child-stdio.js close rmSync', TMP],
   ['feature-run.js shellMerged openSync', TMP],
   ['feature-run.js shellMerged rmSync', TMP],
   ['session.js spillSubagentPrompts writeFileSync', TMP],
@@ -657,7 +666,7 @@ test('guard: a raw write through an alias and every writable open form is report
   for (const c of ALIAS_CASES) assert.deepEqual(keysIn(c.src, c.imports), c.keys, c.name);
 });
 
-const CHILD = `import { git, runChild, runCommandLine } from './child.js';`;
+const CHILD = `import { git, runChild, runCommandLine, runLongChild } from './child.js';`;
 const GIT_CASES = [
   { name: 'git from child.js', src: `git(root, ['commit', '-m', 'x']);`, imports: CHILD, keys: ['git commit'] },
   {
@@ -698,6 +707,13 @@ const GIT_CASES = [
   { name: 'a named argument list', src: `const a = ['merge', x];\ngit(root, a);`, imports: CHILD, keys: ['git merge'] },
   { name: 'runChild', src: `runChild('git', ['stash']);`, imports: CHILD, keys: ['git stash'] },
   { name: 'runChild of another command', src: `runChild('npm', ['commit']);`, imports: CHILD, keys: [] },
+  { name: 'runLongChild', src: `runLongChild('git', ['reset', b]);`, imports: CHILD, keys: ['git reset'] },
+  {
+    name: 'spawnFiles',
+    src: `spawnFiles('git', ['merge', b]);`,
+    imports: `import { spawnFiles } from './child-stdio.js';`,
+    keys: ['git merge'],
+  },
   { name: 'runCommandLine', src: `runCommandLine('git clean -fd');`, imports: CHILD, keys: ['git clean'] },
   {
     name: 'spawnSyncFiles',

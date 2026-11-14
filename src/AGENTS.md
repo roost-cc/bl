@@ -5836,7 +5836,7 @@ them.
   protocol with a Node child (the fake `codex app-server`) uses `fs.readSync(0)` and
   `fs.writeSync(1)` in the child. `test/unit/child-stdio-guard.test.js` parses `src/` and
   `test/` with `acorn` and fails on each of these shapes at a `child_process` call.
-- **A synchronous child runs through `src/child.js`** (F-114 D1): `runChild(command, args)` for an
+- **A child runs through `src/child.js`** (F-114 D1): `runChild(command, args)` for an
   argv command, `runCommandLine(line)` for a configured command line (through a shell),
   `runBl(entry, args)` for a `bl` child, and `git(cwd, args)`. Each runs its child through `spawnSyncFiles` and
   returns the `spawnSync` result. `gitOut(cwd, args)` is `git()` for a git command that must
@@ -5850,6 +5850,15 @@ them.
   (D2a): the child's result returns to it, and the interrupt is raised when the outermost
   `raiseAfter` ends. While `bl` exits, an interrupt that ends a child of an `exit` listener is
   printed, not raised, so `bl` keeps its exit code and the other listeners run.
+  A long child (a headless agent session, a test-gate command) runs through the fifth entry
+  point, `runLongChild(command, args, opts)` (F-128 D3): an argv with no shell, through
+  `spawnFiles` (`src/child-stdio.js`), the asynchronous counterpart of `spawnSyncFiles`. It
+  resolves to the same result shape on the child's `exit` event, so a leftover process that
+  holds the output file cannot hold the wait open. It never raises an interrupt: during an
+  asynchronous wait `bl`'s own signal listeners run, and a child that a signal ended is a failed
+  child for its caller. `opts.signal` (an `AbortSignal`) ends the child with SIGTERM, and the
+  result then carries Node's `AbortError` as `error`. The module's `exit` listener sends SIGTERM
+  to every long child that still runs, so none outlives `bl`.
   `describeExit(r, what)` words a failed child, `exitStatus(r)` is the exit status a child's
   result stands for (127, 128 + a signal's number, or its status), and `reportExit(cmd, r)` says
   why a child could not start or was killed (F-124 D6). A caller never reads a child's
