@@ -127,6 +127,27 @@ test('bl log with no argument prints the log in a linked worktree subdirectory a
   }
 });
 
+// S-1581: one command gives one log line. A line break in the command or in an
+// argument is written as `\n` or `\r`, and `\` as `\\`, so no field can forge a line.
+test('appendTo writes one line per command whatever the fields hold', () => {
+  const forged = '2026-01-01 00:00:00  bl merge S-2';
+  const cases = [
+    { command: 'refine', args: [`S-1\n${forged}`], want: 'bl refine S-1\\n' + forged },
+    { command: 'refine', args: [`S-1\r\n${forged}`], want: 'bl refine S-1\\r\\n' + forged },
+    { command: 'refine', args: [`S-1\r${forged}`], want: 'bl refine S-1\\r' + forged },
+    { command: `refine\n${forged}`, args: ['S-1'], want: `bl refine\\n${forged} S-1` },
+    { command: 'refine', args: ['a\\nb', 'S-1'], want: 'bl refine a\\\\nb S-1' },
+    { command: 'list', args: [], want: 'bl list' },
+  ];
+  for (const { command, args, want } of cases) {
+    const dir = mkTempDir('bl-log-nl-');
+    appendTo(dir, command, args);
+    const text = readFileSync(join(dir, '.bl', 'activity.log'), 'utf8');
+    assert.equal(text.match(/[\r\n]/g).length, 1, JSON.stringify(text));
+    assert.ok(text.endsWith(`  ${want}\n`), JSON.stringify(text));
+  }
+});
+
 // S-1581: a failed log write must not stop the command it records. Root can
 // write to a 500 directory, so the test skips under root.
 test('appendTo ignores a failed write to an unwritable .bl/', { skip: process.getuid?.() === 0 }, () => {

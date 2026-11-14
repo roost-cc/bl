@@ -41,6 +41,15 @@ function timestamp() {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
+/**
+ * One log field on one line (S-1581): `\` becomes `\\`, a line feed `\n` and a
+ * carriage return `\r`, so an argument cannot start a second log line.
+ * @param {string} s
+ */
+function oneLine(s) {
+  return String(s).replace(/[\\\n\r]/g, (c) => ({ '\\': '\\\\', '\n': '\\n', '\r': '\\r' })[c]);
+}
+
 /** Append a command entry to the activity log — only runs inside a linked worktree. */
 export function append(command, args) {
   const root = linkedWorktreeRoot();
@@ -58,7 +67,8 @@ export function appendTo(worktreePath, command, args) {
   try {
     const logDir = join(worktreePath, LOG_DIR);
     mkdirSync(logDir, { recursive: true });
-    const line = `${timestamp()}  bl ${command}${args.length ? ' ' + args.join(' ') : ''}\n`;
+    const fields = [command, ...args].map(oneLine).join(' ');
+    const line = `${timestamp()}  bl ${fields}\n`;
     appendFileSync(join(logDir, LOG_FILE), line);
   } catch {
     // logging is non-fatal
