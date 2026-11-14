@@ -5727,7 +5727,8 @@ test/
                    # lockOwnerVisible(t) skips a lock-wait test where a child can't see
                    # this pid (fails instead under BL_REQUIRE_PID_TESTS=1)
     tempdir.js     # mkTempDir(prefix) — a temp dir removed when the test process exits;
-                   # mkTempBacklog() — scaffolds a tempdir backlog the same way
+                   # mkTempBacklog() — scaffolds a tempdir backlog the same way;
+                   # { parent } makes it below a dir of the test's own (S-1155)
     token-writer.js    # startTokenWriter() — a node child holding a spec lock (unit lock tests)
     spec-writer.js     # updateSpecInChild() — another writer of a spec, in a node child
                        # that a synchronous test seam waits for
@@ -5760,7 +5761,9 @@ Adding a test:
   its own and removes it when the suite ends (S-1392). A temp file that a
   test leaves behind does not leak into `/tmp`. The rules below
   (`mkTempDir`, own `mktemp` paths) still apply, because a script or a file
-  can run alone. The wrapper needs GNU `env` (coreutils 8.31 or later) for
+  can run alone. The wrapper also sets `BL_CEILING_DIRECTORIES` to that
+  `TMPDIR` (S-1155), so a walk from a cwd never finds a backlog made
+  directly in `TMPDIR`. The wrapper needs GNU `env` (coreutils 8.31 or later) for
   `--default-signal`: BSD and macOS `env` lack it.
 - **unit** — write `test/unit/<module>.test.js` using `node:test` and
   `node:assert/strict`. Import the module under test from `../../src/...`.
@@ -5776,9 +5779,13 @@ Adding a test:
   reach (F-67). Make every temp dir with
   `mkTempDir(prefix)` or `mkTempBacklog()` from `test/helpers/tempdir.js`,
   never a bare `mkdtempSync`, so the dir is removed when the file's tests end.
+  If the test finds the backlog by a walk from a cwd, make it with
+  `mkTempBacklog(fixture, { parent })` in a `mkTempDir` of the test's own.
 - **integration** — write `test/integration/<command>.test.js` that
   `mkTempBacklog()`s a backlog and `runBl(args, { cwd })`s the binary
   against it. Assert filesystem effects, frontmatter, and exit codes.
+  `runBl` sets `BL_BACKLOG_DIR` to `cwd`. A test of the walk unsets it and
+  makes the backlog with `mkTempBacklog(fixture, { parent })`.
 - **cli** — write `test/cli/<topic>.sh`. Source `helpers/tempdir.sh`,
   call `mk_temp_backlog`, then drive `"$BL"` with the assert\_\* helpers.
   `cli/run-all.sh` picks it up automatically and runs it at the same time
