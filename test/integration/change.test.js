@@ -113,6 +113,33 @@ test('bl change opens a read-only copy of the change document in VISUAL and remo
   assert.equal(existsSync(dirname(dirname(path))), false, 'the bl-view-* directory is removed');
 });
 
+test('bl change follows its document while the editor is open (S-1182)', () => {
+  // The fake editor appends a line to the real change document, waits up to 5 s for the
+  // copy to hold it, keeps what the copy holds and exits 0.
+  const dir = backlog();
+  const real = join(dir, 'stories', 'S1', 'change.md');
+  const edir = mkTempDir('bl-change-editor-');
+  const kept = join(edir, 'kept');
+  const bin = join(edir, 'fake-editor');
+  writeFileSync(
+    bin,
+    `#!/bin/sh
+for f; do :; done
+printf 'Appended line.\\n' >> "$SRC"
+i=0; until grep -q 'Appended line' "$f" || [ $i -ge 50 ]; do sleep 0.1; i=$((i+1)); done
+cat "$f" > '${kept}'
+exit 0
+`,
+  );
+  chmodSync(bin, 0o755);
+  const r = bl(['change', 'S-1'], dir, { ...tty(), VISUAL: bin, SRC: real, TMPDIR: mkTempDir('bl-change-tmp-') });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stderr, '');
+  // Nothing is rendered for a change document: the copy is the file byte for byte.
+  assert.deepEqual(readFileSync(kept), readFileSync(real));
+  assert.match(readFileSync(kept, 'utf8'), /Appended line\.\n$/);
+});
+
 test('bl change with stdout not a terminal prints the change document byte for byte', () => {
   const dir = backlog();
   const r = bl(['change', 'S-1'], dir, { VISUAL: 'false' });
