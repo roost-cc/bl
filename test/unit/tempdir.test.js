@@ -94,6 +94,24 @@ for (const [name, end, signal] of endings) {
   });
 }
 
+test('mkTempDir keeps the dirs while another signal listener lets the process go on, and removes them at exit', () => {
+  const helper = new URL('../helpers/tempdir.js', import.meta.url).href;
+  const script = `
+    import { existsSync } from "fs";
+    import { mkTempDir } from ${JSON.stringify(helper)};
+    const dir = mkTempDir("bl-tempdir-test-");
+    // As takeInterrupts (F-128 D8): the first SIGTERM is a stop, not an end.
+    process.on("SIGTERM", () => {});
+    process.kill(process.pid, "SIGTERM");
+    setTimeout(() => console.log(JSON.stringify({ dir, kept: existsSync(dir) })), 200);
+  `;
+  const r = spawnSyncFiles(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const { dir, kept } = JSON.parse(r.stdout);
+  assert.equal(kept, true, 'the dir is kept while the process goes on');
+  assert.equal(existsSync(dir), false, `${dir} left behind at exit`);
+});
+
 test('mkTempDir removes the other dirs when one cannot be removed', (t) => {
   if (process.getuid?.() === 0) return t.skip('root ignores directory permissions');
   const helper = new URL('../helpers/tempdir.js', import.meta.url).href;
