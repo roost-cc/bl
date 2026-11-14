@@ -12,7 +12,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { git } from '../helpers/git-backlog.js';
@@ -97,4 +97,28 @@ test('bl in a linked worktree appends one line per command, with no header', () 
   assert.equal(lines.length, 2, lines.join('\n'));
   assert.match(lines[0], /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d {2}bl validate --json$/);
   assert.match(lines[1], /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d {2}bl list$/);
+});
+
+test('bl log with no argument prints the log in a linked worktree subdirectory and "Not in a worktree" in a main checkout subdirectory', () => {
+  const wt = linkedWorktree();
+  const wtSub = join(wt, 'sub');
+  mkdirSync(join(wt, '.bl'), { recursive: true });
+  mkdirSync(wtSub);
+  // A log from before S-1560 still holds the old header; `bl log` prints it as it is.
+  const old = '# bl activity log\n# branch: x\n# started: 2026-01-01 00:00:00\n\n2026-01-01 00:00:01  bl old\n';
+  writeFileSync(join(wt, '.bl', 'activity.log'), old);
+  const inWt = runBl(['log'], { cwd: wtSub });
+  assert.equal(inWt.status, 0, inWt.stderr);
+  assert.equal(inWt.stdout, old.trimEnd() + '\n');
+
+  // A main checkout subdirectory and a directory outside git (the old
+  // "Not in a git repository." case) both print "Not in a worktree".
+  const mainSub = join(repo(), 'sub');
+  mkdirSync(mainSub);
+  for (const cwd of [mainSub, mkTempDir('bl-log-nogit-')]) {
+    const r = runBl(['log'], { cwd });
+    assert.equal(r.status, 0, `${cwd}: ${r.stderr}`);
+    assert.equal(r.stdout, '', cwd);
+    assert.match(r.stderr, /Not in a worktree/, cwd);
+  }
 });
