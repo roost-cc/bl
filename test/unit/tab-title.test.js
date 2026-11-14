@@ -1,9 +1,11 @@
 // tab-title.js: one code path for the terminal tab's title.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import { chmodSync, writeFileSync } from 'fs';
 import { delimiter, join } from 'path';
+import { fileURLToPath } from 'url';
 import { spawnToFiles } from '../helpers/spawn-files.js';
+import { fakeTmux, renamedTitles } from '../helpers/fake-tmux.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { withEnv } from '../helpers/fake-pagers.js';
 import {
@@ -19,22 +21,7 @@ import {
   unitTitleFields,
   updateTabTitle,
 } from '../../src/tab-title.js';
-
-/** A temp dir on PATH holding a fake `tmux` that appends its arguments, one per line, to `record`. */
-function fakeTmux() {
-  const dir = mkTempDir('bl-tmux-');
-  const record = join(dir, 'record');
-  writeFileSync(
-    join(dir, 'tmux'),
-    `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done >> '${record}'\nprintf '\\036\\n' >> '${record}'\n`,
-  );
-  chmodSync(join(dir, 'tmux'), 0o755);
-  return {
-    dir,
-    record,
-    calls: () => (existsSync(record) ? readFileSync(record, 'utf8').split('\x1e\n').filter(Boolean) : []),
-  };
-}
+import { ALIASES, COMMANDS } from '../../src/command-table.js';
 
 /** Run `fn` under a fake tmux: `TMUX` set, a captured window id, titles on. */
 function underFakeTmux(fn) {
@@ -497,6 +484,56 @@ for (const [signal, number] of [
     assert.deepEqual([r.exitCode, r.exitSignal], [number, null]);
   });
 }
+
+// ---------------------------------------------------------------------------
+// every command (S-1412)
+// ---------------------------------------------------------------------------
+
+const BL = fileURLToPath(new URL('../../bin/bl', import.meta.url));
+
+/**
+ * Run `bin/bl …args` in an empty directory that is not a backlog, under its
+ * own fake tmux with window `@7`; resolve with its exit status and the fake
+ * tmux's calls. `env` adds to or (undefined) removes from the environment.
+ */
+async function blUnderFakeTmux(args, env = {}) {
+  const fake = fakeTmux();
+  const childEnv = {
+    ...process.env,
+    PATH: `${fake.dir}${delimiter}${process.env.PATH}`,
+    TMUX: '/tmp/tmux-fake,1,0',
+    BL_TMUX_WINDOW_ID: '@7',
+    BL_BACKLOG_DIR: undefined,
+    BL_TAB_TITLE: undefined,
+    ...env,
+  };
+  for (const [k, v] of Object.entries(childEnv)) if (v === undefined) delete childEnv[k];
+  const { status } = await spawnToFiles(BL, args, { cwd: mkTempDir('bl-no-backlog-'), env: childEnv }).closed;
+  return { status, calls: fake.calls() };
+}
+
+const renamesWindow7 = (calls) => calls.some((c) => c.startsWith('rename-window\n-t\n@7\n'));
+
+test('every command in the command table, every alias and no command at all rename the window', async () => {
+  const names = [...Object.keys(COMMANDS), ...Object.keys(ALIASES)];
+  const runs = await Promise.all([
+    ...names.map(async (name) => ({ name, ...(await blUnderFakeTmux([name, '--help'])) })),
+    blUnderFakeTmux([]).then((r) => ({ name: '(no arguments)', ...r })),
+  ]);
+  const silent = runs.filter((r) => !renamesWindow7(r.calls)).map((r) => r.name);
+  assert.deepEqual(silent, [], `no rename-window -t @7 from: bl ${silent.join(', bl ')}`);
+});
+
+test('with an empty BL_TAB_TITLE, a command renames nothing', async () => {
+  const { calls } = await blUnderFakeTmux(['list', '--help'], { BL_TAB_TITLE: '' });
+  assert.deepEqual(calls, []);
+});
+
+test('bl --help starts with status help and ends with ended', async () => {
+  const { status, calls } = await blUnderFakeTmux(['--help']);
+  assert.equal(status, 0);
+  assert.deepEqual(renamedTitles(calls), [':  : help', ':  : ended']);
+});
 
 // ---------------------------------------------------------------------------
 // window id capture
