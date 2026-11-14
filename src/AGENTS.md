@@ -130,15 +130,15 @@ takes a `dirtySnapshot` before it writes, and compares it with one taken at the 
 
 Each command's owner and scope:
 
-- Feature `bl merge`: the owner is `merge F-n`. The scope is its work units' directories
-  (`scope()`), its release manifest (`writeReleaseManifest`) and its theme's `index.md`
-  (`recordThemeState`).
+- Feature `bl merge`: the owner is `merge F-n`. The scope is the directories of its work units'
+  `index.md` files (`scope()`), its release manifest (`writeReleaseManifest`) and its theme's
+  `index.md` (`recordThemeState`).
 - `bl batch`'s cross-story pass commits the same way. The owner is `batch B-n`, and the scope is
-  its work units' directories.
-- Story `bl merge`'s triage: the owner is `triage S-n`, and the scope is the merged story's
-  directory. So the agent commits the stories that it creates itself
+  the directories of its work units' `index.md` files.
+- Story `bl merge`'s triage: the owner is `triage S-n`, and the scope is the directory of the
+  merged story's `index.md`. So the agent commits the stories that it creates itself
   (`prompts/cleanup-triage.md`).
-- `bl refine`: the scope is its work units' directories.
+- `bl refine`: the scope is the directories of its work units' `index.md` files.
 
 When you add a new command, ask: "What is the one piece of information that the caller needs?"
 That goes on stdout. Everything else goes through the `info(…)` / `warn(…)` helpers in
@@ -2125,8 +2125,8 @@ Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
      prints the refusal and exits 1 before its `dirtySnapshot`: no outcome file, no status, no
      commit.
   2. It passes `units` to `launchSession`, and `scope` to `commitChangedSince`. So the commit
-     holds only the directories of `units`, a story made for the feature during the session
-     included (F-122 D3).
+     holds only the directories of the `index.md` files of `units`, a story made for the feature
+     during the session included (F-122 D3).
   3. It records the status from the outcome. `refined: true` records the success of the `refine`
      row, `refined`. `premise_holds: false` records its failure, a feature's `draft`. Otherwise
      the status stays.
