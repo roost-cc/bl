@@ -498,8 +498,8 @@ and component index files only under the backlog lock, so they need `atomicWrite
   - The wait awaits a timer, so Ctrl+C ends `bl` at once during the wait.
   - `fn` is synchronous, and a returned promise is an error (F-105 W4). The lock is re-entrant
     per process, so an `await` inside `fn` would let another task of the process skip the lock.
-  - A write nested in a hold calls `updateSpecFileHeld`: the same read-modify-write without the
-    lock. It throws unless this process holds the spec's lock.
+  - A write nested under the spec's lock calls `updateSpecFileHeld`: the same read-modify-write
+    without the lock. It throws unless this process holds the spec's lock.
 - **Failure.** Token bookkeeping is best-effort: the token writers catch the error and return
   false. Every other writer lets the error propagate. So a write that could not happen fails the
   command instead of being lost.
@@ -572,12 +572,12 @@ and component index files only under the backlog lock, so they need `atomicWrite
 - **Who is on it.** These writers write a spec through `updateSpecFile`:
   - the token writers (`accumulateTokensOnFile`, `accumulateStepTokensOnFile`,
     `recordStoryTokens`). `recordFeatureTokens` holds `withSpecLock` across its transcript read,
-    and nests `updateSpecFileHeld` in that hold;
+    and nests `updateSpecFileHeld` under that lock;
   - `feature-cmd.js` `updateFeature`: approve, the run's status and the totals re-read;
   - `bl merge F-n`'s fold (`markFeatureMerged`): each story, then the feature, one spec lock at a
     time inside the backlog lock;
   - `bl done`'s one write. It collects the status, commit, completed date and transcript totals
-    inside the hold. A collection failure is non-fatal; a write failure fails `bl done`;
+    while it holds the spec lock. A collection failure is non-fatal; a write failure fails `bl done`;
   - `bl run`'s writers (`writeEscalation`, `recordStoryRunFields`);
   - the writers of `bl updates`: `recordMerge`, `recordOutcome`, `dropStory`, the request write
     in `requestUpdate`, and the refresh and close of `syncUpdates`. The refresh and close apply
@@ -602,9 +602,10 @@ and component index files only under the backlog lock, so they need `atomicWrite
   `.bl/tmp/new-<pid>/` and moves them into place with `moveIntoBacklog`.
 
   A change document and `allowed-tools.json` take a spec lock of their own too (F-126 D2, D3).
-  - Every change document write is in `change-doc.js`: `updateChange` (async, through
-    `withSpecLock`), `updateChangeHeld` for a caller already in that hold, and `ensureChange`,
-    `recordMerge`, `addGateLine` and `restoreChange` on those or on `withSpecFileLock`.
+  - Every change document write is in `change-doc.js`. `updateChange` is async and takes the
+    lock through `withSpecLock`. `updateChangeHeld` is for a caller that already holds that lock.
+    `ensureChange`, `recordMerge`, `addGateLine` and `restoreChange` work on those or on
+    `withSpecFileLock`.
   - `ensureAllowedTools` reads, regenerates and writes in `withSpecFileLock`.
   - `withSpecFileLock` (`spec-file.js`) is the spec lock for an existing file. For a file that it
     creates, it is the backlog lock with the spec lock inside it, as for a new spec file.
