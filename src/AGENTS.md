@@ -2596,7 +2596,7 @@ and never parses the hook's output. The kinds of cause are these:
   renders it, for each lock file. One block holds what the branch brings in (`new`), and one
   holds what `main` has too (`overdue`). Each block has its own options. If ci-cd could not
   compare with `main` (`base.compared` is `false`), every finding counts as new.
-- Any other step: the excerpt and the last 30 lines of the record's `<commit>.log`, and a note
+- Any other step: the excerpt and the last 30 lines of the record's `<commit>.log`. A note says
   that bl did not check whether `main` fails the step too.
 - No usable record, or an `origin/<branch>` that lacks HEAD after the push. A record is not
   usable in these cases:
