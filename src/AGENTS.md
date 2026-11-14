@@ -1659,7 +1659,8 @@ Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
   session included (F-122 D3). `refined: true` records the `refine` row's
   success, `refined`; `premise_holds: false` records its failure, a feature's
   `draft`; otherwise the status stays. `applyRefineStatus` prints `reason`
-  for every verdict, and a status it records (through `transition`) takes
+  for every verdict, with each further line indented so that no line of it
+  reads as another unit's status line (S-1408), and a status it records (through `transition`) takes
   `reason` as the entry's `outcome`, so the log says why a unit is refined.
   A batch story takes the first entry with its id, and a batch story the
   outcome does not name stays as it is. A session without a valid outcome
