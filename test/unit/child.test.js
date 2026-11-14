@@ -448,6 +448,68 @@ test('when bl exits 143 while a long child runs, the exit listener ends the chil
   assert.ok(!alive(pid), `sleep (pid ${pid}) still runs after bl exited`);
 });
 
+// A script prefix that makes `fs.<name>` throw for every module that imports it.
+const FAIL_FS = [
+  `import fs from 'fs';`,
+  `import { syncBuiltinESMExports } from 'module';`,
+  `const fail = (name) => { fs[name] = () => { throw new Error('injected ' + name + ' failure'); }; syncBuiltinESMExports(); };`,
+].join('\n');
+
+test('long_child_receives_sigterm_when_stdio_exit_cleanup_fails', () => {
+  const dir = mkTempDir('bl-child-long-');
+  const pidFile = join(dir, 'pid');
+  const r = runScript(
+    [
+      FAIL_FS,
+      `const pidFile = ${JSON.stringify(pidFile)};`,
+      `runLongChild('sh', ['-c', 'echo $$ > "$1.tmp" && mv "$1.tmp" "$1" && exec sleep 30', 'sh', pidFile]);`,
+      `await new Promise(() => setInterval(() => {`,
+      `  try { fs.readFileSync(pidFile); } catch { return; }`,
+      `  fail('rmSync');`,
+      `  process.exit(143);`,
+      `}, 20));`,
+    ].join('\n'),
+  );
+  assert.equal(r.status, 143, r.stderr);
+  assert.ok(r.stderr.includes('exit listener 143\n'), r.stderr);
+  assert.ok(!r.stderr.includes('injected rmSync failure'), r.stderr);
+  const pid = Number(readFileSync(pidFile, 'utf8').trim());
+  const deadline = Date.now() + 5000;
+  while (alive(pid) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  assert.ok(!alive(pid), `sleep (pid ${pid}) still runs after bl exited`);
+});
+
+// A failed stdio cleanup (`stdioFiles().close()`) hides neither the child's
+// result nor the error that came before it, on each path that calls it.
+for (const [name, body, expected] of [
+  [
+    'spawnSyncFiles after the child exits',
+    `fail('rmSync'); console.log(runChild('sh', ['-c', 'echo out'], { encoding: 'utf8' }).stdout.trim());`,
+    'out',
+  ],
+  [
+    'spawnFiles after the child exits',
+    `fail('rmSync'); console.log((await runLongChild('sh', ['-c', 'echo out'], { encoding: 'utf8' })).stdout.trim());`,
+    'out',
+  ],
+  [
+    'a failed setup',
+    `fail('openSync'); fail('rmSync'); try { runChild('true'); } catch (e) { console.log(e.message); }`,
+    'injected openSync failure',
+  ],
+  [
+    'a failed read-back',
+    `fail('readFileSync'); fail('rmSync'); try { runChild('true'); } catch (e) { console.log(e.message); }`,
+    'injected readFileSync failure',
+  ],
+]) {
+  test(`a failed stdio cleanup hides nothing: ${name}`, () => {
+    const r = runScript(`${FAIL_FS}\n${body}`);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout, `${expected}\nafter\n`);
+  });
+}
+
 /** Whether the process `pid` still runs. */
 function alive(pid) {
   try {

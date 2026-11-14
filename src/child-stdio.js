@@ -123,7 +123,8 @@ process.on('exit', () => {
  * - `readBack(result)`: the result with the captured files read back into
  *   `output`, `stdout` and `stderr`. A failed launch (no `pid`) is returned
  *   as it is.
- * - `close()`: close every descriptor and remove the directory.
+ * - `close()`: close every descriptor and remove the directory. It never
+ *   throws.
  *
  * If making a file throws, the files made so far are removed before the throw.
  */
@@ -144,7 +145,13 @@ function stdioFiles(args, options) {
         // already closed
       }
     }
-    if (dir) rmSync(dir, { recursive: true, force: true });
+    // Best effort: a failed removal must not hide the child's result or the
+    // caller's error, nor skip the `exit` listeners after `waiting`'s.
+    try {
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // a leftover temp directory
+    }
   };
   const fileFor = (name, flags, content) => {
     dir ??= mkdtempSync(join(tmpdir(), 'bl-stdio-'));
