@@ -104,6 +104,10 @@ non-zero, for example after an escalation. Any other exit sets the status from t
 `bl` leaves the window's automatic rename off; `tmux set -w automatic-rename on` gives tmux's
 own name back.
 
+A title is plain text: `bl` removes control characters from it, and under tmux it doubles each
+`#`, so tmux shows `#{…}` and `#(…)` as typed. If tmux does not answer, `bl` waits for it for
+1 s in all, and then sets no more titles in that process.
+
 Two `bl` processes in one tmux window (split panes) write the same title, and the last write
 wins. So a short `bl list` beside a long `bl merge` leaves `ended` on the tab until the merge's
 next step sets its status.

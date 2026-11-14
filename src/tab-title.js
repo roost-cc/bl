@@ -47,6 +47,10 @@
  * which sends bl's current title again. What the tool set is not captured:
  * the tool writes straight to the terminal, so bl never sees it.
  *
+ * A title is sent as plain text (`sendTabTitle`): control characters are
+ * removed, and tmux gets each `#` as `##`. A process waits for tmux at most
+ * `TMUX_TIMEOUT_MS` in all (`tmux`).
+ *
  * When `bl` exits, the last title stays on the tab (S-1393, operator decision
  * 2026-11-09). The tab shows how the work ended until the next `bl` in that
  * window or the operator replaces it. A code path that reaches an end state
