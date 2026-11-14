@@ -12,7 +12,6 @@ import {
   parseFrontmatter,
   normalizeComponentId,
   FORGE_OPS,
-  BODY_READING_OP,
 } from './config.js';
 import { DERIVED_KEYS, changeDoc, loadBacklog } from './backlog-graph.js';
 import { readAllStories, readComponents, pathEntryProblem } from './story.js';
@@ -93,17 +92,19 @@ export const VALID_STORY_KEYS = new Set([
   'tokens_headless_cache_creation',
   'tokens_headless_cache_read',
   'tokens_by_step',
-  // A Renovate update story, written by `bl updates sync` (F-32 Design D3).
+  // Old stories keep these keys: the removed `bl updates` wrote them, and
+  // `bl validate` is their one reader (S-1559).
+  // A Renovate update story, from `bl updates sync` (F-32 Design D3).
   'update_repo',
   'update_branch',
   'update_pr',
   'update_head',
   'update_security',
-  // The operator's request on an update story, executed by the runner's
-  // next `bl updates run` (F-50 D8).
+  // The operator's request on an update story, once executed by
+  // `bl updates run` (F-50 D8).
   'update_request',
   'update_request_reason',
-  // A vulns story, written by `bl updates vulns`, keyed by `update_repo` and
+  // A vulns story, from `bl updates vulns`, keyed by `update_repo` and
   // `update_lockfile` with no `update_branch` (F-71 D4). `update_dropped` is the
   // date of the operator's drop.
   'update_lockfile',
@@ -113,20 +114,20 @@ export const VALID_STORY_KEYS = new Set([
 
 export const VALID_REVIEW_STATUSES = new Set(['pending', 'fixed', 'addressed']);
 
-/** The requests the operator can leave on an update story (F-50 D8). */
-export const UPDATE_REQUESTS = ['approve', 'drop'];
+/** The requests an old update story may carry (F-50 D8). */
+const UPDATE_REQUESTS = ['approve', 'drop'];
 
 /**
  * What is wrong with an update story's request state, or null: an
  * `update_request` is absent or one of `UPDATE_REQUESTS`; a drop carries a
  * non-empty string `update_request_reason`; nothing else carries one.
- * `bl validate`, `bl updates run` and `bl updates status` all refuse what
- * this names, so none treats a malformed request as absent or invents a
- * reason.
+ * `bl validate` refuses what this names, so it never treats a malformed
+ * request as absent or invents a reason. The removed `bl updates` wrote
+ * these keys; old stories keep them.
  * @param {object} fm
  * @returns {string | null}
  */
-export function updateRequestProblem(fm) {
+function updateRequestProblem(fm) {
   const request = fm?.update_request;
   const reason = fm?.update_request_reason;
   if (request == null) {
@@ -1007,8 +1008,7 @@ const READS_PR_BODY = [/--json[ =]\S*\b(body|comments)\b/, /\bcomments\b/, /\bgh
 /**
  * The forge plugin against F-42 D4: `forge` names a plugin of the top-level
  * `backlog.json`, the plugin holds exactly the ops of `FORGE_OPS`, each a
- * command string, and no op
- * but `update.notes` reads a PR body or comments (`--json body`,
+ * command string, and no op reads a PR body or comments (`--json body`,
  * `comments`, `gh pr view`): the PR is a projection of the change document,
  * and bl never reads review content back from the forge. No `forge` key
  * (`forge: none`) has nothing to check.
@@ -1039,12 +1039,9 @@ export function findForgeFindings(config) {
       findings.push(err('forge-op', `plugins.${forge}: "${op}" must be a command string`));
       continue;
     }
-    if (op !== BODY_READING_OP && READS_PR_BODY.some((re) => re.test(cmd))) {
+    if (READS_PR_BODY.some((re) => re.test(cmd))) {
       findings.push(
-        err(
-          'forge-op-reads-body',
-          `plugins.${forge}: "${op}" reads a PR body or comments; only ${BODY_READING_OP} may`,
-        ),
+        err('forge-op-reads-body', `plugins.${forge}: "${op}" reads a PR body or comments; no forge op may`),
       );
     }
   }

@@ -1785,27 +1785,20 @@ export function openTmuxWindow(name, argv, { cwd = process.cwd() } = {}) {
 
 /**
  * The forge ops bl calls (F-42 D4), each with the `{{vars}}` it is given. A
- * forge plugin holds these and no others (`bl validate`), and only
- * `update.notes` (Renovate's release notes) may read a PR body.
+ * forge plugin holds these and no others (`bl validate`), and no op reads a
+ * PR body.
  *
  *   change.open      title, body       prints the new PR's URL   (bl run)
  *   change.describe  number, body      rewrites an open PR's body (bl run)
  *   change.find      branch            JSON [{number,url,state,headRefOid,labels}]
- *   change.close     number, comment   (bl merge, bl updates drop)
- *   change.ready     number            marks a draft PR ready (bl updates run)
- *   update.notes     number            Renovate's PR body (bl updates run)
+ *   change.close     number, comment   (bl merge)
  */
 export const FORGE_OPS = Object.freeze({
   'change.open': ['title', 'body'],
   'change.describe': ['number', 'body'],
   'change.find': ['branch'],
   'change.close': ['number', 'comment'],
-  'change.ready': ['number'],
-  'update.notes': ['number'],
 });
-
-/** The one op allowed to read a PR body. */
-export const BODY_READING_OP = 'update.notes';
 
 /**
  * Run a forge op (e.g. `change.find`, `change.close`) through the
