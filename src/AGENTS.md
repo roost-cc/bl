@@ -3512,8 +3512,28 @@ next, arrow included, such as `→ bl merge`); an unset field renders as nothing
 is trimmed. The placeholder is the `{{var}}`
 bl's prompts and plugin commands use, not a new format.
 
+- Every command sets a start title (S-1412). `bl.js` calls `updateTabTitle(commandTitle(argv))`
+  right after `captureTmuxWindowId()`, before the backlog pull, `settlePending` and dispatch.
+  `commandTitle` (`src/command-table.js`) gives the status: the canonical command name
+  (`ALIASES` maps `ls` to `list`), or `<command> <subcommand>` for a `COMMANDS` entry with
+  `subcommands: true` (`task`, `updates`, `inbox`, `block`) whose first argument is a word,
+  not a flag or a unit id (`updates run`, `inbox done`). It is `help` for no command, `help`,
+  `-h`, `--help`, or `-h`/`--help` among the arguments; an unknown command shows its word.
+  The `feature` and `story` fields are the unit ids the arguments name (`classifyId`, also
+  the value of `--name=value`), one through `unitTitleFields`, several as `<n> features` or
+  `<n> stories`. `bl.js` dispatches only through `COMMANDS` and `ALIASES`, so a new command
+  needs no title code of its own; `test/unit/tab-title.test.js` runs `bin/bl <name> --help`
+  for every key under a fake tmux and fails on a run that renames nothing.
 - A code path sets the fields it knows, by name, at any time: `updateTabTitle('story', 'S-34')`
-  or `updateTabTitle({ feature: 'F-56', status: 'testing' })`. Names are not checked.
+  or `updateTabTitle({ feature: 'F-56', status: 'testing' })`. Names are not checked. Its
+  fields replace the start title's.
+- `bl merge` shows its steps as the status: `integrate` (`integrateForMerge`), `test gate`
+  (before the integration's `runTestGate`), `pre-push gate + push` (`PUSH_STATUS`, before
+  each `git push` of the integrated branch and of `main`: git runs the pre-push gate inside
+  `git push`, so bl cannot show the two apart), `cleanup` (before the PR close), `sync`
+  (before the backlog sync) and `tag` (before a feature's tags are pushed). The statuses
+  inside the integration go through the runner's `title`, so the unit tests' fake runner
+  sets none.
 - `launchSession` sets the unit `parsed.id` names (`F-n` or a story batch's `B-n` the feature,
   `S-n` the story; through `unitTitleFields`) and the mode as `status` (`workon` shows as
   `implement`); a caller that knows more, such as a story's `feature:`, sets it first. The
@@ -3535,7 +3555,13 @@ bl's prompts and plugin commands use, not a new format.
   the child processes that `bl review` starts in parallel for several targets
   (`runChildren`), so the parent's window keeps the parent's title. `agentEnv` sets it for
   every agent session (S-1388): the tab belongs to the `bl` that started the session,
-  so no `bl` the agent runs, and no test it starts, renames the window.
+  so no `bl` the agent runs, and no test it starts, renames the window. Every `bl` started
+  for data runs with it too, so it does not end the parent's title `ended` mid-run:
+  `runBacklogSync`'s child `bl sync`, `bl side`'s child `bl new`, the `bl top` view (and
+  so every `bl` it runs in its window), and the `bl inbox --json` of
+  `_roost_inbox_task_ids` in the three completion files. The sequential children of
+  `mergeInOrder` and `eachInTurn` keep their titles: they run one at a time in the
+  operator's window and name the target in hand.
   `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`,
   `BL_TMUX_WINDOW_ID` and `BL_TAB_TITLE` for every `npm run test:*` script
   (`test/unit/tmux-free-env.test.js` guards it). The same wrapper unsets `BL_BACKLOG_DIR`
@@ -3553,8 +3579,9 @@ bl's prompts and plugin commands use, not a new format.
   title unpadded, so no tab keeps a working status after bl stops. The first title also calls `exitOnSignal`
   (`signal-exit.js`), the SIGINT and SIGTERM handlers that `bl.js` registers when `bl` starts:
   they end the process with `process.exit(130|143)`, so the hook sees an interrupt. They are
-  registered once per process. A process that loads `tab-title.js` without `bl.js` and sets no
-  title keeps Node's default signal action.
+  registered once per process. Since every command sets a start title, the exit hook reaches
+  every command. A process that loads `tab-title.js` without `bl.js` keeps Node's default
+  signal action until its first title, and for good with titles off.
 - The title width only grows while the process runs: `showTabTitle` pads a shorter title with
   trailing spaces to the widest title shown, so the tmux status bar does not move. A final
   title is not padded. `currentTabTitle` and `renderTabTitle` stay unpadded; `endTabTitle`

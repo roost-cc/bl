@@ -19,11 +19,22 @@
  * result is trimmed: with the default format, a story with no feature shows
  * as `: S-210 : implement` and a feature with no story as `F-123 :  : refine`.
  * `{{name}}` is the placeholder bl already uses in its prompts and plugin
- * commands (F-63 row 2), not a new format. An empty `BL_TAB_TITLE` turns
- * titles off; `bl` sets it so for every agent session (`agentEnv`, S-1388)
- * and for the child processes that `bl run` and `bl review` start in
- * parallel for several targets. The tab belongs to the `bl` the
- * operator started, so nothing below an agent session renames the window.
+ * commands (F-63 row 2), not a new format.
+ *
+ * Every command sets a title (S-1412): `bl.js` sets a start title before it
+ * does anything else, from `commandTitle` in `src/command-table.js` (the
+ * command, its subcommand, the unit ids its arguments name), so a new
+ * command needs no title code of its own. A command that knows more sets
+ * its own fields later. So every `bl` owes the tab an end state and
+ * registers `exitOnSignal`.
+ *
+ * An empty `BL_TAB_TITLE` turns titles off. `bl` sets it so for every agent
+ * session (`agentEnv`, S-1388), for the child processes that `bl review`
+ * starts in parallel for several targets, and for every `bl` it starts for
+ * data: the `bl sync` of a merge (`runBacklogSync`), the `bl new` of
+ * `bl side`, the view of `bl top`, and the `bl inbox --json` that the shell
+ * completions run. The tab belongs to the `bl` the operator started, so
+ * nothing below it renames the window.
  *
  * The title's width only grows while the process runs (S-1389): a shorter
  * title is sent with trailing spaces up to the widest title shown so far, so

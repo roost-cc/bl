@@ -7,8 +7,11 @@
  * listeners run and see the code. `bl.js` calls it when `bl` starts, so every
  * command exits 130 or 143 and runs its `exit` listeners (the throwaway worktree of `bl merge`, a
  * session's lock file). `tab-title.js` calls it on the first title too (to
- * end the title as `interrupted`, S-1393). The backlog lock needs none: the
- * kernel frees it when the process ends (F-104). The handlers are registered
+ * end the title as `interrupted`, S-1393): `bl.js` sets a start title for
+ * every command (S-1412), so a new command needs no code of its own for
+ * either. A `bl` started for data runs with `BL_TAB_TITLE=''` and sets no
+ * title, so only `bl.js` registers the handlers there. The backlog lock
+ * needs none: the kernel frees it when the process ends (F-104). The handlers are registered
  * once per process.
  *
  * `INTERRUPT_SIGNALS` names the signals that interrupt `bl`, and
