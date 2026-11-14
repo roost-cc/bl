@@ -108,7 +108,7 @@ JSON object, and nothing else, to `{{outcomePath}}`:
 - If a sub-agent did not finish or did not reply with an object, set its entry to
   `{ "id": "<its ID>", "refined": false, "reason": "<what happened, in one line>" }`.
 
-`bl refine` reads the file when the session ends. It sets each story with `refined: true` to
-refined and records its reason in the story's log. It prints the reason for each other story and
-leaves its status as it is. If the file
-is missing or does not match this shape, `bl refine` changes no status.
+`bl refine` reads the file when the session ends and prints each story's reason. It sets each
+story with `refined: true` to refined and records its reason in the story's log. It leaves the
+status of each other story as it is. If the file is missing or does not match this shape,
+`bl refine` changes no status.
