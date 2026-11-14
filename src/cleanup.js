@@ -45,7 +45,9 @@ import {
   refuseStoryRepo,
   storyRepoOrExit,
   removeUnitDirIfEmpty,
+  worktreeChanges,
 } from './story.js';
+import { removeRunFiles } from './gc.js';
 import { getAllowedTools, loadPrompt } from './session.js';
 import { addGateLine, gateLine, recordMerge } from './change-doc.js';
 import { PUSH_STATUS, shellMerged } from './feature-run.js';
@@ -997,17 +999,6 @@ export function commitsAhead(repoPath, branchName) {
 }
 
 /**
- * Uncommitted changes in a worktree (tracked or untracked). Null when git
- * cannot tell.
- *
- * @returns {string[] | null}
- */
-function worktreeChanges(worktreePath) {
-  const r = runGit(worktreePath, ['status', '--porcelain']);
-  return r.status === 0 ? r.stdout.split('\n').filter((l) => l.trim()) : null;
-}
-
-/**
  * The end of every repo's cleanup: its worktree, then its unit directory
  * once no other repo's worktree is in it, then its branches. A failed step
  * is not fatal.
@@ -1398,6 +1389,7 @@ the main checkout as it was.`);
         console.error('Cleanup plugin failed — continuing anyway.');
       }
     }
+    removeRunFiles(config, [parsed.id]);
   }
 
   info(

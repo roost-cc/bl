@@ -39,6 +39,7 @@ const subArgv = argv.slice(1);
 function printHelp() {
   const editor = editorCommand();
   const unstarted = flowForHelp().unstartedStatusesOf('story').join('/');
+  const closed = flowForHelp().closedStatusesOf('story').join(' or ');
   console.log(`Usage: bl <command> [args...]
 
 Global Options:
@@ -215,6 +216,9 @@ Commands:
   stop       Stop a running bl run cleanly (<F-id|B-id|S-id>): ends its
                agent session, records "stopped"; bl run <id> --resume
                continues it
+  gc         Remove the scratch directories, older gate logs and worktree
+               directories of work units that are ${closed}
+               --dry-run      Print what would be removed; remove nothing
   agent      Launch the configured agent with backlog allowed-tools applied
                [args...]      Passthrough args to the agent
 

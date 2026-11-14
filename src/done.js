@@ -35,6 +35,7 @@ import { dirtySnapshot, failedCommitPending, failedCommitRecord, hasOwnRepo } fr
 import { loadFlow } from './flow.js';
 import { holdRefusal } from './blockers.js';
 import { applyTransition, reviewOf, roundOf, statusOf } from './transition.js';
+import { removeRunFiles } from './gc.js';
 
 function resolveCommitHash(config, primaryRepoName, rawCommit) {
   if (rawCommit) return rawCommit;
@@ -167,6 +168,7 @@ async function doneStory(parsed, status, rawCommit, config, commitMap = null) {
     };
     runPlugins(donePlugins, pluginVars, primaryRepoPath ?? config.backlogRoot);
   }
+  removeRunFiles(config, [parsed.id]);
 
   info(`\nDone. Story ${parsed.id} marked ${marked}.`);
 }

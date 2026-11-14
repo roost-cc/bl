@@ -13,7 +13,7 @@
 
 import { existsSync, readdirSync, rmdirSync } from 'fs';
 import { join, matchesGlob } from 'path';
-import { gitOut } from './child.js';
+import { git, gitOut } from './child.js';
 import { graphOf } from './backlog-graph.js';
 import { holderOf } from './kernel-lock.js';
 import { dirLockPath } from './lock.js';
@@ -273,10 +273,14 @@ export function findStoryDir(parsed, config) {
 // ---------------------------------------------------------------------------
 
 /**
- * List all story worktrees for a given repo path.
- * @returns {{ path, branch }[]}
+ * List all story worktrees for a given repo path. With `detached`, a
+ * worktree on no branch (a detached HEAD, as `bl updates` makes) is listed
+ * too, with `branch: null`.
+ * @param {string} repoPath
+ * @param {{ detached?: boolean }} [opts]
+ * @returns {{ path: string, branch: string | null }[]}
  */
-export function listWorktrees(repoPath) {
+export function listWorktrees(repoPath, { detached = false } = {}) {
   const results = [];
   if (!existsSync(repoPath)) return results;
   try {
@@ -285,15 +289,27 @@ export function listWorktrees(repoPath) {
       const lines = entry.split('\n');
       const pathLine = lines.find((l) => l.startsWith('worktree '));
       const branchLine = lines.find((l) => l.startsWith('branch '));
-      if (!pathLine || !branchLine) continue;
+      if (!pathLine || (!branchLine && !detached)) continue;
       const wPath = pathLine.slice('worktree '.length);
-      const wBranch = branchLine.slice('branch refs/heads/'.length);
+      const wBranch = branchLine ? branchLine.slice('branch refs/heads/'.length) : null;
       if (wPath !== repoPath) results.push({ path: wPath, branch: wBranch });
     }
   } catch {
     // no worktrees or not a git repo
   }
   return results;
+}
+
+/**
+ * Uncommitted changes in a worktree (tracked or untracked). Null when git
+ * cannot tell.
+ *
+ * @param {string} worktreePath
+ * @returns {string[] | null}
+ */
+export function worktreeChanges(worktreePath) {
+  const r = git(worktreePath, ['status', '--porcelain']);
+  return r.status === 0 ? r.stdout.split('\n').filter((l) => l.trim()) : null;
 }
 
 /** Find an existing worktree by branch name in a specific repo. */

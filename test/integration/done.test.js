@@ -726,3 +726,51 @@ test('bl done: a CRLF story keeps one frontmatter block and its line end', () =>
     cleanup();
   }
 });
+
+// S-1112: `bl done` removes the story's scratch directories and older gate logs.
+
+/** A `.bl/run` for S-1 (and S-2's scratch, which stays); returns its path. */
+function seedRunFiles(dir) {
+  const run = join(dir, '.bl', 'run');
+  mkdirSync(join(run, 'S-1.S-1.scratch'), { recursive: true });
+  writeFileSync(join(run, 'S-1.S-1.scratch', 'probe.txt'), 'probe\n');
+  mkdirSync(join(run, 'S-2.S-2.scratch'));
+  for (const name of ['S-1.test-1.log', 'S-1.test-2.log', 'S-1.json']) writeFileSync(join(run, name), '{}\n');
+  return run;
+}
+
+test('bl done removes the scratch directories and older gate logs, and keeps the newest log and the run state', () => {
+  const { dir, cleanup } = backlogWithStory();
+  try {
+    const run = seedRunFiles(dir);
+    const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(readdirSync(run).sort(), ['S-1.json', 'S-1.test-2.log', 'S-2.S-2.scratch']);
+    assert.match(r.stderr, /^Removed 2 run files of S-1 \(\d+ B\)\.$/m);
+  } finally {
+    cleanup();
+  }
+});
+
+test(
+  'bl done warns about a run file it cannot remove and still exits 0',
+  { skip: process.getuid?.() === 0 && 'root removes read-only files' },
+  () => {
+    const { dir, cleanup } = backlogWithStory();
+    const locked = join(dir, '.bl', 'run', 'S-1.S-1.scratch', 'sub');
+    try {
+      seedRunFiles(dir);
+      mkdirSync(locked);
+      writeFileSync(join(locked, 'held.txt'), 'held\n');
+      chmodSync(locked, 0o555);
+      const r = runBl(['done', 'S-1', 'deadbeef'], { cwd: dir });
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stderr, /^bl: warning: could not remove .*S-1\.S-1\.scratch: /m);
+      assert.ok(!existsSync(join(dir, '.bl', 'run', 'S-1.test-1.log')), 'the other run files go');
+      assert.equal(logStatusOf('story', storyFm(dir, 'stories/S1-first-story/index.md')), 'done');
+    } finally {
+      chmodSync(locked, 0o755);
+      cleanup();
+    }
+  },
+);

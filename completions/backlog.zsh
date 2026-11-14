@@ -140,6 +140,7 @@ _roost_bl() {
     'top:A live view of the runs, the inbox, bl next, capacity and history'
     'watch:Follow the live agent session of a run, step by step'
     'stop:Stop a running bl run cleanly, so --resume continues it'
+    'gc:Remove what done and superseded work units left behind'
     'help:Show help'
   )
 
@@ -229,6 +230,9 @@ _roost_bl() {
       local -a ids
       ids=( ${(f)"$(_roost_feature_ids)"} ${(f)"$(_roost_story_ids)"} )
       _arguments -s '1:feature or story id:(${ids})'
+      ;;
+    gc)
+      _arguments -s '--dry-run[List what would be removed; remove nothing]'
       ;;
     inbox)
       if [[ "${words[2]}" == done ]]; then

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -91,9 +91,22 @@ test('bl merge lands the branch, marks work done, and commits only what it chang
     g(dir, 'commit', '-q', '-m', 'backlog');
     const opStory = join(dir, 'stories', 'S2-b', 'index.md');
     appendFileSync(opStory, '\nOperator notes in progress.\n');
+    // The run files of the feature and its story (S-1112): the scratch
+    // directories and the older gate log go, the newer log stays.
+    const run = join(dir, '.bl', 'run');
+    for (const scratch of ['F-1.S-1.scratch', 'S-1.r1.fix.scratch']) mkdirSync(join(run, scratch), { recursive: true });
+    for (const log of ['F-1.test-1.log', 'F-1.test-2.log', 'S-2.test-1.log']) writeFileSync(join(run, log), 'x\n');
+    mkdirSync(join(run, 'S-2.S-2.scratch'));
 
     const r = runBl(['merge', 'F-1'], { cwd: dir, env });
     assert.equal(r.status, 0, r.stderr);
+    for (const gone of ['F-1.S-1.scratch', 'S-1.r1.fix.scratch', 'F-1.test-1.log']) {
+      assert.ok(!existsSync(join(run, gone)), `${gone} is removed`);
+    }
+    for (const kept of ['F-1.test-2.log', 'S-2.test-1.log', 'S-2.S-2.scratch']) {
+      assert.ok(existsSync(join(run, kept)), `${kept} stays`);
+    }
+    assert.match(r.stderr, /^Removed 3 run files of F-1, S-1 \(\d+ B\)\.$/m);
 
     assert.equal(g(code, 'show', 'main:a.txt'), 'feature', 'branch merged into main');
     assert.equal(g(origin, 'show', 'main:a.txt'), 'feature', 'main pushed');
