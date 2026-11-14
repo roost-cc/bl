@@ -186,4 +186,5 @@ test('bl change --help exits 0 with the usage', () => {
   assert.equal(r.status, 0);
   assert.match(r.stdout, /^Usage: bl change <S-n\|F-n\|B-n> \[--open\]/);
   assert.match(r.stdout, /--open/);
+  assert.match(r.stdout, /While the editor is open the copy follows\s+the document/);
 });

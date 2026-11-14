@@ -5094,6 +5094,12 @@ bl which -d C10               # prints the component's directory
 task, and a page with nothing to render (a story with no task), is the file byte for
 byte. `bl edit` always opens the committed file.
 
+While the editor is open, `bl view`'s copy follows the real file (S-1182): bl watches the
+file's directory and, 100 ms after the last change, renders the page again and renames a new
+copy over the old one. vim with `autoread` (or at its "file changed" prompt) reloads it; less
+and more show it when they open the file again. bl ignores SIGINT, SIGQUIT and SIGTERM until
+the editor exits, so a Ctrl-C meant for the editor does not end bl and leave the copy behind.
+
 Both exit with the editor's status: 127 when it cannot be launched, 128 + n when
 signal n kills it. When `bl view` cannot make its copy it shows the page instead
 (printed when it fits the terminal, else `$PAGER` → `less` → `more`) and exits
@@ -5115,7 +5121,8 @@ The document is the unit's current one (`currentChange`): the highest-numbered o
 `feature:` or `batch:` is set) writes its change to that unit's document, so `bl change S-n`
 shows that unit's document and says so on stderr first:
 `S-n is in F-m: showing F-m's change document`. `bl change` and `bl view` share one viewer
-(`showReadOnly`, `src/view.js`): the same editor order, temp copy and pager fallback.
+(`showReadOnly`, `src/view.js`): the same editor order, temp copy and pager fallback, and
+the copy follows the document while the editor is open, as `bl view`'s copy follows its page.
 
 `--open` prints, with no editor, the open (unchecked) items of the latest `### Session` of
 `## Review Log`, grouped under their category heading, each with its continuation lines:
