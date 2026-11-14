@@ -530,7 +530,9 @@ test('bl view keeps the last copy and says so when a refresh fails (S-1182)', ()
   const before = readFileSync(real, 'utf8');
   const editor = followEditor(`printf 'new\\n' > "$SRC"
 sleep 0.6
-cat "$f" > "$(dirname "$0")/kept"`);
+cat "$f" > "$(dirname "$0")/kept"
+printf 'newer\\n' > "$SRC"
+seen newer`);
   const r = bl(['view', 'S-1'], dir, {
     ...tty('rename'),
     VISUAL: editor.bin,
@@ -540,4 +542,5 @@ cat "$f" > "$(dirname "$0")/kept"`);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(readFileSync(join(dirname(editor.bin), 'kept'), 'utf8'), before);
   assert.equal(r.stderr, 'bl view: cannot refresh the copy (injected rename failure); it keeps its last text\n');
+  assert.equal(editor.read('newer'), 'newer\n');
 });

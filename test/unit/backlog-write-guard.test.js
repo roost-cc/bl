@@ -199,6 +199,7 @@ const ALLOWED = new Map([
   ['view.js removeCopy rmSync', TMP],
   ['view.js placeCopy writeFileSync', TMP],
   ['view.js placeCopy renameSync', TMP],
+  ['view.js placeCopy rmSync', TMP],
   ['blockers-merge.js main writeFileSync', "git's merge driver writes the merge result into the temp file git names"],
   ['cleanup.js removeThrowaway rmSync', "removes bl merge's throwaway worktree under the worktree root"],
   ['feature-run.js restoreDisk rmSync', 'restores a code worktree path after a review pass'],

@@ -113,11 +113,14 @@ const SETTLE_MS = 100;
 /**
  * Put `content` at `copy`, read-only, by renaming a sibling staging file over
  * it: a reader that holds the old copy open keeps the old, complete file.
+ * A staging file that a failed rename left behind is read-only, so it is
+ * removed first.
  * @param {string} copy
  * @param {string | Buffer} content
  */
 function placeCopy(copy, content) {
   const staging = join(dirname(copy), `.${basename(copy)}.next`);
+  rmSync(staging, { force: true });
   writeFileSync(staging, content);
   chmodSync(staging, 0o444);
   renameSync(staging, copy);
