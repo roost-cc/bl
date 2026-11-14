@@ -26,10 +26,13 @@
  */
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { describeExit, runChild, runLongChild } from './child.js';
+import { SIGKILL_AFTER_MS, describeExit, runChild, runLongChild } from './child.js';
 
-/** How long `systemctl stop` lets a scope's processes exit on SIGTERM before SIGKILL. */
-const STOP_TIMEOUT = 'TimeoutStopSec=10s';
+/**
+ * How long `systemctl stop` lets a scope's processes exit on SIGTERM before
+ * SIGKILL: the time `runLongChild` gives a stopped long child (F-128 A6).
+ */
+const STOP_TIMEOUT = `TimeoutStopSec=${SIGKILL_AFTER_MS / 1000}s`;
 
 /**
  * Whether `pid` names a live process. Only `staleScopes` asks it, about the

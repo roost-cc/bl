@@ -23,9 +23,11 @@
  * `bl`'s own listeners, so the reason for D2's raise (no listener runs during
  * a synchronous wait) does not apply. A child that a signal ended is a failed
  * child for its caller. `opts.signal` (an `AbortSignal`) sends SIGTERM to the
- * child. The module's `exit` listener sends SIGTERM to every long child that
- * is still running (F-128 A1). `bl` does not wait for it and sends no SIGKILL,
- * so a child that handles or ignores SIGTERM can outlive `bl`.
+ * child, then SIGKILL if it still runs `SIGKILL_AFTER_MS` (10 s) later, and
+ * the wait returns when the child exits (F-128 A6). The module's `exit`
+ * listener sends SIGTERM to every long child that is still running (F-128
+ * A1). `bl` does not wait for it and sends no SIGKILL, so a child that
+ * handles or ignores SIGTERM can outlive `bl`.
  *
  * `gitOut(cwd, args, opts)` is `git()` for a git command that must succeed
  * (F-124 D2): it returns the trimmed stdout, and throws `describeExit`'s
@@ -69,7 +71,14 @@ export const BL_PATH = fileURLToPath(new URL('./bl.js', import.meta.url));
 let depth = 0;
 let kept = null;
 
-/** The long children that are still running: the controller that ends each one. */
+/**
+ * How long a long child may run after its stop signal sends it SIGTERM, in ms,
+ * before `runLongChild` sends it SIGKILL (F-128 A6). A process scope's
+ * `TimeoutStopSec` is the same time (`src/process-scope.js`).
+ */
+export const SIGKILL_AFTER_MS = 10_000;
+
+/** The long children that are still running: the controller that sends each one SIGTERM. */
 const longChildren = new Set();
 
 /**
@@ -95,7 +104,8 @@ process.on('exit', () => {
  * @param {string} command
  * @param {readonly string[]} [args]
  * @param {import('child_process').SpawnOptions & { encoding?: BufferEncoding | 'buffer' }} [opts]
- *   `opts.signal` sends SIGTERM to the child when it fires
+ *   `opts.signal` sends SIGTERM to the child when it fires, then SIGKILL if
+ *   the child still runs `SIGKILL_AFTER_MS` later
  * @returns {Promise<ChildResult>}
  */
 export async function runLongChild(command, args = [], opts = {}) {
@@ -103,7 +113,7 @@ export async function runLongChild(command, args = [], opts = {}) {
   const signal = opts.signal ? AbortSignal.any([opts.signal, controller.signal]) : controller.signal;
   longChildren.add(controller);
   try {
-    return await spawnFiles(command, args, { ...opts, shell: false, signal });
+    return await spawnFiles(command, args, { ...opts, shell: false, signal, sigkillAfter: SIGKILL_AFTER_MS });
   } finally {
     longChildren.delete(controller);
   }

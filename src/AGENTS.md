@@ -4093,8 +4093,8 @@ step it stopped in.
    `bl.js` (a test) gets them too.
 3. The controller's signal is `ctx.stopSignal`. Each long child of the loop gets it: the session
    in `runSession` (`runner.session({ signal })`) and each test-gate command
-   (`runner.testGate(cmd, cwd, { signal })`). When it fires, the child gets SIGTERM, and its wait
-   returns when the child exits.
+   (`runner.testGate(cmd, cwd, { signal })`). When it fires, the child gets SIGTERM, then SIGKILL
+   if it still runs 10 s later (F-128 A6), and its wait returns when the child exits.
 4. `checkStop` stops the run when it finds a stop request for this process or when
    `ctx.stopSignal` has fired. It runs where it ran before: at each step start, after each long
    child, and in each one-second slice of a usage-limit wait. With a request, the note is
@@ -5905,8 +5905,10 @@ them.
   resolves to the same result shape on the child's `exit` event, so a leftover process that
   holds the output file cannot hold the wait open. It never raises an interrupt: during an
   asynchronous wait `bl`'s own signal listeners run, and a child that a signal ended is a failed
-  child for its caller. `opts.signal` (an `AbortSignal`) sends SIGTERM to the child, and the
-  wait returns when the child exits; the result then carries Node's `AbortError` as `error`.
+  child for its caller. `opts.signal` (an `AbortSignal`) sends SIGTERM to the child, then
+  SIGKILL if the child still runs 10 s later (`SIGKILL_AFTER_MS`, F-128 A6, the same time as a
+  process scope's `TimeoutStopSec`). The wait returns when the child exits; the result then
+  carries Node's `AbortError` as `error`.
   The module's `exit` listener sends SIGTERM to every long child that still runs. `bl` does not
   wait for those children and sends no SIGKILL, so a child that handles or ignores SIGTERM can
   outlive `bl`.

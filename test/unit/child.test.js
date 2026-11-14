@@ -3,7 +3,7 @@
  * SIGTERM that ends one (D2), keeps it inside `raiseAfter` until the undo ran
  * (D2a), and words a failed child (`describeExit`, D1). F-128 S-1536:
  * `runLongChild` returns every result, raises nothing, and its child gets
- * SIGTERM when `bl` exits (D3).
+ * SIGTERM when `bl` exits (D3), and SIGKILL 10 s after its stop signal (A6).
  *
  * An interrupt row runs a Node child that calls `exitOnSignal()` (as `bl.js`
  * does), then the entry point, then prints `after`. The raise ends that child,
@@ -26,7 +26,9 @@ import {
   runChild,
   runCommandLine,
   runLongChild,
+  SIGKILL_AFTER_MS,
 } from '../../src/child.js';
+import { ignoresSigterm } from '../helpers/ignores-sigterm.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
 const CHILD = fileURLToPath(new URL('../../src/child.js', import.meta.url));
@@ -417,6 +419,39 @@ test('runLongChild ends its child with SIGTERM when opts.signal fires', async ()
   const r = await runLongChild('sleep', ['30'], { signal: controller.signal });
   assert.equal(r.signal, 'SIGTERM');
   assert.equal(r.error?.name, 'AbortError');
+});
+
+// F-128 A6: the real 10 s, so this row takes about 10 s.
+test('run_long_child_sigkills_a_child_that_ignores_sigterm', async () => {
+  assert.equal(SIGKILL_AFTER_MS, 10_000);
+  const child = ignoresSigterm(mkTempDir('bl-child-long-'));
+  const controller = new AbortController();
+  const wait = runLongChild(child.command, child.args, { signal: controller.signal });
+  await child.ready();
+  const aborted = Date.now();
+  controller.abort();
+  const r = await wait;
+  const ms = Date.now() - aborted;
+  assert.equal(r.signal, 'SIGKILL');
+  assert.equal(r.error?.name, 'AbortError');
+  assert.ok(ms >= SIGKILL_AFTER_MS && ms < SIGKILL_AFTER_MS + 5000, `the wait took ${ms} ms after the abort`);
+});
+
+test('a long child that exits on SIGTERM gets no SIGKILL, and no SIGKILL timer holds bl', () => {
+  // A SIGKILL timer left running would hold the Node child for 10 s.
+  const started = Date.now();
+  const r = runScript(
+    [
+      `const controller = new AbortController();`,
+      `setTimeout(() => controller.abort(), 100);`,
+      `const r = await runLongChild('sleep', ['30'], { signal: controller.signal });`,
+      `console.log(r.signal);`,
+    ].join('\n'),
+  );
+  const ms = Date.now() - started;
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'SIGTERM\nafter\n');
+  assert.ok(ms < SIGKILL_AFTER_MS / 2, `the Node child ran ${ms} ms`);
 });
 
 test('when bl exits 143 while a long child runs, the exit listener ends the child with SIGTERM', () => {

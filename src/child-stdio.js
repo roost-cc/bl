@@ -68,9 +68,11 @@ export function spawnSyncFiles(command, args, options) {
  *   left holding an output file (a `setsid` leftover) cannot hold the wait
  *   open. The files are read back and removed after `exit`.
  * - `options.signal` (an `AbortSignal`) sends SIGTERM to the child when it
- *   fires, and the wait goes on until the child exits. If SIGTERM ended the
- *   child, the result has `signal: 'SIGTERM'`; the result has Node's
- *   `AbortError` as `error`, as a timeout carries `ETIMEDOUT` in `spawnSync`.
+ *   fires, and the wait goes on until the child exits. If the child still
+ *   runs `options.sigkillAfter` ms later, it gets SIGKILL; without
+ *   `sigkillAfter` it gets none. The result has the signal that ended the
+ *   child (`'SIGTERM'` or `'SIGKILL'`) and Node's `AbortError` as `error`, as
+ *   a timeout carries `ETIMEDOUT` in `spawnSync`.
  * - A failed launch (`ENOENT`) resolves with `error` set and no output, as
  *   `spawnSync` returns it.
  * - If the process exits during the wait, an `exit` listener removes the
@@ -78,24 +80,39 @@ export function spawnSyncFiles(command, args, options) {
  *
  * @param {string} command
  * @param {readonly string[] | import('child_process').SpawnOptions} [args]
- * @param {import('child_process').SpawnOptions & { encoding?: BufferEncoding | 'buffer' }} [options]
+ * @param {import('child_process').SpawnOptions & { encoding?: BufferEncoding | 'buffer', sigkillAfter?: number }} [options]
  * @returns {Promise<import('child_process').SpawnSyncReturns<string | Buffer>>}
  */
 export async function spawnFiles(command, args, options) {
   const files = stdioFiles(args, options);
+  const { sigkillAfter, ...spawnOptions } = files.options;
+  const abort = spawnOptions.signal;
   waiting.add(files);
   try {
     const result = await new Promise((resolve) => {
-      const child = spawn(command, files.args, { ...files.options, killSignal: 'SIGTERM' });
+      const child = spawn(command, files.args, { ...spawnOptions, killSignal: 'SIGTERM' });
       let error;
+      let sigkill;
+      const startSigkill = () => {
+        sigkill = setTimeout(() => child.kill('SIGKILL'), sigkillAfter);
+      };
+      if (abort && sigkillAfter !== undefined) {
+        if (abort.aborted) startSigkill();
+        else abort.addEventListener('abort', startSigkill, { once: true });
+      }
+      const settle = (r) => {
+        clearTimeout(sigkill);
+        abort?.removeEventListener('abort', startSigkill);
+        resolve(r);
+      };
       child.on('error', (e) => {
         error ??= e;
         // No pid: the child never started, and no `exit` event follows.
         if (child.pid === undefined) {
-          resolve({ pid: 0, output: null, stdout: null, stderr: null, status: null, signal: null, error });
+          settle({ pid: 0, output: null, stdout: null, stderr: null, status: null, signal: null, error });
         }
       });
-      child.on('exit', (status, signal) => resolve({ pid: child.pid, status, signal, error }));
+      child.on('exit', (status, signal) => settle({ pid: child.pid, status, signal, error }));
     });
     return files.readBack(result);
   } finally {

@@ -3,15 +3,16 @@
  * sandbox: input, captured streams, encodings, pass-through streams, both
  * call forms, and that its temp directory is gone after every outcome.
  * `spawnFiles` (F-128 D2, S-1536), its asynchronous counterpart: the same
- * files and result shape, a wait that ends on `exit`, its abort signal and a
- * failed launch.
+ * files and result shape, a wait that ends on `exit`, its abort signal, the
+ * SIGKILL after it (F-128 A6) and a failed launch.
  */
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { accessSync, constants, readdirSync, writeFileSync } from 'fs';
-import { delimiter, join } from 'path';
+import { basename, delimiter, join } from 'path';
 import { spawnFiles, spawnSyncFiles } from '../../src/child-stdio.js';
+import { ignoresSigterm } from '../helpers/ignores-sigterm.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 
 // `os.tmpdir()` reads TMPDIR on each call: point it at a fresh dir per test
@@ -315,6 +316,27 @@ test('spawnFiles ends its child with SIGTERM when options.signal fires', async (
   assert.equal(r.error?.name, 'AbortError');
   assert.equal(r.stdout, 'started\n');
   assert.deepEqual(leftovers(), []);
+});
+
+test('spawnFiles sends SIGKILL options.sigkillAfter ms after options.signal fires, to a child that ignores SIGTERM', async () => {
+  // The ready file's directory is in `tmp` too; it is the one entry left there.
+  const readyDir = mkTempDir('bl-child-stdio-ready-');
+  const child = ignoresSigterm(readyDir);
+  const controller = new AbortController();
+  const wait = spawnFiles(child.command, child.args, {
+    encoding: 'utf8',
+    signal: controller.signal,
+    sigkillAfter: 300,
+  });
+  await child.ready();
+  const aborted = Date.now();
+  controller.abort();
+  const r = await wait;
+  const ms = Date.now() - aborted;
+  assert.equal(r.signal, 'SIGKILL');
+  assert.equal(r.error?.name, 'AbortError');
+  assert.ok(ms >= 300 && ms < 10_000, `the wait took ${ms} ms after the abort`);
+  assert.deepEqual(leftovers(), [basename(readyDir)]);
 });
 
 test('spawnFiles with a missing command resolves with error ENOENT and leaves no directory', async () => {
