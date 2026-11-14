@@ -1078,139 +1078,208 @@ document. This section holds the notes on the code.
 
 ## The transition log (`transitions:`, F-69 D2, D4)
 
-A story's, feature's and task's frontmatter holds `transitions:`, an append-only list of entries
-`{ at, to, by, via?, outcome?, note? }`: `at` is ISO 8601 UTC, `to` a status of the type, `by`
-the verb (`force` for a forced move, `operator` for a hand edit before `bl force`), `via` the
-last capability that ran, `outcome` one line from its outcome, `note` free text (`migrated` on a
-synthesized entry). An entry's `from` is the previous entry's `to`.
+The frontmatter of a story, a feature and a task holds `transitions:`, an append-only list of
+entries `{ at, to, by, via?, outcome?, note? }`:
+
+- `at`: the time, in ISO 8601 UTC;
+- `to`: a status of the type;
+- `by`: the verb (`force` for a forced move, `operator` for a hand edit before `bl force`);
+- `via`: the last capability that ran;
+- `outcome`: one line from that capability's outcome;
+- `note`: free text (`migrated` on a synthesized entry).
+
+An entry's `from` is the `to` of the entry before it.
 
 - **Forced moves (F-119 D2).** `bl force <id> <status>` (see `### bl force`) writes an entry
-  `by: force` (`FORCE`). `force` is bl's own verb, and `flow.json` does not list it (the
-  reader leaves a type's `force` row out, `Flow.forceRows`, and `flow-json` reports it): it goes
-  between any two different statuses of the type, terminal ones included (`hasEdge`). An
-  entry out of a terminal status (reopening `done`) removes `completed:` (a task's `done:`),
-  and `bl validate` reports a `completed:` on a log that ends at an open status. The old hand
-  entries `by: operator` stay valid on any verb's edge; a new hand move is a `bl force`.
+  `by: force` (`FORCE`). `force` is bl's own verb, and `flow.json` does not list it. The reader
+  leaves a type's `force` row out (`Flow.forceRows`), and `flow-json` reports the row. A forced
+  move goes between any two different statuses of the type, terminal ones included (`hasEdge`).
+  An entry out of a terminal status (reopening `done`) removes `completed:` (a task's `done:`).
+  `bl validate` reports a `completed:` on a log that ends at a status that does not meet `done`.
+  The old hand entries `by: operator` stay valid on the edge of any verb. A new hand move is a
+  `bl force`.
 
-- **Derived.** The status is the last entry's `to`, and the round is the number of entries into
-  `in_review`, less the returns below. Neither is stored, and the change document holds no
-  review field (D5): before F-69 its `review_round` and `review_status` held the review state,
-  which bl now reads only for a unit with no log. `added` (the first entry's date) and `completed` (a task's
-  `done`: the date of the entry to a terminal status) stay as fields for one release; the writer
-  sets them and `bl validate` checks them (`transition-log`).
-- **The one writer** is `src/transition.js`. `applyTransition(flow, kind, fm, to, { by, via,
-outcome, note, at, change })` is pure: it appends the entry when the type's table has the edge
-  from the current status to `to` under `by` (`Flow.edges`: the verb's `during`, or a `success`
-  or `failure` branch), and throws `FlowError` with `fm` unchanged when it does not. A `during`
-  equal to the current status records nothing (null), so a review started on a unit already
-  `in_review` does not count twice. `transition(backlogRoot, unit, to, opts)` is
-  `updateSpecFile` around it and returns the entry. A caller that changes other fields in the
-  same locked write calls `applyTransition` inside its own mutate.
+- **Derived.** The status is the last entry's `to`. The round is the number of entries into
+  `in_review`, less the returns below. bl stores neither, and the change document holds no
+  review field (D5). Before F-69, its `review_round` and `review_status` held the review state.
+  bl now reads them only for a work unit with no log. Two dates stay as fields for one release:
+  `added` (the first entry's date) and `completed` (a task's `done`: the date of the entry to a
+  terminal status). The writer sets them, and `bl validate` checks them (`transition-log`).
+- **The one writer** is `src/transition.js`:
+  - `applyTransition(flow, kind, fm, to, { by, via, outcome, note, at, change })` is pure. It
+    appends the entry when the type's table has the edge from the current status to `to` under
+    `by`. The edge is one of `Flow.edges`: the verb's `during`, or a `success` or `failure`
+    branch. When the table has no such edge, it throws `FlowError` and leaves `fm` unchanged. A
+    `during` equal to the current status records nothing (null). So a review that starts on a
+    work unit that is already `in_review` does not count twice.
+  - `transition(backlogRoot, unit, to, opts)` is `updateSpecFile` around `applyTransition`, and
+    it returns the entry. A caller that changes other fields in the same locked write calls
+    `applyTransition` inside its own mutate.
+
   `test/unit/single-writer.test.js` fails when another module in `src/` assigns or deletes a
-  frontmatter `status` or `transitions`, renders one into a template, or writes a `status:`
-  line; `updates.js`, `updates-run.js` and `updates-vulns.js` are exempt (Out of Scope).
-- **The writers (F-69 D3).** `applyNew` gives a new story, feature or task its first entry,
-  `draft` by `new` (the templates hold `transitions:`, no `status:`). `bl refine` records
-  `in_refinement` by `refine` before the session (`enterVerb` in `refineAndCommit`, F-119 R1;
-  nothing on a unit there already or on a `refine` row with no `during`). The start is all or
-  nothing: when one unit's write fails, bl puts back each unit it moved (`snapshot`), starts no
-  session and commits nothing; a unit file it cannot put back is named and left changed. Then `refined` or
-  `draft` by `refine` from the outcome; an outcome of `refined: false`, or none, leaves the
-  unit at `in_refinement`, and the next `bl refine` resumes from there with the prompt of the
-  status before (`statusBeforeRefine`). `bl approve` records `approved` by `approve`, and
-  `bl approve --force` refuses and names `bl force` (F-119 A2); `bl side` `in_progress` by
-  `side`; `bl done` `done` by `done` or `superseded` by `supersede`; `bl task done` `done` by `done`; a scripted
-  run `in_progress` by `implement` or `done` by `done`. `enterVerb(backlogRoot, unit, verb)`
-  records a verb's start, its `during` or a hand verb's success, unless the unit is there
-  already: `bl implement` records `in_progress` by `implement` on the story (on each story of
-  a feature) before the session, and the loop does so for each story it starts or finds
-  complete. The loop records `in_progress` by `run` at run start, `in_review` by `run` via
-  `open_pr` after the PR, the review verdict (`branchOf` over the `review` row: `ready_for_merge`,
-  `fixing` while `round_within_cap`, else `escalated`) by `review`, `in_review` by `fix` via
-  `fix_self_review` after a fix, and `escalated` with every escalation (`writeEscalation`, by
-  the verb whose failure branch leaves the current status: `merge` inside `bl merge`'s
-  integration). Each session hop carries the session summary as `outcome`. `bl review` records
-  `in_review` by `review` when it starts on a unit in progress or ready for merge, and its
-  verdict. `bl merge` records `done` by `merge` via `merge` on the feature and each story
-  (`applyMerged`; a story never started, by `done`). `ensureLog` writes a unit's synthesized
-  log when a run or a review starts on a unit with no log, from its change document as it is
-  then, so its hops read the stored log. `bl merge`'s review of a merge resolution records
-  `in_review` and its verdict too, outside the round cap (`round_within_cap` always holds), so
-  open items leave the unit in `fixing` and the escalation that follows is by `fix`.
+  frontmatter `status` or `transitions`. It fails too when the module renders one into a
+  template or writes a `status:` line. `updates.js`, `updates-run.js` and `updates-vulns.js` are
+  exempt (Out of Scope).
+
+- **The writers (F-69 D3).** These are the entries that each verb records:
+  - `applyNew` gives a new story, feature or task its first entry, `draft` by `new`. The
+    templates hold `transitions:` and no `status:`.
+  - `bl refine` records `in_refinement` by `refine` before the session (`enterVerb` in
+    `refineAndCommit`, F-119 R1). It records nothing on a work unit that is there already, or
+    on a `refine` row with no `during`. The start is all or nothing. If the write of one work
+    unit fails, bl puts back each work unit that it moved (`snapshot`), starts no session and
+    commits nothing. It names a unit file that it cannot put back, and leaves that file
+    changed.
+  - After the session, `bl refine` records `refined` or `draft` by `refine`, from the outcome.
+    An outcome of `refined: false`, or no outcome, leaves the work unit at `in_refinement`. The
+    next `bl refine` resumes from there, with the prompt of the status before
+    (`statusBeforeRefine`).
+  - `bl approve` records `approved` by `approve`. `bl approve --force` refuses and names
+    `bl force` (F-119 A2).
+  - `bl side` records `in_progress` by `side`.
+  - `bl done` records `done` by `done`, or `superseded` by `supersede`.
+  - `bl task done` records `done` by `done`.
+  - For a scripted story (`src/scripted.js`), bl records `in_progress` by `implement` or `done`
+    by `done`.
+  - `enterVerb(backlogRoot, unit, verb)` records the start of a verb: its `during`, or the
+    success of a hand verb. It records nothing when the work unit is there already.
+    `bl implement` records `in_progress` by `implement` on the story before the session. For a
+    feature, it records that entry on each story of the feature. `bl run` records it on each
+    story that it starts, or finds already implemented.
+  - `bl run` records these entries on the work unit:
+    - `in_progress` by `run` when it starts;
+    - `in_review` by `run` via `open_pr`, after the pull request;
+    - the review verdict by `review`. `branchOf` over the `review` row gives the verdict:
+      `ready_for_merge`, `fixing` while `round_within_cap` holds, else `escalated`;
+    - `in_review` by `fix` via `fix_self_review`, after a fix.
+  - Every escalation records `escalated` (`writeEscalation`). The entry is by the verb whose
+    failure branch leaves the current status. Inside the integration of `bl merge`, that verb
+    is `merge`.
+  - Each session hop carries the session summary as `outcome`.
+  - `bl review` records `in_review` by `review` when it starts on a work unit that is in
+    progress or ready for merge. It records its verdict too.
+  - `bl merge` records `done` by `merge` via `merge` on the feature and on each story
+    (`applyMerged`). A story that never started gets `done` by `done`.
+  - `ensureLog` writes the synthesized log of a work unit that has no log, when `bl run` or a
+    review starts on it. It writes the log from the change document as it is at that moment, so
+    that the hops read the stored log.
+  - When `bl merge` reviews a merge resolution, that review records `in_review` and its verdict
+    too, outside the round cap: `round_within_cap` always holds there. So open items leave the work
+    unit in `fixing`, and the escalation that follows is by `fix`.
 - **Start states (F-69 D3).** `startOf(config, kind, unit, verbs)` picks the first of `verbs`
-  whose `from` holds the unit's status (`statusOf` with its change document's review
-  position, for a unit with no log) and checks it with `assertFrom`. `bl run` passes its `then`
-  chain (`Flow.chainOf`: `run`, `review`, `fix`), so it resumes a unit in review or fixing;
-  `bl implement` passes `implementVerbOf(kind, unit)`: `fix` when the unit's review position
-  (`reviewOf`) is `fixing`, whatever its status, else `implement` (a `done` or `superseded`
-  unit always gets `implement`, whose row refuses it); a started `fix` records
-  `fixing`, its `during`;
-  `bl review`, `bl merge`, `bl refine` and `bl approve` their own verb. When the verb may
-  start, a hold on its nominal path refuses it (`holdRefusal`, F-119 R4): the one hold check
-  of every verb that calls `startOf`. `bl merge` checks the `when` guards and the holds in
-  `mergeGates` with their own messages (`guards: false`), so it names a hold once. A malformed
-  `transitions:` (`malformedLogRefusal`) refuses every verb; `bl merge F-n` and
-  `prepareFeatureWorktree` also refuse a feature whose story has one, before the first repo step.
-- **A unit with no log** (before `bl/scripts/migrate-transitions.js` runs) reads as the log the
-  migration would write, `legacyLog(kind, fm, change)`: `draft` at `added`, then its `status:`
-  through `LEGACY_STATUSES`; a terminal status at `completed`. A unit at `in_progress` or
-  `escalated` takes its review position from its change document: one `in_review` per
-  `review_round` (a `fixing` between two), then `fixing` for `pending`, `fixing` and `in_review`
-  for `fixed`, `ready_for_merge` for `addressed`, and last `escalated` for an escalated unit. A
-  `done` or `superseded` unit whose change document records a round gets `in_progress` and that
-  review part before its terminal entry, so its rounds survive the migration, which removes
-  `review_round` (`bl report` reads them). The
-  first `applyTransition` on such a unit writes that log (an entry with no date takes the new
-  entry's `at`), then the new entry, and removes `status:`; `transitions:` takes its place.
+  whose `from` holds the work unit's status, and checks it with `assertFrom`. For a work unit
+  with no log, the status is `statusOf` with the review position of its change document. Each
+  command passes its own `verbs`:
+  - `bl run` passes its `then` chain (`Flow.chainOf`: `run`, `review`, `fix`). So it resumes a
+    work unit in review or fixing.
+  - `bl implement` passes `implementVerbOf(kind, unit)`. That is `fix` when the work unit's
+    review position (`reviewOf`) is `fixing`, whatever its status, else `implement`. A `done`
+    or `superseded` work unit always gets `implement`, whose row refuses it. A `fix` that starts
+    records `fixing`, its `during`.
+  - `bl review`, `bl merge`, `bl refine` and `bl approve` pass their own verb.
+
+  When the verb may start, a hold on its nominal path refuses it (`holdRefusal`, F-119 R4).
+  This is the one hold check of every verb that calls `startOf`. `bl merge` checks the `when`
+  guards and the holds in `mergeGates`, with their own messages (`guards: false`). So it names
+  a hold once. A malformed `transitions:` (`malformedLogRefusal`) refuses every verb.
+  `bl merge F-n` and `prepareFeatureWorktree` also refuse a feature whose story has a malformed
+  `transitions:`. They refuse it before the first repo step.
+
+- **A work unit with no log** (before `bl/scripts/migrate-transitions.js` runs) reads as the
+  log that the migration would write, `legacyLog(kind, fm, change)`. That log is `draft` at
+  `added`, then its `status:` through `LEGACY_STATUSES`. A terminal status is at `completed`.
+
+  A work unit at `in_progress` or `escalated` takes its review position from its change
+  document:
+  - one `in_review` per `review_round`, with a `fixing` between two;
+  - then `fixing` for `pending`, `fixing` and `in_review` for `fixed`, and `ready_for_merge`
+    for `addressed`;
+  - last, `escalated` for an escalated work unit.
+
+  A `done` or `superseded` work unit whose change document records a round gets `in_progress`
+  and that review part before its terminal entry. So its rounds survive the migration, which
+  removes `review_round` (`bl report` reads them). The first `applyTransition` on such a work
+  unit writes that log, then the new entry, and removes `status:`. An entry with no date takes
+  the new entry's `at`. `transitions:` takes the place of `status:`.
+
 - **The migration**, `node scripts/migrate-transitions.js [--dry-run] [--backlog <dir>]`
-  (`src/migrate-transitions.js`, F-69 D4), writes that log with git dates (`datedLog`): the
-  entry to the stored status, when it is neither `draft` nor terminal, at the last commit that
-  set the `status:` line (`git log --follow -S`); the `in_review` entries at the Review Log
-  session dates (`sessionDates`), the newest session for the newest round; a unit with no
-  `added` starts at the commit that added its file; no entry is before the one above it. It
-  converts one unit at a time through `updateSpecFile` (`setLog` puts the log in `status:`'s
-  place), then removes `review_round` and `review_status` from the unit's change documents
-  through `updateChangeHeld` in each document's spec lock, writes `flow.json` v2 (`migratedFlowText`: bl's template, which
-  has no gates since F-119), and commits the changed paths once (`commitPaths`) with the counts. It does
-  not use `applyMigration`. A unit whose run lock (`.bl/run/<id>.lock`) or session lock
-  (`liveSessionLocks`, by the worktree's branch) is held by another process (`otherHolder`; the
-  PID in a lock file decides nothing, so a parent `bl` run's lock counts too) is skipped and listed, with the stories of such a feature, and so is a unit
-  whose `transitions:` is malformed (`logShape`); a rerun converts a held unit, a malformed one
-  once someone fixes it, and, with nothing left, prints `nothing to do`. It sets `added` and
-  `completed` to the days of the new log's first and terminal entries (`setDates`). A run that
-  fails after it wrote (a step throws, or the commit fails) records the paths it wrote in
-  `.bl/run/commit-failed/migrate-transitions.json`. The rerun commits each one that is still
-  uncommitted with the recorded content along with its own paths, and names each one that was
-  committed or edited since. `--dry-run` prints the same counts and the paths it would carry,
-  and writes nothing. The migration leaves an update story (`update_repo:`, `isUpdateStory` in
-  `src/priority.js`) and its change documents in the old shape, because the updates flow still
-  reads and writes its `status:` (F-69 Out of Scope). The run and the dry run print
-  `kept in the old shape (update stories, F-69 Out of Scope): <n>`; the counts and the commit
+  (`src/migrate-transitions.js`, F-69 D4), writes that log with git dates (`datedLog`):
+  - The entry to the stored status is at the last commit that set the `status:` line
+    (`git log --follow -S`). The log has this entry when the status is neither `draft` nor
+    terminal.
+  - The `in_review` entries are at the session dates of the Review Log (`sessionDates`): the
+    newest session for the newest round.
+  - A work unit with no `added` starts at the commit that added its file.
+  - No entry is before the entry above it.
+
+  The migration works in these steps:
+  1. It converts one work unit at a time through `updateSpecFile`. `setLog` puts the log in the
+     place of `status:`.
+  2. It removes `review_round` and `review_status` from the work unit's change documents,
+     through `updateChangeHeld`, in the spec lock of each document.
+  3. It writes `flow.json` v2 (`migratedFlowText`: bl's template, which has no gates since
+     F-119).
+  4. It commits the changed paths once (`commitPaths`), with the counts.
+
+  It does not use `applyMigration`. It sets `added` and `completed` to the days of the first and
+  the terminal entries of the new log (`setDates`).
+
+  The migration skips these work units and lists them:
+  - a work unit whose run lock (`.bl/run/<id>.lock`) or session lock (`liveSessionLocks`, by the
+    worktree's branch) another process holds (`otherHolder`), with the stories of such a
+    feature. The PID in a lock file decides nothing, so the lock of a parent `bl` run counts
+    too.
+  - a work unit whose `transitions:` is malformed (`logShape`).
+
+  A rerun converts a held work unit, and a malformed one once someone fixes it. With nothing
+  left, it prints `nothing to do`.
+
+  A migration can fail after it wrote: a step throws, or the commit fails. Then it records the
+  paths that it wrote in `.bl/run/commit-failed/migrate-transitions.json`. The rerun commits
+  each recorded path that is still uncommitted, with the recorded content, along with its own
+  paths. It names each recorded path that someone committed or edited since. `--dry-run` prints
+  the same counts and the paths that it would carry, and writes nothing.
+
+  The migration leaves an update story (`update_repo:`, `isUpdateStory` in `src/priority.js`)
+  and its change documents in the old shape. The reason is that the updates flow still reads and
+  writes the story's `status:` (F-69 Out of Scope). The migration and the dry run print
+  `kept in the old shape (update stories, F-69 Out of Scope): <n>`. The counts and the commit
   message leave those stories out.
-- **The review state (D5).** `reviewOf(kind, fm, change)` reads it from the log: `round`, the
-  rounds the log opened; `reviewed`, the rounds with a verdict (`round`, less the open one);
-  `position`, the last of `in_review` (a round open), `fixing` (its items open) and
-  `ready_for_merge` (clean), null before the first review; `fixed`, the open round follows a fix
-  (its review is a re-review). The roles are `REVIEW` in `flow.js`. A verdict is an entry to
-  `fixing` or `ready_for_merge`, or the review's own entry to `escalated` (`via: review`: the
-  closing round left items open), which leaves the items in `fixing`. An entry into `in_review`
-  opens a round, except a return to a round with no verdict yet, or a resumed run's (`by: run`)
-  return to open items: a run resumed after an escalation goes `escalated` → `in_progress` →
-  `in_review`, and that is no review, so it spends no round. `reviewed` is what the old
-  `review_round` counted; `fixing`, `in_review` after a fix and `ready_for_merge` are the old
-  `pending`, `fixed` and `addressed`.
-- **Readers.** `statusOf`, `roundOf` and `logOf(kind, fm, change)` read the log, or `legacyLog`.
-  `makeUnit` sets `.status`, `.round` and `.transitions` through them. For a unit with no log,
-  `makeUnit`'s `.status` reads no change document, so it is the `status:` word (a v1 word
-  mapped) as before F-69; at `in_progress`, `escalated` or a terminal status (`readsChange`),
-  `.round` and `.transitions` are getters that read the change document when asked. A change document bl cannot read gives no
-  review part. The records the review readers take, `storyUnit` (`src/unit.js`) and the feature
-  record (`readAllFeatures`), set `.status` with the review position (`statusOf` with the
-  change document) and `.round`; the merge gates, `bl done`, `bl inbox`, `bl status`, `bl
-review` and the loop read those, or `reviewOf`, and never the change document's fields.
+
+- **The review state (D5).** `reviewOf(kind, fm, change)` reads it from the log:
+  - `round`: the rounds that the log opened;
+  - `reviewed`: the rounds with a verdict (`round`, less the open one);
+  - `position`: the last of `in_review` (a round is open), `fixing` (its items are open) and
+    `ready_for_merge` (clean). It is null before the first review;
+  - `fixed`: the open round follows a fix, so its review is a re-review.
+
+  The roles are `REVIEW` in `flow.js`. A verdict is an entry to `fixing` or `ready_for_merge`.
+  The review's own entry to `escalated` (`via: review`) is a verdict too: the closing round left
+  items open, and the entry leaves the items in `fixing`.
+
+  An entry into `in_review` opens a round, with two exceptions. One is a return to a round that
+  has no verdict yet. The other is the return of a resumed `bl run` (`by: run`) to open items. A
+  `bl run` that resumes after an escalation goes `escalated` → `in_progress` → `in_review`.
+  That is no review, so it spends no round. `reviewed` is what the old `review_round` counted.
+  `fixing`, `in_review` after a fix, and `ready_for_merge` are the old `pending`, `fixed` and
+  `addressed`.
+
+- **Readers.** `statusOf`, `roundOf` and `logOf(kind, fm, change)` read the log, or
+  `legacyLog`. `makeUnit` sets `.status`, `.round` and `.transitions` through them. For a work
+  unit with no log, `makeUnit`'s `.status` reads no change document. So it is the `status:`
+  word (a v1 word mapped), as before F-69. At `in_progress`, `escalated` or a terminal status
+  (`readsChange`), `.round` and `.transitions` are getters that read the change document when
+  asked. A change document that bl cannot read gives no review part.
+
+  The review readers take two records: `storyUnit` (`src/unit.js`) and the feature record
+  (`readAllFeatures`). Both set `.status` with the review position (`statusOf` with the change
+  document) and `.round`. The merge gates, `bl done`, `bl inbox`, `bl status`, `bl review` and
+  `bl run` read those records, or `reviewOf`. They never read the fields of the change document.
+
 - **`assertFrom(flow, unit, verb, ctx)`** returns null, or the refusal "S-5 is draft; run starts
-  from refined, in_progress or escalated (bl refine S-5 reaches refined)": the unit's status must
-  be in the row's `from`, and then each `when` guard (`src/guards.js`) must hold on `ctx`.
+  from refined, in_progress or escalated (bl refine S-5 reaches refined)". The work unit's
+  status must be in the row's `from`. Then each `when` guard (`src/guards.js`) must hold on
+  `ctx`.
 
 ## Holds between units (`blockers.json`, F-66 D2)
 
