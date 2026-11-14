@@ -2512,162 +2512,174 @@ the integration's own `Next:` paragraph, and the resume command is `bl merge <id
 
 ### The repo guard
 
-Each time the loop reaches the test gate (after the stories, after a self-review
-that changed the tree, after each fix round), `repoGuard` (`feature-run.js`, F-52
-D4, F-61 D1) first diffs every prepared worktree against main (`git diff --name-only -z
-main...HEAD`, names exactly as git gives them), and also any worktree on the unit's branch in a registered repo the
-run did not prepare (`git worktree list --porcelain -z` in each main checkout, `strayWorktrees`).
-A repo with changes but no story of the unit gets one warning naming the repo and
-its count of changed paths. A changed path outside the stories' components gets
-none: `paths:` is a map, not a rule (F-61 Decision P1). Each warning is recorded once
-per run in the history (`step: "repo-guard"`, `warning: true`). The guard only warns:
-the run goes on to the gate, and `bl merge` refusing a stray repo is the hard stop.
+`bl run` reaches the test gate after the stories, after a self-review that changed the tree, and
+after each fix round. Each time, `repoGuard` (`feature-run.js`, F-52 D4, F-61 D1) first diffs
+these worktrees against main:
+
+- every prepared worktree (`git diff --name-only -z main...HEAD`, with the names exactly as git
+  gives them);
+- every worktree on the work unit's branch in a registered repo that `bl run` did not prepare
+  (`git worktree list --porcelain -z` in each main checkout, `strayWorktrees`).
+
+If a repo has changes but no story of the work unit, the guard gives one warning. The warning
+names the repo and its count of changed paths. A changed path outside the stories' components
+gets no warning: `paths:` is a map, not a rule (F-61 Decision P1). `bl run` records each warning
+once per run in the history (`step: "repo-guard"`, `warning: true`). The guard only warns.
+`bl run` goes on to the gate, and the hard stop is `bl merge`, which refuses a stray repo.
 
 ### The test gate
 
-The gate covers every repo the run prepared (S-1010): the run's own repo
-(a feature's lead) first, then `prep.otherWorktrees` in the feature's repo
-order (F-52 D3). Each repo's `test` stage
-plugins are resolved with that repo's config (`configForRepo`, so its
-`plugins-test` in `backlog.json` applies) and run in that repo's worktree, with
-`{{worktreePath}}` set to it, one after another, stopping at the first that
-fails. Before anything runs, every repo's plugins are checked (an unknown
-name or an unresolved placeholder in any repo is `test gate misconfigured`),
-then every worktree must be clean. A repo with no plugin is skipped by name;
-the gate is `skipped` overall only when no repo has one. So every repo's
-tests run before review, not first at its own push gate during `bl merge`.
-Every attempt (pass, fail, or a dirty-worktree refusal) writes
-its complete output to one file,
-`<backlog>/.bl/run/<F-id>.test-<n>.log`, where `n` is the run state's
-`testAttempts` counter, bumped and saved as each attempt starts, so `--resume`
-never overwrites an earlier attempt's log. Each command's output follows a
-`── <repo> · <plugin>: <command>` header line (`── <repo>: skipped (no test
-plugin)` for a repo without one); a dirty-worktree refusal writes its
-`git status` list under each dirty repo's name and path. The change
-document's `## Gate` gets one line per repo the attempt reached:
-`<date> · <repo> · <command> · <verdict>`. A failed result names the repo and
-its worktree; the fix-tests session gets them as `{{testRepo}}` and
-`{{testWorktree}}` and fixes and commits there (it still starts in the run's
-own worktree). A plugin runs with stdout and stderr on one file
-descriptor (`shellMerged()`), so its errors stay in the order it printed them.
-The logs stay with the rest of `.bl/run/`; nothing prunes them.
+The gate covers every repo that `bl run` prepared (S-1010). It takes the run's own repo (a
+feature's lead repo) first, then `prep.otherWorktrees` in the feature's repo order (F-52 D3).
+For each repo, the gate resolves the `test` stage plugins with that repo's config
+(`configForRepo`, so the repo's `plugins-test` in `backlog.json` applies). It runs them in that
+repo's worktree, with `{{worktreePath}}` set to the worktree. The plugins run one after another
+and stop at the first that fails.
 
-A failed attempt reaches the fix-tests session and the escalation as three
-views: the log path, a failure excerpt, and the last 30 lines. The excerpt
-(`failureExcerpt()` in `test-excerpt.js`) is drawn from anywhere in the failing
-plugin's output: every line matching one of `FAILURE_MARKERS` (Playwright's
-`  1) [` failure headers, `Error:` / `<Name>Error:` lines, `CERT_HAS_EXPIRED`,
-node:test `not ok` / `✖` / a non-zero `ℹ fail`, and the app runner's
-`N passed, M failed` (M > 0) and `Failed:` summaries) with 2 lines of context,
-overlapping ranges merged, `…` between the rest, capped at 80 lines keeping the
-earliest. With no match it reads `(no failure markers matched — see the full
-log)`. The tail alone is not enough: an app run ends with `stack.teardown.js`
-noise, and on F-4 the error that mattered sat far above it. The fix-tests
-prompt gets `{{testLogPath}}`, `{{testExcerpt}}` and `{{testTail}}`, and is told
-to read the log rather than rerun the suite. A second failed attempt escalates
-as `test gate failed twice` with the command, the log path, the excerpt and
-the tail, in that order.
+Before anything runs, the gate makes two checks:
 
-A failed `git push` (`pushBranch()` in `bl run`, `pushIntegrated()` in
-`bl merge`) escalates in the `_escalation.md` shape (S-897), which
-`pushEscalation()` in `push-gate.js` builds with `escalationText()`
-(`escalation.js`). The reason line stays first. bl takes the cause from the
-check record that ci-cd's `ci gate` writes when it fails (S-1556):
-`<git-common-dir>/ci-cd/checks/<commit>.json`, read by `gateRecord()` only
-when `by` is `gate`, `verdict` is `fail` and `started` is not before the push
-began. bl never reruns the gate and never parses the hook's output. The kinds:
+1. It checks the plugins of every repo. An unknown name or an unresolved placeholder in any repo
+   is `test gate misconfigured`.
+2. It checks that every worktree is clean.
 
-- `error` set: the step could not run; the one option is to do what the
-  error names.
-- The last step is `vulns`: each blocking finding as `findingsTable()` renders
-  it, per lock file, in a block for what the branch brings in (`new`) and one
-  for what `main` has too (`overdue`), each with its own options. When ci-cd
-  could not compare with `main` (`base.compared` is `false`), every finding
-  counts as new.
-- Any other step: the excerpt and last 30 lines of the record's
-  `<commit>.log`, and a note that bl did not check whether `main` fails the
-  step too.
-- No usable record (none, `by` is `check`, an older `started`, a malformed
-  record, an `exit_code` that is not an integer of 1 or more, no step and no
-  `error` text, or a `vulns` report `checkReport()` refuses or that has no
-  blocking finding), and an
-  `origin/<branch>` that lacks HEAD after the push: the problem line names
-  what `gateRecord()` found and why, and the push output goes through
-  `pushFailure()` under Details (its excerpt, left out when no marker
-  matches, then the last 10 lines; the pre-push gate prints its failed test
-  far above its summary, S-1499). bl does not guess at the cause. So every
-  record `gateRecord()` returns leads to at least one decision.
+The gate skips a repo with no plugin, and names it. The gate is `skipped` as a whole only when no
+repo has a plugin. So the tests of every repo run before review, and not first at the repo's own
+push gate during `bl merge`.
 
-No option bypasses the gate (`--no-verify`).
+Every attempt writes its complete output to one file, `<backlog>/.bl/run/<F-id>.test-<n>.log`.
+An attempt is a pass, a fail or a dirty-worktree refusal. `n` is the run state's `testAttempts`
+counter. `bl run` bumps and saves the counter as each attempt starts, so `--resume` never
+overwrites the log of an earlier attempt. In the log:
 
-The fix-tests session returns an outcome object (`schemas/fix-tests.json`,
-F-68 D2): `outcome` is one of three values, and `reason` is required for each.
-Nothing is read from the session's text; a session without a valid outcome is
-resumed once and then escalates (D5).
+- The output of each command follows a header line, `── <repo> · <plugin>: <command>`. A repo
+  without a plugin gets `── <repo>: skipped (no test plugin)`.
+- A dirty-worktree refusal writes its `git status` list under the name and path of each dirty
+  repo.
 
-- `fixed`: the agent committed a fix, and the loop reruns the gate. A second
-  failure escalates as `test gate failed twice`.
-- `rerun`: the failure would not reproduce after a real attempt; `reason`
-  says what it tried. The loop reruns the gate. If that gate fails too, the
-  failure is real, and one more fix-tests session gets it (`fixNote` says it
-  reproduced) instead of escalating. `rerun` is honoured once per gate. After
-  that it counts as `fixed`.
-- `unrelated`: nothing in the repos can make the gate pass. That
-  means the stack runs other code than this worktree's, stray files the
-  session cannot move, or infrastructure outside the repos is down. The loop
-  does not rerun the gate. It escalates at once as `test gate failure is
-environmental (fix-tests: unrelated)`, with the agent's reason followed by
-  the first attempt's details. The reason stays short; the session writes
-  its full explanation for the operator to `escalation.md` in its scratch
-  directory (`ESCALATION_FILE`), and when that file has content it replaces
-  the bare reason in `## Escalation`, followed by
-  ``fix-tests returned `unrelated`: <reason>`` and the gate's details
-  (`unrelatedDetails()`). The loop clears the file before every fix-tests
-  session, so a sent-back session never inherits the previous one's. On F-4 an expired dev certificate was diagnosed
-  correctly, and a rerun would have cost five minutes and replaced the reason
-  with a second identical failure. After the operator fixes the environment,
-  `--resume` starts at the gate, because the implemented stories are already
-  complete.
+The change document's `## Gate` gets one line for each repo that the attempt reached:
+`<date> · <repo> · <command> · <verdict>`. A failed result names the repo and its worktree. The
+fix-tests session gets them as `{{testRepo}}` and `{{testWorktree}}`, and fixes and commits
+there. The session still starts in the run's own worktree. A plugin runs with stdout and stderr
+on one file descriptor (`shellMerged()`), so its errors stay in the order it printed them. The
+logs stay with the rest of `.bl/run/`, and nothing prunes them.
 
-A flaky failure is a bug to fix, not an environment problem. F-22 escalated a
-page-load timeout with `UNRELATED` after it had failed 2 of its 4 gate runs.
-So the first `unrelated` outcome whose reason reads as flaky (`looksFlaky()`:
-flaky, intermittent, timeout / timed out, "not caused by") does not escalate.
-The loop sends the session back to fix-tests once, without rerunning the gate,
-and `fixNote` (`flakyPushbackNote()`) tells the agent to fix the failure. The
-refusal is recorded in the run history. A second `unrelated` escalates. With
-both detours, one `testGateWithFix()` call runs at most three fix-tests
-sessions and three gates.
+A failed attempt reaches the fix-tests session and the escalation in three views: the log path,
+a failure excerpt and the last 30 lines. `failureExcerpt()` in `test-excerpt.js` takes the
+excerpt from anywhere in the output of the failing plugin:
+
+1. It takes every line that matches one of `FAILURE_MARKERS`, with 2 lines of context. The
+   markers are:
+   - Playwright's `  1) [` failure headers;
+   - `Error:` and `<Name>Error:` lines, and `CERT_HAS_EXPIRED`;
+   - node:test's `not ok`, `✖` and a non-zero `ℹ fail`;
+   - the app runner's summaries, `N passed, M failed` (M > 0) and `Failed:`.
+2. It merges overlapping ranges, and puts `…` between the other ranges.
+3. It caps the excerpt at 80 lines, and keeps the earliest.
+
+With no match, the excerpt reads `(no failure markers matched — see the full log)`. The tail
+alone is not enough. An app run ends with `stack.teardown.js` noise, and on F-4 the error that
+mattered sat far above it. The fix-tests prompt gets `{{testLogPath}}`, `{{testExcerpt}}` and
+`{{testTail}}`. It tells the agent to read the log, and not to rerun the suite. A second failed
+attempt escalates as `test gate failed twice`. The escalation gives the command, the log path,
+the excerpt and the tail, in that order.
+
+A failed `git push` escalates in the `_escalation.md` shape (S-897). The push is `pushBranch()`
+in `bl run` or `pushIntegrated()` in `bl merge`. `pushEscalation()` in `push-gate.js` builds the
+escalation with `escalationText()` (`escalation.js`), and the reason line stays first. bl takes
+the cause from the check record that ci-cd's `ci gate` writes when it fails (S-1556):
+`<git-common-dir>/ci-cd/checks/<commit>.json`. `gateRecord()` reads the record only when `by` is
+`gate`, `verdict` is `fail` and `started` is not before the push began. bl never reruns the gate
+and never parses the hook's output. The kinds of cause are these:
+
+- `error` set: the step could not run. The one option is to do what the error names.
+- The last step is `vulns`: the escalation shows each blocking finding as `findingsTable()`
+  renders it, for each lock file. One block holds what the branch brings in (`new`), and one
+  holds what `main` has too (`overdue`). Each block has its own options. If ci-cd could not
+  compare with `main` (`base.compared` is `false`), every finding counts as new.
+- Any other step: the excerpt and the last 30 lines of the record's `<commit>.log`, and a note
+  that bl did not check whether `main` fails the step too.
+- No usable record, or an `origin/<branch>` that lacks HEAD after the push. A record is not
+  usable in these cases:
+  - no record exists;
+  - `by` is `check`, or `started` is older;
+  - the record is malformed;
+  - `exit_code` is not an integer of 1 or more;
+  - the record has no step and no `error` text;
+  - `checkReport()` refuses the `vulns` report, or the report has no blocking finding.
+
+  Then the problem line names what `gateRecord()` found and why. The push output goes through
+  `pushFailure()` under Details: its excerpt (left out when no marker matches), then the last 10
+  lines. The pre-push gate prints its failed test far above its summary (S-1499). bl does not
+  guess at the cause.
+
+So every record that `gateRecord()` returns leads to at least one decision. No option bypasses
+the gate (`--no-verify`).
+
+The fix-tests session returns an outcome object (`schemas/fix-tests.json`, F-68 D2). `outcome` is
+one of three values, and each value needs a `reason`. bl reads nothing from the session's text.
+If a session gives no valid outcome, bl resumes it once and then escalates (D5).
+
+- `fixed`: the agent committed a fix, and `bl run` reruns the gate. A second failure escalates as
+  `test gate failed twice`.
+- `rerun`: the failure did not reproduce after a real attempt, and `reason` says what the agent
+  tried. `bl run` reruns the gate. If that gate fails too, the failure is real. Then one more
+  fix-tests session gets it, and `bl run` does not escalate; `fixNote` says that the failure
+  reproduced. `bl run` honours `rerun` once per gate. After that, `rerun` counts as `fixed`.
+- `unrelated`: nothing in the repos can make the gate pass. The causes are these: the stack runs
+  other code than this worktree's, the session cannot move stray files, or infrastructure
+  outside the repos is down. `bl run` does not rerun the gate. It escalates at once as
+  `test gate failure is environmental (fix-tests: unrelated)`, with the agent's reason and then
+  the details of the first attempt.
+
+  The reason stays short. The session writes its full explanation for the operator to
+  `escalation.md` in its scratch directory (`ESCALATION_FILE`). When that file has content, it
+  replaces the bare reason in `## Escalation`. After it come the line
+  ``fix-tests returned `unrelated`: <reason>`` and the gate's details (`unrelatedDetails()`).
+  `bl run` clears the file before every fix-tests session. So a session that was sent back never inherits the file of the
+  session before it.
+
+  On F-4 the agent diagnosed an expired dev certificate correctly. A rerun would have cost five
+  minutes, and a second identical failure would have replaced the reason. After the operator
+  fixes the environment, `--resume` starts at the gate, because the stories are already
+  implemented.
+
+A flaky failure is a bug to fix, not an environment problem. F-22 escalated a page-load timeout
+with `UNRELATED` after the timeout failed 2 of its 4 gate attempts. So the first `unrelated`
+outcome whose reason reads as flaky does not escalate. `looksFlaky()` reads a reason as flaky
+when it says flaky, intermittent, timeout or timed out, or "not caused by". `bl run` sends the
+session back to fix-tests once, and does not rerun the gate. `fixNote` (`flakyPushbackNote()`)
+tells the agent to fix the failure. The run history records the refusal. A second `unrelated`
+escalates. With both detours, one `testGateWithFix()` call runs at most three fix-tests sessions
+and three gates.
 
 ### Blocked by a bug: ad-hoc stories
 
-Every code-writing feature prompt carries the rule in
-`prompts/_blocked-by-bug.md`: `feature-story`, `feature-self-review`,
-`feature-fix-self-review`, `feature-workon-review`, `feature-fix-tests` and
-`feature-workon`. `loadPrompt()` renders it into the `{{blockedByBug}}` slot
-(`PROMPT_PARTIALS` in `session.js`) with the template's own variables; a story
-run (`unitKind: "story"`) gets `_blocked-by-bug-story.md` instead
-(`STORY_PARTIALS`), which records the fix as a dated line in the story's `## Notes`. The
-rule says that an agent blocked by a real bug fixes it, even outside the
-feature's scope, and keeps going:
+Every feature prompt that writes code carries the rule in `prompts/_blocked-by-bug.md`. These
+prompts are `feature-story`, `feature-self-review`, `feature-fix-self-review`,
+`feature-workon-review`, `feature-fix-tests` and `feature-workon`. `loadPrompt()` renders the
+rule into the `{{blockedByBug}}` slot (`PROMPT_PARTIALS` in `session.js`), with the template's
+own variables. A loose story's `bl run` (`unitKind: "story"`) gets `_blocked-by-bug-story.md`
+instead (`STORY_PARTIALS`). That rule records the fix as a dated line in the story's `## Notes`.
+
+The rule says this: if a real bug blocks an agent, the agent fixes it, even outside the feature's
+scope, and keeps going.
 
 1. Find the cause.
 2. Record an ad-hoc story with
-   `bl new {{featureId}} {{adhocComponent}} --type bug --points <n> --no-sync --title … --body-file <backlog>/.bl/run/<F-id>.adhoc-<slug>.md`,
-   and set it `in_progress` with its criteria checked, so the loop's
-   `storyComplete()` skips it and `bl merge` marks it done.
+   `bl new {{featureId}} {{adhocComponent}} --type bug --points <n> --no-sync --title … --body-file <backlog>/.bl/run/<F-id>.adhoc-<slug>.md`.
+   Set it `in_progress` with its criteria checked. Then `storyComplete()` in `bl run` skips it,
+   and `bl merge` marks it done.
 3. Fix the bug in a commit that touches only that bug.
 4. Commit the story file and the feature file to the backlog.
 
-`adhocComponent` comes from the feature's first story
-(`prepareFeatureWorktree()`). `bl new` is covered by the `bl:*` baseline in
-`allowed-tools.json`, and `--no-sync` writes the story and commits nothing, so the session's
-`bl sync --commit` commits it with the feature file. If
-`bl new` fails, the fallback is a task with the same body file,
-`bl task <F-n> --title "Ad-hoc fix (done, <sha>): …" --gate none`, so the operator makes it
-a story at merge. The rule allows escalation only for an
-architectural problem, an unclear business rule, or a conflict with the
-tenets. "Flaky" and "not caused by this branch" are not reasons to stop.
+`adhocComponent` comes from the feature's first story (`prepareFeatureWorktree()`). The `bl:*`
+baseline in `allowed-tools.json` covers `bl new`. `--no-sync` writes the story and commits
+nothing, so the session's `bl sync --commit` commits it with the feature file. If `bl new` fails,
+the fallback is a task with the same body file,
+`bl task <F-n> --title "Ad-hoc fix (done, <sha>): …" --gate none`. The operator then makes it a
+story at merge. The rule allows an escalation for only three things: an architectural problem, an
+unclear business rule, or a conflict with the tenets. "Flaky" and "not caused by this branch" are
+not reasons to stop.
 
 ### Escalations for the operator
 
