@@ -33,7 +33,7 @@ function assertTemplateBlock(dir, rel, name) {
 }
 
 test("every template's frontmatter holds keys, no {{var}}; bodies keep theirs", () => {
-  for (const name of ['story', 'story-feature', 'story-update', 'feature', 'epic', 'theme', 'component', 'change']) {
+  for (const name of ['story', 'story-feature', 'feature', 'epic', 'theme', 'component', 'change']) {
     const text = readFileSync(join(TEMPLATES, `${name}.md`), 'utf8');
     const block = text.match(/^---\n([\s\S]*?)\n---\n/)[1];
     assert.doesNotMatch(block, /\{\s*\{/, name);

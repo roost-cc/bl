@@ -108,7 +108,7 @@ test('checkUnit takes an open feature or loose story and refuses everything else
     ],
     features: [{ id: 'F-1', title: 'One', status: 'approved' }],
   });
-  // An update story, as `bl updates` writes one: no feature, an `update_repo:`.
+  // An update story, as the removed `bl updates` wrote one: no feature, an `update_repo:`.
   mkdirSync(join(dir, 'stories', 'S12-update'), { recursive: true });
   writeFileSync(
     join(dir, 'stories', 'S12-update', 'index.md'),
