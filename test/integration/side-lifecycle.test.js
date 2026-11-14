@@ -17,13 +17,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { delimiter, join } from 'path';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { parseChange, serializeChange } from '../../src/change-doc.js';
 import { findFeature, normalizeFeatureId } from '../../src/feature.js';
 import { prepareFeatureWorktree } from '../../src/feature-cmd.js';
 import { defaultRunner, runFeature } from '../../src/feature-run.js';
 import { runBl } from '../helpers/run-bl.js';
+import { fakeTmux, renamedTitles } from '../helpers/fake-tmux.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { git, initGitBacklog } from '../helpers/git-backlog.js';
 import { defaultOutcome, reviewOutcome } from '../helpers/outcomes.js';
@@ -216,14 +217,24 @@ test('side_feature_lifecycle_two_repos: bl side in a story session, then the run
 test('standalone_side_batch_merge_clears_inbox: three standalone side stories are listed as change once they have commits, and one bl merge clears them', async () => {
   const { tmp, dir, repos, mainBranches } = build();
   const made = [];
+  // Under a fake tmux: the tab belongs to `bl side`, so its child `bl new` sets no title (S-1412).
+  const tmux = fakeTmux();
+  const tmuxEnv = {
+    PATH: `${tmux.dir}${delimiter}${process.env.PATH}`,
+    TMUX: '/tmp/tmux-fake,1,0',
+    BL_TMUX_WINDOW_ID: '@7',
+  };
   for (const title of ['Side a', 'Side b', 'Side c']) {
     const r = runBl(
       ['side', 'repoB', '--from', 'S-3', '--title', title, '--points', '1', '--body-file', '-', '--json'],
-      { cwd: dir, input: DONE },
+      { cwd: dir, input: DONE, env: tmuxEnv },
     );
     assert.equal(r.status, 0, r.stderr);
     made.push(JSON.parse(r.stdout));
   }
+  const statuses = renamedTitles(tmux.calls()).map((t) => t.split(' : ').at(-1).trim());
+  assert.ok(statuses.includes('side'), statuses.join(', '));
+  assert.ok(!statuses.includes('new'), statuses.join(', '));
   const ids = made.map((s) => s.story);
   const listed = () =>
     JSON.parse(runBl(['inbox', '--json'], { cwd: dir }).stdout)

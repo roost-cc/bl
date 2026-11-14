@@ -72,6 +72,7 @@ import { unitFiles } from './backlog-graph.js';
 import { insertAfter } from './template.js';
 import { LOCK_FD_ENV, withLock } from './lock.js';
 import { syncAndCommit, reportBacklogCommit } from './sync.js';
+import { TAB_TITLE_ENV } from './tab-title.js';
 
 export const SIDE_JSON_SCHEMA = 'bl-side-json/v1';
 
@@ -230,7 +231,8 @@ function newStory({ feature, component, title, points, type, body, lock }) {
   const res = runBl(BL_PATH, argv, {
     stdio: [body != null ? 'pipe' : 'ignore', 'pipe', 'inherit', lock.fd],
     ...(body != null ? { input: body } : {}),
-    env: { ...process.env, [LOCK_FD_ENV]: '3' },
+    // A child for data: the tab belongs to this `bl side` (S-1412).
+    env: { ...process.env, [LOCK_FD_ENV]: '3', [TAB_TITLE_ENV]: '' },
     encoding: 'utf8',
   });
   if (res.error || res.status !== 0) fail(`bl side: bl new failed: ${describeExit(res, 'bl new')}`);

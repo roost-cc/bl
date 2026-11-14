@@ -108,9 +108,10 @@ _roost_filter_value() {
   esac
 }
 
-# Collect the open task ids (T-7, ...) bl inbox lists
+# Collect the open task ids (T-7, ...) bl inbox lists, with tab titles off:
+# a completion must not rename the window (S-1412)
 _roost_inbox_task_ids() {
-  bl inbox --json 2>/dev/null \
+  BL_TAB_TITLE= bl inbox --json 2>/dev/null \
     | node -e 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{for(const e of JSON.parse(s||"[]"))if(e.kind==="task")console.log(e.id)})' 2>/dev/null
 }
 
