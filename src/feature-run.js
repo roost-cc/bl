@@ -129,7 +129,7 @@ import { gateRecord, pushEscalation } from './push-gate.js';
 import { describeFailure, localTime } from './agent-failure.js';
 import * as processScope from './process-scope.js';
 import { regenerateConflicts, regeneratePlugins } from './regenerate.js';
-import { REVIEW, loadFlow } from './flow.js';
+import { FlowError, REVIEW, loadFlow } from './flow.js';
 import {
   NoEdgeError,
   applyTransition,
@@ -1122,18 +1122,28 @@ export function escalatingVerb(flow, kind, status, integration) {
  * that escalated, with the reason as its note. With `fold`, used by
  * `bl merge`'s integration, content an agent wrote during the merge is kept
  * below bl's own reason and details instead of standing alone (F-36 D8).
+ * When the log refuses the entry (a `FlowError`: a log that `bl validate`
+ * rejects, S-1580), the section is still written and a warning in the run's
+ * history says that the log has no `escalated` entry.
  */
 async function writeEscalation(ctx, reason, details = '', { fold = false } = {}) {
   const { feature } = ctx;
   const text = `${reason}${details ? `\n\n${details}` : ''}`.trim();
   const flow = loadFlow(ctx.config.backlogRoot);
   const kind = unitKind(ctx);
+  let refused = null;
   // Under the spec lock, inside the backlog lock when `bl merge` holds it
   // (F-67 D4): a token step entry a session writes meanwhile is kept.
   await updateSpecFile(ctx.config.backlogRoot, feature.indexPath, (fm, body) => {
     const by = escalatingVerb(flow, kind, statusOf(kind, fm), Boolean(ctx.integration));
     const note = String(reason).split('\n')[0];
-    if (by) applyTransition(flow, kind, fm, 'escalated', { by, note });
+    try {
+      if (by) applyTransition(flow, kind, fm, 'escalated', { by, note });
+    } catch (e) {
+      // `applyTransition` leaves `fm` unchanged: the reason still reaches ## Escalation.
+      if (!(e instanceof FlowError)) throw e;
+      refused = e;
+    }
     const existing = extractSection(body, 'Escalation');
     if (!sectionHasContent(existing)) {
       return existing == null
@@ -1143,6 +1153,11 @@ async function writeEscalation(ctx, reason, details = '', { fold = false } = {})
     if (fold) return replaceSection(body, 'Escalation', `${text}\n\nWritten during the merge:\n\n${existing.trim()}`);
     return body;
   });
+  if (refused) {
+    const note = `the transition log has no escalated entry: ${refused.message}`;
+    record(ctx, { step: 'escalate', ok: true, warning: true, note });
+    ctx.runner.log(`  warning: ${note}`);
+  }
   await commitFeatureFile(ctx, 'escalate', `chore: ${feature.id} escalated — ${reason}`);
 }
 

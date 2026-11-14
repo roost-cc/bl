@@ -2163,6 +2163,44 @@ test('writeEscalation fills an Escalation heading with trailing whitespace', asy
   }
 });
 
+test('writeEscalation records ## Escalation when the stored-log check refuses the escalated entry', async () => {
+  // Each way the log breaks during the run (S-1580): the escalated entry is refused, the reason is not lost.
+  const breaks = {
+    'a stale completed:': (fm) => {
+      fm.completed = '2026-10-01';
+    },
+    'an entry with no by': (fm) => {
+      delete fm.transitions.at(-1).by;
+    },
+  };
+  for (const [name, broken] of Object.entries(breaks)) {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      let gates = 0;
+      const shell = (cmd) => {
+        // The second gate run is the last step before the escalation.
+        if (cmd === 'npm test' && ++gates === 2) editFile(feature.indexPath, broken);
+        return null;
+      };
+      const runner = fakeRunner({ dir, feature, testResults: [1, 1], behaviour: { shell } });
+      const before = parseFrontmatter(readFileSync(feature.indexPath, 'utf8')).fm.transitions;
+      const state = await runFeature({ feature, config, prep, runner });
+      assert.equal(state.status, 'escalated', `${name}: ${state.lastError}`);
+      const { fm, body } = parseFrontmatter(readFileSync(feature.indexPath, 'utf8'));
+      assert.match(extractSection(body, 'Escalation'), /test gate failed twice/, `${name}: the reason written`);
+      assert.ok(
+        !JSON.stringify(fm.transitions).includes('"escalated"'),
+        `${name}: no escalated entry (log was ${JSON.stringify(before)})`,
+      );
+      const warning = state.history.find((h) => h.step === 'escalate' && h.warning);
+      assert.match(warning?.note ?? '', /^the transition log has no escalated entry: /, name);
+      assert.equal(loadRunState(config, 'F-1').status, 'escalated', `${name}: the run state saved`);
+    } finally {
+      cleanup();
+    }
+  }
+});
+
 test('a backlog commit that fails is recorded at the escalation and the pr: write', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
