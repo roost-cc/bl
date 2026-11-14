@@ -18,6 +18,11 @@ test('commandTitle: the command, its subcommand and the unit ids its arguments n
     [['run', 's34'], { status: 'run', story: 'S-34' }],
     [['run', 'B-2'], { status: 'run', feature: 'B-2' }],
     [['side', '--from=F-56'], { status: 'side', feature: 'F-56' }],
+    // A value after = that is not an id names no unit.
+    [['side', '--from=--x=S-1'], { status: 'side' }],
+    // An alias shows its command, and its ids as the command's would.
+    [['pr', 'S-1'], { status: 'review', story: 'S-1' }],
+    [['show', 'F-1'], { status: 'view', feature: 'F-1' }],
     [['refine', 'C32'], { status: 'refine' }],
     [['task', '--json'], { status: 'task' }],
     [['bogus'], { status: 'bogus' }],
