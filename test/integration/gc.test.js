@@ -230,6 +230,59 @@ test('gc_keeps_unit_on_list_failure_or_late_worktree', async (t) => {
   });
 });
 
+test('gc_reports_partial_cleanup_and_prune_failure: each failed step is a failed kept line, and the rest is still printed', async (t) => {
+  /** `fail` is a shell test on the git arguments; `kept` is the kept line's path and reason. */
+  const cases = [
+    {
+      name: 'unreadable status',
+      fail: '[ "$1" = status ]',
+      kept: (wt) => [join(wt, 's1-done', 'code'), 'git cannot read its status'],
+    },
+    {
+      name: 'refused removal',
+      fail: '[ "$1 $2" = "worktree remove" ]',
+      kept: (wt) => [join(wt, 's1-done', 'code'), 'injected'],
+    },
+    {
+      name: 'failed prune',
+      fail: '[ "$1 $2" = "worktree prune" ]',
+      kept: (_wt, code) => [code, 'git worktree prune: injected'],
+    },
+  ];
+  for (const c of cases) {
+    await t.test(c.name, () => {
+      const { dir, run, code, wt, cleanup } = gcBacklog();
+      try {
+        const env = gitShim(dir, `if ${c.fail}; then echo injected >&2; exit 1; fi`);
+        const r = runBl(['gc'], { cwd: dir, env });
+        assert.equal(r.status, 1, r.stderr);
+        const [path, reason] = c.kept(wt, code);
+        assert.match(r.stdout, new RegExp(`^kept ${path} \\(${reason}\\)$`, 'm'));
+        assert.match(r.stdout, new RegExp(`^removed ${join(run, 'S-1.S-1.scratch')}$`, 'm'));
+        assert.match(r.stderr, /^bl gc: removed \d+ paths/m);
+      } finally {
+        cleanup();
+      }
+    });
+  }
+
+  await t.test('a worktree sweep that stops on an error still reports the run files removed', () => {
+    const { dir, run, wt, cleanup } = gcBacklog();
+    try {
+      rmSync(wt, { recursive: true, force: true });
+      writeFileSync(wt, 'not a directory\n');
+      const r = runBl(['gc'], { cwd: dir, env: GIT_ENV });
+      assert.equal(r.status, 1, r.stderr);
+      assert.match(r.stdout, new RegExp(`^removed ${join(run, 'S-1.S-1.scratch')}$`, 'm'));
+      assert.match(r.stdout, new RegExp(`^kept ${wt} \\(.*ENOTDIR.*\\)$`, 'm'));
+      assert.ok(!existsSync(join(run, 'S-1.S-1.scratch')));
+      assert.match(r.stderr, /^bl gc: removed 5 paths, .*; kept 2\.$/m);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 test('gc_rejects_or_honors_inline_dry_run_values: a valued boolean flag is refused and removes nothing', () => {
   const { dir, cleanup } = mkTempBacklog({
     config: { worktrees: './wt' },

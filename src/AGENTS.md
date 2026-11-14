@@ -4836,7 +4836,12 @@ Output: one stdout line per path, run files first: `removed <path>`, or `kept <p
 With `--dry-run`, `bl gc` removes nothing, runs no git command that changes anything, and writes
 `would remove <path>` in place of `removed`. Then one stderr line:
 `bl gc: removed <n> paths, <size>; kept <k>.` (`would remove` with `--dry-run`). A path that
-cannot be removed is a `kept` line with the error, and `bl gc` exits 1; otherwise it exits 0.
+cannot be removed is a `kept` line with the error, and so is a failed git command: a worktree whose
+status git cannot read, a `git worktree remove` that git refuses, a `git worktree list` that
+fails, and a failed `git worktree prune` (a `kept <repo path>` line). If one sweep stops on an
+error, the other sweep's lines are still printed. In each of these cases `bl gc` exits 1;
+otherwise it exits 0. A path kept for its uncommitted changes, or because it names no work unit,
+is not a failure.
 
 ### `bl list`
 

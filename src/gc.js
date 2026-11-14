@@ -65,8 +65,9 @@ with --dry-run) or "kept <path> (<reason>)". Then one stderr line with the
 count and size removed, and the count kept.
 
 Exit codes:
-  0   Nothing failed (a kept path is not a failure).
-  1   A path could not be removed, or a bad argument.`;
+  0   Nothing failed (a path kept for its changes or its name is not a
+      failure).
+  1   A path could not be removed, a git command failed, or a bad argument.`;
 
 /**
  * The leading segment of a `.bl/run` entry's name, up to its first `.`: the
@@ -179,6 +180,25 @@ const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** The first line of `text`, trimmed. */
 const firstLine = (text) => text.trim().split('\n')[0];
+
+/** Why a git run failed: the first line of its stderr, else its exit status. */
+const gitFailure = (r) => firstLine(r.stderr ?? '') || `git exited ${r.status}`;
+
+/**
+ * `sweep()`, or, when it throws, a `Sweep` that keeps `path` as failed with
+ * the error, so the other sweep's results are still printed.
+ *
+ * @param {() => Sweep} sweep
+ * @param {string} path
+ * @returns {Sweep}
+ */
+function attempt(sweep, path) {
+  try {
+    return sweep();
+  } catch (err) {
+    return { removed: [], kept: [{ path, reason: firstLine(err.message), failed: true }] };
+  }
+}
 
 /** The total of `{ bytes }` items. */
 const totalBytes = (items) => items.reduce((sum, r) => sum + r.bytes, 0);
@@ -345,7 +365,7 @@ export function sweepWorktrees(config, graph, { dryRun }) {
     const held = [];
     for (const w of inside) {
       const changes = worktreeChanges(w.path);
-      if (changes == null) held.push({ path: w.path, reason: 'git cannot read its status' });
+      if (changes == null) held.push({ path: w.path, reason: 'git cannot read its status', failed: true });
       else if (changes.length > 0)
         held.push({ path: w.path, reason: `uncommitted changes in ${changes.length} paths` });
       else if (dryRun) gone.push({ path: w.path, bytes: sizeOf(w.path) });
@@ -353,7 +373,7 @@ export function sweepWorktrees(config, graph, { dryRun }) {
         const bytes = sizeOf(w.path);
         const r = git(w.repoPath, ['worktree', 'remove', w.path]);
         if (r.status === 0) gone.push({ path: w.path, bytes });
-        else held.push({ path: w.path, reason: firstLine(r.stderr ?? '') || `git exited ${r.status}` });
+        else held.push({ path: w.path, reason: gitFailure(r), failed: true });
       }
     }
     // List again just before the directory goes: a worktree registered in
@@ -384,7 +404,12 @@ export function sweepWorktrees(config, graph, { dryRun }) {
     removed.push({ path: dir, bytes });
   }
 
-  if (!dryRun) for (const repoPath of repoPaths) git(repoPath, ['worktree', 'prune']);
+  if (!dryRun) {
+    for (const repoPath of repoPaths.filter((p) => existsSync(p))) {
+      const r = git(repoPath, ['worktree', 'prune']);
+      if (r.status !== 0) kept.push({ path: repoPath, reason: `git worktree prune: ${gitFailure(r)}`, failed: true });
+    }
+  }
   return { removed, kept };
 }
 
@@ -411,7 +436,10 @@ export async function main(argv) {
   const dryRun = args['dry-run'] === true;
   const config = loadConfig();
   const graph = loadBacklog(config);
-  const sweeps = [sweepRunFiles(config, graph, { dryRun }), sweepWorktrees(config, graph, { dryRun })];
+  const sweeps = [
+    attempt(() => sweepRunFiles(config, graph, { dryRun }), join(config.backlogRoot, RUN_DIR)),
+    attempt(() => sweepWorktrees(config, graph, { dryRun }), worktreeRoot(config)),
+  ];
 
   const verb = dryRun ? 'would remove' : 'removed';
   const removed = sweeps.flatMap((s) => s.removed);
