@@ -2,7 +2,7 @@
 // title every command sets (S-1412).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ALIASES, COMMANDS, commandTitle } from '../../src/command-table.js';
+import { ALIASES, COMMANDS, commandTitle, findCommand } from '../../src/command-table.js';
 
 test('commandTitle: the command, its subcommand and the unit ids its arguments name', () => {
   for (const [argv, title] of [
@@ -21,6 +21,9 @@ test('commandTitle: the command, its subcommand and the unit ids its arguments n
     [['refine', 'C32'], { status: 'refine' }],
     [['task', '--json'], { status: 'task' }],
     [['bogus'], { status: 'bogus' }],
+    // A word that names an Object.prototype key is an unknown word too.
+    [['constructor'], { status: 'constructor' }],
+    [['__proto__'], { status: '__proto__' }],
   ]) {
     assert.deepEqual(commandTitle(argv), title, argv.join(' '));
   }
@@ -29,6 +32,15 @@ test('commandTitle: the command, its subcommand and the unit ids its arguments n
 test('commandTitle: no command, a help word, or -h/--help in the arguments is help', () => {
   for (const argv of [[], ['help'], ['-h'], ['--help'], ['merge', '--help'], ['agent', 'x', '-h']]) {
     assert.deepEqual(commandTitle(argv), { status: 'help' }, argv.join(' '));
+  }
+});
+
+test('findCommand: an alias resolves to its command; an unknown or Object.prototype word has no entry', () => {
+  assert.equal(findCommand('ls').name, 'list');
+  assert.equal(findCommand('ls').entry, COMMANDS.list);
+  assert.equal(findCommand('merge').entry, COMMANDS.merge);
+  for (const word of ['bogus', 'constructor', 'toString', '__proto__', undefined]) {
+    assert.deepEqual(findCommand(word), { name: word, entry: undefined }, String(word));
   }
 });
 

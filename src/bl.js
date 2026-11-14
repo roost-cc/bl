@@ -17,7 +17,7 @@ import { warn, editorCommand } from './config.js';
 import { captureTmuxWindowId, updateTabTitle } from './tab-title.js';
 import { flowForHelp } from './flow.js';
 import { exitOnSignal } from './signal-exit.js';
-import { ALIASES, COMMANDS, HELP_WORDS, commandTitle } from './command-table.js';
+import { HELP_WORDS, commandTitle, findCommand } from './command-table.js';
 
 const argv = process.argv.slice(2);
 
@@ -292,7 +292,7 @@ async function run() {
     printHelp();
     return;
   }
-  const entry = COMMANDS[ALIASES[command] ?? command];
+  const { entry } = findCommand(command);
   if (entry) return entry.run(subArgv);
   console.error(`bl: unknown command '${command}'`);
   console.error("Run 'bl help' for usage.");

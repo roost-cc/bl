@@ -101,6 +101,17 @@ export const ALIASES = { ls: 'list', pr: 'review', s: 'sync', show: 'view', clau
 export const HELP_WORDS = new Set(['help', '-h', '--help']);
 
 /**
+ * The command a word names: its canonical name (an alias resolved) and its
+ * table entry, or no entry for an unknown word. Only the tables' own keys
+ * count, so `constructor` is an unknown word, not `Object`.
+ * @param {string | undefined} word
+ */
+export function findCommand(word) {
+  const name = word !== undefined && Object.hasOwn(ALIASES, word) ? ALIASES[word] : word;
+  return { name, entry: name !== undefined && Object.hasOwn(COMMANDS, name) ? COMMANDS[name] : undefined };
+}
+
+/**
  * `bl refine`: with `-t`, start the refine in a new tmux window, which the
  * detached `bl refine` owns; else refine here.
  * @param {string[]} argv
@@ -141,10 +152,10 @@ async function refine(argv) {
  * @returns {{ status: string, feature?: string, story?: string }}
  */
 export function commandTitle(argv) {
-  const name = ALIASES[argv[0]] ?? argv[0];
+  const { name, entry } = findCommand(argv[0]);
   const rest = argv.slice(1);
   const help = name === undefined || HELP_WORDS.has(name) || rest.includes('-h') || rest.includes('--help');
-  const sub = COMMANDS[name]?.subcommands && rest[0] && !rest[0].startsWith('-') && !classifyId(rest[0]);
+  const sub = entry?.subcommands && rest[0] && !rest[0].startsWith('-') && !classifyId(rest[0]);
   const status = help ? 'help' : sub ? `${name} ${rest[0]}` : name;
 
   // Each title field to the distinct ids the arguments name for it.
