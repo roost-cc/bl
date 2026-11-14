@@ -10,5 +10,5 @@ the groups of stories that can run in parallel. These rules feed it:
   overlap. `bl run` finds file overlap itself.
 - During a run, the plan wins. If the plan proves wrong, change it in `plan.yaml` (beside the
   change document, in the directory of the work unit's `index.md`) and add a `changes` entry
-  that says why. Then do the extra work to resolve
-  the conflicts. A correct plan is good; working code is a must.
+  that says why. Then do the extra work to resolve the conflicts. A correct plan is good;
+  working code is a must.
