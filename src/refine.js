@@ -167,11 +167,12 @@ export function statusBeforeRefine(flow, kind, fm, change = null) {
  * `success` branch (`refined`) or `failure` branch (`draft`, the premise
  * does not hold) in the unit's log, `by: refine, via: refine`, with `reason`
  * as the entry's `outcome` (`transition`, F-69 D3); or, when `result` is
- * null, leave the status and print `reason`.
+ * null, leave the status. Either way, print `reason`: the outcome schemas
+ * require it for every verdict (S-1408).
  * @param {string} backlogRoot
  * @param {{ id: string, kind: "story" | "feature", indexPath: string }} unit
  * @param {"success" | "failure" | null} result
- * @param {string} [reason]
+ * @param {string} reason
  */
 export async function applyRefineStatus(backlogRoot, { id, kind, indexPath }, result, reason) {
   if (result) {
@@ -183,8 +184,7 @@ export async function applyRefineStatus(backlogRoot, { id, kind, indexPath }, re
     } catch (e) {
       throw new Error(`${id}: ${e.message}`);
     }
-    // A draft (the premise does not hold) says why.
-    info(result === 'failure' && reason ? `${id}: status ${status}: ${reason}` : `${id}: status ${status}.`);
+    info(`${id}: status ${status}: ${reason}`);
   } else {
     info(`${id} is not refined; its status is unchanged: ${reason}`);
   }
@@ -427,16 +427,17 @@ async function refineBatch(targets, config) {
 /**
  * Apply a batch refine's outcome to every story. A story whose status write
  * fails does not stop the others: bl tries each one, then throws one error
- * that names the stories set and each story not set.
+ * that names the stories set and each story not set. A story takes the
+ * first entry with its id; an entry for a story outside the batch is not read.
  * @param {string} backlogRoot
  * @param {Array<{ id: string, found: { indexPath: string } }>} targets
- * @param {Record<string, { refined: boolean, reason?: string }>} stories
+ * @param {Array<{ id: string, refined: boolean, reason: string }>} stories
  */
 export async function applyBatchStatuses(backlogRoot, targets, stories) {
   const set = [];
   const failed = [];
   for (const t of targets) {
-    const entry = stories[t.id] ?? { refined: false, reason: 'the outcome has no entry for it' };
+    const entry = stories.find((s) => s.id === t.id) ?? { refined: false, reason: 'the outcome has no entry for it' };
     try {
       await applyRefineStatus(backlogRoot, storyUnit(t), entry.refined ? 'success' : null, entry.reason);
       if (entry.refined) set.push(t.id);
@@ -474,9 +475,10 @@ With a single resolved story, launches one interactive agent session in the
 backlog repo to refine and plan it. With multiple stories, launches one
 orchestrator session that delegates each story to its own sub-agent, refining
 them in parallel. The session ends by writing its outcome: when the session
-ends, bl sets each story the agent refined to "refined", and prints the reason
-for each one it did not. Then bl commits and pushes what the session left
-uncommitted in the stories' directories, and names each other path it left.
+ends, bl sets each story the agent refined to "refined", leaves each other
+story as it is, and prints the agent's reason for each. Then bl commits and
+pushes what the session left uncommitted in the stories' directories, and
+names each other path it left.
 
 A refine locks its stories first. If another bl process holds one of them,
 the refine refuses with that process's pid.`);

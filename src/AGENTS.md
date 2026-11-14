@@ -1623,10 +1623,31 @@ Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
 - **Schemas (D2).** `schemas/<step>.json`, one per prompt that ends a step,
   loaded by `loadSchema(name)` in `session.js` beside `loadPrompt`. Each has
   `additionalProperties: false` and a one-line `summary`.
+- **One plain schema (S-1408).** Each outcome schema is the one schema that
+  ajv and every agent use, with no translation layer and no per-provider
+  form, so it is what OpenAI's strict mode accepts (Codex's
+  `--output-schema`). Every object's `required` lists every key of its
+  `properties`. A field that can be empty is nullable
+  (`anyOf: [<its schema>, { "type": "null" }]`), and its prompt example
+  shows `null`. A refine `reason` is never empty: it says why for every
+  verdict, as fix-tests' `reason` does, so it is a required string. No
+  outcome schema has a conditional keyword (`if`, `then`, `else`, `allOf`,
+  `oneOf`, `not`) or an object without fixed properties (`propertyNames`,
+  `patternProperties`: a map), so the batch's `stories` is an array. A
+  schema does not refuse an outcome whose fields contradict each other: each
+  reader decides from one field and only prints the others, so the deciding
+  field wins (`refined`; `premise_holds`, then `refined`; `fixed`;
+  `resolved` and bl's own checks; the story's criteria for implement).
+  `null` means no value is needed; a reader that needs one and gets `null`
+  prints a fallback, as merge-resolve's `(no reason given)` for
+  `resolved: false`. `test/unit/outcome-schemas.test.js` guards the schema
+  rules. `schemas/plan.json` is not an outcome schema: it is the shape of
+  `plan.yaml` (F-125), which only ajv reads and no agent receives, so it
+  keeps its `propertyNames` map.
 - **Refine outcomes (D3).** `bl refine` passes `schemas/refine.json`
-  (`{ summary, refined, reason? }`), `refine-batch.json`
-  (`{ summary, stories: { "S-n": { refined, reason? } } }`) or
-  `feature-refine.json` (`{ summary, premise_holds, refined, reason? }`) to
+  (`{ summary, refined, reason }`), `refine-batch.json`
+  (`{ summary, stories: [{ id, refined, reason }] }`) or
+  `feature-refine.json` (`{ summary, premise_holds, refined, reason }`) to
   `launchSession`, and `refineAndCommit` (`refine.js`) applies the outcome
   before its backlog commit. `refineAndCommit(units, opts, message, apply)`
   first takes the work unit locks of `units` (`takeUnitLocksOrExit`: the story,
@@ -1637,12 +1658,14 @@ Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
   holds only the units' directories, a story made for the feature during the
   session included (F-122 D3). `refined: true` records the `refine` row's
   success, `refined`; `premise_holds: false` records its failure, a feature's
-  `draft`; otherwise the status stays and `reason` is printed
-  (`applyRefineStatus`, through `transition`, with `reason` as the entry's
-  `outcome`). A batch story the outcome does not name stays as it is. A
-  session without a valid outcome file records no outcome: each unit stays at
-  the status the session started it in (the `refine` row's `during`,
-  `in_refinement`), and bl prints the fault; the agent's own commit of the refinement is not affected. No refine
+  `draft`; otherwise the status stays. `applyRefineStatus` prints `reason`
+  for every verdict, and a status it records (through `transition`) takes
+  `reason` as the entry's `outcome`, so the log says why a unit is refined.
+  A batch story takes the first entry with its id, and a batch story the
+  outcome does not name stays as it is. A session without a valid outcome
+  file records no outcome: each unit stays at the status the session started
+  it in (the `refine` row's `during`, `in_refinement`), and bl prints the
+  fault; the agent's own commit of the refinement is not affected. No refine
   prompt asks the agent to write a status
   (`test/unit/prompts-no-status-writes.test.js`).
 - **No valid outcome is an error, not a verdict (D5).** `runSession` in
@@ -1665,9 +1688,8 @@ status` prints the latest one of each step (`outcomeLines()` in
   criteria. fix-tests passes `fix-tests.json`
   (`{ summary, outcome: fixed | rerun | unrelated, reason }`) and the
   resolution `merge-resolve.json` (`{ summary, resolved, reason }`;
-  `resolved: false` is a resolution problem). Every property of the three is
-  required, `blocked` and the resolution's `reason` nullable, so Codex's
-  strict `--output-schema` has no optional field to refuse. The prompts end
+  `resolved: false` is a resolution problem), `blocked` and the resolution's
+  `reason` nullable (**One plain schema** above). The prompts end
   with `{{outcomeDelivery}}` and the object (`_implement-outcome.md` is
   shared by the two implement prompts). No prompt asks for a verdict line
   (`DONE S-n`, `ESCALATED`, `RESOLVED`, `FIXED`, `UNRELATED:`, `RERUN:`), and

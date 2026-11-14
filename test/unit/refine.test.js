@@ -53,13 +53,13 @@ test('a batch refine applies every story it can and names each one it could not'
     for (const id of ['S-1', 'S-3', 'S-4']) {
       await transition(dir, { kind: 'story', indexPath: path(id) }, 'in_refinement', { by: 'refine' });
     }
-    const outcome = {
-      'S-1': { refined: true },
-      'S-2': { refined: true },
-      'S-3': { refined: false, reason: 'too large' },
-      'S-4': { refined: true },
-      'S-5': { refined: true },
-    };
+    const outcome = [
+      { id: 'S-1', refined: true, reason: 'ready' },
+      { id: 'S-2', refined: true, reason: 'ready' },
+      { id: 'S-3', refined: false, reason: 'too large' },
+      { id: 'S-4', refined: true, reason: 'ready' },
+      { id: 'S-5', refined: true, reason: 'ready' },
+    ];
     await assert.rejects(
       async () => applyBatchStatuses(dir, targets, outcome),
       (e) => {
@@ -75,6 +75,46 @@ test('a batch refine applies every story it can and names each one it could not'
     assert.equal(status('S-4'), 'refined');
     const entry = parseFrontmatter(readFileSync(path('S-1'), 'utf8')).fm.transitions.at(-1);
     assert.deepEqual([entry.to, entry.by, entry.via], ['refined', 'refine', 'refine']);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a batch entry decides from refined alone, prints its reason for every verdict, and the first entry for a story wins (S-1408)', async (t) => {
+  const stories = ['S-1', 'S-2', 'S-3'].map((id) => ({ id, component: 'C01', title: id, status: 'backlog' }));
+  const { dir, cleanup } = mkTempBacklog({ components: [{ id: 'C01', title: 'One' }], stories });
+  const lines = [];
+  t.mock.method(process.stderr, 'write', (chunk) => lines.push(String(chunk).trimEnd()));
+  try {
+    const path = (id) => `${dir}/stories/S${id.slice(2)}/index.md`;
+    const targets = ['S-1', 'S-2', 'S-3'].map((id) => ({ id, found: { indexPath: path(id) } }));
+    // refineAndCommit records the refinement session's start first (F-119 R1).
+    for (const { found } of targets) {
+      await transition(dir, { kind: 'story', indexPath: found.indexPath }, 'in_refinement', { by: 'refine' });
+    }
+    lines.length = 0;
+    await applyBatchStatuses(dir, targets, [
+      { id: 'S-1', refined: true, reason: 'every criterion has a check' },
+      { id: 'S-2', refined: false, reason: 'an open question blocks the plan' },
+      { id: 'S-3', refined: false, reason: 'too large' },
+      { id: 'S-3', refined: true, reason: 'ready' },
+      { id: 'S-9', refined: true, reason: 'ready' },
+    ]);
+    const fm = (id) => parseFrontmatter(readFileSync(path(id), 'utf8')).fm;
+    assert.deepEqual(
+      ['S-1', 'S-2', 'S-3'].map((id) => statusOf('story', fm(id))),
+      ['refined', 'in_refinement', 'in_refinement'],
+    );
+    assert.equal(
+      fm('S-1').transitions.at(-1).outcome,
+      'every criterion has a check',
+      'the reason is the outcome of the log entry',
+    );
+    assert.deepEqual(lines, [
+      'S-1: status refined: every criterion has a check',
+      'S-2 is not refined; its status is unchanged: an open question blocks the plan',
+      'S-3 is not refined; its status is unchanged: too large',
+    ]);
   } finally {
     cleanup();
   }

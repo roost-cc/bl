@@ -104,6 +104,25 @@ test('the integration round on a feature with no log records its verdict in the 
   }
 });
 
+// S-1408: bl checks every merge itself, so resolved: true with a reason is
+// checked like any other outcome, and the reason is not one of its problems.
+test('a resolved: true outcome with a reason is checked by bl, and the reason is not a problem (S-1408)', async () => {
+  const fx = fixture();
+  try {
+    landOnMain(fx, 'f1-feat.txt', "main's version\n", 'main edits f1-feat.txt');
+    const { config, unit, prep } = featureCtx(fx);
+    const resolved = { ...RESOLVED, structured: { ...RESOLVED.structured, reason: 'a.js has two meanings' } };
+    const { runner } = scriptedRunner({ test: 'true', resolve: () => resolved });
+    const res = await integrateUnit({ unit, config, prep, runner });
+    assert.equal(res.escalated, true);
+    const esc = escalation(featureFile(fx));
+    assert.match(esc, /- code: the merge is still in progress/);
+    assert.doesNotMatch(esc, /did not resolve it: a\.js has two meanings/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('an agent that leaves the merge unfinished is aborted and escalated, and main is untouched', async () => {
   const fx = fixture();
   try {

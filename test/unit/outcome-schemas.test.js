@@ -78,7 +78,7 @@ test('every schema refuses a summary of spaces only', () => {
     ['fix-tests', { summary: 's', outcome: 'unrelated', reason: ' ' }, /\$\/reason/],
     ['refine', { summary: 's', refined: false, reason: ' ' }, /\$\/reason/],
     ['feature-refine', { summary: 's', premise_holds: false, refined: false, reason: ' ' }, /\$\/reason/],
-    ['refine-batch', { summary: 's', stories: { 'S-1': { refined: false, reason: ' ' } } }, /\$\/stories\/S-1\/reason/],
+    ['refine-batch', { summary: 's', stories: [{ id: 'S-1', refined: false, reason: ' ' }] }, /\$\/stories\/0\/reason/],
   ];
   for (const [schemaName, outcome, at] of blank) {
     assert.match(validateOutcome(loadSchema(schemaName), outcome).structuredError ?? '', at, schemaName);
@@ -109,8 +109,8 @@ test('every schema refuses control characters in its text fields, and keeps a ta
     ['feature-refine', (t) => ({ summary: 's', premise_holds: false, refined: false, reason: t }), /\$\/reason/],
     [
       'refine-batch',
-      (t) => ({ summary: 's', stories: { 'S-1': { refined: false, reason: t } } }),
-      /\$\/stories\/S-1\/reason/,
+      (t) => ({ summary: 's', stories: [{ id: 'S-1', refined: false, reason: t }] }),
+      /\$\/stories\/0\/reason/,
     ],
   ];
   for (const [schemaName, outcome, at] of fields) {
@@ -140,7 +140,7 @@ test('a long text field that fails its pattern is refused in linear time (S-1405
     ['fix-tests', (t) => ({ summary: 's', outcome: 'unrelated', reason: t })],
     ['refine', (t) => ({ summary: 's', refined: false, reason: t })],
     ['feature-refine', (t) => ({ summary: 's', premise_holds: false, refined: false, reason: t })],
-    ['refine-batch', (t) => ({ summary: 's', stories: { 'S-1': { refined: false, reason: t } } })],
+    ['refine-batch', (t) => ({ summary: 's', stories: [{ id: 'S-1', refined: false, reason: t }] })],
   ];
   for (const [schemaName, outcome] of fields) {
     const schema = loadSchema(schemaName);
@@ -156,77 +156,89 @@ test('a long text field that fails its pattern is refused in linear time (S-1405
 
 test("a batch sub-agent's reply is a valid entry of the batch outcome", () => {
   const [entry] = jsonBlocks('_refine-outcome-subagent');
-  const outcome = { summary: 's', stories: { 'S-1': entry } };
+  const outcome = { summary: 's', stories: [{ id: 'S-1', ...entry }] };
   assert.equal(validateOutcome(loadSchema('refine-batch'), outcome).structuredError, null);
 });
 
-// Cross-field consistency (F-68 review round 1): bl trusts each field, so an
-// outcome whose fields contradict each other is refused at the boundary. Each
-// row is [schema, outcome, accepted].
-const CONSISTENCY = [
-  ['fix', { summary: 's', fixed: true, open: 0 }, true],
-  ['fix', { summary: 's', fixed: false, open: 2 }, true],
-  // fix outcome with fixed true and open above 0 is refused
-  ['fix', { summary: 's', fixed: true, open: 3 }, false],
-  // and its mirror: fixed false with open 0
-  ['fix', { summary: 's', fixed: false, open: 0 }, false],
-  ['implement', { summary: 's', done: true, blocked: null }, true],
-  ['implement', { summary: 's', done: false, blocked: 'no access to the repo' }, true],
-  ['implement', { summary: 's', done: true, blocked: 'no access to the repo' }, false],
-  ['implement', { summary: 's', done: false, blocked: null }, false],
-  ['merge-resolve', { summary: 's', resolved: true, reason: null }, true],
-  ['merge-resolve', { summary: 's', resolved: false, reason: 'a.js has two meanings' }, true],
-  ['merge-resolve', { summary: 's', resolved: true, reason: 'a.js has two meanings' }, false],
-  ['merge-resolve', { summary: 's', resolved: false, reason: null }, false],
-  ['feature-refine', { summary: 's', premise_holds: true, refined: true }, true],
-  ['feature-refine', { summary: 's', premise_holds: true, refined: false, reason: 'r' }, true],
-  ['feature-refine', { summary: 's', premise_holds: false, refined: false, reason: 'r' }, true],
-  ['feature-refine', { summary: 's', premise_holds: false, refined: true, reason: 'r' }, false],
-  ['feature-refine', { summary: 's', premise_holds: true, refined: false }, false],
-  ['refine', { summary: 's', refined: false, reason: 'r' }, true],
-  ['refine', { summary: 's', refined: false }, false],
-  ['refine-batch', { summary: 's', stories: { 'S-1': { refined: false } } }, false],
-  // Not contradictions: a self-review can commit a correction and still find
-  // the branch not ready, and a verifier can escalate a round with no open
-  // items (a premise or test-infrastructure problem).
-  ['self-review', { summary: 's', ok: false, changed: true }, true],
-  ['review', { summary: 's', must: 0, should: 0, nits: 0, escalated: true }, true],
-];
+/**
+ * Each subschema of `schema` that describes an object or holds a keyword,
+ * with its JSON path: the schema itself, each property, each `items` and
+ * each `anyOf` branch.
+ */
+function* subschemas(schema, path = '$') {
+  yield [path, schema];
+  for (const [k, v] of Object.entries(schema.properties ?? {})) yield* subschemas(v, `${path}.${k}`);
+  if (schema.items) yield* subschemas(schema.items, `${path}[]`);
+  for (const [i, v] of (schema.anyOf ?? []).entries()) yield* subschemas(v, `${path}|${i}`);
+}
 
-test('outcome schemas refuse fields that contradict each other', () => {
-  for (const [schemaName, outcome, accepted] of CONSISTENCY) {
-    const { structuredError } = validateOutcome(loadSchema(schemaName), outcome);
-    assert.equal(structuredError === null, accepted, `${schemaName} ${JSON.stringify(outcome)}: ${structuredError}`);
+// OpenAI's strict mode (Codex's `--output-schema`) refuses a conditional
+// keyword, an optional property and an object without fixed properties, and
+// bl sends every agent the same schema (S-1408).
+test('every schema is one plain schema: no conditional keyword, every property required, no map', () => {
+  for (const schemaName of Object.keys(EXAMPLES)) {
+    for (const [path, s] of subschemas(loadSchema(schemaName))) {
+      const at = `${schemaName} ${path}`;
+      for (const k of ['if', 'then', 'else', 'allOf', 'oneOf', 'not', 'propertyNames', 'patternProperties'])
+        assert.equal(s[k], undefined, `${at} has ${k}`);
+      if (s.type !== 'object') continue;
+      assert.equal(s.additionalProperties, false, `${at}: additionalProperties is false`);
+      assert.deepEqual([...s.required].sort(), Object.keys(s.properties).sort(), `${at}: every property is required`);
+    }
   }
 });
 
-// Each rule a CONSISTENCY row refuses, as the field's description states it
-// to the agent: [schema, the field's path in the schema, the rule's words].
-const RULES = [
-  ['fix', ['properties', 'open'], 'open is 0 exactly when fixed is true'],
-  ['implement', ['properties', 'blocked'], 'blocked is a string exactly when done is false'],
-  ['merge-resolve', ['properties', 'reason'], 'reason is a string exactly when resolved is false'],
-  ['feature-refine', ['properties', 'refined'], 'refined is false whenever premise_holds is false'],
-  ['feature-refine', ['properties', 'reason'], 'Required unless premise_holds and refined are both true'],
-  ['refine', ['properties', 'reason'], 'Required when refined is false'],
-  [
-    'refine-batch',
-    ['properties', 'stories', 'additionalProperties', 'properties', 'reason'],
-    'Required when refined is false',
-  ],
+// What used to be refused as a contradiction (F-68 review round 1) is valid
+// now: each reader decides from one field and only prints the others. The
+// reader tests show the deciding field wins: refine and feature-refine in
+// test/integration/refine-outcome.test.js, the batch in test/unit/refine.test.js,
+// fix in test/unit/change-doc.test.js, implement in
+// test/unit/feature-run-loop.test.js, merge-resolve in
+// test/integration/merge-integrate-clean.test.js.
+const CONTRADICTIONS = [
+  ['fix', { summary: 's', fixed: true, open: 3 }],
+  ['fix', { summary: 's', fixed: false, open: 0 }],
+  ['implement', { summary: 's', done: true, blocked: 'no access to the repo' }],
+  ['implement', { summary: 's', done: false, blocked: null }],
+  ['merge-resolve', { summary: 's', resolved: true, reason: 'a.js has two meanings' }],
+  ['merge-resolve', { summary: 's', resolved: false, reason: null }],
+  ['feature-refine', { summary: 's', premise_holds: false, refined: true, reason: 'r' }],
 ];
 
-test("each CONSISTENCY rule is named in its schema field's description", () => {
-  for (const [schemaName, path, words] of RULES) {
-    const field = path.reduce((o, k) => o[k], loadSchema(schemaName));
-    assert.ok(field.description.includes(words), `${schemaName} ${path.at(-1)}: "${words}"`);
+test('an outcome whose fields contradict each other is valid; its reader decides', () => {
+  for (const [schemaName, outcome] of CONTRADICTIONS) {
+    const { structuredError } = validateOutcome(loadSchema(schemaName), outcome);
+    assert.equal(structuredError, null, `${schemaName} ${JSON.stringify(outcome)}`);
   }
-  // Every schema with a refused row has its rule stated.
-  for (const [schemaName, , accepted] of CONSISTENCY) {
-    if (!accepted)
-      assert.ok(
-        RULES.some(([s]) => s === schemaName),
-        `${schemaName} has a rule in RULES`,
-      );
+});
+
+test('a required field refuses a missing key, nullable or not (S-1408)', () => {
+  for (const [schemaName, outcome, at] of [
+    ['refine', { summary: 's', refined: true }, '$/reason'],
+    ['feature-refine', { summary: 's', premise_holds: true, refined: true }, '$/reason'],
+    ['refine-batch', { summary: 's', stories: [{ id: 'S-1', refined: true }] }, '$/stories/0/reason'],
+    ['implement', { summary: 's', done: true }, '$/blocked'],
+  ]) {
+    assert.equal(
+      validateOutcome(loadSchema(schemaName), outcome).structuredError,
+      `schema violation at ${at}: must have required property '${at.split('/').at(-1)}'`,
+      schemaName,
+    );
+  }
+});
+
+test('a refine reason is a string for every verdict: null is refused (S-1408)', () => {
+  for (const [schemaName, outcome, at] of [
+    ['refine', { summary: 's', refined: true, reason: null }, '$/reason'],
+    ['refine', { summary: 's', refined: false, reason: null }, '$/reason'],
+    ['feature-refine', { summary: 's', premise_holds: true, refined: true, reason: null }, '$/reason'],
+    ['feature-refine', { summary: 's', premise_holds: false, refined: false, reason: null }, '$/reason'],
+    ['refine-batch', { summary: 's', stories: [{ id: 'S-1', refined: true, reason: null }] }, '$/stories/0/reason'],
+  ]) {
+    assert.equal(
+      validateOutcome(loadSchema(schemaName), outcome).structuredError,
+      `schema violation at ${at}: must be string`,
+      `${schemaName} ${JSON.stringify(outcome)}`,
+    );
   }
 });

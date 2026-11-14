@@ -751,6 +751,30 @@ test('applyFixOutcome: fixed records in_review by fix and commits the unit file;
   assert.equal(git('status', '--porcelain'), '', 'the unit file is committed');
 });
 
+test('applyFixOutcome decides from fixed alone; open is only printed (S-1408)', async (t) => {
+  const lines = [];
+  t.mock.method(process.stderr, 'write', (chunk) => lines.push(String(chunk).trimEnd()));
+  for (const [structured, fixed, status] of [
+    [{ summary: 's', fixed: true, open: 3 }, true, 'in_review'],
+    [{ summary: 's', fixed: false, open: 0 }, false, 'fixing'],
+  ]) {
+    const { root, dir } = unitDir();
+    const doc = newChange({ changeOf: 'F-42', repos: [{ repo: 'bl', branch: 'f42-hub' }] });
+    Object.assign(doc.fm, { review_round: '1', review_status: 'pending' });
+    writeFileSync(changePath(dir), serializeChange(doc));
+    const unit = fixUnit(root, dir);
+    gitIn(root, 'init', '-q', '-b', 'main');
+    gitIn(root, 'add', '.');
+    gitIn(root, 'commit', '-q', '-m', 'base');
+    const change = readChange(changePath(dir));
+    const name = JSON.stringify(structured);
+    assert.equal(await applyFixOutcome(root, unit, { structured, structuredError: null }, change), fixed, name);
+    const fm = parseFrontmatter(readFileSync(unit.indexPath, 'utf8')).fm;
+    assert.equal(statusOf('feature', fm, change), status, name);
+  }
+  assert.ok(lines.includes('warning: F-42: 0 review item(s) still open; F-42 stays in fixing: s'), lines.join('\n'));
+});
+
 test('bl implement on an escalated feature or story whose review position is fixing starts the fix session and records in_review by fix on a fixed outcome', async () => {
   const at = (n) => `2026-11-0${n}T00:00:00Z`;
   const head = [

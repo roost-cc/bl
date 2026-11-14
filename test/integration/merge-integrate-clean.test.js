@@ -139,6 +139,23 @@ test('a red gate after a clean merge reaches the resolution agent; its failure e
   }
 });
 
+test('a resolution outcome of resolved: false with a null reason escalates with (no reason given) (S-1408)', async () => {
+  const fx = fixture();
+  try {
+    landOnMain(fx, 'other.txt', 'other\n', 'other work on main');
+    const { config, unit, prep } = featureCtx(fx);
+    const unresolved = { ...UNRESOLVED, structured: { ...UNRESOLVED.structured, reason: null } };
+    const { runner } = scriptedRunner({ test: 'echo boom; false', resolve: () => unresolved });
+    const res = await integrateUnit({ unit, config, prep, runner });
+    assert.equal(res.escalated, true);
+    const esc = escalation(featureFile(fx));
+    assert.match(esc, /- the agent did not resolve it: \(no reason given\)/);
+    assert.doesNotMatch(esc, /\bnull\b|\bundefined\b/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('a red gate after a clean merge that the agent fixes is gated, re-reviewed and pushed', async () => {
   const fx = fixture();
   try {
