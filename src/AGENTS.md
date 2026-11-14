@@ -4117,8 +4117,8 @@ interrupt during a lock wait is taken at the next check after the wait.
 
 `bl stop <F-id|B-id|S-id>` (`src/stop.js`, S-1335, F-87 D7a) stops a running `bl run` cleanly, so
 that `bl run <id> --resume` continues it from the step it stopped in. `bl top`'s stop action
-runs it. The run loop is synchronous (agent sessions start through `spawnSync`), so a signal
-to its bl would be handled only after the run ends. `bl stop` never sends one:
+runs it. `bl stop` writes a stop request and sends SIGTERM to the run's bl (F-128 D9), with or
+without user systemd:
 
 1. It reads the run state. With none, or one that is not `running`, it exits 1 with
    `no running run for <id>`, whoever holds the run lock: a live holder is then a `bl review`
@@ -4136,20 +4136,19 @@ to its bl would be handled only after the run ends. `bl stop` never sends one:
    own pid, the time and the pid of the run it stops. So two `bl stop`s never write or delete
    each other's request, and a write that fails deletes only its own file and exits 1. The
    loop honours only a request whose `holder` is its own pid.
-3. It stops each process scope of the holder (`scopesOf()` in `src/process-scope.js`, the scopes
-   named `bl-<unit>-<holder pid>-<n>`) with `stopScope()`. That ends the current agent session
-   or test-gate command, and the loop's spawn returns. Without user systemd there is no scope,
-   and the run stops when its current session ends.
-4. The loop checks the request (`checkStop()` in `src/feature-run.js`) at each step start
-   (`setStep`) and after each spawn in `newScope(ctx)` returns (the session in `runSession`,
-   each test-gate command in `runTestGateInner`), before it reads the result, and in each
-   one-second slice of a usage-limit wait, which has no scope to stop. So the stopped
-   session is not an attempt and does not escalate, and its tokens are lost, as for a killed
-   bl (**Tokens per step**). With the request there, the loop records a `{ step: "stopped" }`
-   history entry, writes `status: stopped`, `stoppedAt` and `stoppedBy` (the pids of the
-   `bl stop`s whose requests it read; `markStopped`), deletes the
-   requests for its own pid and throws a `StopRequestError`. Its step cleanups run, `runFeature` releases the
-   run lock and the work unit locks, and `bl run` exits 130.
+3. It sends SIGTERM to the holder (`stopRun`'s `kill` option, `process.kill` by default). The
+   run takes it as a stop (**An interrupt during `bl run` is a stop**, above): it ends the
+   current agent session or test-gate command. If the holder is already gone (`ESRCH`),
+   `bl stop` goes on to the wait. Any other failure prints
+   `bl stop: could not signal pid <n>: <message>`, and the run stops at its next check.
+4. The loop's `checkStop()` (`src/feature-run.js`) finds the request for its own pid, so the
+   note is `stopped by bl stop at <step>`, not the signal's. The stopped session is not an
+   attempt and does not escalate, and its tokens are lost, as for a killed bl (**Tokens per
+   step**). The loop records a `{ step: "stopped" }` history entry, writes `status: stopped`,
+   `stoppedAt` and `stoppedBy` (the pids of the `bl stop`s whose requests it read;
+   `markStopped`), deletes the requests for its own pid and throws a `StopRequestError`. Its
+   step cleanups run, `runFeature` releases the run lock and the work unit locks, and `bl run`
+   exits 130.
 5. `bl stop` waits up to 30 s for that holder to let the run lock go, then prints
    `stopped <id> at <step>; resume: bl run <id> --resume` on stderr and exits 0. If the lock is
    still held, it exits 1 with `stop requested: <id> (pid <n>) stops at its next check`

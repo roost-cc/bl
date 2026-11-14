@@ -1,9 +1,7 @@
 /**
  * stop.js — `bl stop <F-id|B-id|S-id>`: stop a running `bl run` cleanly, so that
- * `bl run <id> --resume` continues it (F-87 Design D7a, Decision A4; S-1335).
- *
- * The run loop is synchronous (agents start through `spawnSync`), so a signal
- * to its bl would be handled only after the run ends. Instead `bl stop`:
+ * `bl run <id> --resume` continues it (F-87 Design D7a, Decision A4; S-1335;
+ * F-128 D9). `bl stop`:
  *
  * 1. reads the run state. With none, or one that is not `running`, there is
  *    nothing to stop: a live holder of the run lock is then a `bl review` or
@@ -15,14 +13,14 @@
  * 2. writes its stop request, a file of its own in `.bl/run/<id>.stop/`
  *    (`writeStopRequest`): JSON with its own pid, the time and `holder`, the
  *    pid of the run it stops. It deletes no other `bl stop`'s request.
- * 3. stops each process scope of the holder (`scopesOf`), which ends the
- *    current session or test-gate command. The loop's spawn returns, and the
- *    loop finds the request (`checkStop` in feature-run.js), records
- *    `stopped`, releases its locks and exits 130.
+ * 3. sends SIGTERM to the holder. `bl run` takes it as a stop (F-128 D8): it
+ *    ends the current session or test-gate command, finds the request
+ *    (`checkStop` in feature-run.js), records `stopped`, releases its locks
+ *    and exits 130. A holder that is already gone (`ESRCH`) needs no signal;
+ *    any other failure is one line, and the run stops at its next check.
  * 4. waits up to STOP_WAIT_MS for that holder to let the run lock go.
  *
- * It never sends a signal to the bl process. Without user systemd there is no
- * scope to stop, and the run stops at its next check. `bl stop` is a short
+ * This works with or without user systemd. `bl stop` is a short
  * command (F-122 D2): it neither takes nor checks work unit locks, because the
  * run it stops holds them. stdout stays empty; every line goes to stderr.
  */
@@ -32,7 +30,6 @@ import { setTimeout as delay } from 'timers/promises';
 import { loadConfig } from './config.js';
 import { loadRunState, markStopped, saveRunState } from './feature-run.js';
 import { otherHolder } from './kernel-lock.js';
-import { scopeAvailable, scopesOf, stopScope } from './process-scope.js';
 import { runArgs } from './run-arg.js';
 import { acquireRunLock, releaseRunLock, runHolder, runLockPath, writeStopRequest } from './run-lock.js';
 
@@ -46,12 +43,10 @@ const HELP = `Usage: bl stop <F-id|B-id|S-id>
 
 Stop a running bl run cleanly. Continue it later with bl run <id> --resume.
 
-bl stop writes a stop request in .bl/run/<id>.stop/ and stops the run's agent
-session or test command (its user systemd scope). The run then records
+bl stop writes a stop request in .bl/run/<id>.stop/ and sends SIGTERM to the
+run's bl. The run then ends its agent session or test command, records
 "stopped", releases its locks and exits 130. bl stop waits up to
-${STOP_WAIT_MS / 1000} s for that. Without user systemd, the run stops when its
-current session ends. The work unit's status does not change, and bl stop
-never sends a signal to the bl process.
+${STOP_WAIT_MS / 1000} s for that. The work unit's status does not change.
 
 A run state that says running while no bl holds the run (the bl died) is
 marked stopped at once.
@@ -102,11 +97,14 @@ export function markDead(config, id, err) {
 /**
  * Stop run `id`; resolves to the exit code. `err(line)` gets each line.
  *
+ * `kill(pid, signal)` sends the SIGTERM (default `process.kill`), a test seam.
+ *
  * @param {{ config: object, id: string, err: (line: string) => void,
- *   waitMs?: number, pollMs?: number }} opts
+ *   waitMs?: number, pollMs?: number,
+ *   kill?: (pid: number, signal: string) => unknown }} opts
  * @returns {Promise<number>}
  */
-export async function stopRun({ config, id, err, waitMs = STOP_WAIT_MS, pollMs = STOP_POLL_MS }) {
+export async function stopRun({ config, id, err, waitMs = STOP_WAIT_MS, pollMs = STOP_POLL_MS, kill = process.kill }) {
   let state;
   try {
     state = loadRunState(config, id);
@@ -142,17 +140,11 @@ export async function stopRun({ config, id, err, waitMs = STOP_WAIT_MS, pollMs =
     err(`bl stop: cannot write the stop request: ${e.message}; nothing stopped`);
     return 1;
   }
-  if (scopeAvailable().ok) {
-    let scopes = [];
-    try {
-      scopes = scopesOf(id, holder);
-    } catch (e) {
-      err(`bl stop: ${e.message}; the run stops at its next check`);
-    }
-    for (const unit of scopes) {
-      const r = stopScope(unit);
-      if (!r.ok) err(`bl stop: could not stop ${unit}.scope: ${r.output}`);
-    }
+  try {
+    kill(holder, 'SIGTERM');
+  } catch (e) {
+    // A holder that is gone lets the lock go; the wait finds it free.
+    if (e.code !== 'ESRCH') err(`bl stop: could not signal pid ${holder}: ${e.message}`);
   }
 
   const end = Date.now() + waitMs;
