@@ -195,8 +195,13 @@ export async function runStream(
   );
   // The reader went away (EPIPE): nobody is left to read a snapshot.
   stdout.on('error', () => lines.close());
-  await emitSnapshot();
+  // The first tick runs while the stream waits for the close: a read that never ends holds no shutdown.
+  const first = emitSnapshot();
   const timer = setInterval(emitSnapshot, interval);
-  await closed;
-  clearInterval(timer);
+  try {
+    await Promise.race([first, closed]);
+    await closed;
+  } finally {
+    clearInterval(timer);
+  }
 }

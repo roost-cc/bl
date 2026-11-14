@@ -238,3 +238,43 @@ for (const at of [1, 2]) {
     });
   }
 }
+
+// Each row: the section whose read never ends, the tick it hangs in, and how
+// the reader goes away during that read. runStream resolves all the same, and
+// writes nothing after the close.
+for (const [section, at] of [
+  ['runs', 1],
+  ['capacity', 1],
+  ['runs', 2],
+]) {
+  for (const how of ['stdin closes', 'stdout fails']) {
+    test(`run_stream_first_tick_close_resolves_before_capacity_read: ${section} hangs in tick ${at}, ${how}`, async () => {
+      const config = { backlogRoot: mkTempDir('bl-top-stream-') };
+      const stdin = new PassThrough();
+      let lines = 0;
+      const stdout = new Writable({
+        write(_chunk, _enc, cb) {
+          lines += 1;
+          cb();
+        },
+      });
+      const stderr = new Writable({ write: (_chunk, _enc, cb) => cb() });
+      let calls = 0;
+      const readers = Object.fromEntries(SECTIONS.map((name) => [name, () => ({ ok: true })]));
+      readers[section] = () => {
+        calls += 1;
+        if (calls !== at) return { ok: true };
+        if (how === 'stdin closes') stdin.end();
+        else stdout.emit('error', new Error('write EPIPE'));
+        return new Promise(() => {});
+      };
+      // No row hangs capacity in tick 2: only tick 1 reads it.
+      const result = await Promise.race([
+        runStream(config, { interval: 10, stdin, stdout, stderr, readers }).then(() => 'resolved'),
+        new Promise((resolve) => setTimeout(() => resolve('still waiting'), 500)),
+      ]);
+      assert.equal(result, 'resolved');
+      assert.equal(lines, at - 1, 'only the ticks before the hung read wrote');
+    });
+  }
+}
