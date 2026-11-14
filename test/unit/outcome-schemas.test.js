@@ -160,31 +160,96 @@ test("a batch sub-agent's reply is a valid entry of the batch outcome", () => {
   assert.equal(validateOutcome(loadSchema('refine-batch'), outcome).structuredError, null);
 });
 
+/** The JSON Schema 2020-12 keywords whose value is one subschema. */
+const ONE = [
+  'items',
+  'additionalProperties',
+  'additionalItems',
+  'contains',
+  'not',
+  'if',
+  'then',
+  'else',
+  'propertyNames',
+  'unevaluatedItems',
+  'unevaluatedProperties',
+];
+/** The keywords whose value is a map of subschemas. */
+const MAP = ['properties', 'patternProperties', 'dependentSchemas', '$defs', 'definitions'];
+/** The keywords whose value is an array of subschemas. */
+const LIST = ['anyOf', 'allOf', 'oneOf', 'prefixItems'];
+
 /**
- * Each subschema of `schema` that describes an object or holds a keyword,
- * with its JSON path: the schema itself, each property, each `items` and
- * each `anyOf` branch.
+ * Each subschema of `schema`, with its JSON path: the schema itself and every
+ * schema under a keyword of ONE, MAP or LIST, at any depth.
  */
 function* subschemas(schema, path = '$') {
+  if (typeof schema !== 'object' || schema === null) return;
   yield [path, schema];
-  for (const [k, v] of Object.entries(schema.properties ?? {})) yield* subschemas(v, `${path}.${k}`);
-  if (schema.items) yield* subschemas(schema.items, `${path}[]`);
-  for (const [i, v] of (schema.anyOf ?? []).entries()) yield* subschemas(v, `${path}|${i}`);
+  for (const k of ONE) yield* subschemas(schema[k], `${path}.${k}`);
+  for (const k of MAP) for (const [n, v] of Object.entries(schema[k] ?? {})) yield* subschemas(v, `${path}.${k}.${n}`);
+  for (const k of LIST) for (const [i, v] of (schema[k] ?? []).entries()) yield* subschemas(v, `${path}.${k}[${i}]`);
 }
 
-// OpenAI's strict mode (Codex's `--output-schema`) refuses a conditional
-// keyword, an optional property and an object without fixed properties, and
-// bl sends every agent the same schema (S-1408).
+/**
+ * What OpenAI's strict mode (Codex's `--output-schema`) refuses in `schema`,
+ * at any depth: a conditional keyword, a map, an object that is open or has
+ * an optional property. bl sends every agent the same schema (S-1408).
+ */
+function plainViolations(schema) {
+  const found = [];
+  for (const [path, s] of subschemas(schema)) {
+    for (const k of [
+      'if',
+      'then',
+      'else',
+      'allOf',
+      'oneOf',
+      'not',
+      'propertyNames',
+      'patternProperties',
+      'dependentSchemas',
+    ])
+      if (s[k] !== undefined) found.push(`${path} has ${k}`);
+    if (![s.type].flat().includes('object') && s.properties === undefined) continue;
+    if (s.additionalProperties !== false) found.push(`${path}: additionalProperties is not false`);
+    const required = [...(s.required ?? [])].sort();
+    if (JSON.stringify(required) !== JSON.stringify(Object.keys(s.properties ?? {}).sort()))
+      found.push(`${path}: not every property is required`);
+  }
+  return found;
+}
+
 test('every schema is one plain schema: no conditional keyword, every property required, no map', () => {
   for (const schemaName of Object.keys(EXAMPLES)) {
-    for (const [path, s] of subschemas(loadSchema(schemaName))) {
-      const at = `${schemaName} ${path}`;
-      for (const k of ['if', 'then', 'else', 'allOf', 'oneOf', 'not', 'propertyNames', 'patternProperties'])
-        assert.equal(s[k], undefined, `${at} has ${k}`);
-      if (s.type !== 'object') continue;
-      assert.equal(s.additionalProperties, false, `${at}: additionalProperties is false`);
-      assert.deepEqual([...s.required].sort(), Object.keys(s.properties).sort(), `${at}: every property is required`);
-    }
+    assert.deepEqual(plainViolations(loadSchema(schemaName)), [], schemaName);
+  }
+});
+
+// plain_schema_checks_defs: the guard finds a banned keyword and an optional
+// property in every place a subschema can sit, nested or not.
+test('the plain-schema guard checks every nested subschema (S-1408)', () => {
+  const bad = {
+    if: { const: true },
+    type: 'object',
+    properties: { reason: { type: 'string' } },
+    required: [],
+    additionalProperties: false,
+  };
+  const places = [
+    ...ONE.map((k) => ({ [k]: bad })),
+    ...MAP.map((k) => ({ [k]: { x: bad } })),
+    ...LIST.map((k) => ({ [k]: [{ type: 'null' }, bad] })),
+    { $defs: { outer: { anyOf: [{ items: bad }] } } },
+  ];
+  for (const place of places) {
+    const schema = { ...loadSchema('refine'), ...place };
+    if (place.properties) schema.properties = { ...loadSchema('refine').properties, ...place.properties };
+    const found = plainViolations(schema).join('\n');
+    const at = JSON.stringify(Object.keys(place));
+    // A path below the root `$`: the nested schema's own violations.
+    assert.match(found, /^\$\.[^:\s]+ has if$/m, at);
+    assert.match(found, /^\$\.[^:\s]+: not every property is required$/m, at);
   }
 });
 
