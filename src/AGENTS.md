@@ -2020,8 +2020,10 @@ document's `## Gate` gets one line per repo the attempt reached:
 `<date> · <repo> · <command> · <verdict>`. A failed result names the repo and
 its worktree; the fix-tests session gets them as `{{testRepo}}` and
 `{{testWorktree}}` and fixes and commits there (it still starts in the run's
-own worktree). A plugin runs with stdout and stderr on one file
-descriptor (`shellMerged()`), so its errors stay in the order it printed them.
+own worktree). A plugin runs as a long child (`runner.testGate()`, through
+`runLongChild`, F-128 D7) with stdout and stderr on one file descriptor
+(`mergedOutput()`, which `shellMerged()` shares), so its errors stay in the
+order it printed them.
 The logs stay with the rest of `.bl/run/`; nothing prunes them.
 
 A failed attempt reaches the fix-tests session and the escalation as three

@@ -50,7 +50,7 @@ import {
 import { tmpdir } from 'os';
 import { join, relative, dirname } from 'path';
 import { isDeepStrictEqual } from 'util';
-import { exitStatus, runChild, runCommandLine } from './child.js';
+import { exitStatus, runChild, runCommandLine, runLongChild } from './child.js';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
@@ -820,13 +820,12 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         stderrTail: r.stderrTail ?? '',
       };
     },
-    /** `scope`: run `cmd` as `sh -c <cmd>` inside that user systemd scope (F-70 D4). */
-    shell(cmd, cwd, { mergeStreams = false, scope = null } = {}) {
-      if (mergeStreams) return shellMerged(cmd, cwd, { scope });
-      const r = spawnShell(cmd, scope, {
+    shell(cmd, cwd, { mergeStreams = false } = {}) {
+      if (mergeStreams) return shellMerged(cmd, cwd);
+      const r = spawnShell(cmd, {
         cwd,
         encoding: 'utf8',
-        env: { CI: 'true', ...process.env },
+        env: shellEnv(),
         stdout: 'pipe',
         stderr: 'pipe',
         maxBuffer: 64 * 1024 * 1024,
@@ -835,6 +834,14 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         status: exitStatus(r),
         output: `${r.stdout ?? ''}${r.stderr ?? ''}`,
       };
+    },
+    /**
+     * Run the test-gate command `cmd` as a long child (`gateMerged`, F-128
+     * D7): in user systemd scope `scope` when there is one (F-70 D4), ended
+     * with SIGTERM when `signal` fires.
+     */
+    async testGate(cmd, cwd, { scope = null, signal } = {}) {
+      return gateMerged(cmd, cwd, { scope, signal });
     },
     forge(op, vars, { config, repoPath }) {
       return runForgeOp(op, vars, { config, repoPath });
@@ -1529,17 +1536,13 @@ async function reapStaleScopes(ctx) {
 }
 
 /**
- * Run the shell command `cmd`: through `runCommandLine` (`src/child.js`),
+ * Run the shell command `cmd` through `runCommandLine` (`src/child.js`),
  * which raises the SIGINT or SIGTERM that ends it, or its exit 130 or 143
- * (F-114 D2); with `scope`, as `sh -c <cmd>` inside that user systemd scope
- * (F-70 D4). stdin is 'ignore'; `stdout` and `stderr` are the other two
+ * (F-114 D2). stdin is 'ignore'; `stdout` and `stderr` are the other two
  * streams.
  */
-function spawnShell(cmd, scope, { stdout, stderr, ...options }) {
-  const stdio = ['ignore', stdout, stderr];
-  if (!scope) return runCommandLine(cmd, { ...options, stdio });
-  // Through the scope's files, so a leftover holding stdout cannot hang it.
-  return processScope.scopedSpawn(scope)('sh', ['-c', cmd], { ...options, stdio });
+function spawnShell(cmd, { stdout, stderr, ...options }) {
+  return runCommandLine(cmd, { ...options, stdio: ['ignore', stdout, stderr] });
 }
 
 /**
@@ -1550,24 +1553,75 @@ function spawnShell(cmd, scope, { stdout, stderr, ...options }) {
  * A command ended by a signal that does not stop `bl` has `status` 128 + the
  * signal's number (`exitStatus`).
  */
-export function shellMerged(cmd, cwd, { scope = null } = {}) {
+export function shellMerged(cmd, cwd) {
+  const out = mergedOutput();
+  try {
+    return out.result(spawnShell(cmd, { cwd, env: shellEnv(), stdout: out.fd, stderr: out.fd }));
+  } finally {
+    out.close();
+  }
+}
+
+/**
+ * Run the test-gate command `cmd` as `shellMerged` does, but as a long child
+ * (`runLongChild`, F-128 D7): `sh -c <cmd>` inside user systemd scope `scope`
+ * when there is one (F-70 D4), ended with SIGTERM when `signal` fires. The
+ * wait ends when the command exits, though a process it left still holds the
+ * output file.
+ */
+async function gateMerged(cmd, cwd, { scope = null, signal } = {}) {
+  const run = scope ? processScope.scopedCommand(scope, 'sh', ['-c', cmd]) : { command: 'sh', args: ['-c', cmd] };
+  const out = mergedOutput();
+  try {
+    const r = await runLongChild(run.command, run.args, {
+      cwd,
+      env: shellEnv(),
+      stdio: ['ignore', out.fd, out.fd],
+      signal,
+    });
+    return out.result(r);
+  } finally {
+    out.close();
+  }
+}
+
+/** The environment of a shell or test-gate command: bl's, with `CI=true`. */
+function shellEnv() {
+  return { CI: 'true', ...process.env };
+}
+
+/**
+ * One file for a command's stdout and stderr together, for `shellMerged` and
+ * `gateMerged`: `fd` to pass as both streams; `result(r)` reads the file into
+ * the runner's `{ status, output }` for child result `r`, a launch error's
+ * message after the output; `close()` closes `fd` and removes the file.
+ */
+function mergedOutput() {
   const dir = mkdtempSync(join(tmpdir(), 'bl-gate-'));
   const file = join(dir, 'output');
   let fd = null;
+  const close = () => {
+    if (fd != null) closeSync(fd);
+    fd = null;
+    rmSync(dir, { recursive: true, force: true });
+  };
   try {
     fd = openSync(file, 'a');
-    const r = spawnShell(cmd, scope, { cwd, env: { CI: 'true', ...process.env }, stdout: fd, stderr: fd });
-    closeSync(fd);
-    fd = null;
-    const output = readFileSync(file, 'utf8');
-    return {
-      status: exitStatus(r),
-      output: r.error ? `${output}${output && !output.endsWith('\n') ? '\n' : ''}${r.error.message}\n` : output,
-    };
-  } finally {
-    if (fd != null) closeSync(fd);
-    rmSync(dir, { recursive: true, force: true });
+  } catch (e) {
+    close();
+    throw e;
   }
+  return {
+    fd,
+    result(r) {
+      const output = readFileSync(file, 'utf8');
+      return {
+        status: exitStatus(r),
+        output: r.error ? `${output}${output && !output.endsWith('\n') ? '\n' : ''}${r.error.message}\n` : output,
+      };
+    },
+    close,
+  };
 }
 
 /**
@@ -2610,7 +2664,7 @@ function notRestored(ctx, wt, snap) {
 async function runTestGate(ctx) {
   // The gate's test commands run in user systemd scopes too (decision D4-b).
   const gate = await withContainerCleanup(ctx, 'test gate', async () =>
-    withProcessCleanup(ctx, 'test gate', () => runTestGateInner(ctx)),
+    withProcessCleanup(ctx, 'test gate', async () => runTestGateInner(ctx)),
   );
   await recordGateLine(ctx, gate);
   return gate;
@@ -3281,7 +3335,7 @@ function repoGuard(ctx) {
 
 const GIT_STATUS_COMMAND = 'git status --porcelain --untracked-files=all';
 
-function runTestGateInner(ctx) {
+async function runTestGateInner(ctx) {
   const { runner, prep, config } = ctx;
   const targets = gateTargets(ctx);
   const multi = targets.length > 1;
@@ -3419,9 +3473,9 @@ function runTestGateInner(ctx) {
     }
     for (const { name, cmd } of t.commands) {
       runner.log(`  ${t.repo} · test plugin ${name}: ${cmd}`);
-      // Merged streams: an error printed on stderr stays next to the stdout
-      // lines around it (runners without the option ignore it).
-      const r = runner.shell(cmd, t.worktreePath, { mergeStreams: true, scope: newScope(ctx) });
+      // A long child with merged streams: an error printed on stderr stays
+      // next to the stdout lines around it (F-128 D7).
+      const r = await runner.testGate(cmd, t.worktreePath, { scope: newScope(ctx), signal: ctx.stopSignal });
       checkStop(ctx);
       const output = String(r.output ?? '');
       log += `── ${t.repo} · ${name}: ${cmd}\n${output}${output.endsWith('\n') || !output ? '' : '\n'}`;

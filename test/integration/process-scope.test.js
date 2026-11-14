@@ -9,7 +9,7 @@ import fs, { chmodSync, writeFileSync } from 'fs';
 import { syncBuiltinESMExports } from 'module';
 import { delimiter, join } from 'path';
 import { isPidAlive } from '../../src/process-scope.js';
-import { shellMerged } from '../../src/feature-run.js';
+import { defaultRunner } from '../../src/feature-run.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import {
   scopeAvailable,
@@ -86,10 +86,14 @@ test('a scoped capture returns when the command exits, though a child it left ho
   }
 });
 
-test("the test gate's merged shell runs its command in the scope, output and status intact", { skip }, () => {
+test("the test gate's command runs in the scope, output and status intact", { skip }, async () => {
   const unit = scopeUnitName(UNIT, 5);
   try {
-    const r = shellMerged('setsid sleep 300 & echo out; echo err >&2; exit 4', mkTempDir('bl-scope-'), { scope: unit });
+    const r = await defaultRunner().testGate(
+      'setsid sleep 300 & echo out; echo err >&2; exit 4',
+      mkTempDir('bl-scope-'),
+      { scope: unit },
+    );
     assert.deepEqual(r, { status: 4, output: 'out\nerr\n' });
     let sleep;
     assert.ok(

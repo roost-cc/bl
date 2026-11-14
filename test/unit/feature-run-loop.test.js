@@ -25,6 +25,7 @@ import {
   RUN_DIR,
   looksFlaky,
   shellMerged,
+  defaultRunner,
   ESCALATION_FILE,
   reviewEnd,
   roundCapStanding,
@@ -758,19 +759,52 @@ test('shellMerged keeps stdout and stderr in the order the command printed them'
   assert.match(bad.output, /ENOENT/);
 });
 
-test('the test gate asks the runner for merged streams', async () => {
+test("the default runner's testGate merges the streams, as shellMerged does, without a scope", async () => {
+  const cwd = mkTempDir('bl-gate-');
+  const { testGate } = defaultRunner();
+  assert.deepEqual(await testGate('echo one; echo two >&2; echo three; exit 3', cwd), {
+    status: 3,
+    output: 'one\ntwo\nthree\n',
+  });
+  assert.deepEqual(await testGate('echo "$CI"', cwd), { status: 0, output: 'true\n' });
+  assert.deepEqual(await testGate('echo before; kill -KILL $$', cwd), { status: 137, output: 'before\n' });
+  const bad = await testGate('true', join(cwd, 'missing'));
+  assert.equal(bad.status, 127);
+  assert.match(bad.output, /ENOENT/);
+  // A process the command left holds the output file; the wait ends when
+  // the command exits, not when the leftover does.
+  const started = Date.now();
+  const left = await testGate('setsid sleep 30 & echo $! > pid; echo done; exit 2', cwd);
+  assert.deepEqual(left, { status: 2, output: 'done\n' });
+  assert.ok(Date.now() - started < 20_000, 'not held until the leftover exits');
+  process.kill(Number(readFileSync(join(cwd, 'pid'), 'utf8')), 'SIGTERM');
+  // A stop signal that fires ends the command with SIGTERM.
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 200);
+  const stopped = await testGate('echo started; exec sleep 30', cwd, { signal: controller.signal });
+  assert.match(stopped.output, /^started\n/);
+  assert.notEqual(stopped.status, 0);
+});
+
+test('the test gate runs its commands through runner.testGate', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
     const opts = [];
     const runner = fakeRunner({ dir, feature });
-    runner.shell = ((orig) => (cmd, cwd, o) => {
-      if (cmd === 'npm test') opts.push(o);
-      return orig(cmd, cwd);
-    })(runner.shell);
+    const shell = runner.shell;
+    runner.testGate = async (cmd, cwd, o) => {
+      opts.push({ cmd, ...o });
+      return shell(cmd, cwd);
+    };
+    runner.shell = (cmd, cwd, o) => {
+      assert.notEqual(cmd, 'npm test', 'the gate command does not run through runner.shell');
+      return shell(cmd, cwd, o);
+    };
     await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
     assert.ok(opts.length > 0);
-    // No scope: this runner has no scope methods (F-70 D4).
-    for (const o of opts) assert.deepEqual(o, { mergeStreams: true, scope: null });
+    // No scope: this runner has no scope methods (F-70 D4). No stop signal
+    // until the run takes interrupts (F-128 D8).
+    for (const o of opts) assert.deepEqual(o, { cmd: 'npm test', scope: null, signal: undefined });
   } finally {
     cleanup();
   }
