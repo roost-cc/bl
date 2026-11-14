@@ -6496,6 +6496,8 @@ them.
   `runBl(entry, args)` for a `bl` child, and `git(cwd, args)`. Each runs its child through `spawnSyncFiles` and
   returns the `spawnSync` result. `gitOut(cwd, args)` is `git()` for a git command that must
   succeed: it returns the trimmed stdout, or throws `describeExit`'s message (F-124 D2).
+  `git()` passes the `BL_CEILING_DIRECTORIES` entries to every git it starts, in
+  `GIT_CEILING_DIRECTORIES` after any value already set (S-1560).
   `BL_PATH` is this process's own `bl.js`, the `entry` for a `runBl` of this `bl` (F-124 D5).
   If SIGINT or SIGTERM ends the child, the module prints
   `bl: <child> was ended by <signal>` and raises the signal (D2), so `bl` exits 130 or 143 and the

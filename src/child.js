@@ -13,7 +13,9 @@
  * - `git(cwd, args, opts)`: `runChild('git', args)` in `cwd`, with
  *   `encoding: 'utf8'` and stdio `['ignore', 'pipe', 'pipe']` unless `opts`
  *   says otherwise. It sets `cwd`, not `git -C`, so the argv stays what the
- *   tests' git shims match.
+ *   tests' git shims match. It adds the `BL_CEILING_DIRECTORIES` entries to
+ *   the child's `GIT_CEILING_DIRECTORIES` (S-1560), so git's search for a
+ *   repository stops where bl's walk for a backlog stops.
  *
  * The fifth entry point, `runLongChild(command, args, opts)`, starts a long
  * child (a headless agent session, a test-gate command: F-128 D3). It runs
@@ -60,6 +62,7 @@
  * killed (F-124 D6).
  */
 
+import { delimiter } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnFiles, spawnSyncFiles } from './child-stdio.js';
 import { EXIT_CODES, INTERRUPT_SIGNALS, interruptOf, raiseSignal, signalExitCode } from './signal-exit.js';
@@ -164,8 +167,30 @@ export function runBl(entry, args = [], opts = {}) {
  */
 export function git(cwd, args, opts = {}) {
   return /** @type {import('child_process').SpawnSyncReturns<string>} */ (
-    runChild('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts, cwd })
+    runChild('git', args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...opts,
+      env: withGitCeiling(opts.env ?? process.env),
+      cwd,
+    })
   );
+}
+
+/**
+ * `env` with its `BL_CEILING_DIRECTORIES` entries added to
+ * `GIT_CEILING_DIRECTORIES` (S-1560): git's search for a repository stops
+ * where bl's walk for a backlog stops. A value already set is kept first.
+ * The raw `BL_CEILING_DIRECTORIES` string goes to git unchanged, so git reads
+ * an empty entry (for example `:/tmp`) by its own rules.
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {NodeJS.ProcessEnv}
+ */
+function withGitCeiling(env) {
+  const bl = env.BL_CEILING_DIRECTORIES;
+  if (!bl) return env;
+  const own = env.GIT_CEILING_DIRECTORIES;
+  return { ...env, GIT_CEILING_DIRECTORIES: own ? `${own}${delimiter}${bl}` : bl };
 }
 
 /**
