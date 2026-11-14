@@ -113,9 +113,10 @@ test('bl view of a task id copies tasks/T<n>-<slug>.md', () => {
   assert.ok(editor.read().path.endsWith('/tasks/T1-run-the-migration.md'), editor.read().path);
 });
 
-test('bl view survives a Ctrl-C the editor handles and still removes the copy', () => {
-  // The terminal sends Ctrl-C to bl as well as to the editor (vi traps it). The fake editor
-  // records its path, finds bl among its ancestors and sends it SIGINT, then exits 0.
+test('bl view survives a Ctrl-C, a Ctrl-\\ and a SIGTERM while the editor runs and still removes the copy', () => {
+  // The terminal sends Ctrl-C and Ctrl-\ to bl as well as to the editor (vi traps them). The
+  // fake editor records its path, finds bl among its ancestors and sends it SIGINT, SIGQUIT
+  // and SIGTERM, then exits 0.
   const dir = backlog();
   const tdir = mkTempDir('bl-view-editor-');
   const record = join(tdir, 'record');
@@ -123,12 +124,14 @@ test('bl view survives a Ctrl-C the editor handles and still removes the copy', 
   writeFileSync(
     bin,
     `#!/bin/sh
-trap '' INT
+trap '' INT QUIT TERM
 for f; do :; done
 printf '%s' "$f" > '${record}'
 p=$PPID
 until tr '\\0' ' ' < /proc/$p/cmdline | grep -q 'bl.js'; do p=$(ps -o ppid= -p $p | tr -d ' '); done
 kill -INT $p
+kill -QUIT $p
+kill -TERM $p
 sleep 0.3
 exit 0
 `,
@@ -418,4 +421,165 @@ test('bl view --help names the editor chain, the read-only copy, the wait flag a
   assert.match(r.stdout, /read-only copy of the page in myeditor \(\$VISUAL → \$EDITOR → vi\)/);
   assert.match(r.stdout, /discarded when the editor exits/);
   assert.match(r.stdout, /code --wait/);
+  assert.match(r.stdout, /While the editor is open the copy follows the real file/);
+  assert.match(r.stdout, /vim reloads it with 'autoread'/);
+  assert.match(r.stdout, /less and more show it when they open\s+the file again\s+\(:e in less\)/);
+});
+
+/**
+ * A fake editor whose body runs with `$f` the copy and `$SRC` the real file, and
+ * `seen <word>`: wait up to 5 s for the copy to hold <word>; after that, the copy is
+ * written to `<record>.<word>`. stdout and stderr go to bl's stderr (runBl captures it).
+ */
+function followEditor(body) {
+  const dir = mkTempDir('bl-view-editor-');
+  const record = join(dir, 'record');
+  const bin = script(
+    dir,
+    'fake-editor',
+    `for f; do :; done
+seen() { i=0; until grep -q "$1" "$f" || [ $i -ge 50 ]; do sleep 0.1; i=$((i+1)); done; cat "$f" > '${record}'."$1"; }
+${body}`,
+  );
+  return { bin, read: (word) => readFileSync(`${record}.${word}`, 'utf8') };
+}
+
+test('bl view follows the real file: written in place and replaced by rename, the copy at one path and 0444 (S-1182)', () => {
+  const dir = backlog();
+  const real = join(dir, 'stories', 'S1', 'index.md');
+  const before = readFileSync(real, 'utf8');
+  const editor = followEditor(`exec 3< "$f"
+printf '%s' "$(cat "$SRC")
+in place
+" > "$SRC"
+seen 'in place'
+printf '%s' "$(cat "$SRC")
+renamed
+" > "$SRC.tmp" && mv "$SRC.tmp" "$SRC"
+seen renamed
+stat -c '%a' "$f" >&2
+cat <&3 > "$(dirname "$0")/held"
+exit 5`);
+  const r = bl(['view', 'S-1'], dir, { ...tty(), VISUAL: editor.bin, SRC: real, TMPDIR: mkTempDir('bl-view-tmp-') });
+  assert.equal(r.status, 5, r.stderr);
+  assert.equal(r.stderr, '444\n', 'the refreshed copy is 0444, and bl says nothing');
+  assert.equal(editor.read('in place'), `${before}in place\n`);
+  assert.equal(editor.read('renamed'), `${before}in place\nrenamed\n`);
+  // A reader that held the first copy open (less, more) still reads it whole.
+  assert.equal(readFileSync(join(dirname(editor.bin), 'held'), 'utf8'), before);
+});
+
+test('bl view refreshes a rendered page from the backlog after its file changes (S-1182)', () => {
+  const dir = everyKind();
+  const real = join(dir, 'epics', 'E50-value', 'index.md');
+  const editor = followEditor(`printf '\\nAdded line.\\n' >> "$SRC"\nseen 'Added line'`);
+  const r = bl(['view', 'E50'], dir, { ...tty(), VISUAL: editor.bin, SRC: real, TMPDIR: mkTempDir('bl-view-tmp-') });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(editor.read('Added line'), rendered(dir, 'E50'));
+  assert.match(editor.read('Added line'), /^## Features\n\n\| /m);
+});
+
+test('bl view refreshes a burst of writes once and skips a change that leaves the text as it is (S-1182)', () => {
+  const dir = backlog();
+  const real = join(dir, 'stories', 'S1', 'index.md');
+  const log = join(mkTempDir('bl-view-log-'), 'renames');
+  const editor = followEditor(`for n in 1 2 3 4 5; do printf 'burst %s\\n' $n > "$SRC"; done
+seen 'burst 5'
+touch "$SRC"
+cp "$SRC" "$SRC.tmp" && mv "$SRC.tmp" "$SRC"
+sleep 0.5`);
+  const r = bl(['view', 'S-1'], dir, {
+    ...tty('renames'),
+    VISUAL: editor.bin,
+    SRC: real,
+    BL_VIEW_RENAME_LOG: log,
+    TMPDIR: mkTempDir('bl-view-tmp-'),
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(editor.read('burst 5'), 'burst 5\n');
+  const renames = readFileSync(log, 'utf8').trim().split('\n');
+  assert.equal(renames.length, 2, `the copy placed, then one refresh: ${renames}`);
+  assert.ok(
+    renames.every((to) => to.endsWith('/S1/index.md')),
+    renames.join(', '),
+  );
+});
+
+test('bl view keeps the copy while the real file is gone, says so once, and picks it up again (S-1182)', () => {
+  const dir = backlog();
+  const real = join(dir, 'stories', 'S1', 'index.md');
+  const before = readFileSync(real, 'utf8');
+  const editor = followEditor(`mv "$SRC" "$SRC.away"
+sleep 0.4
+rm "$SRC.away"
+sleep 0.4
+cat "$f" > "$(dirname "$0")/kept"
+printf 'back\\n' > "$SRC"
+seen back
+exit 4`);
+  const r = bl(['view', 'S-1'], dir, { ...tty(), VISUAL: editor.bin, SRC: real, TMPDIR: mkTempDir('bl-view-tmp-') });
+  assert.equal(r.status, 4, r.stderr);
+  assert.equal(readFileSync(join(dirname(editor.bin), 'kept'), 'utf8'), before);
+  assert.equal(r.stderr, `bl view: ${real} is gone; the copy keeps its last text\n`);
+  assert.equal(editor.read('back'), 'back\n');
+});
+
+test('bl view keeps the last copy and says so when a refresh fails (S-1182)', () => {
+  const dir = backlog();
+  const real = join(dir, 'stories', 'S1', 'index.md');
+  const before = readFileSync(real, 'utf8');
+  const editor = followEditor(`printf 'new\\n' > "$SRC"
+sleep 0.6
+cat "$f" > "$(dirname "$0")/kept"
+printf 'newer\\n' > "$SRC"
+seen newer`);
+  const r = bl(['view', 'S-1'], dir, {
+    ...tty('rename'),
+    VISUAL: editor.bin,
+    SRC: real,
+    TMPDIR: mkTempDir('bl-view-tmp-'),
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readFileSync(join(dirname(editor.bin), 'kept'), 'utf8'), before);
+  assert.equal(r.stderr, 'bl view: cannot refresh the copy (injected rename failure); it keeps its last text\n');
+  assert.equal(editor.read('newer'), 'newer\n');
+});
+
+/**
+ * Run `bl view S-1` with `fault` on the watcher: the fake editor changes the real file, waits
+ * longer than a refresh takes, keeps what the copy holds and exits 6. Asserts the exit status,
+ * that the copy kept its first text and that the bl-view-* directory is removed.
+ */
+function viewUnfollowed(fault) {
+  const dir = backlog();
+  const real = join(dir, 'stories', 'S1', 'index.md');
+  const before = readFileSync(real, 'utf8');
+  const editor = followEditor(`printf '%s' "$f" > "$(dirname "$0")/path"
+sleep 0.2
+printf 'changed\\n' > "$SRC"
+sleep 0.6
+cat "$f" > "$(dirname "$0")/kept"
+exit 6`);
+  const r = bl(['view', 'S-1'], dir, {
+    ...tty(fault),
+    VISUAL: editor.bin,
+    SRC: real,
+    TMPDIR: mkTempDir('bl-view-tmp-'),
+  });
+  const edir = dirname(editor.bin);
+  assert.equal(r.status, 6, r.stderr);
+  assert.equal(readFileSync(join(edir, 'kept'), 'utf8'), before, 'the copy keeps its first text');
+  const path = readFileSync(join(edir, 'path'), 'utf8');
+  assert.equal(existsSync(dirname(dirname(path))), false, 'the bl-view-* directory is removed');
+  return { r, real };
+}
+
+test('bl view still opens the editor when it cannot watch the file (S-1182)', () => {
+  const { r, real } = viewUnfollowed('watch');
+  assert.equal(r.stderr, `bl view: cannot follow ${real} (injected watch failure); the copy will not change\n`);
+});
+
+test('bl view keeps the copy after a watcher error (S-1182)', () => {
+  const { r, real } = viewUnfollowed('watch-error');
+  assert.equal(r.stderr, `bl view: stopped following ${real} (injected watch error); the copy keeps its last text\n`);
 });

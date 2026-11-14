@@ -22,7 +22,7 @@
 
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, statSync } from 'fs';
 import { join, resolve, basename, delimiter, dirname, relative, isAbsolute, sep } from 'path';
-import { exitStatus, reportExit, runChild, runCommandLine } from './child.js';
+import { exitStatus, reportExit, runChild, runCommandLine, runLongChild } from './child.js';
 import { realOrResolved } from './real-path.js';
 import { reassertTabTitle } from './tab-title.js';
 import { Document, LineCounter, Scalar, isMap, isScalar, parseDocument, visit } from 'yaml';
@@ -2027,7 +2027,26 @@ export function editorCommand() {
  * unquoted.
  */
 export function runEditor(path) {
-  const res = runCommandLine(`${editorCommand()} ${shellQuote(path)}`, { stdio: 'inherit' });
+  const res = runCommandLine(editorLine(path), { stdio: 'inherit' });
   reassertTabTitle(); // an editor may have set the terminal title
   return res;
+}
+
+/**
+ * `runEditor` without blocking the event loop (`bl view`, S-1182): the same
+ * command line through `/bin/sh -c` (what `shell: true` runs), started as a
+ * long child (`runLongChild`), so bl's timers and file watchers run while the
+ * editor is open. It resolves to the same result shape. A signal that ends
+ * the editor is not raised again (F-128 D3): `reportExit` reads it.
+ * @param {string} path
+ */
+export async function runEditorAsync(path) {
+  const res = await runLongChild('/bin/sh', ['-c', editorLine(path)], { stdio: 'inherit' });
+  reassertTabTitle(); // an editor may have set the terminal title
+  return res;
+}
+
+/** The shell command line that opens `path` in the editor, the path shell-quoted. */
+function editorLine(path) {
+  return `${editorCommand()} ${shellQuote(path)}`;
 }

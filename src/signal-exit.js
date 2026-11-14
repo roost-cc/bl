@@ -14,7 +14,8 @@
  * there. The backlog lock needs none: the kernel frees it when the process
  * ends (F-104). The handlers are registered once per process.
  * `takeInterrupts` lets `bl run`'s loop take the first interrupt as a stop
- * instead (F-128 D8).
+ * instead (F-128 D8), and `ignoreSignals` lets `bl view` ignore them while
+ * its editor runs (S-1182).
  *
  * `INTERRUPT_SIGNALS` names the signals that interrupt `bl`, and
  * `raiseSignal` raises one of them again after a synchronous child ended on
@@ -100,6 +101,7 @@ export function exitOnSignal() {
   registered = true;
   for (const signal of INTERRUPT_SIGNALS) {
     process.on(signal, () => {
+      if (ignored.has(signal)) return;
       const handler = interruptHandler;
       if (!handler) process.exit(EXIT_CODES[signal]);
       interruptHandler = null;
@@ -125,5 +127,34 @@ export function takeInterrupts(handler) {
   interruptHandler = handler;
   return () => {
     if (interruptHandler === handler) interruptHandler = null;
+  };
+}
+
+/** The signals `ignoreSignals` holds now. */
+const ignored = new Set();
+
+/**
+ * Ignore `signals` until the returned release function runs (S-1182): a
+ * listener that does nothing replaces Node's default action, and
+ * `exitOnSignal`'s listener returns at once for them. `bl view` ignores
+ * SIGINT and SIGQUIT while its editor runs, as `system(3)` does, and SIGTERM,
+ * as its synchronous wait did before S-1182: a Ctrl-C or Ctrl-\ meant for the
+ * editor does not end `bl` and leave its copy behind. One holder at a time:
+ * the set of ignored signals is shared, so the first release of two
+ * overlapping calls for one signal would let `exitOnSignal` act on it again.
+ * @param {readonly NodeJS.Signals[]} signals
+ * @returns {() => void}
+ */
+export function ignoreSignals(signals) {
+  const nothing = () => {};
+  for (const signal of signals) {
+    ignored.add(signal);
+    process.on(signal, nothing);
+  }
+  return () => {
+    for (const signal of signals) {
+      ignored.delete(signal);
+      process.off(signal, nothing);
+    }
   };
 }

@@ -129,3 +129,17 @@ for (const signal of INTERRUPT_SIGNALS) {
     assert.equal(r.signal, signal, `status ${r.status}, stdout ${r.stdout}: ${r.stderr}`);
   });
 }
+
+// S-1182: `bl view` ignores SIGINT, SIGQUIT and SIGTERM while its editor runs.
+test('ignoreSignals: SIGINT, SIGQUIT and SIGTERM are ignored until the release; then SIGINT exits 130', () => {
+  const r = runNode([
+    `import { exitOnSignal, ignoreSignals } from ${JSON.stringify(SIGNAL_EXIT)};`,
+    'exitOnSignal();',
+    `const release = ignoreSignals(['SIGINT', 'SIGQUIT', 'SIGTERM']);`,
+    `for (const s of ['SIGINT', 'SIGQUIT', 'SIGTERM']) process.kill(process.pid, s);`,
+    `setTimeout(() => { process.stdout.write('went on\\n'); release(); process.kill(process.pid, 'SIGINT'); }, 200);`,
+    `setTimeout(() => { process.stdout.write('alive'); process.exit(0); }, 2000);`,
+  ]);
+  assert.equal(r.status, EXIT_CODES.SIGINT, `signal ${r.signal}: ${r.stderr}`);
+  assert.equal(r.stdout, 'went on\n');
+});

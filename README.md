@@ -35,7 +35,8 @@ each directory above it, bl looks for a subdirectory whose `backlog.json` has a 
 the nearest one wins. Two at the same level are an error. Set `BL_BACKLOG_DIR` to the backlog
 directory to use it from anywhere else, or to choose between two. Set `BL_CEILING_DIRECTORIES`,
 as git's `GIT_CEILING_DIRECTORIES`, to directories the walk must not move up into: absolute paths
-separated by `:`. bl's test suite sets it to its own temp directory.
+separated by `:`. bl passes the same directories to every git it starts, in
+`GIT_CEILING_DIRECTORIES`. bl's test suite sets it to its own temp directory.
 
 ## `backlog.json`
 

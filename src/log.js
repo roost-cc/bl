@@ -5,7 +5,7 @@
  * run inside that worktree. The main repo is never logged.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { appendFileSync, existsSync, readFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { gitOut } from './child.js';
 import { loadConfig, info } from './config.js';
@@ -15,29 +15,25 @@ import { allActiveWorktrees } from './story.js';
 const LOG_DIR = '.bl';
 const LOG_FILE = 'activity.log';
 
-function getGitRoot() {
+/**
+ * The top level of the linked worktree that holds the cwd, or null in a main
+ * checkout or outside git. Absolute paths on both sides (S-1560): in a
+ * subdirectory of a main checkout, git prints `--git-dir` absolute and
+ * `--git-common-dir` relative, and a text comparison took it for a worktree.
+ * @returns {string | null}
+ */
+function linkedWorktreeRoot() {
   try {
-    return gitOut(undefined, ['rev-parse', '--show-toplevel']);
+    const [gitDir, commonDir, top] = gitOut(undefined, [
+      'rev-parse',
+      '--path-format=absolute',
+      '--git-dir',
+      '--git-common-dir',
+      '--show-toplevel',
+    ]).split('\n');
+    return gitDir !== commonDir ? top : null;
   } catch {
     return null;
-  }
-}
-
-function isWorktree() {
-  try {
-    const commonDir = gitOut(undefined, ['rev-parse', '--git-common-dir']);
-    const gitDir = gitOut(undefined, ['rev-parse', '--git-dir']);
-    return commonDir !== gitDir;
-  } catch {
-    return false;
-  }
-}
-
-function getBranch(cwd) {
-  try {
-    return gitOut(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
-  } catch {
-    return 'unknown';
   }
 }
 
@@ -45,29 +41,23 @@ function timestamp() {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
-/** Append a command entry to the activity log — only runs inside a worktree. */
+/** Append a command entry to the activity log — only runs inside a linked worktree. */
 export function append(command, args) {
-  if (!isWorktree()) return;
-  const root = getGitRoot();
-  if (!root) return;
-  appendTo(root, command, args);
+  const root = linkedWorktreeRoot();
+  if (root) appendTo(root, command, args);
 }
 
-/** Append a command entry to a specific worktree's activity log. */
+/**
+ * Append a command entry to a specific worktree's activity log: one write of
+ * one line to a file opened for appending (S-1560). The kernel puts each such
+ * write at the end of the file, so processes that append at the same time
+ * need no lock and lose no line.
+ */
 export function appendTo(worktreePath, command, args) {
   const logDir = join(worktreePath, LOG_DIR);
-  const logPath = join(logDir, LOG_FILE);
-
   mkdirSync(logDir, { recursive: true });
-
-  if (!existsSync(logPath)) {
-    const branch = getBranch(worktreePath);
-    const header = `# bl activity log\n# branch: ${branch}\n# started: ${timestamp()}\n\n`;
-    writeFileSync(logPath, header);
-  }
-
   const line = `${timestamp()}  bl ${command}${args.length ? ' ' + args.join(' ') : ''}\n`;
-  writeFileSync(logPath, readFileSync(logPath, 'utf8') + line);
+  appendFileSync(join(logDir, LOG_FILE), line);
 }
 
 function showLog(worktreePath) {
@@ -148,15 +138,10 @@ Options:
     return;
   }
 
-  if (!isWorktree()) {
+  const root = linkedWorktreeRoot();
+  if (!root) {
     info("Not in a worktree. Use 'bl log <story-id>' or 'bl log --all'.");
     process.exit(0);
-  }
-
-  const root = getGitRoot();
-  if (!root) {
-    console.error('Not in a git repository.');
-    process.exit(1);
   }
 
   showLog(root);
