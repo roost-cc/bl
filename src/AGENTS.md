@@ -1504,7 +1504,7 @@ interactive launch and calls `provider.spawn({ headless: true })`: `claude -p
 prompted) and `codex exec --json --output-last-message <file>` for Codex.
 `spawn()` is async (F-128 D5): a headless session is a long child (`runLongChild`, or
 `scopedSpawn(unit)`'s function in a process scope), so `bl`'s own listeners and timers run
-while it does, and `runHeadlessSession({ signal })` ends it with SIGTERM when the signal fires
+while it does, and `runHeadlessSession({ signal })` sends it SIGTERM when the signal fires
 (a failed session, its `error` the `AbortError`). An interactive session keeps a synchronous
 wait (`runChild` with inherited stdio, F-128 A3): it holds the terminal, so `bl` never exits
 while the agent has it. Every caller awaits `spawn()`. The
@@ -4093,8 +4093,8 @@ step it stopped in.
    `bl.js` (a test) gets them too.
 3. The controller's signal is `ctx.stopSignal`. Each long child of the loop gets it: the session
    in `runSession` (`runner.session({ signal })`) and each test-gate command
-   (`runner.testGate(cmd, cwd, { signal })`). When it fires, the child gets SIGTERM and its wait
-   returns.
+   (`runner.testGate(cmd, cwd, { signal })`). When it fires, the child gets SIGTERM, and its wait
+   returns when the child exits.
 4. `checkStop` stops the run when it finds a stop request for this process or when
    `ctx.stopSignal` has fired. It runs where it ran before: at each step start, after each long
    child, and in each one-second slice of a usage-limit wait. With a request, the note is
@@ -4105,7 +4105,7 @@ step it stopped in.
    The `exit` listener of `src/child.js` sends SIGTERM to the long child.
 
 `bl review` and `bl merge` (`reviewFeature`, `integrateUnit`) take no interrupts: an interrupt
-exits 130 or 143, and the `exit` listener of `src/child.js` ends their long child. An interactive
+exits 130 or 143, and the `exit` listener of `src/child.js` sends SIGTERM to their long child. An interactive
 session (`bl run -i`) keeps a synchronous wait (F-128 A3). A SIGINT that `bl` gets during it runs
 the handler when the session ends, and the run stops at its next check. If the same SIGINT ended
 the agent, `src/child.js` raises it at once instead (F-114 D2). Known limits: an
@@ -5905,9 +5905,11 @@ them.
   resolves to the same result shape on the child's `exit` event, so a leftover process that
   holds the output file cannot hold the wait open. It never raises an interrupt: during an
   asynchronous wait `bl`'s own signal listeners run, and a child that a signal ended is a failed
-  child for its caller. `opts.signal` (an `AbortSignal`) ends the child with SIGTERM, and the
-  result then carries Node's `AbortError` as `error`. The module's `exit` listener sends SIGTERM
-  to every long child that still runs, so none outlives `bl`.
+  child for its caller. `opts.signal` (an `AbortSignal`) sends SIGTERM to the child, and the
+  wait returns when the child exits; the result then carries Node's `AbortError` as `error`.
+  The module's `exit` listener sends SIGTERM to every long child that still runs. `bl` does not
+  wait for those children and sends no SIGKILL, so a child that handles or ignores SIGTERM can
+  outlive `bl`.
   `describeExit(r, what)` words a failed child, `exitStatus(r)` is the exit status a child's
   result stands for (127, 128 + a signal's number, or its status), and `reportExit(cmd, r)` says
   why a child could not start or was killed (F-124 D6). A caller never reads a child's

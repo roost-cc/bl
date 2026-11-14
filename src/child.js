@@ -22,9 +22,10 @@
  * interrupt: during an asynchronous wait every signal sent to `bl` reaches
  * `bl`'s own listeners, so the reason for D2's raise (no listener runs during
  * a synchronous wait) does not apply. A child that a signal ended is a failed
- * child for its caller. `opts.signal` (an `AbortSignal`) ends the child with
- * SIGTERM. The module's `exit` listener sends SIGTERM to every long child
- * that is still running, so none outlives `bl` (F-128 A1).
+ * child for its caller. `opts.signal` (an `AbortSignal`) sends SIGTERM to the
+ * child. The module's `exit` listener sends SIGTERM to every long child that
+ * is still running (F-128 A1). `bl` does not wait for it and sends no SIGKILL,
+ * so a child that handles or ignores SIGTERM can outlive `bl`.
  *
  * `gitOut(cwd, args, opts)` is `git()` for a git command that must succeed
  * (F-124 D2): it returns the trimmed stdout, and throws `describeExit`'s
@@ -94,7 +95,7 @@ process.on('exit', () => {
  * @param {string} command
  * @param {readonly string[]} [args]
  * @param {import('child_process').SpawnOptions & { encoding?: BufferEncoding | 'buffer' }} [opts]
- *   `opts.signal` ends the child with SIGTERM when it fires
+ *   `opts.signal` sends SIGTERM to the child when it fires
  * @returns {Promise<ChildResult>}
  */
 export async function runLongChild(command, args = [], opts = {}) {

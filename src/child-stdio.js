@@ -67,9 +67,10 @@ export function spawnSyncFiles(command, args, options) {
  * - It resolves on the child's `exit` event, not `close`: a process the child
  *   left holding an output file (a `setsid` leftover) cannot hold the wait
  *   open. The files are read back and removed after `exit`.
- * - `options.signal` (an `AbortSignal`) ends the child with SIGTERM when it
- *   fires. The result then has `signal: 'SIGTERM'` and Node's `AbortError` as
- *   `error`, as a timeout carries `ETIMEDOUT` in `spawnSync`.
+ * - `options.signal` (an `AbortSignal`) sends SIGTERM to the child when it
+ *   fires, and the wait goes on until the child exits. If SIGTERM ended the
+ *   child, the result has `signal: 'SIGTERM'`; the result has Node's
+ *   `AbortError` as `error`, as a timeout carries `ETIMEDOUT` in `spawnSync`.
  * - A failed launch (`ENOENT`) resolves with `error` set and no output, as
  *   `spawnSync` returns it.
  * - If the process exits during the wait, an `exit` listener removes the
