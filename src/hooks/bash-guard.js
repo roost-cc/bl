@@ -49,9 +49,10 @@
  * wording change needs no reinstall.
  */
 
-import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
 import { dirname, isAbsolute, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import { realOrResolved } from '../real-path.js';
 import { loadHookDenyMessage } from '../tool-guide.js';
 import { sessionStackFragmentIn } from '../session-stack.js';
 
@@ -488,14 +489,6 @@ function discoverGitDir(dir) {
   }
 }
 
-function realPath(path) {
-  try {
-    return realpathSync(path);
-  } catch {
-    return path;
-  }
-}
-
 /**
  * True when a git command commits through the backlog's index: the Git
  * directory it selects (which holds the index) is the backlog's own. When
@@ -514,7 +507,7 @@ function usesBacklogIndex(git, backlog) {
     selected = discoverGitDir(git.dir);
     if (!selected) return within(git.dir, backlog);
   }
-  return realPath(selected) === realPath(own);
+  return realOrResolved(selected) === realOrResolved(own);
 }
 
 /**

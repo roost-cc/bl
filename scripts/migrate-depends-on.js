@@ -15,8 +15,8 @@
  * gives is not in `blockers.json`; a later run removes the key once that is
  * fixed, and a run on a consistent backlog changes nothing. `--backlog` names
  * the backlog root; by default it is found as `bl` finds it
- * ($BL_BACKLOG_DIR, else the nearest ancestor or ancestor's `backlog/` with a
- * backlog.json). Run it from the merged bl after `bl merge F-111` (task T-72).
+ * (`findBacklogRoot` in `src/config.js`). Run it from the merged bl after
+ * `bl merge F-111` (task T-72).
  *
  * Exit codes: 0 done (or nothing to do), 1 the backlog is not clean at
  * origin/main with no bl run active (nothing is done), or a step or the

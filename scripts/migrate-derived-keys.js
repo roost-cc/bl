@@ -12,9 +12,8 @@
  * writes nothing. Without it, everything is written and the backlog is
  * committed once, with the counts in the message; a second run changes
  * nothing. `--backlog` names the backlog root; by default it is found as `bl`
- * finds it ($BL_BACKLOG_DIR, else the nearest ancestor or ancestor's
- * `backlog/` with a backlog.json). Run it from the merged bl after
- * `bl merge F-77`: the bl before F-77 reads membership from `stories:`.
+ * finds it (`findBacklogRoot` in `src/config.js`). Run it from the merged bl
+ * after `bl merge F-77`: the bl before F-77 reads membership from `stories:`.
  *
  * Exit codes: 0 done (or nothing to do), 1 the backlog is not clean at
  * origin/main with no bl run active (nothing is done), or a step or the

@@ -19,7 +19,7 @@
  * spec lock, and nothing holds two spec locks at once.
  */
 
-import { existsSync, readFileSync, realpathSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { isAbsolute, join, relative, resolve } from 'path';
 import { createHash } from 'crypto';
@@ -28,6 +28,7 @@ import { awaitLock, LOCK_WAIT_MS, LockWaitTimeout } from './lock-wait.js';
 import { assertHeld, release, tryLock } from './kernel-lock.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { canonical, withLock } from './lock.js';
+import { realOrResolved } from './real-path.js';
 import { withCoveringLock } from './write-lock.js';
 
 /** The spec lock could not be taken: held by a live process past the wait, or not creatable. */
@@ -47,12 +48,7 @@ export class SpecLockError extends Error {
  * release (F-104 D3).
  */
 export function specLockPath(indexPath) {
-  let path = resolve(indexPath);
-  try {
-    path = realpathSync(path);
-  } catch {
-    // not there (yet): the resolved path
-  }
+  const path = realOrResolved(indexPath);
   return join(tmpdir(), `bl-tokens-${createHash('sha1').update(path).digest('hex').slice(0, 16)}.lock`);
 }
 

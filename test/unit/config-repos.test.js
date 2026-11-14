@@ -21,7 +21,7 @@ import { findStoryDir } from '../../src/story.js';
 import { resolveFeaturePluginsReport } from '../../src/feature.js';
 import { testPluginsFor } from '../../src/updates.js';
 import { deployableRepos } from '../../src/release.js';
-import { mkTempBacklog } from '../helpers/tempdir.js';
+import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 
 const SESSION_STACK = { workon: 'session up {{sessionNum}}', cleanup: 'session down {{sessionNum}}' };
@@ -29,34 +29,37 @@ const SESSION_STACK = { workon: 'session up {{sessionNum}}', cleanup: 'session d
 /**
  * The shape the migration writes (F-51 D4's example): app.acme.com with the
  * old project's index layer and `backlog.json` override, bl with its update
- * tests. The repo directories live inside the backlog, so bl finds it by
- * walking up from either.
+ * tests. The repo directories live inside the backlog, so bl finds it from
+ * either: the walk reaches the backlog's parent.
  */
-function appBacklog() {
-  const t = mkTempBacklog({
-    repos: {
-      'app.acme.com': {
-        path: 'repos/app.acme.com',
-        deployable: true,
-        update_tests: ['app-tests'],
-        'plugins-bootstrap': ['node-ws', 'acme-vendor'],
-        'plugins-test': ['app-tests'],
-        overrides: { plugins: { 'session-stack': SESSION_STACK } },
+function appBacklog(opts) {
+  const t = mkTempBacklog(
+    {
+      repos: {
+        'app.acme.com': {
+          path: 'repos/app.acme.com',
+          deployable: true,
+          update_tests: ['app-tests'],
+          'plugins-bootstrap': ['node-ws', 'acme-vendor'],
+          'plugins-test': ['app-tests'],
+          overrides: { plugins: { 'session-stack': SESSION_STACK } },
+        },
+        bl: { path: 'repos/bl', update_tests: ['bl-tests'] },
       },
-      bl: { path: 'repos/bl', update_tests: ['bl-tests'] },
+      components: [
+        { id: 'C00', title: 'App', dirSuffix: 'app', repo: 'app.acme.com', home: true },
+        { id: 'C01', title: 'No vendor', dirSuffix: 'no-vendor', repo: 'app.acme.com' },
+        { id: 'C32', title: 'bl', dirSuffix: 'bl', repo: 'bl', home: true },
+      ],
+      stories: [
+        { id: 'S-1', component: 'C00', title: 'App work', dirSuffix: 'app-work', primary_repo: 'app.acme.com' },
+        { id: 'S-2', component: 'C01', title: 'No vendor', dirSuffix: 'no-vendor', primary_repo: 'app.acme.com' },
+        { id: 'S-3', component: 'C00', title: 'No tests', dirSuffix: 'no-tests', primary_repo: 'app.acme.com' },
+        { id: 'S-4', component: 'C32', title: 'bl work', dirSuffix: 'bl-work', primary_repo: 'bl' },
+      ],
     },
-    components: [
-      { id: 'C00', title: 'App', dirSuffix: 'app', repo: 'app.acme.com', home: true },
-      { id: 'C01', title: 'No vendor', dirSuffix: 'no-vendor', repo: 'app.acme.com' },
-      { id: 'C32', title: 'bl', dirSuffix: 'bl', repo: 'bl', home: true },
-    ],
-    stories: [
-      { id: 'S-1', component: 'C00', title: 'App work', dirSuffix: 'app-work', primary_repo: 'app.acme.com' },
-      { id: 'S-2', component: 'C01', title: 'No vendor', dirSuffix: 'no-vendor', primary_repo: 'app.acme.com' },
-      { id: 'S-3', component: 'C00', title: 'No tests', dirSuffix: 'no-tests', primary_repo: 'app.acme.com' },
-      { id: 'S-4', component: 'C32', title: 'bl work', dirSuffix: 'bl-work', primary_repo: 'bl' },
-    ],
-  });
+    opts,
+  );
   const cfgPath = join(t.dir, 'backlog.json');
   const raw = JSON.parse(readFileSync(cfgPath, 'utf8'));
   raw.plugins = {
@@ -277,7 +280,8 @@ test('an app.acme.com story resolves bootstrap and test from the repo layer; a c
 });
 
 test('the plugins resolve the same whether bl runs from the backlog, bl or app.acme.com', () => {
-  const { dir, cleanup } = appBacklog();
+  // In a parent of its own: the walk stops below the suite's TMPDIR (S-1155).
+  const { dir, cleanup } = appBacklog({ parent: mkTempDir('bl-parent-') });
   const prev = process.env.BL_BACKLOG_DIR;
   delete process.env.BL_BACKLOG_DIR;
   try {
@@ -317,13 +321,17 @@ test('with projects in backlog.json, bl refuses and says where they went', () =>
   try {
     const cfgPath = join(dir, 'backlog.json');
     const raw = JSON.parse(readFileSync(cfgPath, 'utf8'));
-    // The pre-F-51 shape, with or without a repos block beside it.
+    // The pre-F-51 shape, with or without a repos block beside it. Without
+    // one, the file is no backlog (S-1155), so only loadConfig given the root
+    // refuses it.
+    const projects = { demo: { title: 'Demo', repos: ['repos/bl'] } };
     for (const shape of [
-      { ...raw, projects: { demo: { title: 'Demo', repos: ['repos/bl'] } } },
-      { backlog: 'backlog', projects: { demo: { title: 'Demo', repos: ['repos/bl'] } } },
+      { ...raw, projects },
+      { backlog: 'backlog', projects },
     ]) {
       writeFileSync(cfgPath, JSON.stringify(shape));
       assert.throws(() => loadConfig({ backlogRoot: dir }), /still has "projects".*now live in "repos"/s);
+      if (!shape.repos) continue;
       for (const args of [
         ['list'],
         ['validate'],

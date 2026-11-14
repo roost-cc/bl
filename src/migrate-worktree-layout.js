@@ -40,23 +40,14 @@
  * does not undo them; a rerun finishes the job.
  */
 
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  realpathSync,
-  rmdirSync,
-  rmSync,
-  statSync,
-} from 'fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync } from 'fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { atomicWriteFile } from './atomic-write.js';
 import { git, raiseAfter } from './child.js';
 import { loadConfig } from './config.js';
 import { canonical, withLock } from './lock.js';
 import { applyMigration } from './migration-txn.js';
+import { realOrResolved as real } from './real-path.js';
 import { RUN_DIR } from './run-lock.js';
 import { isSessionRunning, sessionLockPath } from './story.js';
 
@@ -105,15 +96,6 @@ export function linkedWorktrees(repoPath) {
     const branchLine = lines.find((l) => l.startsWith('branch refs/heads/'));
     return { path, branch: branchLine ? branchLine.slice('branch refs/heads/'.length) : null };
   });
-}
-
-/** `path` with its links resolved when it exists, else as given. */
-function real(path) {
-  try {
-    return realpathSync(path);
-  } catch {
-    return resolve(path);
-  }
 }
 
 /** Whether `path` is `dir` or inside it, by path segment: `..cache` is inside, `..` is not. */

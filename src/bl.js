@@ -247,12 +247,14 @@ async function run() {
   // Committing commands, `bl inbox` and `bl updates status` rebase the
   // backlog onto origin/main first (F-50 D4), before anything below writes
   // to it; a pull that could not put the checkout back stops the command.
+  // `bl init` pulls and settles the directory it writes to, never one the walk finds.
+  const initDir = command === 'init' ? (await import('./init.js')).initBacklogDir() : undefined;
   const { commandPullsBacklog } = await import('./backlog-commit.js');
   if (commandPullsBacklog(command, subArgv)) {
     const { loadConfig } = await import('./config.js');
     let config = null;
     try {
-      config = loadConfig();
+      config = initDir ? loadConfig({ backlogRoot: initDir }) : loadConfig();
     } catch {
       // Not in a backlog: the command reports that itself.
     }
@@ -260,16 +262,14 @@ async function run() {
       const { pullBeforeCommand } = await import('./sync.js');
       const pull = await pullBeforeCommand(config);
       if (pull.state === 'unsafe') process.exit(1);
-    } else if (command === 'init') {
+    } else if (initDir) {
       // `bl init` repairs a backlog.json that `loadConfig` rejects (no
       // "repos", no effort levels), so it pulls that backlog first all the
       // same (S-1330). `pullBeforeCommand` skips a backlog with no repo of
       // its own, as for every command.
-      const { initBacklogDir } = await import('./init.js');
-      const dir = initBacklogDir();
-      if (existsSync(join(dir, 'backlog.json'))) {
+      if (existsSync(join(initDir, 'backlog.json'))) {
         const { pullBeforeCommand } = await import('./sync.js');
-        const pull = await pullBeforeCommand({ backlogRoot: dir }, { regenerate: false });
+        const pull = await pullBeforeCommand({ backlogRoot: initDir }, { regenerate: false });
         if (pull.state === 'unsafe') process.exit(1);
       }
     }
@@ -279,7 +279,7 @@ async function run() {
   // record; settle it before any command reads membership (F-35 Decision K).
   if (command && command !== 'help' && !command.startsWith('-')) {
     const { settlePending } = await import('./feature-links.js');
-    await settlePending();
+    await settlePending(initDir);
   }
 
   switch (command) {

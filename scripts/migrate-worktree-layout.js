@@ -11,8 +11,8 @@
  * `--dry-run` prints every move, run-state rewrite, removal, directory left in
  * place and the `backlog.json` change, and writes nothing. Without it,
  * everything is done and the backlog is committed once. `--backlog` names the
- * backlog root; by default it is found as `bl` finds it ($BL_BACKLOG_DIR,
- * else the nearest ancestor or ancestor's `backlog/` with a backlog.json).
+ * backlog root; by default it is found as `bl` finds it (`findBacklogRoot` in
+ * `src/config.js`).
  * It is the one caller of `loadConfig`'s `legacyWorktrees`, which accepts the
  * old `{repo}` template every other bl command refuses. Only the operator
  * runs it, as task T-14 says.
