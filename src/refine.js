@@ -181,12 +181,13 @@ export async function applyRefineStatus(backlogRoot, { id, kind, indexPath }, re
   const printed = reason.replace(/\r\n|[\r\n\u2028\u2029]/g, '\n  ');
   if (result) {
     let status;
-    // The error names the unit: in a batch, the units before it are set.
+    // The error names the unit: in a batch, the units before it are set. It
+    // carries `reason` too, so a refused write does not lose the verdict.
     try {
       status = requireBranch(loadFlow(backlogRoot), kind, 'refine', result, {}).to;
       await transition(backlogRoot, { kind, indexPath }, status, { by: 'refine', via: 'refine', outcome: reason });
     } catch (e) {
-      throw new Error(`${id}: ${e.message}`);
+      throw new Error(`${id}: ${e.message}\n  refine verdict: ${printed}`);
     }
     info(`${id}: status ${status}: ${printed}`);
   } else {

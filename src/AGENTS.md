@@ -2172,7 +2172,8 @@ Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
      row, `refined`. `premise_holds: false` records its failure, a feature's `draft`. Otherwise
      the status stays.
 
-  `applyRefineStatus` prints `reason` for every verdict. It indents each further line of
+  `applyRefineStatus` prints `reason` for every verdict. If the status write fails (for example
+  the stored-log check refuses it), the error ends with `reason`. It indents each further line of
   `reason` (after LF, CR, CRLF, U+2028 or U+2029). So no line reads as the status line of another
   work unit (S-1408). When it records a status (through `transition`), the log entry's `outcome`
   is `reason`. So the log says why a work unit is refined.

@@ -27,11 +27,14 @@ test('a batch refine outcome file name stays under 255 bytes for every batch siz
   }
 });
 
-test('a status write that fails names its story', async () => {
+test('a status write that fails names its story and keeps the verdict', async () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const unit = { id: 'S-9', kind: 'story', indexPath: `${dir}/stories/S9-gone/index.md` };
-    await assert.rejects(async () => applyRefineStatus(dir, unit, 'success', 'ready'), /^Error: S-9: /);
+    await assert.rejects(
+      async () => applyRefineStatus(dir, unit, 'success', 'ready\nall criteria hold'),
+      /^Error: S-9: [^]*\n {2}refine verdict: ready\n {2}all criteria hold$/,
+    );
   } finally {
     cleanup();
   }
