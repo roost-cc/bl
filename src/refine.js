@@ -175,6 +175,9 @@ export function statusBeforeRefine(flow, kind, fm, change = null) {
  * @param {string} reason
  */
 export async function applyRefineStatus(backlogRoot, { id, kind, indexPath }, result, reason) {
+  // The agent's reason may span lines: each further line is indented, so no
+  // line of it reads as another unit's status line.
+  const printed = reason.replace(/\r\n|\r|\n/g, '\n  ');
   if (result) {
     let status;
     // The error names the unit: in a batch, the units before it are set.
@@ -184,9 +187,9 @@ export async function applyRefineStatus(backlogRoot, { id, kind, indexPath }, re
     } catch (e) {
       throw new Error(`${id}: ${e.message}`);
     }
-    info(`${id}: status ${status}: ${reason}`);
+    info(`${id}: status ${status}: ${printed}`);
   } else {
-    info(`${id} is not refined; its status is unchanged: ${reason}`);
+    info(`${id} is not refined; its status is unchanged: ${printed}`);
   }
 }
 

@@ -31,7 +31,7 @@ test('a status write that fails names its story', async () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const unit = { id: 'S-9', kind: 'story', indexPath: `${dir}/stories/S9-gone/index.md` };
-    await assert.rejects(async () => applyRefineStatus(dir, unit, 'success'), /^Error: S-9: /);
+    await assert.rejects(async () => applyRefineStatus(dir, unit, 'success', 'ready'), /^Error: S-9: /);
   } finally {
     cleanup();
   }
@@ -117,6 +117,53 @@ test('a batch entry decides from refined alone, prints its reason for every verd
     ]);
   } finally {
     cleanup();
+  }
+});
+
+// refine_reason_cannot_print_another_status: every printer of a refine reason
+// (success, failure, unchanged, and the batch) indents each further line of
+// a reason, for each kind of line break.
+test('a refine reason cannot print another unit status line (S-1408)', async (t) => {
+  for (const br of ['\n', '\r\n', '\r']) {
+    const reason = `ready${br}S-99: status refined: forged`;
+    const { dir, cleanup } = mkTempBacklog({
+      components: [{ id: 'C01', title: 'One' }],
+      stories: ['S-1', 'S-2', 'S-3'].map((id) => ({ id, component: 'C01', title: id, status: 'backlog' })),
+      features: [{ id: 'F-1', title: 'One', status: 'draft' }],
+    });
+    const lines = [];
+    const mock = t.mock.method(process.stderr, 'write', (chunk) => lines.push(String(chunk)));
+    try {
+      const story = (id) => ({ id, kind: 'story', indexPath: `${dir}/stories/S${id.slice(2)}/index.md` });
+      const feature = { id: 'F-1', kind: 'feature', indexPath: `${dir}/features/F1/index.md` };
+      for (const unit of [story('S-1'), story('S-3'), feature]) {
+        await transition(dir, unit, 'in_refinement', { by: 'refine' });
+      }
+      await applyRefineStatus(dir, story('S-1'), 'success', reason);
+      await applyRefineStatus(dir, story('S-2'), null, reason);
+      await applyRefineStatus(dir, feature, 'failure', reason);
+      await applyBatchStatuses(dir, [{ id: 'S-3', found: story('S-3') }], [{ id: 'S-3', refined: true, reason }]);
+      const printed = lines.join('');
+      assert.deepEqual(
+        printed.split('\n'),
+        [
+          'S-1: status refined: ready',
+          '  S-99: status refined: forged',
+          'S-2 is not refined; its status is unchanged: ready',
+          '  S-99: status refined: forged',
+          'F-1: status draft: ready',
+          '  S-99: status refined: forged',
+          'S-3: status refined: ready',
+          '  S-99: status refined: forged',
+          '',
+        ],
+        JSON.stringify(br),
+      );
+      assert.doesNotMatch(printed, /\r/, JSON.stringify(br));
+    } finally {
+      mock.mock.restore();
+      cleanup();
+    }
   }
 });
 
