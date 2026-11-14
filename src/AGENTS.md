@@ -2741,10 +2741,9 @@ Where the text comes from:
 
 ### Scratch directories
 
-Headless agents cannot delete files, and the gate refuses a dirty worktree, so
-every loop session that may need to diagnose something gets a
-`{{scratchDir}}` outside the worktree, created before it starts:
-`<backlog>/.bl/run/<F-id>.<slot>.scratch`.
+Headless agents cannot delete files, and the gate refuses a dirty worktree. So every session of
+`bl run` that may need to diagnose something gets a `{{scratchDir}}` outside the worktree.
+`bl run` creates it before the session starts: `<backlog>/.bl/run/<F-id>.<slot>.scratch`.
 
 | Session                                 | Slot                                                                   |
 | --------------------------------------- | ---------------------------------------------------------------------- |
@@ -2753,99 +2752,112 @@ every loop session that may need to diagnose something gets a
 | review fix (`feature-workon-review.md`) | `r<round>.fix` (also for `bl implement` with a review pending)         |
 | review passes                           | `r<round>.<dimension>`, `r<round>.verify`                              |
 
-The prompts tell the agent to write probe scripts, redirected test output and
-scratch configs there, never in the worktree, and none tells it to delete
-files. A stray file fix-tests cannot move out ends the session with the
-outcome `unrelated` and the reason "stray files in the worktree: <paths>" for
-the operator.
+The prompts tell the agent to write probe scripts, redirected test output and scratch configs
+there, never in the worktree. No prompt tells the agent to delete files. If fix-tests cannot move
+a stray file out, it ends the session with the outcome `unrelated` and the reason "stray files in
+the worktree: <paths>" for the operator.
 
 ### Worktree hygiene in the loop
 
-Review passes are read-only by contract. Each one gets a `{{scratchDir}}` under
-`.bl/run/` for probe scripts. Before every review-mode session the loop
-snapshots each worktree the round covers (HEAD, `git status -z`, the bytes and
-index entry of every changed path); afterwards it puts back only the paths
-whose state differs from that snapshot, so an operator's uncommitted work under
-`bl review` stays as it was. New files the session left move to
-`.bl/run/F-<n>.quarantine/<timestamp>-<pass>/untracked/`, its tracked edits are
-saved as `tracked.patch` and reverted, and commits it made are saved with
-`git format-patch` and reset away. Each quarantine is a `hygiene:<pass>` entry
-in the run history. If git cannot report a worktree's state, or the restore
-does not bring it back to the snapshot, the round stops there (a run
-escalates) rather than let the next pass inherit the debris. The test gate
-itself refuses a dirty tree, and reads a failed `git status` as dirty: it lists
-the stray paths and hands them to the fix-tests session to commit or delete, so
-the gate only ever certifies committed code. bl's own `.bl/` is excluded from the
-check whether or not a repo ignores it.
+Review passes are read-only by contract. Each pass gets a `{{scratchDir}}` under `.bl/run/` for
+probe scripts. Before every review-mode session, bl takes a snapshot of each worktree that the
+round covers: HEAD, `git status -z`, and the bytes and index entry of every changed path. After
+the session, bl puts back only the paths whose state differs from that snapshot. So an
+operator's uncommitted work under `bl review` stays as it was. bl moves what the session left
+into a quarantine:
+
+- New files that the session left move to
+  `.bl/run/F-<n>.quarantine/<timestamp>-<pass>/untracked/`.
+- bl saves the session's tracked edits as `tracked.patch`, and reverts them.
+- bl saves the commits that the session made with `git format-patch`, and resets them away.
+
+Each quarantine is a `hygiene:<pass>` entry in the run history. If git cannot report the state of
+a worktree, or the restore does not bring it back to the snapshot, the round stops there (`bl run`
+escalates). The next pass does not inherit the debris.
+
+The test gate itself refuses a dirty tree, and it reads a failed `git status` as dirty. It lists
+the stray paths and gives them to the fix-tests session to commit or delete. So the gate only
+ever certifies committed code. bl leaves its own `.bl/` out of the check, whether or not a repo
+ignores it.
 
 ### Defect classes
 
-Every Must and Should item carries `Class: <defect class> — instances: <list>;
-also check: <where>`. The review passes name the class and hunt its other
-instances in the branch's diff; the verifier merges same-class findings into
-one item; the fix round sweeps the whole class (the reviewer's list is where it
-starts, not where it stops), usually as one shared check with a table-driven
-test; the fix self-review confirms no instance remains; and a re-review that
-finds another instance of the same class reports the resolution as not
-holding. Instances in code the branch did not change go to `## Deferred`.
+Every Must and Should item carries a class line,
+`Class: <defect class> — instances: <list>; also check: <where>`. Each step of a round works on the whole class:
+
+- The review passes name the class, and look for its other instances in the branch's diff.
+- The verifier merges the findings of one class into one item.
+- The fix session fixes the whole class, usually as one shared check with a table-driven test.
+  The reviewer's list is where the fix starts, not where it stops.
+- The fix self-review checks that no instance remains.
+- If a re-review finds another instance of the same class, it reports that the resolution does
+  not hold.
+
+Instances in code that the branch did not change go to `## Deferred`.
 
 ### Finding origin and test-container cleanup
 
-Both review passes tag every finding `Origin: introduced` (in lines the branch
-added or changed against main, or a pre-existing defect the branch newly makes
-reachable or worse) or `Origin: pre-existing` (neither). `introduced` wins: a
-defect in lines the branch changed is `introduced`, even if main shows the same
-behavior (S-1442). The rule lives in one fragment, `prompts/_origin-rule.md`,
-which both passes and the verifier render. The verifier checks the tags and
-routes each instance of a class by its own origin. It puts only `introduced`
-findings into the session, and writes `pre-existing` ones to the feature's
-`## Deferred` list, so a round-cap escalation can only concern code the feature
-introduced.
+Both review passes tag every finding with its origin:
 
-Around every headless session and every test-gate run, the loop lists
-containers before and after and removes the new ones that carry no
-`com.docker.compose.project` label: integration-test helpers such as
-`minio-in-memory` that would otherwise hold the stack's ports. Compose stacks
-(the dev stack, session stacks) and containers that already existed are never
-touched. Each removal is a `hygiene:containers` history entry;
-`BL_KEEP_TEST_CONTAINERS=1` turns the cleanup off. Each `bl` that makes the
-default runner sets `BL_CONTAINER_OWNER` to a token of its own, which every
-step inherits; the app's test helper (`@roost/tools/docker`) sets it as the
-`cc.roost.bl-owner` label of each container it creates. The snapshot leaves
-out containers whose label names another `bl`, so loops running side by side
-do not remove each other's test containers. An unlabelled non-compose container
-started by anything else during the step (a manual `docker run`) is still
-removed.
+- `Origin: introduced`: the defect is in lines that the branch added or changed against main, or
+  it is a pre-existing defect that the branch newly makes reachable or worse.
+- `Origin: pre-existing`: neither.
 
-Processes get the same hygiene (F-70 D4, `src/process-scope.js`). Every
-headless session `runSession` starts and every test-gate command runs in a user
-systemd scope (`systemd-run --user --scope --collect`), named
-`bl-<unit id, lowercased>-<bl pid>-<n>`. A scope's cgroup keeps every process
-the step started, whatever it did with `setsid` or reparenting. After the step,
-whether it succeeded, failed or threw, and before its containers are listed (a
-hung test can hold a container), each of its scopes still running is stopped
-with `systemctl --user stop`. What was in it (pid and command) goes into one
-`hygiene:processes` history entry and one log line. A scope that is already
-gone adds no entry; one whose processes cannot be listed is stopped anyway. If
-a stop fails, or a scope is still active after it or systemctl cannot say, the
-run escalates with the processes and the `systemctl --user stop <unit>.scope`
-to run. At `bl run` start and `--resume`, `bl review` and `bl merge`'s
-integration, the unit's scopes whose `bl` pid is dead (a crashed or killed
-`bl`'s leftovers) are stopped and recorded the same way; when systemctl cannot
-list them, the run escalates before the first step with the
-`systemctl --user list-units` to run. Interactive sessions
-are not scoped: the operator owns them. Without user systemd (macOS, a host or
-guest whose probe `systemd-run --user --scope --quiet --collect true` fails,
-`bl` inside a sandbox), steps run unscoped, the run records one
-`hygiene:processes` entry (`ok: true`) saying process hygiene is unavailable and
-why, and nothing is killed (decision D4-a: no fallback by working directory,
-which could kill the operator's editor or dev server). A runner without the
-scope methods (the unit tests' fake) skips the hygiene.
+`introduced` wins. A defect in lines that the branch changed is `introduced`, even if main shows
+the same behavior (S-1442). The rule lives in one fragment, `prompts/_origin-rule.md`, which both
+passes and the verifier render. The verifier checks the tags, and routes each instance of a class
+by its own origin. It puts only `introduced` findings into the session. It writes `pre-existing`
+ones to the feature's `## Deferred` list. So a round-cap escalation can only be about code that
+the feature introduced.
 
-The fix self-review's diff starts at the commit the last review saw
-(`reviewBaseSha` in the run state), or, when none is recorded (a session
-written by hand or by a run whose state is gone), at the commit the fix
-session started from.
+Around every headless session and every test-gate attempt, bl lists the containers before and
+after. It removes the new ones that carry no `com.docker.compose.project` label. These are
+integration-test helpers such as `minio-in-memory`, which would otherwise hold the ports of the
+stack. bl never touches Compose stacks (the dev stack, session stacks) or containers that
+already existed. Each removal is a `hygiene:containers` history entry.
+`BL_KEEP_TEST_CONTAINERS=1` turns the cleanup off.
+
+Each `bl` that makes the default runner sets `BL_CONTAINER_OWNER` to a token of its own, and
+every step inherits it. The app's test helper (`@roost/tools/docker`) sets the token as the
+`cc.roost.bl-owner` label of each container that it creates. The snapshot leaves out containers
+whose label names another `bl`. So two `bl` processes side by side do not remove each other's
+test containers. bl still removes an unlabelled non-compose container that something else
+started during the step (a manual `docker run`).
+
+Processes get the same hygiene (F-70 D4, `src/process-scope.js`). Every headless session that
+`runSession` starts, and every test-gate command, runs in a user systemd scope
+(`systemd-run --user --scope --collect`). The scope's name is
+`bl-<unit id, lowercased>-<bl pid>-<n>`. The cgroup of a scope keeps every process that the step
+started, whatever the process did with `setsid` or reparenting.
+
+After the step, bl stops each of the step's scopes that is still there, with
+`systemctl --user stop`. It does this whether the step succeeded, failed or threw. It does it
+before it lists the step's containers, because a hung test can hold a container. What was in the
+scope (pid and command) goes into one `hygiene:processes` history entry and one log line.
+
+- A scope that is already gone adds no entry.
+- If bl cannot list the processes of a scope, it stops the scope anyway.
+- A stop can fail, or a scope can still be `active` after the stop, or systemctl cannot say.
+  Then `bl run` escalates with the processes and the `systemctl --user stop <unit>.scope` command
+  to run.
+
+Some steps first stop the leftovers of a `bl` that crashed or was killed: the start of `bl run`
+and `--resume`, `bl review`, and `bl merge`'s integration. Each stops the scopes of the work unit
+whose `bl` pid is dead, and records them in the same way. If systemctl cannot list the scopes,
+`bl run` escalates before the first step, with the `systemctl --user list-units` command to run.
+
+Interactive sessions get no scope: the operator owns them. Without user systemd, steps run with
+no scope. That is the case on macOS, on a host or guest whose probe
+`systemd-run --user --scope --quiet --collect true` fails, and for `bl` inside a sandbox. Then bl
+records one `hygiene:processes` entry (`ok: true`), which says that process hygiene is not
+available and why, and bl kills nothing. Decision D4-a chose no fallback by working directory,
+because that could kill the operator's editor or dev server. A runner without the scope methods
+(the fake of the unit tests) skips the hygiene.
+
+The diff of the fix self-review starts at the commit that the last review saw (`reviewBaseSha` in
+the run state). If the run state records none, the diff starts at the commit that the fix session
+started from. That happens for a Review Log session written by hand, or by a `bl run` whose state
+is gone.
 
 ### Adding stories to a feature
 
@@ -2854,28 +2866,30 @@ bl new F-3 C01 --title "Mint codes" --points 3                    # one story
 bl new --from spec.json                                            # many at once
 ```
 
-In a spec, `"feature": "F-3"` at the top level tags every story and appends
-them to the feature in spec order; the top-level `"component": "C<nn>"` names
-the stories' component, and `"component": "C<nn>"` on a story places it in
-another component, in any repo: a story's repo is its component's.
+In a spec, a top-level `"feature": "F-3"` tags every story, and appends the stories to the
+feature in spec order. The top-level `"component": "C<nn>"` names the stories' component.
+`"component": "C<nn>"` on one story places that story in another component, in any repo: a
+story's repo is its component's.
 
 ### Review rules the feature prompts enforce
 
-The feature review prompts carry four rules derived from this backlog's own
-review history (see `docs/process-review-2026-09-24.md` in the backlog repo):
-enumerate every input class of a flagged function and report all failing
-siblings at once; execute with a second-shape or malformed input and give
-every Must-fix a `Repro:` line; phrase items as invariants and name the test
-that proves them; quarantine nits (`[safe]` only when no logic changes). On a
-re-review the reviewer runs the named tests and checks only the files the
-fixes touched — it does not re-sample the untouched diff. The implementing
-prompt self-reviews the whole branch before opening the pull request.
+The feature review prompts carry four rules. The rules come from this backlog's own review
+history (see `docs/process-review-2026-09-24.md` in the backlog repo):
 
-Both the correctness pass (rule 8) and the self-review (item 5) also check
-**placement**: when a change alters what something is or who uses it (a
-domain-specific module made generic, a helper now shared across services),
-code left in a package of its old role is a finding even when the diff never
-touches the file. They read the repo's AGENTS.md package map, where it has
+1. List every input class of a flagged function, and report all failing siblings at once.
+2. Run the code with an input of a second shape or a malformed input, and give every Must-fix a
+   `Repro:` line.
+3. Phrase items as invariants, and name the test that proves them.
+4. Quarantine nits (`[safe]` only when no logic changes).
+
+On a re-review, the reviewer runs the named tests and checks only the files that the fixes
+touched. It does not sample the untouched diff again. The implementing prompt self-reviews the
+whole branch before it opens the pull request.
+
+The correctness pass (rule 8) and the self-review (item 5) also check **placement**. A change may
+alter what something is or who uses it, for example a domain-specific module made generic, or a
+helper now shared across services. Then code left in a package of its old role is a finding, even
+when the diff never touches the file. Both read the repo's AGENTS.md package map, where it has
 one, and its tenets.
 
 ## Story batches
