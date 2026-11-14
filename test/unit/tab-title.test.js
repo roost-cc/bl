@@ -10,6 +10,7 @@ import { mkTempDir } from '../helpers/tempdir.js';
 import { withEnv } from '../helpers/fake-pagers.js';
 import {
   DEFAULT_TAB_TITLE_FORMAT,
+  TMUX_TIMEOUT_MS,
   captureTmuxWindowId,
   clearTabTitle,
   currentTabTitle,
@@ -581,6 +582,24 @@ test('every command in the command table, every alias and no command at all rena
 test('with an empty BL_TAB_TITLE, a command renames nothing', async () => {
   const { calls } = await blUnderFakeTmux(['list', '--help'], { BL_TAB_TITLE: '' });
   assert.deepEqual(calls, []);
+});
+
+test('a hung tmux does not hold a command back', async () => {
+  // Each tmux call hangs for 20 s. Without BL_TMUX_WINDOW_ID, bl calls tmux three
+  // times: display-message, the start title and the exit title.
+  const dir = mkTempDir('bl-tmux-hung-');
+  writeFileSync(join(dir, 'tmux'), '#!/bin/sh\nexec sleep 20\n');
+  chmodSync(join(dir, 'tmux'), 0o755);
+  for (const windowId of ['@7', undefined]) {
+    const env = { ...process.env, PATH: `${dir}${delimiter}${process.env.PATH}`, TMUX: '/tmp/tmux-fake,1,0' };
+    for (const k of ['BL_BACKLOG_DIR', 'BL_TAB_TITLE', 'BL_TMUX_WINDOW_ID']) delete env[k];
+    if (windowId) env.BL_TMUX_WINDOW_ID = windowId;
+    const started = Date.now();
+    const { status } = await spawnToFiles(BL, ['list', '--help'], { cwd: mkTempDir('bl-no-backlog-'), env }).closed;
+    const ms = Date.now() - started;
+    assert.equal(status, 0);
+    assert.ok(ms < 3 * TMUX_TIMEOUT_MS + 5000, `bl list --help took ${ms} ms (window id ${windowId})`);
+  }
 });
 
 test('bl --help starts with status help and ends with ended', async () => {

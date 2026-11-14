@@ -196,10 +196,7 @@ export function reassertTabTitle() {
  */
 export function captureTmuxWindowId() {
   if (!process.env.TMUX || process.env.BL_TMUX_WINDOW_ID) return;
-  const res = runChild('tmux', ['display-message', '-p', '#{window_id}'], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  const res = tmux('display-message', '-p', '#{window_id}');
   if (res.status === 0 && res.stdout) {
     process.env.BL_TMUX_WINDOW_ID = res.stdout.trim();
   }
@@ -282,6 +279,13 @@ function windowTarget() {
   return id ? ['-t', id] : [];
 }
 
+/**
+ * How long bl waits for one `tmux` call, in milliseconds. Every command calls
+ * tmux at start and at exit, so a hung tmux server must not hold it back.
+ */
+export const TMUX_TIMEOUT_MS = 1000;
+
+/** Run `tmux …args`; past `TMUX_TIMEOUT_MS` Node kills it and the call counts as failed. */
 function tmux(...args) {
-  runChild('tmux', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  return runChild('tmux', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: TMUX_TIMEOUT_MS });
 }
