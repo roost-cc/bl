@@ -101,12 +101,14 @@ test('a refine rerun after a refused commit commits what the first session left'
 
 // A session that exits 0, exits 7, or is killed by a signal: a failed commit
 // makes bl refine exit 1 every time, for the story, the batch and the feature.
+// The signal is SIGKILL: a SIGINT or SIGTERM that ends an interactive session
+// is an interrupt, which bl raises (the test after this loop).
 for (const [label, args, write] of [
   ['bl refine S-n', ['S-1'], [S1]],
   ['the batch refine', ['S-1', 'S-2'], [S1, S2]],
   ['bl refine F-n', ['F-1'], [F1]],
 ]) {
-  for (const exit of ['0', '7', 'TERM']) {
+  for (const exit of ['0', '7', 'KILL']) {
     test(`refine_commit_failure_overrides_session_status: ${label}, session ends ${exit}, a refused commit exits 1 naming the paths`, async () => {
       const dir = await gitBacklog();
       writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
@@ -121,6 +123,18 @@ for (const [label, args, write] of [
     });
   }
 }
+
+// An interactive session waits synchronously through runChild (F-128 A3), so a
+// SIGTERM that ends it is an interrupt (F-114 D2): bl names it and exits 143
+// at once, and commits nothing.
+test('an interactive session ended by SIGTERM makes bl refine exit 143 at once, with no commit', async () => {
+  const dir = await gitBacklog();
+  const head = git(dir, 'rev-parse', 'HEAD');
+  const r = refine(dir, ['S-1'], { write: [S1], exit: 'TERM' });
+  assert.equal(r.status, 143, r.stderr);
+  assert.match(r.stderr, /^bl: claude .* was ended by SIGTERM$/m);
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), head);
+});
 
 // `bl refine -t`, and several targets with a feature among them, run each
 // refine in a tmux window of its own, named by `renderTabTitle` (tab-title.js):

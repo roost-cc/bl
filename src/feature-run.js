@@ -738,6 +738,7 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
       schema = null,
       retry = null,
       follow = null,
+      signal,
     }) {
       // An interactive session returns its outcome in the outcome file (F-68 D1).
       const promptVars = interactive && schema ? { ...vars, outcomeCarrier: 'file' } : vars;
@@ -803,6 +804,8 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
         schema,
         sessionId: resume,
         follow,
+        // A headless session ends with SIGTERM when `signal` fires (F-128 D5).
+        signal,
         // The agent and all it starts live in the step's scope (F-70 D4).
         run: scope ? processScope.scopedSpawn(scope) : undefined,
       });
@@ -1570,10 +1573,10 @@ export function shellMerged(cmd, cwd) {
  * output file.
  */
 async function gateMerged(cmd, cwd, { scope = null, signal } = {}) {
-  const run = scope ? processScope.scopedCommand(scope, 'sh', ['-c', cmd]) : { command: 'sh', args: ['-c', cmd] };
+  const run = scope ? processScope.scopedSpawn(scope) : runLongChild;
   const out = mergedOutput();
   try {
-    const r = await runLongChild(run.command, run.args, {
+    const r = await run('sh', ['-c', cmd], {
       cwd,
       env: shellEnv(),
       stdio: ['ignore', out.fd, out.fd],

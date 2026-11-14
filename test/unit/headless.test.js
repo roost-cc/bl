@@ -19,6 +19,7 @@ import { holderOf, release, tryLock } from '../../src/kernel-lock.js';
 import { holdLock, holdLockInChild } from '../helpers/hold-lock.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
+import { runLongChild } from '../../src/child.js';
 
 test('buildClaudeArgs headless uses print mode with JSON output and no session name', () => {
   const args = buildClaudeArgs({
@@ -74,10 +75,10 @@ test('parseClaudeJsonResult handles the object, array, and noisy forms', () => {
   assert.equal(plain.usage, null);
 });
 
-test('ClaudeProvider.spawn headless captures stdout through the injected runner', () => {
+test('ClaudeProvider.spawn headless captures stdout through the injected runner', async () => {
   const p = new ClaudeProvider();
   let seen;
-  const r = p.spawn({
+  const r = await p.spawn({
     mode: 'workon',
     prompt: 'x',
     worktreePath: '/wt',
@@ -99,13 +100,13 @@ test('ClaudeProvider.spawn headless captures stdout through the injected runner'
   assert.equal(p.supportsHeadless(), true);
 });
 
-test('ClaudeProvider.spawn passes --model, which outranks ANTHROPIC_MODEL in the environment', () => {
+test('ClaudeProvider.spawn passes --model, which outranks ANTHROPIC_MODEL in the environment', async () => {
   const prev = process.env.ANTHROPIC_MODEL;
   process.env.ANTHROPIC_MODEL = 'claude-fable-5-1';
   try {
     for (const headless of [true, false]) {
       let seen;
-      new ClaudeProvider().spawn({
+      await new ClaudeProvider().spawn({
         mode: 'workon',
         prompt: 'x',
         worktreePath: '/wt',
@@ -278,13 +279,13 @@ test('buildCodexArgs passes -c model_reasoning_effort=<level> to codex exec, the
   assert.throws(() => buildCodexArgs({ ...base, effort: 'huge' }), /^Error: effort must be one of/);
 });
 
-test("CodexProvider.spawn hands the configuration's model and the effort level to codex exec", () => {
+test("CodexProvider.spawn hands the configuration's model and the effort level to codex exec", async () => {
   const calls = [];
   const run = (cmd, args) => {
     calls.push({ cmd, args });
     return { status: 0, stdout: '' };
   };
-  new CodexProvider().spawn({
+  await new CodexProvider().spawn({
     prompt: 'p',
     worktreePath: '/wt',
     backlogRoot: '/bl',
@@ -294,7 +295,7 @@ test("CodexProvider.spawn hands the configuration's model and the effort level t
     run,
     ensureApprovedCommandPrefixes: () => ({ added: 0 }),
   });
-  new CodexProvider().spawn({
+  await new CodexProvider().spawn({
     prompt: 'p',
     worktreePath: '/wt',
     backlogRoot: '/bl',
@@ -364,9 +365,9 @@ test("headless token totals survive bl merge's transcript re-read", () => {
   assert.deepEqual([only.tokens_input, only.tokens_output, only.tokens_cache_read], ['7', '8', '9']);
 });
 
-test('CodexProvider.spawn headless reads the last-message file back as output', () => {
+test('CodexProvider.spawn headless reads the last-message file back as output', async () => {
   const p = new CodexProvider();
-  const r = p.spawn({
+  const r = await p.spawn({
     prompt: 'p',
     worktreePath: '/wt',
     backlogRoot: '/bl',
@@ -389,9 +390,9 @@ test('CodexProvider.spawn headless reads the last-message file back as output', 
   assert.equal(p.supportsHeadless(), true);
 });
 
-test('CodexProvider.spawn headless removes the last-message file when the spawn errors', () => {
+test('CodexProvider.spawn headless removes the last-message file when the spawn errors', async () => {
   let file = null;
-  const r = new CodexProvider().spawn({
+  const r = await new CodexProvider().spawn({
     prompt: 'p',
     worktreePath: '/wt',
     backlogRoot: '/bl',
@@ -727,6 +728,42 @@ test('runHeadlessSession counts an agent killed by a signal as a failed session,
       });
       assert.equal(r.isError, true, Provider.name);
       assert.equal(r.status, 137, Provider.name);
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('runHeadlessSession ends the agent with SIGTERM when its signal fires, a failed session (F-128 D5)', async () => {
+  const { dir, cleanup } = mkTempBacklog();
+  try {
+    const cfg = loadConfig({ backlogRoot: dir });
+    for (const Provider of [ClaudeProvider, CodexProvider]) {
+      // The agent is a long `sleep`: only the signal, passed on by
+      // runHeadlessSession and the adapter, ends it before the test's timeout.
+      let child = null;
+      const run = async (_cmd, _args, opts) => (child = await runLongChild('sleep', ['30'], opts));
+      const started = Date.now();
+      const r = await runHeadlessSession({
+        mode: 'review',
+        parsed: { id: 'F-1' },
+        prompt: 'p',
+        worktreePath: mkTempDir('bl-wt-'),
+        config: cfg,
+        roostDir: cfg.roostDir,
+        backlogRoot: dir,
+        signal: AbortSignal.timeout(100),
+        run,
+        provider: new (class extends Provider {
+          spawn(opts) {
+            return super.spawn({ ...opts, ensureApprovedCommandPrefixes: () => ({ added: 0 }) });
+          }
+        })(),
+      });
+      assert.equal(child.signal, 'SIGTERM', Provider.name);
+      assert.ok(Date.now() - started < 10_000, `${Provider.name}: ended by the signal, not by sleep`);
+      assert.equal(r.isError, true, Provider.name);
+      assert.equal(r.error, 'The operation was aborted', Provider.name);
     }
   } finally {
     cleanup();
@@ -1301,7 +1338,7 @@ test('parseCodexJsonEvents does not borrow a reset time from another error event
   assert.equal(bare.refusal.message, S865_LIMIT);
 });
 
-test('CodexProvider.spawn headless surfaces the refusal the event stream names', () => {
+test('CodexProvider.spawn headless surfaces the refusal the event stream names', async () => {
   const p = new CodexProvider();
   const spawnWith = (result) =>
     p.spawn({
@@ -1313,13 +1350,16 @@ test('CodexProvider.spawn headless surfaces the refusal the event stream names',
       run: () => result,
     });
   // The output-last-message file is empty on a failed turn: the limit comes from the events.
-  const refused = spawnWith({ status: 1, stdout: [JSON.stringify({ type: 'thread.started' }), S865_EVENT].join('\n') });
+  const refused = await spawnWith({
+    status: 1,
+    stdout: [JSON.stringify({ type: 'thread.started' }), S865_EVENT].join('\n'),
+  });
   assert.equal(refused.isError, true);
   assert.equal(refused.refusal.kind, 'other');
   assert.equal(refused.refusal.scope, 'account');
   assert.equal(refused.refusal.message, S865_LIMIT);
   assert.ok(refused.refusal.resetsAt instanceof Date);
-  const ok = spawnWith({
+  const ok = await spawnWith({
     status: 0,
     stdout: JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 2, output_tokens: 3 } }),
   });

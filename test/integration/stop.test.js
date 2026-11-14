@@ -40,7 +40,7 @@ test(
       const base = fakeRunner({ dir, feature });
       // S-1's session is an agent that sleeps in the step's scope. `bl stop`
       // starts when it does, from another process, as the operator would.
-      const runner = scopedRunner(base, (o) => {
+      const runner = scopedRunner(base, async (o) => {
         if (scope || o.promptName !== 'feature-story') return base.session(o);
         scope = o.scope;
         stopper = spawnToFiles(
@@ -51,7 +51,7 @@ test(
             env: withNoAgent({ ...personEnv(), BL_BACKLOG_DIR: dir }),
           },
         );
-        const r = scopedSpawn(o.scope)('sh', ['-c', `touch '${started}'; exec sleep 300`], { stdio: 'ignore' });
+        const r = await scopedSpawn(o.scope)('sh', ['-c', `touch '${started}'; exec sleep 300`], { stdio: 'ignore' });
         return {
           ok: false,
           isError: true,

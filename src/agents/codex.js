@@ -2,7 +2,6 @@
  * codex.js — Codex CLI implementation of AgentProvider.
  */
 
-import { spawnSync } from 'child_process';
 import {
   closeSync,
   existsSync,
@@ -17,7 +16,7 @@ import {
 import { homedir, tmpdir } from 'os';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { exitStatus, runChild } from '../child.js';
+import { exitStatus, runChild, runLongChild } from '../child.js';
 import { checkModel, info, isBlBranchPath, worktreeRoot } from '../config.js';
 import { checkEffort } from '../effort.js';
 import { runCapacityHelper } from './capacity-helper.js';
@@ -870,7 +869,7 @@ export class CodexProvider extends AgentProvider {
     };
   }
 
-  spawn({
+  async spawn({
     prompt,
     permissions = [],
     denied = [],
@@ -883,12 +882,13 @@ export class CodexProvider extends AgentProvider {
     worktreeRoot = null,
     scopes = {},
     ensureApprovedCommandPrefixes = ensureCodexApprovedCommandPrefixes,
-    run = spawnSync,
     headless = false,
+    run = headless ? runLongChild : runChild,
     model = null,
     effort = null,
     schema = null,
     follow = null,
+    signal,
   }) {
     const translated = Array.isArray(permissions)
       ? translateCodexPermissions(permissions, {
@@ -941,7 +941,7 @@ export class CodexProvider extends AgentProvider {
       const eventsFd = follow ? openSync(follow.path, 'w') : null;
       try {
         if (schemaFile) writeFileSync(schemaFile, JSON.stringify(schema));
-        r = run('codex', codexArgs, {
+        r = await run('codex', codexArgs, {
           cwd,
           // Marked headless (F-78 D3), so the bl it runs refuses `bl rank`.
           env: agentEnv({ headless: true }),
@@ -949,7 +949,8 @@ export class CodexProvider extends AgentProvider {
           // stderr is captured, copied to bl's stderr when codex exits, and
           // names the exit in a missing outcome's fault (S-1398).
           stdio: ['ignore', eventsFd ?? 'pipe', 'pipe'],
-          maxBuffer: 256 * 1024 * 1024,
+          // `signal` ends codex with SIGTERM.
+          signal,
         });
         if (r.stderr) process.stderr.write(r.stderr);
         stdout = follow ? readFileSync(follow.path, 'utf8') : String(r.stdout ?? '');
@@ -988,6 +989,8 @@ export class CodexProvider extends AgentProvider {
       };
     }
 
+    // Interactive: a synchronous wait (`runChild`, F-128 A3), so bl never
+    // exits while codex holds the terminal.
     return run('codex', codexArgs, {
       stdio: 'inherit',
       cwd,

@@ -10,8 +10,12 @@
  *   - translatePermissions(): adapt generic backlog permission tokens into the
  *     agent CLI's native permission/policy representation.
  *   - getToolHints(): provide prompt-visible tool names for rendered guidance.
- *   - spawn(): synchronously launch the agent and return a child_process
- *     SpawnSyncReturns-like result.
+ *   - spawn(): launch the agent; async, it resolves to a child_process
+ *     SpawnSyncReturns-like result (F-128 D5). A headless session waits
+ *     asynchronously (`runLongChild`), so bl's own signal listeners and timers
+ *     run while it does, and `signal` can end it. An interactive session
+ *     waits synchronously (`runChild`, F-128 A3): it holds the terminal, as
+ *     the editor does, so bl never exits while the agent has it.
  *
  * Optional capabilities:
  *   - findSession(): return a provider session id when the CLI can resume by
@@ -213,8 +217,21 @@ export class AgentProvider {
    *                                       write its events where the handle
    *                                       says, so followSession() can read
    *                                       them while it runs.
+   * @param {AbortSignal} [opts.signal]  - Headless only: ends the agent with
+   *                                       SIGTERM when it fires; the session
+   *                                       is then a failed one.
+   * @param {Function} [opts.run]        - Test seam and process-scope hook:
+   *                                       runs the agent's argv. Headless,
+   *                                       `runLongChild` (or `scopedSpawn`'s
+   *                                       function), awaited; interactive,
+   *                                       `runChild` with inherited stdio.
+   * @returns {Promise<object>} the result: a headless session's carries the
+   *   fields supportsHeadless() names. An interactive session's wait is
+   *   synchronous inside the promise (F-128 A3): the agent holds the
+   *   terminal, so bl does nothing else until it exits, and a SIGINT bl gets
+   *   meanwhile runs bl's listener afterwards.
    */
-  spawn(opts) {
+  async spawn(opts) {
     throw new Error('spawn() not implemented');
   }
 
@@ -252,8 +269,8 @@ export class AgentProvider {
   }
 
   /**
-   * Whether this configuration can take work now. Synchronous, like spawn(),
-   * and never throws: an adapter that cannot ask, or whose asking fails (a
+   * Whether this configuration can take work now. Synchronous, and never
+   * throws: an adapter that cannot ask, or whose asking fails (a
    * timeout, an exit, a protocol error), answers `unknown` with the reason in
    * `message`.
    *

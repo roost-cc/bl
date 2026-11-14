@@ -43,10 +43,10 @@ function eventually(fn, ms = 5000) {
 test(
   'a scoped command passes its exit status through, and stopping its scope removes the setsid child it left',
   { skip },
-  () => {
+  async () => {
     const unit = scopeUnitName(UNIT, 1);
     try {
-      const r = scopedSpawn(unit)('bash', ['-c', 'setsid sleep 300 & exit 3'], { stdio: 'ignore' });
+      const r = await scopedSpawn(unit)('bash', ['-c', 'setsid sleep 300 & exit 3'], { stdio: 'ignore' });
       assert.equal(r.status, 3, `the command's status: ${r.error?.message ?? ''}`);
       let left = [];
       assert.ok(
@@ -68,11 +68,11 @@ test(
   },
 );
 
-test('a scoped capture returns when the command exits, though a child it left holds its stdout', { skip }, () => {
+test('a scoped capture returns when the command exits, though a child it left holds its stdout', { skip }, async () => {
   const unit = scopeUnitName(UNIT, 6);
   try {
     const started = Date.now();
-    const r = scopedSpawn(unit)('bash', ['-c', 'setsid sleep 300 & echo done; exit 2'], {
+    const r = await scopedSpawn(unit)('bash', ['-c', 'setsid sleep 300 & echo done; exit 2'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 30_000,
@@ -107,9 +107,9 @@ test("the test gate's command runs in the scope, output and status intact", { sk
   }
 });
 
-test('a scope whose command left nothing is gone at once and lists nothing', { skip }, () => {
+test('a scope whose command left nothing is gone at once and lists nothing', { skip }, async () => {
   const unit = scopeUnitName(UNIT, 2);
-  const r = scopedSpawn(unit)('true', [], { stdio: 'ignore' });
+  const r = await scopedSpawn(unit)('true', [], { stdio: 'ignore' });
   assert.equal(r.status, 0);
   assert.deepEqual(scopeProcesses(unit), []);
 });
@@ -231,24 +231,28 @@ exit 1
   }
 });
 
-test("staleScopes finds a dead bl's scope of the unit, not this bl's; scopesOf finds a bl's own", { skip }, () => {
-  // Above any pid_max (at most 2^22), so no process has it.
-  const dead = scopeUnitName(UNIT, 3, 4_999_999);
-  const mine = scopeUnitName(UNIT, 4);
-  try {
-    for (const u of [dead, mine]) {
-      const r = scopedSpawn(u)('bash', ['-c', 'setsid sleep 300 & exit 0'], { stdio: 'ignore' });
-      assert.equal(r.status, 0);
+test(
+  "staleScopes finds a dead bl's scope of the unit, not this bl's; scopesOf finds a bl's own",
+  { skip },
+  async () => {
+    // Above any pid_max (at most 2^22), so no process has it.
+    const dead = scopeUnitName(UNIT, 3, 4_999_999);
+    const mine = scopeUnitName(UNIT, 4);
+    try {
+      for (const u of [dead, mine]) {
+        const r = await scopedSpawn(u)('bash', ['-c', 'setsid sleep 300 & exit 0'], { stdio: 'ignore' });
+        assert.equal(r.status, 0);
+      }
+      assert.deepEqual(staleScopes(UNIT), [dead]);
+      assert.deepEqual(staleScopes(`${UNIT}-other`), [], 'another unit has none');
+      // The same listing, filtered by the bl pid: what `bl stop` stops (S-1335).
+      assert.deepEqual(scopesOf(UNIT, process.pid), [mine], "this bl's scopes, the live holder's");
+      assert.deepEqual(scopesOf(UNIT, 4_999_999), [dead]);
+      assert.deepEqual(scopesOf(`${UNIT}-other`, process.pid), [], 'another unit has none');
+    } finally {
+      assert.deepEqual(stopScope(dead), { ok: true });
+      assert.deepEqual(stopScope(mine), { ok: true });
     }
-    assert.deepEqual(staleScopes(UNIT), [dead]);
-    assert.deepEqual(staleScopes(`${UNIT}-other`), [], 'another unit has none');
-    // The same listing, filtered by the bl pid: what `bl stop` stops (S-1335).
-    assert.deepEqual(scopesOf(UNIT, process.pid), [mine], "this bl's scopes, the live holder's");
-    assert.deepEqual(scopesOf(UNIT, 4_999_999), [dead]);
-    assert.deepEqual(scopesOf(`${UNIT}-other`, process.pid), [], 'another unit has none');
-  } finally {
-    assert.deepEqual(stopScope(dead), { ok: true });
-    assert.deepEqual(stopScope(mine), { ok: true });
-  }
-  assert.deepEqual(staleScopes(UNIT), []);
-});
+    assert.deepEqual(staleScopes(UNIT), []);
+  },
+);

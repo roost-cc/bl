@@ -231,14 +231,14 @@ test('GeminiProvider.generatePolicy with no write roots grants no write tools', 
   assert.ok(policy.includes('read_file'));
 });
 
-test("GeminiProvider.spawn writes its policy file in the process's TMPDIR and removes it", () => {
+test("GeminiProvider.spawn writes its policy file in the process's TMPDIR and removes it", async () => {
   const dir = mkTempDir('bl-gemini-tmpdir-');
   const saved = process.env.TMPDIR;
   process.env.TMPDIR = dir;
   let policyPath;
   let existed;
   try {
-    new GeminiProvider().spawn({
+    await new GeminiProvider().spawn({
       name: 'x',
       prompt: 'p',
       worktreePath: '/wt',
@@ -538,7 +538,7 @@ test('translateCodexPermissions approves ./bl/bin/bl in a unit directory that ho
   assert.deepEqual(prefixes(root), [['/roost/bl/bin/bl']], 'the root itself');
 });
 
-test("CodexProvider.spawn starts in the unit directory and makes every repo worktree's git metadata writable", () => {
+test("CodexProvider.spawn starts in the unit directory and makes every repo worktree's git metadata writable", async () => {
   const tmp = mkTempDir('bl-codex-spawn-');
   const git = (cwd, ...a) =>
     execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd, stdio: 'ignore' });
@@ -551,7 +551,7 @@ test("CodexProvider.spawn starts in the unit directory and makes every repo work
     git(main, 'worktree', 'add', '-q', '-b', 'f1-x', join(unitDir, repo));
   }
   let spawned = null;
-  new CodexProvider().spawn({
+  await new CodexProvider().spawn({
     prompt: 'p',
     permissions: translateCodexPermissions([]),
     worktreePath: join(unitDir, 'a'),
@@ -631,10 +631,10 @@ test('ensureCodexApprovedCommandPrefixes fails open when rules file is unreadabl
   assert.match(warnings[0], /could not update Codex approved command prefixes/);
 });
 
-test('CodexProvider.spawn installs approvals and keeps prompt guidance', () => {
+test('CodexProvider.spawn installs approvals and keeps prompt guidance', async () => {
   const installed = [];
   let spawned = null;
-  const result = new CodexProvider().spawn({
+  const result = await new CodexProvider().spawn({
     prompt: 'Do the work.',
     permissions: translateCodexPermissions(['git:*', 'Read']),
     worktreePath: '/repo/worktree',

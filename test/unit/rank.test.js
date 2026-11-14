@@ -146,10 +146,10 @@ test('agentEnv turns titles off for every spawn and marks a headless one with BL
 });
 
 test('every adapter gives a headless spawn BL_HEADLESS=1 and an interactive spawn none', async () => {
-  await withMarker(undefined, () => {
-    const launch = (provider, headless, extra = {}) => {
+  await withMarker(undefined, async () => {
+    const launch = async (provider, headless, extra = {}) => {
       let opts;
-      provider.spawn({
+      await provider.spawn({
         name: 'x',
         prompt: 'p',
         worktreePath: '/wt',
@@ -167,11 +167,11 @@ test('every adapter gives a headless spawn BL_HEADLESS=1 and an interactive spaw
       ['codex', new CodexProvider(), codexExtra],
       ['gemini', new GeminiProvider(), { permissions: [] }],
     ]) {
-      assert.equal(launch(provider, true, extra)[HEADLESS_ENV], '1', `${name} headless`);
-      assert.equal(launch(provider, false, extra)[HEADLESS_ENV], undefined, `${name} interactive`);
+      assert.equal((await launch(provider, true, extra))[HEADLESS_ENV], '1', `${name} headless`);
+      assert.equal((await launch(provider, false, extra))[HEADLESS_ENV], undefined, `${name} interactive`);
       // S-1388: titles off in every agent session, headless or not.
-      assert.equal(launch(provider, true, extra).BL_TAB_TITLE, '', `${name} headless title`);
-      assert.equal(launch(provider, false, extra).BL_TAB_TITLE, '', `${name} interactive title`);
+      assert.equal((await launch(provider, true, extra)).BL_TAB_TITLE, '', `${name} headless title`);
+      assert.equal((await launch(provider, false, extra)).BL_TAB_TITLE, '', `${name} interactive title`);
     }
   });
 });

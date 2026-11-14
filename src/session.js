@@ -758,7 +758,9 @@ function sessionModel(model, agent, config) {
  * headless rules. `stderrTail` is the last 20 non-empty lines of the agent
  * CLI's stderr (S-1398), or `''`. `follow` is the adapter's follow handle
  * for this session (`followHandle()`, S-1272), or null; the spawn writes the
- * session's events where it says, for `bl watch`.
+ * session's events where it says, for `bl watch`. When `signal` (an
+ * `AbortSignal`) fires, the agent ends with SIGTERM and the session is a
+ * failed one (F-128 D5).
  *
  * @returns {Promise<{ status: number, output: string, isError: boolean,
  *             usage: object|null, sessionId: string|null, denials: string[],
@@ -785,6 +787,7 @@ export async function runHeadlessSession({
   schema = null,
   sessionId = null,
   follow = null,
+  signal = undefined,
   run = undefined,
   units = null,
   provider: providerOverride = null,
@@ -803,8 +806,8 @@ export async function runHeadlessSession({
     stderrTail: '',
   });
   // `provider` is a test seam; production resolves it from `agent`. `run`,
-  // when given, replaces the adapter's `spawnSync` for the agent itself: `bl
-  // run` passes one that starts it in a user systemd scope (F-70 D4).
+  // when given, replaces the adapter's `runLongChild` for the agent itself:
+  // `bl run` passes one that starts it in a user systemd scope (F-70 D4).
   const provider = providerOverride ?? getProvider(agent);
   const cwd = unitDir ?? worktreePath;
   if (typeof provider.supportsHeadless !== 'function' || !provider.supportsHeadless()) {
@@ -840,7 +843,7 @@ export async function runHeadlessSession({
     });
     const scopes = resolvePermissionScopes(config, { unitDir: cwd });
 
-    result = provider.spawn({
+    result = await provider.spawn({
       mode,
       name: label,
       prompt: sessionId ? prompt : withHeadlessRules(prompt, mode),
@@ -861,6 +864,7 @@ export async function runHeadlessSession({
       effort,
       schema,
       follow,
+      signal,
       ...(run ? { run } : {}),
     });
   } finally {
@@ -1033,7 +1037,7 @@ export async function launchSession({
       }
     }
 
-    result = provider.spawn({
+    result = await provider.spawn({
       mode,
       name: sessionName,
       prompt: effectivePrompt,

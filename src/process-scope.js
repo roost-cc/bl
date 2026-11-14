@@ -27,8 +27,7 @@
  */
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { spawnSyncFiles } from './child-stdio.js';
-import { describeExit, runChild } from './child.js';
+import { describeExit, runChild, runLongChild } from './child.js';
 
 /** How long `systemctl stop` lets a scope's processes exit on SIGTERM before SIGKILL. */
 const STOP_TIMEOUT = 'TimeoutStopSec=10s';
@@ -130,17 +129,21 @@ export function scopedCommand(unit, command, args = []) {
 }
 
 /**
- * A `spawnSync` that runs its command inside scope `unit`: the `run` an agent
- * adapter's `spawn` takes. Captured streams go through files
- * (`spawnSyncFiles`), not pipes: `spawnSync` waits for every holder of a pipe
- * to close it, so a process the step left holding the command's stdout would
- * hang the call, and the cleanup that stops it would never run (seen at
- * implement: `bash -c 'setsid sleep 300 & exit 3'` with a piped stdout).
+ * An asynchronous function that runs its command inside scope `unit` as a
+ * long child (`runLongChild`, F-128 D4): the `run` an agent adapter's
+ * headless `spawn` takes, and the test gate's scoped command. It resolves
+ * when the command exits, though a process the step left still holds its
+ * output file, so the cleanup that stops that process runs (seen at
+ * implement: `bash -c 'setsid sleep 300 & exit 3'` with a piped stdout hung
+ * a wait for the pipe to close).
+ *
+ * @returns {(command: string, args: readonly string[], options?: object) =>
+ *   ReturnType<typeof runLongChild>}
  */
 export function scopedSpawn(unit) {
-  return (command, args, options) => {
+  return async (command, args, options) => {
     const s = scopedCommand(unit, command, args);
-    return spawnSyncFiles(s.command, s.args, options);
+    return runLongChild(s.command, s.args, options);
   };
 }
 

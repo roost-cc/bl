@@ -2,7 +2,6 @@
  * claude.js — Claude Code implementation of AgentProvider.
  */
 
-import { spawnSync } from 'child_process';
 import { randomUUID } from 'crypto';
 import { join, dirname } from 'path';
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
@@ -11,7 +10,7 @@ import { fileURLToPath } from 'url';
 import { clockTime, matchLimit } from './limit.js';
 import { AgentProvider, agentEnv, windowsCapacity } from './provider.js';
 import { loadHookDenyMessage } from '../tool-guide.js';
-import { exitStatus } from '../child.js';
+import { exitStatus, runChild, runLongChild } from '../child.js';
 import { checkModel, isPlainObject } from '../config.js';
 import { checkEffort } from '../effort.js';
 import { runCapacityHelper } from './capacity-helper.js';
@@ -749,7 +748,7 @@ export class ClaudeProvider extends AgentProvider {
     return agentEnv({ headless, backlogRoot });
   }
 
-  spawn({
+  async spawn({
     mode,
     name,
     prompt,
@@ -767,7 +766,8 @@ export class ClaudeProvider extends AgentProvider {
     topLevel = null,
     schema = null,
     follow = null,
-    run = spawnSync,
+    signal,
+    run = headless ? runLongChild : runChild,
   }) {
     const env = this.spawnEnv({ headless, backlogRoot, model, topLevel });
     const claudeArgs = buildClaudeArgs({
@@ -790,13 +790,13 @@ export class ClaudeProvider extends AgentProvider {
     if (headless) {
       // Capture stdout (the JSON result) and stderr. The stderr is copied to
       // bl's stderr when claude exits, and names the exit in a missing
-      // outcome's fault (S-1398).
-      const r = run('claude', claudeArgs, {
+      // outcome's fault (S-1398). `signal` ends claude with SIGTERM.
+      const r = await run('claude', claudeArgs, {
         cwd,
         env,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
-        maxBuffer: 256 * 1024 * 1024,
+        signal,
       });
       if (r.stderr) process.stderr.write(r.stderr);
       if (r.error) return r;
@@ -804,6 +804,8 @@ export class ClaudeProvider extends AgentProvider {
       return { ...r, ...parsed, ...withExitFault(parsed, 'claude', exitStatus(r), r.stderr) };
     }
 
+    // Interactive: a synchronous wait (`runChild`, F-128 A3), so bl never
+    // exits while claude holds the terminal.
     return run('claude', claudeArgs, {
       stdio: 'inherit',
       cwd,

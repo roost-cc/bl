@@ -1501,7 +1501,13 @@ draft → in_refinement → refined → approved → in_progress → in_review �
 `session.js` resolves the same allowlist, deny list, and directory scopes as an
 interactive launch and calls `provider.spawn({ headless: true })`: `claude -p
 --output-format json` for Claude (a tool outside the allowlist is denied, not
-prompted) and `codex exec --json --output-last-message <file>` for Codex. The
+prompted) and `codex exec --json --output-last-message <file>` for Codex.
+`spawn()` is async (F-128 D5): a headless session is a long child (`runLongChild`, or
+`scopedSpawn(unit)`'s function in a process scope), so `bl`'s own listeners and timers run
+while it does, and `runHeadlessSession({ signal })` ends it with SIGTERM when the signal fires
+(a failed session, its `error` the `AbortError`). An interactive session keeps a synchronous
+wait (`runChild` with inherited stdio, F-128 A3): it holds the terminal, so `bl` never exits
+while the agent has it. Every caller awaits `spawn()`. The
 result carries the agent's final message, an error flag, token usage (which
 accumulates on the feature's `tokens_*` frontmatter and on `tokens_headless_*`;
 headless sessions leave no titled transcript, so the transcript re-read at
