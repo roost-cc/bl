@@ -779,7 +779,7 @@ test("the default runner's testGate merges the streams, as shellMerged does, wit
   assert.deepEqual(left, { status: 2, output: 'done\n' });
   assert.ok(Date.now() - started < 20_000, 'not held until the leftover exits');
   process.kill(Number(readFileSync(join(cwd, 'pid'), 'utf8')), 'SIGTERM');
-  // A stop signal that fires ends the command with SIGTERM.
+  // A stop signal that fires sends the command SIGTERM, which ends `sleep`.
   const controller = new AbortController();
   setTimeout(() => controller.abort(), 200);
   const stopped = await testGate('echo started; exec sleep 30', cwd, { signal: controller.signal });

@@ -1,8 +1,10 @@
 // Process scopes against the real user systemd (F-70 D4): a scoped command's
 // exit status passes through, a `setsid` child it leaves stays in the scope,
-// the listing names it, and stopping the scope removes it. Skipped, with the
-// probe's reason, where user systemd scopes are unavailable (macOS, a sandbox,
-// a host without a user manager).
+// the listing names it, and stopping the scope removes it. A test-gate command
+// that ignores SIGTERM gets SIGKILL after a stop, in a scope and without one
+// (F-128 A6). The scoped rows are skipped, with the probe's reason, where user
+// systemd scopes are unavailable (macOS, a sandbox, a host without a user
+// manager).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs, { chmodSync, writeFileSync } from 'fs';
@@ -10,6 +12,8 @@ import { syncBuiltinESMExports } from 'module';
 import { delimiter, join } from 'path';
 import { isPidAlive } from '../../src/process-scope.js';
 import { defaultRunner } from '../../src/feature-run.js';
+import { SIGKILL_AFTER_MS } from '../../src/child.js';
+import { ignoresSigterm } from '../helpers/ignores-sigterm.js';
 import { mkTempDir } from '../helpers/tempdir.js';
 import {
   scopeAvailable,
@@ -105,6 +109,35 @@ test("the test gate's command runs in the scope, output and status intact", { sk
     stopScope(unit);
   }
 });
+
+// F-128 A6: the real 10 s, so each row takes about 10 s.
+for (const scoped of [false, true]) {
+  test(
+    `a test-gate command ${scoped ? 'in a scope' : 'without a scope'} that ignores SIGTERM gets SIGKILL 10 s after the stop signal`,
+    { skip: scoped && skip },
+    async () => {
+      const unit = scopeUnitName(UNIT, 8);
+      const child = ignoresSigterm(mkTempDir('bl-gate-kill-'));
+      const controller = new AbortController();
+      try {
+        const wait = defaultRunner().testGate(child.script, mkTempDir('bl-gate-kill-cwd-'), {
+          scope: scoped ? unit : null,
+          signal: controller.signal,
+        });
+        await child.ready();
+        const aborted = Date.now();
+        controller.abort();
+        const r = await wait;
+        const ms = Date.now() - aborted;
+        assert.ok(ms >= SIGKILL_AFTER_MS && ms < SIGKILL_AFTER_MS + 5000, `the wait took ${ms} ms after the abort`);
+        assert.notEqual(r.status, 0);
+        assert.match(r.output, /The operation was aborted/);
+      } finally {
+        if (scoped) stopScope(unit);
+      }
+    },
+  );
+}
 
 test('a scope whose command left nothing is gone at once and lists nothing', { skip }, async () => {
   const unit = scopeUnitName(UNIT, 2);
