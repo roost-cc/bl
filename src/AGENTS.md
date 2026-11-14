@@ -5763,8 +5763,8 @@ Adding a test:
   (`mkTempDir`, own `mktemp` paths) still apply, because a script or a file
   can run alone. The wrapper also sets `BL_CEILING_DIRECTORIES` to that
   `TMPDIR` (S-1155), so a walk from a cwd never finds a backlog made
-  directly in `TMPDIR`. The wrapper needs GNU `env` (coreutils 8.31 or later) for
-  `--default-signal`: BSD and macOS `env` lack it.
+  directly in `TMPDIR`. The wrapper needs GNU `env` (coreutils 8.31 or
+  later) for `--default-signal`: BSD and macOS `env` lack it.
 - **unit** — write `test/unit/<module>.test.js` using `node:test` and
   `node:assert/strict`. Import the module under test from `../../src/...`.
   No fs writes outside `os.tmpdir()`. No spawning, with one exception: a
