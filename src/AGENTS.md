@@ -367,196 +367,275 @@ How the session uses the work unit's directory:
 
 ## Frontmatter is YAML
 
-Every frontmatter block in the backlog is YAML under the failsafe schema (F-62 D1), read
-only by `parseFrontmatter` and written only by `serializeFrontmatter` (`config.js`), both
-through the `yaml` package, bl's one runtime dependency (pinned, `package-lock.json`
-committed; `bin/bl` stops with `npm ci --prefix <bl>` when `fs-ext`'s native module is
-missing, which also catches an install from before `fs-ext`). `package.json` names npm in
-`packageManager`, so pnpm refuses to run in bl (`ERR_PNPM_OTHER_PM_EXPECTED`): `pnpm exec`
-would otherwise reinstall `node_modules` in its own layout without `fs-ext`'s build.
-Every scalar is a string (`points: 5` reads `"5"`, an empty `key:` reads `""`); mappings and
-sequences are objects and arrays at any depth. The writer keeps the keys in object order,
-writes a sequence of scalars in flow style (`[S-1, S-2]`, `[]` when empty), mappings and
-sequences of mappings in block style, an empty value as a bare `key:`, and quotes what the
-library says needs quotes: bl never decides that. A block that is not YAML throws
-`FrontmatterError` with the file's line and column (the opening `---` is line 1), and a
-reader that knows the file names it (`parseFrontmatterOf`).
+Every frontmatter block in the backlog is YAML under the failsafe schema (F-62 D1). Only
+`parseFrontmatter` reads it, and only `serializeFrontmatter` writes it (`config.js`). Both work
+through the `yaml` package, bl's one runtime dependency. The package is pinned, and
+`package-lock.json` is committed.
 
-Every write goes through `serializeFrontmatter` (F-62 D3): bl never edits a frontmatter line
-as text. A template's frontmatter (`templates/*.md`) holds its keys in order, the fixed values
-set and the variable ones empty; `renderTemplate` (`template.js`) parses it, sets the values
-(a key set to `undefined`, such as `feature:` on a story with none, is left out) and writes
-it. `{{var}}` placeholders live only in template bodies.
+- If `fs-ext`'s native module is missing, `bin/bl` stops and says to run
+  `npm ci --prefix <bl>`. This also catches an install from before `fs-ext`.
+- `package.json` names npm in `packageManager`, so pnpm refuses to run in bl
+  (`ERR_PNPM_OTHER_PM_EXPECTED`). Otherwise `pnpm exec` would reinstall `node_modules` in its own
+  layout, without `fs-ext`'s build.
 
-The list keys (`LIST_KEYS`: `stories`, `depends_on`, `required_for`, `components`,
-`features`, `epics`, `paths`, `repos`, plus `plugins` and `plugins-<stage>`) are
-sequences (`stories`, `required_for`, `components` and an epic's `features` are derived
-keys since F-77 D3, kept here so a stored copy that is not a list is still
-`frontmatter-list` until the migration removes it), read as the parsed array (`parseIdList`, `parseNameList`, `parsePathList`,
-`parsePluginList`). A list key with no value is an empty list. Any other scalar (even
-`S-1` or `a, b`), a mapping, or a member that is not a string (not a mapping, for a change
-document's `repos:`) is not read: the reader throws `FrontmatterListError` (`listMembers`)
-rather than drop a blocker or a plugin as if it were never written. `bl validate` reports
-both shapes it will not read: `frontmatter-yaml` and `frontmatter-list` (see **bl validate**).
+Every scalar is a string: `points: 5` reads `"5"`, and an empty `key:` reads `""`. Mappings and
+sequences are objects and arrays at any depth. The writer works by these rules:
+
+- It keeps the keys in object order.
+- It writes a sequence of scalars in flow style (`[S-1, S-2]`, and `[]` when empty).
+- It writes mappings, and sequences of mappings, in block style.
+- It writes an empty value as a bare `key:`.
+- It quotes what the library says needs quotes. bl never decides that.
+
+A block that is not YAML throws `FrontmatterError` with the file's line and column (the opening
+`---` is line 1). A reader that knows the file names it (`parseFrontmatterOf`).
+
+Every write goes through `serializeFrontmatter` (F-62 D3): bl never edits a frontmatter line as
+text. A template's frontmatter (`templates/*.md`) holds its keys in order, with the fixed values
+set and the variable ones empty. `renderTemplate` (`template.js`) parses it, sets the values and
+writes it. It leaves out a key set to `undefined`, such as `feature:` on a story with no
+feature. `{{var}}` placeholders live only in template bodies.
+
+The list keys are sequences: `stories`, `depends_on`, `required_for`, `components`, `features`,
+`epics`, `paths` and `repos`, plus `plugins` and `plugins-<stage>` (`LIST_KEYS`).
+
+- `stories`, `required_for`, `components` and an epic's `features` are derived keys since F-77
+  D3. They stay in the list, so that a stored copy that is not a list is still
+  `frontmatter-list` until the migration removes it.
+- A reader takes a list key as the parsed array (`parseIdList`, `parseNameList`,
+  `parsePathList`, `parsePluginList`). A list key with no value is an empty list.
+- The reader does not read any other shape: a scalar (even `S-1` or `a, b`), a mapping, or a
+  member that is not a string (not a mapping, for a change document's `repos:`). It throws
+  `FrontmatterListError` (`listMembers`), rather than drop a blocker or a plugin as if it were
+  never written.
+
+`bl validate` reports both shapes that bl will not read: `frontmatter-yaml` and
+`frontmatter-list` (see **bl validate**).
 
 ### Reading the backlog: `loadBacklog()` is the one way in (F-77 D2)
 
-Every command reads the backlog through `loadBacklog(config)` (`src/backlog-graph.js`): one
-read of every unit file into a typed, linked graph, memoized per process and revalidated by
-stat, so a command reads each unit file once however many readers it calls. The readers
-(`readAllStories`, `readAllFeatures`, `readComponents`, `readAllThemes`, `readAllEpics`,
-`readAllTasks`, `readUnits` and the `find*` lookups) are projections of its units into their
-record shapes, each record's `fm` a copy the caller may change; the next-id lookups use its
-`maxNum`, which counts every unit directory, readable or not, so `bl new` never reuses a
-number. Use a unit's `text()`, `body()` or `section()` rather than reading its file again. No
-other module lists or reads the unit directories (`test/unit/one-way-in.test.js` fails on a
-`readdirSync` of a unit root, `scanFeatureDirs` or `unitDirs`); a writer that must list unit
-files without reading them, such as `bl side`'s undo, uses `unitFiles`. A strict load (every
-command but `bl validate`) throws the first frontmatter problem of any unit file, a
-`frontmatter-yaml` or a `frontmatter-list`, naming the file. A missing `flow.json` does not
-stop a read: a unit's `done` (and an epic's `status`) throws the `FlowError` when asked.
+Every command reads the backlog through `loadBacklog(config)` (`src/backlog-graph.js`). It reads
+every unit file into a typed, linked graph, with one node per unit file. The graph is memoized
+per process and revalidated by stat. So a command reads each unit file once, however many
+readers it calls.
 
-The backlog was moved to this format by the one-off `scripts/migrate-frontmatter-yaml.js`
-(logic in `src/migrate-frontmatter-yaml.js`, F-62 D5): every file `bl validate` reads is read
-with `parseFrontmatter`, after `legacyRepaired` double-quotes, whole, the value of each
-`key: value` or block sequence member line the retired line reader read differently (a value
-YAML cannot parse, even one it reads past its line such as `[WIP` or `'unfinished`; an alias
-with no anchor; a tag or an anchor no alias names; or a plain value YAML would cut at a ` #`
-comment); every other line keeps its YAML structure, and a block that is still not YAML stops
-the run before anything is written. Each list key's string becomes a sequence, split where
-that key's retired reader split it (`listOfString`: at commas outside quotes and `{…}`/`[…]`
-groups, and an id key at whitespace and `[`/`]` too), and the block is
-written by
-`serializeFrontmatter`. `--dry-run` prints the files and the counts; a run refuses unless the
-backlog is clean at `origin/main` with no `bl` run active, and commits once through
-`migration-txn.js`. A second run plans nothing, so rerunning it after a merge picks up a block
-an older bl wrote in the meantime.
+- **The readers** are projections of the graph's nodes into their record shapes:
+  `readAllStories`, `readAllFeatures`, `readComponents`, `readAllThemes`, `readAllEpics`,
+  `readAllTasks`, `readUnits` and the `find*` lookups. Each record's `fm` is a copy that the
+  caller may change.
+- **The next-id lookups** use the graph's `maxNum`. It counts the directory of every unit file,
+  readable or not, so `bl new` never reuses a number.
+- **The text.** Use a node's `text()`, `body()` or `section()` rather than reading its file
+  again.
+- **No other way in.** No other module lists or reads the directories of the unit files.
+  `test/unit/one-way-in.test.js` fails on a `readdirSync` of a unit root, `scanFeatureDirs` or
+  `unitDirs`. A writer that must list unit files without reading them, such as `bl side`'s undo,
+  uses `unitFiles`.
+- **A strict load** is the load of every command but `bl validate`. It throws the first
+  frontmatter problem of any unit file, a `frontmatter-yaml` or a `frontmatter-list`, and names
+  the file.
+- **A missing `flow.json`** does not stop a read. A node's `done` (and an epic's `status`)
+  throws the `FlowError` when a caller asks for it.
+
+The one-off `scripts/migrate-frontmatter-yaml.js` moved the backlog to this format (logic in
+`src/migrate-frontmatter-yaml.js`, F-62 D5). It worked in these steps:
+
+1. For each line that the retired line reader read differently from YAML, `legacyRepaired`
+   double-quoted the whole value. Such a line is a `key: value` line or a block sequence member
+   line, with one of these values:
+   - a value that YAML cannot parse, even one that it reads past its line, such as `[WIP` or
+     `'unfinished`;
+   - an alias with no anchor;
+   - a tag, or an anchor that no alias names;
+   - a plain value that YAML would cut at a ` #` comment.
+
+   Every other line kept its YAML structure.
+
+2. It read every file that `bl validate` reads with `parseFrontmatter`. A block that was still
+   not YAML stopped the run before anything was written.
+3. Each list key's string became a sequence. The migration split it where that key's retired
+   reader split it (`listOfString`): at commas outside quotes and outside `{…}`/`[…]` groups. It
+   split an id key at whitespace and at `[`/`]` too.
+4. `serializeFrontmatter` wrote the block.
+
+`--dry-run` prints the files and the counts. A run refuses unless the backlog is clean at
+`origin/main` with no `bl` run active. It commits once through `migration-txn.js`. A second run
+plans nothing, so a rerun after a merge picks up a block that an older bl wrote in the meantime.
 
 ### Spec writes (F-67)
 
-A read-modify-write of a story or feature spec goes through `updateSpecFile(backlogRoot,
-indexPath, mutate)` (`spec-file.js`). Under the spec's lock it reads the file (a CRLF file is
-read as LF), refuses one that does not start with a `---` block with a `FrontmatterError`
-naming the file (a writer would otherwise prepend a second block), parses it with
-`parseFrontmatterOf` and calls `mutate(fm, body)`, which changes `fm` in place and returns the
-new body, `undefined` (body unchanged) or `false` (write nothing). It writes
-`serializeFrontmatter(fm) + body` back with the file's line end through `atomicWriteFile`, so a
-failed write leaves the previous file whole and its staging file only in `.bl/tmp/`; bytes equal
-to the file's are not written. It resolves whether it wrote. `backlogRoot` is passed, never
-worked out from the path. A write of a whole new file, or a snapshot restore, calls
-`atomicWriteFile` directly; epic, theme and component index files are written only under the
-backlog lock and need `atomicWriteFile` only.
+A read-modify-write of a story or feature spec goes through
+`updateSpecFile(backlogRoot, indexPath, mutate)` (`spec-file.js`). Under the spec's lock, it
+works in these steps:
+
+1. It reads the file. It reads a CRLF file as LF.
+2. If the file does not start with a `---` block, it refuses with a `FrontmatterError` that names
+   the file. Otherwise a writer would prepend a second block.
+3. It parses the file with `parseFrontmatterOf`.
+4. It calls `mutate(fm, body)`. `mutate` changes `fm` in place and returns the new body,
+   `undefined` (body unchanged) or `false` (write nothing).
+5. It writes `serializeFrontmatter(fm) + body` back, with the file's line end, through
+   `atomicWriteFile`. So a failed write leaves the previous file whole, and its staging file
+   only in `.bl/tmp/`. It does not write bytes equal to the file's.
+6. It resolves whether it wrote.
+
+The caller passes `backlogRoot`; `updateSpecFile` never works it out from the path. A write of a
+whole new file, or a snapshot restore, calls `atomicWriteFile` directly. bl writes epic, theme
+and component index files only under the backlog lock, so they need `atomicWriteFile` only.
 
 - **The lock.** `withSpecLock(indexPath, fn, { waitMs })` is a kernel lock (`kernel-lock.js`
-  `tryLock`, F-104) on a file in the temp dir keyed by the spec's real path (`specLockPath`, a
-  `bl-tokens-<hash>.lock` file). A killed holder leaves no lock, release closes the descriptor,
-  and the file stays (D3), so these files collect in the temp dir. It is re-entrant within a
-  process: a nested call for a lock this process holds takes it again at once. It is async: it
-  waits through `awaitLock` (`lock-wait.js`, F-105 W1) up to `waitMs` (60 s, F-104 D2) for a
-  live holder, says so once on stderr (`Waiting for lock (<lock path>) held by pid <n>…`), and
-  otherwise rejects with `SpecLockError` naming the spec and the holder. The wait awaits a
-  timer, so Ctrl+C ends `bl` at once during it. `fn` is synchronous; a returned promise is an
-  error (F-105 W4: the lock is re-entrant per process, so an `await` inside `fn` would let
-  another task of the process skip the lock). A write nested in a hold calls
-  `updateSpecFileHeld`, the same read-modify-write without the lock, which throws unless this
-  process holds the spec's lock.
-- **Failure.** Token bookkeeping is best-effort: the token writers catch and return false. Every
-  other writer lets the error propagate, so a write that could not happen fails the command
-  instead of being lost.
-- **Lock order.** The backlog lock (`lock.js`) is the outer lock, a spec lock the inner one:
-  `bl merge`, `bl new --feature … S-n`, `bl attach`, `persistLandedCommits` and `bl sync --commit`'s format pass
-  (`formatBacklogFiles`) take the spec lock per file inside the backlog lock. Nothing takes the backlog lock while holding a spec lock, and nothing holds two
-  spec locks at once. A caller that adds a spec lock says so in a comment at the call.
+  `tryLock`, F-104). It locks a file in the temp dir, keyed by the spec's real path
+  (`specLockPath`, a `bl-tokens-<hash>.lock` file).
+  - A killed holder leaves no lock. Release closes the descriptor, and the file stays (D3), so
+    these files collect in the temp dir.
+  - The lock is re-entrant within a process: a nested call for a lock that this process holds
+    takes it again at once.
+  - The lock is async. If a live process holds it, `withSpecLock` waits through `awaitLock`
+    (`lock-wait.js`, F-105 W1) for up to `waitMs` (60 s, F-104 D2). It says so once on stderr
+    (`Waiting for lock (<lock path>) held by pid <n>…`). If the wait ends without the lock, it
+    rejects with `SpecLockError`, which names the spec and the holder.
+  - The wait awaits a timer, so Ctrl+C ends `bl` at once during the wait.
+  - `fn` is synchronous, and a returned promise is an error (F-105 W4). The lock is re-entrant
+    per process, so an `await` inside `fn` would let another task of the process skip the lock.
+  - A write nested in a hold calls `updateSpecFileHeld`: the same read-modify-write without the
+    lock. It throws unless this process holds the spec's lock.
+- **Failure.** Token bookkeeping is best-effort: the token writers catch the error and return
+  false. Every other writer lets the error propagate. So a write that could not happen fails the
+  command instead of being lost.
+- **Lock order.** The backlog lock (`lock.js`) is the outer lock, and a spec lock is the inner
+  one.
+  - These callers take the spec lock per file inside the backlog lock: `bl merge`,
+    `bl new --feature … S-n`, `bl attach`, `persistLandedCommits` and `bl sync --commit`'s format
+    pass (`formatBacklogFiles`).
+  - Nothing takes the backlog lock while it holds a spec lock, and nothing holds two spec locks
+    at once.
+  - A caller that adds a spec lock says so in a comment at the call.
 - **The covering lock (F-126).** Every bl write to a backlog path that git does not ignore
   holds that path's covering lock. `lockFor(backlogRoot, path)` (`write-lock.js`) is the one
-  statement of the rule: the spec lock (`specLockPath`) of an existing story or feature
-  `index.md`, change document (`isChangeFile`) or `allowed-tools.json`; the backlog lock to
-  create one of those, and for every other path (`blockers.json`, `priority.yaml`,
-  `releases/`, `themes/`, `tasks/`, `updates/`, `.gitignore`, `flow.json`, a removed unit
-  directory, …); none for a path outside the backlog, or in `.bl/` when git ignores it or the
-  backlog is no git repository. The rule and the ignore check apply to the path the write
-  changes: links in its directory are resolved, and a link at the path itself is resolved only
-  for a write through it
-  (`atomicWriteFile`'s `preserve`, a plugin), since a rename or removal replaces the link. The
-  three write chokepoints in `atomic-write.js` call `assertCovered` before they change
+  statement of the rule:
+  - the spec lock (`specLockPath`) for an existing story or feature `index.md`, change document
+    (`isChangeFile`) or `allowed-tools.json`;
+  - the backlog lock to create one of those, and for every other path (`blockers.json`,
+    `priority.yaml`, `releases/`, `themes/`, `tasks/`, `updates/`, `.gitignore`, `flow.json`, a
+    removed unit file's directory, …);
+  - no lock for a path outside the backlog, or for a path in `.bl/` when git ignores it or the
+    backlog is no git repository.
+
+  The rule and the ignore check apply to the path that the write changes. bl resolves the links
+  in its directory. It resolves a link at the path itself only for a write through the link
+  (`atomicWriteFile`'s `preserve`, a plugin), since a rename or removal replaces the link.
+
+  The three write chokepoints in `atomic-write.js` call `assertCovered` before they change
   anything: `atomicWriteFile`, `removeBacklogPath` (a file or tree) and `moveIntoBacklog` (a
-  rename, both ends checked). Without the lock, and unless `git check-ignore` says git ignores
-  that path, they throw `<path>: bl writes it without its covering lock (<kind> lock <lock path>)`.
-  Each one then changes the path `assertCovered` returns, the one it checked, and a plugin
-  gets the path its lock covers (`withCoveringLock`), never the link that reached it: a link
-  moved after the check cannot send the write to another file. The check runs in production.
-  Synchronous code, which cannot await a lock wait, takes a spec lock with one try: `withSpecLockNow(path, fn)` (`spec-file.js`, F-126 D7) throws
-  `SpecLockError` naming the holder when another process holds it, and the caller decides
-  what that means. `writeBacklogPathNow` (`atomic-write.js`) writes or removes a path that way,
-  under the caller's backlog lock: `snapshot`'s undo and `bl side`'s exit-time undo leave a
-  busy file and name it, and a migration's `write` op fails and restores. A git call that
-  changes the backlog's index, working tree or refs holds the main sync lock instead
-  (`main-sync.js`, F-126 D1). A test that calls a writer directly holds the covering lock
-  around it (`test/helpers/covering-lock.js`).
+  rename, with both ends checked).
+  - If the caller does not hold the lock, they throw
+    `<path>: bl writes it without its covering lock (<kind> lock <lock path>)`. They do not throw
+    when `git check-ignore` says that git ignores the path.
+  - Each chokepoint then changes the path that `assertCovered` returns, the one it checked. A
+    plugin gets the path that its lock covers (`withCoveringLock`), never the link that reached
+    it. So a link moved after the check cannot send the write to another file.
+  - The check runs in production.
+
+  Synchronous code cannot await a lock wait, so it takes a spec lock with one try:
+  `withSpecLockNow(path, fn)` (`spec-file.js`, F-126 D7). If another process holds the lock, it
+  throws `SpecLockError` and names the holder, and the caller decides what that means.
+  `writeBacklogPathNow` (`atomic-write.js`) writes or removes a path that way, under the
+  caller's backlog lock. `snapshot`'s undo and `bl side`'s exit-time undo leave a busy file and
+  name it. A migration's `write` op fails and restores.
+
+  A git call that changes the backlog's index, working tree or refs holds the main sync lock
+  instead (`main-sync.js`, F-126 D1). A test that calls a writer directly holds the covering
+  lock around it (`test/helpers/covering-lock.js`).
+
 - **The static guard (F-126 D6).** `test/unit/backlog-write-guard.test.js` parses every module
   in `src/` except the chokepoints (`atomic-write.js`, `backlog-commit.js`, `main-sync.js`,
-  `child.js`). It fails on each raw write call (`writeFileSync`, `rmSync`, `renameSync`, an
-  `openSync` or `fs.promises.open` whose flag has `w`, `a` or `+`, …), under any local name
-  (an import alias, a destructured name, `const put = fs.writeFileSync`), and each git call
-  that changes state (`commit`, `reset`, `fetch`, …,
-  or a subcommand it cannot read) that its `ALLOWED` map does not name. It finds git calls by
-  import binding: `git` from `child.js` under any local name, `runChild`, `spawnSyncFiles`
-  and the `child_process` calls with the command `'git'`, and command lines that start with
-  `git ` (`runCommandLine`, `execSync`, a runner's `shell`). A finding names the file, the
-  enclosing function and the call, for example `block.js addEdge writeFileSync`. Write to a
-  tracked backlog path through a chokepoint instead. Add an `ALLOWED` entry only for a call
-  that writes outside the backlog or to a path git ignores, or runs git in a code repository:
-  the key is `"<file under src/> <function> <call>"` and the value is that reason. An entry
-  that matches no call fails the test, so a story that removes a call removes its entry.
-- **Who is on it.** The token writers (`accumulateTokensOnFile`, `accumulateStepTokensOnFile`,
-  `recordStoryTokens`) write through `updateSpecFile`, and `recordFeatureTokens` holds
-  `withSpecLock` across its transcript read and nests `updateSpecFileHeld` in that hold. `feature-cmd.js` `updateFeature` (approve, the run's status, the totals re-read),
-  writes through it too, as do `bl merge F-n`'s fold (`markFeatureMerged`: each story, then the feature, one spec lock at a
-  time inside the backlog lock) and `bl done`'s one write (status, commit, completed and the
-  transcript totals collected inside the hold; a collection failure is non-fatal, a write
-  failure fails `bl done`). `persistLandedCommits` keeps its `read`/`write` seams and runs them
-  inside `withSpecLock`, using `readSpecText` and `specText` (`spec-file.js`) for the same CRLF
-  and fence handling. `bl new` writes no other story's file: its `--depends-on`,
-  `--required-for` and a spec's `depends_on` / `required_for` are edges in `blockers.json`
-  (F-111 D5). A new feature's file is written
-  with `atomicWriteFile`. The run loop's writers (`writeEscalation`, `recordStoryRunFields`) and
-  `bl updates`' (`recordMerge`, `recordOutcome`, `dropStory`, the request write in
-  `requestUpdate`, and `syncUpdates`' refresh and close, which apply their change to the spec
-  read under the lock, inside the backlog lock) write through it too; a new update story is
-  written with `atomicWriteFile`, and `dropStory`'s restore after a failed PR close with
-  `atomicWriteFile` inside the story's spec lock. `bl new`'s
-  feature links (each story's `feature:` in `bl new --feature`), `bl attach`'s and `bl side`'s
-  `markSideStory` write through it too, each inside the backlog lock; `bl new`'s new story, component, theme and
-  epic files, and the snapshot restores of `bl side`, `bl task` and `settleRecord`, are written
-  with `atomicWriteFile`, each under its covering lock. No spec in `src/` is written in place any
-  more (`bl new --from` stages its stories in `.bl/tmp/new-<pid>/` and moves them into place
-  with `moveIntoBacklog`).
+  `child.js`). It fails on each call of these two kinds that its `ALLOWED` map does not name:
+  - a raw write call (`writeFileSync`, `rmSync`, `renameSync`, an `openSync` or
+    `fs.promises.open` whose flag has `w`, `a` or `+`, …), under any local name (an import
+    alias, a destructured name, `const put = fs.writeFileSync`);
+  - a git call that changes state (`commit`, `reset`, `fetch`, …, or a subcommand that it cannot
+    read).
+
+  It finds git calls by import binding: `git` from `child.js` under any local name, `runChild`,
+  `spawnSyncFiles` and the `child_process` calls with the command `'git'`. It also finds command
+  lines that start with `git ` (`runCommandLine`, `execSync`, a runner's `shell`). A finding
+  names the file, the enclosing function and the call, for example
+  `block.js addEdge writeFileSync`.
+
+  Write to a tracked backlog path through a chokepoint instead. Add an `ALLOWED` entry only for
+  a call that writes outside the backlog or to a path that git ignores, or that runs git in a
+  code repository. The key is `"<file under src/> <function> <call>"`, and the value is that
+  reason. An entry that matches no call fails the test. So a story that removes a call removes
+  its entry.
+
+- **Who is on it.** These writers write a spec through `updateSpecFile`:
+  - the token writers (`accumulateTokensOnFile`, `accumulateStepTokensOnFile`,
+    `recordStoryTokens`). `recordFeatureTokens` holds `withSpecLock` across its transcript read,
+    and nests `updateSpecFileHeld` in that hold;
+  - `feature-cmd.js` `updateFeature`: approve, the run's status and the totals re-read;
+  - `bl merge F-n`'s fold (`markFeatureMerged`): each story, then the feature, one spec lock at a
+    time inside the backlog lock;
+  - `bl done`'s one write. It collects the status, commit, completed date and transcript totals
+    inside the hold. A collection failure is non-fatal; a write failure fails `bl done`;
+  - `bl run`'s writers (`writeEscalation`, `recordStoryRunFields`);
+  - the writers of `bl updates`: `recordMerge`, `recordOutcome`, `dropStory`, the request write
+    in `requestUpdate`, and the refresh and close of `syncUpdates`. The refresh and close apply
+    their change to the spec read under the lock, inside the backlog lock;
+  - `bl new`'s feature links (each story's `feature:` in `bl new --feature`), and the
+    `markSideStory` of `bl attach` and `bl side`, each inside the backlog lock.
+
+  `persistLandedCommits` keeps its `read`/`write` seams and runs them inside `withSpecLock`. It
+  uses `readSpecText` and `specText` (`spec-file.js`) for the same CRLF and fence handling.
+
+  `bl new` writes no other story's file. Its `--depends-on` and `--required-for`, and a spec's
+  `depends_on` / `required_for`, are edges in `blockers.json` (F-111 D5).
+
+  bl writes these files with `atomicWriteFile`:
+  - a new feature's file, and a new update story;
+  - `dropStory`'s restore after a failed PR close, inside the story's spec lock;
+  - `bl new`'s new story, component, theme and epic files, each under its covering lock;
+  - the snapshot restores of `bl side`, `bl task` and `settleRecord`, each under its covering
+    lock.
+
+  No code in `src/` writes a spec in place any more. `bl new --from` stages its stories in
+  `.bl/tmp/new-<pid>/` and moves them into place with `moveIntoBacklog`.
+
   A change document and `allowed-tools.json` take a spec lock of their own too (F-126 D2, D3).
-  Every change document write is in `change-doc.js`: `updateChange` (async, through
-  `withSpecLock`), `updateChangeHeld` for a caller already in that hold, and `ensureChange`,
-  `recordMerge`, `addGateLine` and `restoreChange` on those or on `withSpecFileLock`.
-  `ensureAllowedTools` reads, regenerates and writes in `withSpecFileLock`. `withSpecFileLock`
-  (`spec-file.js`) is the spec lock for an existing file, and the backlog lock with the spec lock
-  inside it for a file it creates, as for a new spec file.
-  A format or lint plugin rewrites a backlog file in place, so it runs on one backlog file per
+  - Every change document write is in `change-doc.js`: `updateChange` (async, through
+    `withSpecLock`), `updateChangeHeld` for a caller already in that hold, and `ensureChange`,
+    `recordMerge`, `addGateLine` and `restoreChange` on those or on `withSpecFileLock`.
+  - `ensureAllowedTools` reads, regenerates and writes in `withSpecFileLock`.
+  - `withSpecFileLock` (`spec-file.js`) is the spec lock for an existing file. For a file that it
+    creates, it is the backlog lock with the spec lock inside it, as for a new spec file.
+
+  A format or lint plugin rewrites a backlog file in place. So it runs on one backlog file per
   process, inside that file's covering lock (`runPluginLocked`, `spec-file.js`, through
-  `withCoveringLock`, `write-lock.js`, F-126 D4): `bl sync --commit`'s format pass and
-  `bl format` / `bl lint`. An existing spec file takes its spec lock. Any other file (a
-  `tasks/T1-x.md`, a spec file that does not exist yet) takes the backlog lock and then the
-  spec lock keyed by its own path. Only
-  `bl report`'s pages, outside the backlog or under its ignored `reports/`, are formatted in one
-  batch with no lock (`formatBacklogMarkdown`).
-- **A restore keeps the session's tokens.** When a review-verify session fails, the loop puts
-  back the unit file it snapshotted before the session with `restoreKeepingTokens`
-  (`feature-run.js`): the snapshot's frontmatter and body, under the file's covering lock
-  (`withSpecFileLock`) and through `atomicWriteFile`, with the current file's `tokens_*` keys (`tokens_headless_*`,
-  `tokens_updated`, `tokens_by_step`) and line end kept, since the failed session already
-  recorded its usage on that file. A current file the session deleted, emptied or left without a
-  readable `---` block gets the snapshot back whole; a snapshot that is not a spec is refused and
-  the current file left alone. The change document beside it is put back with `restoreChange`
-  (`change-doc.js`, under its covering lock), and the quarantine runs, whatever an earlier
-  restore threw; the round aborts naming each failure. A round that `bl stop` stops puts back the
-  change document alone, the same way: the unit file keeps the escalation the stop wrote.
+  `withCoveringLock`, `write-lock.js`, F-126 D4). This applies to `bl sync --commit`'s format
+  pass and to `bl format` / `bl lint`.
+  - An existing spec file takes its spec lock.
+  - Any other file (a `tasks/T1-x.md`, a spec file that does not exist yet) takes the backlog
+    lock, and then the spec lock keyed by its own path.
+  - Only `bl report`'s pages, outside the backlog or under its ignored `reports/`, are formatted
+    in one batch with no lock (`formatBacklogMarkdown`).
+
+- **A restore keeps the session's tokens.** If a review-verify session fails, the review round
+  puts back the unit file that it snapshotted before the session, with `restoreKeepingTokens`
+  (`feature-run.js`).
+  - It writes the snapshot's frontmatter and body, under the file's covering lock
+    (`withSpecFileLock`) and through `atomicWriteFile`.
+  - It keeps the current file's `tokens_*` keys (`tokens_headless_*`, `tokens_updated`,
+    `tokens_by_step`) and line end, since the failed session already recorded its usage on that
+    file.
+  - If the session deleted or emptied the current file, or left it without a readable `---`
+    block, the file gets the snapshot back whole.
+  - If the snapshot is not a spec, the restore refuses it and leaves the current file alone.
+  - It puts back the change document beside the file with `restoreChange` (`change-doc.js`,
+    under its covering lock).
+  - The quarantine runs, whatever an earlier restore threw. The round aborts and names each
+    failure.
+
+  If `bl stop` stops a round, the round puts back the change document alone, the same way. The
+  unit file keeps the escalation that the stop wrote.
 
 ## Story Frontmatter
 
@@ -581,7 +660,7 @@ completed: 2026-03-15 # date marked done (YYYY-MM-DD)
 ---
 ```
 
-`commit:` records the merge SHA(s) that landed the story. Two shapes:
+`commit:` records the merge SHA(s) that landed the story. It has two shapes:
 
 ```yaml
 # single-repo story (the common case) — bare string
@@ -595,20 +674,19 @@ commit:
   containers: 7fa12e0
 ```
 
-`bl merge` picks the shape automatically: one repo cleaned → string;
-two or more → map. A story merges its one repo, so its `commit:` is a
-string; a feature's is a map once it spans two repos. While a feature merge
-is in progress (a secondary failed), `commit:` holds the map of repos landed so far;
-each landing re-reads that map under the backlog lock, adds its SHA and
-replaces the file atomically, inside its spec lock (`persistLandedCommits` in `cleanup.js`), so
-concurrent merges keep each other's SHAs; mark-done collapses the union.
-A repo whose story branch is gone locally (merged on the forge, or landed
-by an earlier run) records the tip of its `main` after the push, unless an
-earlier run already recorded its merge SHA.
-`bl done`
-defaults to the string form; pass
-`--commit <repo>=<sha>` (repeatable) to write a map explicitly. The
-positional `[commit-hash]` and `--commit` are mutually exclusive.
+`bl merge` picks the shape itself: a string when it cleaned one repo, a map when it cleaned two or
+more. A story merges its one repo, so its `commit:` is a string. A feature's `commit:` is a map
+once the feature spans two repos.
+
+- While a feature merge is in progress (a secondary repo failed), `commit:` holds the map of the
+  repos landed so far. Each landing re-reads that map under the backlog lock, adds its SHA and
+  replaces the file in one atomic write, inside its spec lock (`persistLandedCommits` in
+  `cleanup.js`). So concurrent merges keep each other's SHAs. Mark-done collapses the union.
+- A repo whose story branch is gone locally (merged on the forge, or landed by an earlier run)
+  records the tip of its `main` after the push. It does not if an earlier run already recorded
+  its merge SHA.
+- `bl done` writes the string form by default. Pass `--commit <repo>=<sha>` (repeatable) to write
+  a map. The positional `[commit-hash]` and `--commit` cannot be used together.
 
 ### Field Reference
 
@@ -628,7 +706,7 @@ positional `[commit-hash]` and `--commit` are mutually exclusive.
 | `completed`         | on done  | `YYYY-MM-DD`                                   | Set by the log's entry to `done` or `superseded`                                                                  |
 | `feature`           | no       | `F-<n>`                                        | The feature this story is part of (see **Features**); set by `bl new --feature`                                   |
 | `batch`             | no       | `B-<n>`                                        | The story batch this story is part of (see **Story batches**); never with `feature`                               |
-| `found_by`          | no       | `F-<n>` or `S-<n>`                             | The unit whose work found a side story; set by `bl side --from` (F-48 D2)                                         |
+| `found_by`          | no       | `F-<n>` or `S-<n>`                             | The work unit whose work found a side story; set by `bl side --from` (F-48 D2)                                    |
 | `review_rounds_max` | no       | integer                                        | Written by a story run; caps review rounds                                                                        |
 | `update_repo`       | no       | forge slug, e.g. `acme/tools`                  | Written by `bl updates sync`; with `update_branch` the key of an update story                                     |
 | `update_branch`     | no       | branch name, e.g. `renovate/koa-3.x`           | Written by `bl updates sync`                                                                                      |
@@ -653,29 +731,35 @@ paths: ['src/**', 'test/**'] # optional: globs relative to the repo root (F-61 D
 ---
 ```
 
-A component is a label, never a container: it has no `status`, `points` or
-`completed`, and `bl done` refuses it. `bl new --component --repo <r> --title <t>
-[--paths <glob,…>] [--home]` creates one with the next number (`bl next-id component`); every
-registered repo has exactly one home component, and `bl new --repo <r>` with no
-component, like `bl updates sync`, files a story there.
+A component is a label, never a container. It has no `status`, `points` or `completed`, and
+`bl done` refuses it. `bl new --component --repo <r> --title <t> [--paths <glob,…>] [--home]`
+creates one with the next number (`bl next-id component`). Every registered repo has exactly one
+home component. `bl new --repo <r>` with no component files a story there, and so does
+`bl updates sync`.
 
-A component is an organizational map (F-61): a name for a real code boundary that
-people and agents read, not something `bl` enforces. `paths:` is optional: absent
-means "not mapped", never an implied `**`, and `bl new --component` without `--paths`
-writes no `paths:` key. When present it lists the globs, relative to the component's
-repo root, that the component covers, matched with Node's `path.matchesGlob` (a leading-dot segment
-included, so `**` covers `.github/`). It is a YAML sequence like every list key; a glob
-that starts with `*` or holds `[`, `{` or `,` must be quoted in it (`bl new --component`
-writes the list with `serializeFrontmatter`, which quotes what YAML needs). `parsePathList` (`story.js`) takes the parsed
-value and keeps an empty member (a bare `-` is `""`), a member that is not a string (a
-nested list or mapping) and a `paths:` that is not a list, for `bl validate` to report and
-no glob to match. Two components may overlap: ownership is not exclusive. `bl
-validate` reports `component-paths` for an entry that is empty, not a string,
-absolute or has a `..` or `.` segment (`git diff` names no path `./src/…`, so such an entry
-would never match); a missing or empty list is no finding. `--paths <glob,…>` on the
-command line splits at each comma outside a `{…}` group (`splitGlobs`), and every entry
-is checked the same way. A story filed under the wrong component moves with
-`bl move <S-n>… <C-n>` (see `bl move` below), never a hand edit of `component:`.
+A component is an organizational map (F-61): a name for a real code boundary that people and
+agents read. `bl` does not enforce it.
+
+- **`paths:` is optional.** If it is absent, the component is "not mapped", never an implied
+  `**`. `bl new --component` without `--paths` writes no `paths:` key.
+- **What `paths:` holds.** It lists the globs that the component covers, relative to the
+  component's repo root. bl matches them with Node's `path.matchesGlob`, with a leading-dot
+  segment included, so `**` covers `.github/`.
+- **Its shape.** It is a YAML sequence, like every list key. A glob that starts with `*` or holds
+  `[`, `{` or `,` must be quoted in it. `bl new --component` writes the list with
+  `serializeFrontmatter`, which quotes what YAML needs.
+- **What the reader keeps.** `parsePathList` (`story.js`) takes the parsed value. It keeps an
+  empty member (a bare `-` is `""`), a member that is not a string (a nested list or mapping)
+  and a `paths:` that is not a list. `bl validate` reports them, and they match no glob.
+- **Overlap.** Two components may overlap: ownership is not exclusive.
+- **The check.** `bl validate` reports `component-paths` for an entry that is empty, not a
+  string, absolute, or has a `..` or `.` segment. (`git diff` names no path `./src/…`, so such an
+  entry would never match.) A missing or empty list is no finding.
+- **On the command line.** `--paths <glob,…>` splits at each comma outside a `{…}` group
+  (`splitGlobs`), and bl checks every entry the same way.
+
+A story filed under the wrong component moves with `bl move <S-n>… <C-n>` (see `bl move`
+below), never with a hand edit of `component:`.
 
 ## Themes and Epics
 
