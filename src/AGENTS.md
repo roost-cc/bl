@@ -1215,9 +1215,10 @@ An entry's `from` is the `to` of the entry before it.
      repair.
   4. A hold on the verb's nominal path.
 
-  `bl merge F-n` and `prepareFeatureWorktree` check each open story of the feature with
-  `logRefusal` before the first repo step: with an entry to `done` at a merge, and to
-  `in_progress` at a start.
+  `bl merge F-n` and `prepareFeatureWorktree` check with `logRefusal`, before the first repo
+  step, each story of the feature that the command writes an entry for (`STORY_ENTRY`): at a
+  merge, `done` on each story that is not done; at a start, `in_progress` on each unstarted
+  story only, since a start writes no entry on a story that has started.
 
 - **A work unit with no log** (before `bl/scripts/migrate-transitions.js` runs) reads as the
   log that the migration would write, `legacyLog(kind, fm, change)`. That log is `draft` at

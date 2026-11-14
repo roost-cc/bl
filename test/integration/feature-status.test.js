@@ -272,6 +272,123 @@ test('bl merge refuses a feature whose story has a malformed transitions: before
   }
 });
 
+test("bl merge, bl implement and bl run check each story's log that the command writes, before any repo step (S-1580)", () => {
+  const at = (n) => `2026-11-0${n}T00:00:00Z`;
+  const started = [
+    { at: at(1), to: 'draft', by: 'new' },
+    { at: at(2), to: 'in_progress', by: 'force' },
+  ];
+  const reviewed = [
+    ...started,
+    { at: at(3), to: 'in_review', by: 'run' },
+    { at: at(4), to: 'ready_for_merge', by: 'review' },
+  ];
+  const unstarted = [
+    { at: at(1), to: 'draft', by: 'new' },
+    { at: at(2), to: 'refined', by: 'refine' },
+  ];
+  /** `log` with entry 2's `by` removed: a fault no write repairs. */
+  const noBy = (log) => log.map((e, i) => (i === 1 ? { at: e.at, to: e.to } : e));
+  const done = [...reviewed, { at: at(5), to: 'done', by: 'merge' }];
+  // [name, command, S-2's frontmatter, refused]. The feature and S-1 are clean.
+  const cases = [
+    [
+      'bl merge F-n refuses a story whose log has no by, before any repo lands',
+      'merge',
+      { transitions: noBy(reviewed) },
+      true,
+    ],
+    [
+      'bl implement F-n refuses an unstarted story whose log bl validate rejects, before a worktree',
+      'implement',
+      { transitions: noBy(unstarted) },
+      true,
+    ],
+    [
+      'bl run F-n refuses an unstarted story whose log bl validate rejects, before a worktree',
+      'run',
+      { transitions: noBy(unstarted) },
+      true,
+    ],
+    [
+      'bl merge F-n ignores a closed story whose log is faulty',
+      'merge',
+      { transitions: noBy(done), completed: '2026-11-05' },
+      false,
+    ],
+    [
+      'bl merge F-n goes ahead on an open story whose only fault is a stale completed:',
+      'merge',
+      { transitions: reviewed, completed: '2026-10-01' },
+      false,
+    ],
+    [
+      'bl run F-n goes ahead when a story it does not start has a stale completed:',
+      'run',
+      { transitions: reviewed, completed: '2026-10-01' },
+      false,
+    ],
+    [
+      'bl implement F-n goes ahead when a story it does not start has a stale completed:',
+      'implement',
+      { transitions: reviewed, completed: '2026-10-01' },
+      false,
+    ],
+  ];
+  const backlog = (verb, s2) =>
+    mkTempBacklog({
+      repos: REPOS,
+      components: [HOME],
+      stories: [
+        { id: 'S-1', component: 'C00', title: 'One', dirSuffix: 'one', feature: 'F-1', transitions: started },
+        { id: 'S-2', component: 'C00', title: 'Two', dirSuffix: 'two', feature: 'F-1', ...s2 },
+      ],
+      features: [
+        {
+          id: 'F-1',
+          title: 'Feat',
+          dirSuffix: 'feat',
+          transitions: verb === 'merge' ? reviewed : started,
+          stories: ['S-1', 'S-2'],
+          branch: 'f1-feat',
+        },
+      ],
+    });
+  // What the command prints from its temp backlog, with that backlog's path taken out.
+  const output = (dir, r) => `${r.status}\n${r.stdout}\n${r.stderr}`.replaceAll(dir, '<dir>');
+  for (const [name, verb, s2, refused] of cases) {
+    const bad = backlog(verb, s2);
+    try {
+      const files = ['stories/S1-one/index.md', 'stories/S2-two/index.md', 'features/F1-feat/index.md'];
+      const before = files.map((f) => readFileSync(join(bad.dir, f), 'utf8'));
+      const r = runBl([verb, 'F-1'], { cwd: bad.dir });
+      if (refused) {
+        assert.equal(r.status, 1, `${name}\n${r.stdout}\n${r.stderr}`);
+        assert.match(r.stderr, /^S-2 has a transitions: log that bl validate rejects/m, name);
+        assert.match(r.stderr, /transitions entry 2 has no "by" verb/, name);
+        assert.doesNotMatch(`${r.stdout}${r.stderr}`, /^(Repos|Branch|Worktree)\s+:/m, name);
+        assert.deepEqual(
+          files.map((f) => readFileSync(join(bad.dir, f), 'utf8')),
+          before,
+          name,
+        );
+        continue;
+      }
+      // Goes ahead: the command does what it does on the same backlog with S-2's log clean.
+      assert.doesNotMatch(r.stderr, /bl validate rejects/, `${name}\n${r.stderr}`);
+      const clean = backlog(verb, { transitions: s2.completed === '2026-11-05' ? done : reviewed });
+      try {
+        const want = runBl([verb, 'F-1'], { cwd: clean.dir });
+        assert.equal(output(bad.dir, r), output(clean.dir, want), name);
+      } finally {
+        clean.cleanup();
+      }
+    } finally {
+      bad.cleanup();
+    }
+  }
+});
+
 test('bl validate reports feature link drift and verification-only titles', () => {
   const { dir, cleanup } = mkTempBacklog({
     repos: REPOS,
