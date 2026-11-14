@@ -26,7 +26,8 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync, writeFi
 import { execSync } from 'child_process';
 import { delimiter, dirname, join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { main as cleanupMain } from '../../src/cleanup.js';
+import { main as cleanupMain, installCommand } from '../../src/cleanup.js';
+import { tail } from '../../src/command-output.js';
 import { endTabTitle } from '../../src/tab-title.js';
 import { fakeTmux, renamedTitles } from '../helpers/fake-tmux.js';
 import { parseFrontmatter } from '../../src/config.js';
@@ -1114,4 +1115,15 @@ test('concurrent no-branch cleanup keeps the SHA written after its initial story
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
   assert.equal(logStatusOf('story', fm), 'done');
   assert.equal(fm.commit, 'exact111', 'the SHA recorded after the first read must survive the no-branch tip');
+});
+
+test('installCommand follows the lockfile; tail keeps the last lines', () => {
+  const dir = mkTempDir('bl-wt-');
+  assert.equal(installCommand(dir), null);
+  writeFileSync(join(dir, 'package-lock.json'), '{}');
+  assert.equal(installCommand(dir), 'npm ci');
+  writeFileSync(join(dir, 'pnpm-lock.yaml'), '');
+  assert.equal(installCommand(dir), 'pnpm install --frozen-lockfile');
+  assert.equal(tail('a\nb\nc\n\n', 2), 'b\nc');
+  assert.equal(tail('a', 30), 'a');
 });
