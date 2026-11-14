@@ -44,7 +44,7 @@ const T0 = '2026-11-01T00:00:00Z';
 
 /** A frontmatter whose log ends at `status` (a synthesized entry, so its edge is not checked). */
 const at = (kind, status) => ({
-  [`${kind}_id`]: kind === 'story' ? 'S-5' : kind === 'feature' ? 'F-5' : 'T-5',
+  [`${kind}_id`]: { story: 'S-5', feature: 'F-5', batch: 'B-5', task: 'T-5' }[kind],
   added: '2026-11-01',
   transitions: [{ at: T0, to: status, by: 'new', note: 'migrated' }],
 });
@@ -55,7 +55,7 @@ const at = (kind, status) => ({
 
 test('applyTransition records every edge of the template table, once each', () => {
   let count = 0;
-  for (const kind of ['story', 'feature', 'task']) {
+  for (const kind of Object.keys(flow.types)) {
     for (const { from, to, by } of flow.edges(kind)) {
       const fm = from == null ? { title: 'x' } : at(kind, from);
       const before = structuredClone(fm.transitions ?? []);
@@ -81,6 +81,24 @@ test('the first entry sets added; an entry to a terminal status sets completed (
   applyTransition(flow, 'task', task, 'done', { by: 'done', at: AT });
   assert.equal(task.done, '2026-11-09');
   assert.equal(task.completed, undefined);
+});
+
+test('a batch that bl merge closes or bl supersede ends gets completed:, and no undefined: key', () => {
+  for (const [to, by] of [
+    ['done', 'merge'],
+    ['superseded', 'supersede'],
+  ]) {
+    const fm = at('batch', 'approved');
+    applyTransition(flow, 'batch', fm, 'in_progress', { by: 'implement', at: AT });
+    applyTransition(flow, 'batch', fm, to, { by, at: AT });
+    assert.equal(fm.completed, '2026-11-09', `${to} by ${by}`);
+    assert.equal(Object.hasOwn(fm, 'undefined'), false, `${to} by ${by}`);
+    assert.deepEqual(findings('batch', fm), [], `${to} by ${by}`);
+  }
+});
+
+test('every type in flow.json has a completed field', () => {
+  for (const kind of Object.keys(flow.types)) assert.ok(COMPLETED_KEY[kind], kind);
 });
 
 test('an edge the table lacks throws FlowError and leaves fm unchanged', () => {
@@ -849,7 +867,7 @@ test('a log written before refine had a during stays valid, and the writer refus
 });
 
 test('by: force goes between any two different statuses of the type, terminal ones included (F-119 D2)', () => {
-  for (const kind of ['story', 'feature', 'task']) {
+  for (const kind of Object.keys(flow.types)) {
     const { statuses, terminal } = flow.typeOf(kind);
     // A valid log that ends at `from`: the initial status, then a force there.
     const ending = (from) => ({
