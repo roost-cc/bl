@@ -107,6 +107,16 @@ terminal, else paged ($PAGER → less → more).`);
   await showReadOnly(page.indexPath, page.text, 'bl view', render);
 }
 
+/**
+ * The bytes of the copy: `text`, or the file at `indexPath` byte for byte when `text` is null.
+ * @param {string} indexPath
+ * @param {string | null} text
+ * @returns {Buffer}
+ */
+function copyBytes(indexPath, text) {
+  return text === null ? readFileSync(indexPath) : Buffer.from(text);
+}
+
 /** How long the source must be quiet before the copy is refreshed, in ms. */
 const SETTLE_MS = 100;
 
@@ -133,13 +143,13 @@ function placeCopy(copy, content) {
  * rename is still followed. Returns the function that stops following.
  * @param {string} indexPath
  * @param {string} copy
- * @param {string | Buffer} content  what the copy holds now
+ * @param {Buffer} content  what the copy holds now
  * @param {() => string | null} render
  * @param {string} cmd
  * @returns {() => void}
  */
 function follow(indexPath, copy, content, render, cmd) {
-  let last = Buffer.from(content);
+  let last = content;
   let gone = false;
   let timer;
   const refresh = () => {
@@ -150,8 +160,7 @@ function follow(indexPath, copy, content, render, cmd) {
     }
     gone = false;
     try {
-      const text = render();
-      const next = text === null ? readFileSync(indexPath) : Buffer.from(text);
+      const next = copyBytes(indexPath, render());
       if (next.equals(last)) return;
       placeCopy(copy, next);
       last = next;
@@ -214,7 +223,7 @@ export async function showReadOnly(indexPath, text, cmd, render = () => text) {
     const parent = join(tmp, basename(dirname(indexPath)));
     mkdirSync(parent);
     copy = join(parent, basename(indexPath));
-    content = text ?? readFileSync(indexPath);
+    content = copyBytes(indexPath, text);
     placeCopy(copy, content);
   } catch (err) {
     if (tmp) removeCopy(tmp, cmd);
