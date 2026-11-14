@@ -4,10 +4,10 @@
  * This implementation uses the real 'gemini' CLI.
  */
 
-import { spawnSync } from 'child_process';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { writeFileSync, unlinkSync } from 'fs';
+import { runChild } from '../child.js';
 import { AgentProvider, agentEnv } from './provider.js';
 
 export class GeminiProvider extends AgentProvider {
@@ -89,7 +89,9 @@ export class GeminiProvider extends AgentProvider {
     return null;
   }
 
-  spawn({
+  // Gemini has no headless mode, so every session waits synchronously through
+  // `runChild` (F-128 A3) and `signal` has nothing to end.
+  async spawn({
     mode,
     name,
     prompt,
@@ -102,7 +104,7 @@ export class GeminiProvider extends AgentProvider {
     scopes = {},
     headless = false,
     schema = null,
-    run = spawnSync,
+    run = runChild,
   }) {
     // Gemini has no structured output (F-68 D1): a step that needs an outcome
     // is refused before anything runs, and nothing is read from text.

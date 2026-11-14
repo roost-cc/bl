@@ -56,8 +56,13 @@ export function mkTempDir(prefix, parent = tmpdir()) {
 }
 
 // Listening for a signal replaces its default of ending the process, so
-// once the dirs are gone, re-raise it unless another listener handles it.
+// once the dirs are gone, re-raise it. When another listener handles the
+// signal, that listener decides whether the process ends: `exitOnSignal`
+// ends it through `process.exit`, whose `exit` listener removes the dirs, and
+// `takeInterrupts` lets `bl run`'s loop go on and save its stopped state in
+// them (F-128 D8).
 function onSignal(signal) {
+  if (process.listenerCount(signal) > 1) return;
   removeTrackedDirs();
   for (const s of TERMINATING_SIGNALS) process.removeListener(s, onSignal);
   if (process.listenerCount(signal) === 0) process.kill(process.pid, signal);

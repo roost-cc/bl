@@ -1,8 +1,8 @@
 // `bl stop <id>` (S-1335, F-87 D7a): a run state that is not `running` is
 // refused. For a `running` one, the run lock's holder decides what it does.
 // No holder: the state is marked stopped. A live holder gets the stop
-// request, and `bl stop` waits for the lock to go. It takes no work unit lock
-// (F-122 D2).
+// request and then SIGTERM (F-128 D9), and `bl stop` waits for the lock to
+// go. It takes no work unit lock (F-122 D2).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs, { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
@@ -49,11 +49,22 @@ function saveState(config, status, step = 'implement') {
   return state;
 }
 
-/** Run `stopRun` with its lines collected. */
+/**
+ * Run `stopRun` with its lines collected. Its `kill` does nothing unless a
+ * test passes one: the holder is this test process, which a SIGTERM would end.
+ */
 async function stop(config, opts = {}) {
   const lines = [];
-  const code = await stopRun({ config, id: 'F-1', err: (l) => lines.push(l), pollMs: 20, ...opts });
+  const code = await stopRun({ config, id: 'F-1', err: (l) => lines.push(l), pollMs: 20, kill: () => {}, ...opts });
   return { code, lines };
+}
+
+/** A `kill` that throws a failure with `code`, after `then()`. */
+function failingKill(code, then = () => {}) {
+  return () => {
+    then();
+    throw Object.assign(new Error(`${code}: kill failed`), { code });
+  };
 }
 
 /** F-1's whole stop requests: `[{ path, request }]`. */
@@ -134,7 +145,65 @@ test('stop_live_holder: bl stop writes the request and waits; the run stops and 
   }
 });
 
-test('stop_timeout: a run that still holds its lock after the wait: exit 1, the request stays, no signal', async () => {
+test('stop_signal: bl stop sends SIGTERM to the holder once, after it wrote the request', async () => {
+  const { cleanup, config } = fixture();
+  const holder = holdRun(config);
+  try {
+    const state = saveState(config, 'running');
+    const calls = [];
+    const kill = (pid, signal) => {
+      calls.push({ pid, signal, requests: requests(config).length });
+      // What the run does with the SIGTERM: mark stopped, save, let the lock go.
+      markStopped(state, 'stopped by bl stop at implement', [process.pid]);
+      saveRunState(config, state);
+      holder.release();
+    };
+    assert.deepEqual(await stop(config, { kill }), {
+      code: 0,
+      lines: ['stopped F-1 at implement; resume: bl run F-1 --resume'],
+    });
+    assert.deepEqual(calls, [{ pid: holder.pid, signal: 'SIGTERM', requests: 1 }], 'once, with the request written');
+  } finally {
+    holder.release();
+    cleanup();
+  }
+});
+
+test('stop_signal_gone: a holder that is gone (ESRCH) prints nothing; the wait finds the lock free', async () => {
+  const { cleanup, config } = fixture();
+  const holder = holdRun(config);
+  try {
+    saveState(config, 'running', 'pr');
+    const kill = failingKill('ESRCH', () => holder.release());
+    assert.deepEqual(await stop(config, { kill }), {
+      code: 0,
+      lines: ['F-1 ended running at pr before it read the stop request'],
+    });
+  } finally {
+    holder.release();
+    cleanup();
+  }
+});
+
+test('stop_signal_failed: any other kill failure is one line, and the wait goes on', async () => {
+  const { cleanup, config } = fixture();
+  const holder = holdRun(config);
+  try {
+    saveState(config, 'running');
+    const { code, lines } = await stop(config, { kill: failingKill('EPERM'), waitMs: 100 });
+    assert.equal(code, 1);
+    assert.deepEqual(lines, [
+      `bl stop: could not signal pid ${holder.pid}: EPERM: kill failed`,
+      `stop requested: F-1 (pid ${holder.pid}) stops at its next check`,
+    ]);
+    assert.equal(requests(config).length, 1, 'the request stays');
+  } finally {
+    holder.release();
+    cleanup();
+  }
+});
+
+test('stop_timeout: a run that still holds its lock after the wait: exit 1, the request stays', async () => {
   const { cleanup, config } = fixture();
   const holder = holdRun(config);
   try {
@@ -143,7 +212,6 @@ test('stop_timeout: a run that still holds its lock after the wait: exit 1, the 
     assert.equal(code, 1);
     assert.deepEqual(lines, [`stop requested: F-1 (pid ${holder.pid}) stops at its next check`]);
     assert.equal(requests(config).length, 1, 'the request stays');
-    process.kill(holder.pid, 0); // the holder (this test) still runs: bl stop sent it no signal
   } finally {
     holder.release();
     cleanup();

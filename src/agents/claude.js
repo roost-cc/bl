@@ -2,7 +2,6 @@
  * claude.js — Claude Code implementation of AgentProvider.
  */
 
-import { spawnSync } from 'child_process';
 import { randomUUID } from 'crypto';
 import { join, dirname } from 'path';
 import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
@@ -11,17 +10,13 @@ import { fileURLToPath } from 'url';
 import { clockTime, matchLimit } from './limit.js';
 import { AgentProvider, agentEnv, windowsCapacity } from './provider.js';
 import { loadHookDenyMessage } from '../tool-guide.js';
-import { exitStatus } from '../child.js';
+import { exitStatus, runChild, runLongChild } from '../child.js';
 import { checkModel, isPlainObject } from '../config.js';
 import { checkEffort } from '../effort.js';
-import { runCapacityHelper } from './capacity-helper.js';
-import { CLAUDE_CAPACITY_TIMEOUT_MS } from './claude-capacity.js';
+import { CLAUDE_CAPACITY_TIMEOUT_MS, readClaudeUsage } from './claude-capacity.js';
 import { checkLocalConfiguration, localServerCapacity, localSpawnEnv } from './local.js';
 import { outcomeFor, withExitFault } from '../outcome.js';
 import { followJsonl, oneLine } from './follow.js';
-
-// The script that asks Claude Code's OAuth usage endpoint (see its JSDoc).
-const CAPACITY_HELPER = fileURLToPath(new URL('./claude-capacity.js', import.meta.url));
 
 // Resolve Claude Code's config directory the same way the CLI does: honour
 // `CLAUDE_CONFIG_DIR` when set, else fall back to `~/.claude`. Hardcoding
@@ -429,7 +424,7 @@ function claudeWindowName({ kind, scope }) {
  *
  * @param {unknown} body
  * @param {string|null} model
- * @returns {ReturnType<AgentProvider["capacity"]>}
+ * @returns {Awaited<ReturnType<AgentProvider["capacity"]>>}
  */
 export function claudeCapacity(body, model) {
   const unknown = (scope, message) => ({ state: 'unknown', scope, until: null, windows: [], message });
@@ -489,24 +484,23 @@ export class ClaudeProvider extends AgentProvider {
 
   /**
    * The configuration's quota, read from Claude Code's OAuth usage endpoint
-   * by `claude-capacity.js` with the token in
-   * `$CLAUDE_CONFIG_DIR/.credentials.json` (never refreshed), and mapped by
-   * `claudeCapacity()` for `model` (S-1143). Any failure (no credentials, an
-   * expired token, a non-200 answer, the deadline, a body that is not JSON,
-   * output that is not the helper's) is `unknown` with the reason; never
-   * throws. `run`, `env` and `timeoutMs` are for tests. The helper is a Node
-   * child (`runCapacityHelper`), so its answer comes back through a file.
+   * in the bl process by `readClaudeUsage` (`claude-capacity.js`) with the
+   * token in `$CLAUDE_CONFIG_DIR/.credentials.json` (never refreshed), and
+   * mapped by `claudeCapacity()` for `model` (S-1143). Any failure (no
+   * credentials, an expired token, a non-200 answer, the deadline, a body
+   * that is not JSON, a reader that rejects) is `unknown` with the reason;
+   * never rejects. `read`, `env` and `timeoutMs` are for tests.
    */
-  capacity({ model, run, env, timeoutMs = CLAUDE_CAPACITY_TIMEOUT_MS } = {}) {
+  async capacity({ model, env, timeoutMs = CLAUDE_CAPACITY_TIMEOUT_MS, read = readClaudeUsage } = {}) {
     const unknown = (message) => ({ state: 'unknown', scope: 'model', until: null, windows: [], message });
     const credentials = join(claudeConfigDir(env ?? process.env), '.credentials.json');
-    const { out, reason } = runCapacityHelper(
-      CAPACITY_HELPER,
-      ['--credentials', credentials, '--timeout', String(timeoutMs)],
-      { run, env, timeoutMs },
-    );
-    if (!out) return unknown(`claude capacity read failed (${reason})`);
-    if (!out.ok) return unknown(String(out.error ?? 'claude capacity read failed'));
+    let out;
+    try {
+      out = await read({ credentials, timeoutMs });
+    } catch (error) {
+      return unknown(`claude capacity read failed (${error?.message ?? error})`);
+    }
+    if (!out?.ok) return unknown(String(out?.error ?? 'claude capacity read failed'));
     return claudeCapacity(out.body, model ?? null);
   }
 
@@ -749,7 +743,7 @@ export class ClaudeProvider extends AgentProvider {
     return agentEnv({ headless, backlogRoot });
   }
 
-  spawn({
+  async spawn({
     mode,
     name,
     prompt,
@@ -767,7 +761,8 @@ export class ClaudeProvider extends AgentProvider {
     topLevel = null,
     schema = null,
     follow = null,
-    run = spawnSync,
+    signal,
+    run = headless ? runLongChild : runChild,
   }) {
     const env = this.spawnEnv({ headless, backlogRoot, model, topLevel });
     const claudeArgs = buildClaudeArgs({
@@ -790,13 +785,14 @@ export class ClaudeProvider extends AgentProvider {
     if (headless) {
       // Capture stdout (the JSON result) and stderr. The stderr is copied to
       // bl's stderr when claude exits, and names the exit in a missing
-      // outcome's fault (S-1398).
-      const r = run('claude', claudeArgs, {
+      // outcome's fault (S-1398). `signal` sends claude SIGTERM, then SIGKILL
+      // if it still runs 10 s later (F-128 A6).
+      const r = await run('claude', claudeArgs, {
         cwd,
         env,
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
-        maxBuffer: 256 * 1024 * 1024,
+        signal,
       });
       if (r.stderr) process.stderr.write(r.stderr);
       if (r.error) return r;
@@ -804,6 +800,8 @@ export class ClaudeProvider extends AgentProvider {
       return { ...r, ...parsed, ...withExitFault(parsed, 'claude', exitStatus(r), r.stderr) };
     }
 
+    // Interactive: a synchronous wait (`runChild`, F-128 A3), so bl never
+    // exits while claude holds the terminal.
     return run('claude', claudeArgs, {
       stdio: 'inherit',
       cwd,
@@ -928,7 +926,7 @@ export class LocalProvider extends ClaudeProvider {
     return localSpawnEnv(opts);
   }
 
-  capacity(opts) {
+  async capacity(opts) {
     return localServerCapacity(opts);
   }
 }

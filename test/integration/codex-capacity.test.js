@@ -1,7 +1,7 @@
 /**
- * codex-capacity.test.js — the Codex adapter's capacity() through its helper
- * process and the fake `codex app-server` (F-64 D5): the protocol, the
- * mapping of what it answers, and that app-server never outlives the read.
+ * codex-capacity.test.js — the Codex adapter's capacity() over the fake
+ * `codex app-server` (F-64 D5): the protocol, the mapping of what it answers,
+ * and that app-server never outlives the read.
  */
 
 import { test } from 'node:test';
@@ -18,9 +18,9 @@ const PRIMARY_RESET = new Date(1793260374 * 1000);
 const SECONDARY_RESET = new Date(1793803116 * 1000);
 
 /** capacity() over the fake in `mode`, and whether the fake was left running. */
-function readFake(mode, { timeoutMs = 5_000, path = `${FAKE_BIN}:${process.env.PATH}` } = {}) {
+async function readFake(mode, { timeoutMs = 5_000, path = `${FAKE_BIN}:${process.env.PATH}` } = {}) {
   const pidFile = join(mkTempDir('bl-codex-capacity-'), 'pid');
-  const c = new CodexProvider().capacity({
+  const c = await new CodexProvider().capacity({
     model: 'gpt-6-sol',
     timeoutMs,
     env: { ...process.env, PATH: path, FAKE_CODEX_MODE: mode, FAKE_CODEX_PIDFILE: pidFile },
@@ -42,15 +42,15 @@ const OPEN_WINDOWS = [
   { name: 'codex 7d', remainingPercent: 87, resetsAt: SECONDARY_RESET },
 ];
 
-test('Codex capacity with both windows open is available for the whole account', () => {
-  const { c, running, started } = readFake('open');
+test('Codex capacity with both windows open is available for the whole account', async () => {
+  const { c, running, started } = await readFake('open');
   assert.deepEqual(c, { state: 'available', scope: 'account', until: null, windows: OPEN_WINDOWS, message: '' });
   assert.equal(started, true);
   assert.equal(running, false, 'app-server is stopped after the read');
 });
 
-test('Codex capacity with a window used up is unavailable until that window resets', () => {
-  const { c, running } = readFake('exhausted');
+test('Codex capacity with a window used up is unavailable until that window resets', async () => {
+  const { c, running } = await readFake('exhausted');
   assert.equal(c.state, 'unavailable');
   assert.equal(c.scope, 'account');
   assert.deepEqual(c.until, PRIMARY_RESET);
@@ -59,8 +59,8 @@ test('Codex capacity with a window used up is unavailable until that window rese
   assert.equal(running, false);
 });
 
-test('Codex capacity with spendControlReached is unavailable with no reset', () => {
-  const { c, running } = readFake('spend');
+test('Codex capacity with spendControlReached is unavailable with no reset', async () => {
+  const { c, running } = await readFake('spend');
   assert.equal(c.state, 'unavailable');
   assert.equal(c.until, null);
   assert.equal(c.spend, true);
@@ -69,15 +69,15 @@ test('Codex capacity with spendControlReached is unavailable with no reset', () 
   assert.equal(running, false);
 });
 
-test('Codex capacity reads rateLimits when rateLimitsByLimitId is absent', () => {
-  const { c } = readFake('legacy');
+test('Codex capacity reads rateLimits when rateLimitsByLimitId is absent', async () => {
+  const { c } = await readFake('legacy');
   assert.equal(c.state, 'available');
   assert.deepEqual(c.windows, OPEN_WINDOWS);
 });
 
-test('Codex capacity is unknown, never a throw, when app-server hangs past the deadline, and app-server is killed', () => {
+test('Codex capacity is unknown, never a throw, when app-server hangs past the deadline, and app-server is killed', async () => {
   const started = Date.now();
-  const { c, running } = readFake('hang', { timeoutMs: 400 });
+  const { c, running } = await readFake('hang', { timeoutMs: 400 });
   assert.equal(c.state, 'unknown');
   assert.equal(c.scope, 'account');
   assert.deepEqual(c.windows, []);
@@ -86,21 +86,21 @@ test('Codex capacity is unknown, never a throw, when app-server hangs past the d
   assert.ok(Date.now() - started < 4_000, 'the read ends at its deadline');
 });
 
-test('Codex capacity is unknown with the reason on a JSON-RPC error, an early exit, an empty result or no codex', () => {
-  const err = readFake('error');
+test('Codex capacity is unknown with the reason on a JSON-RPC error, an early exit, an empty result or no codex', async () => {
+  const err = await readFake('error');
   assert.equal(err.c.state, 'unknown');
   assert.match(err.c.message, /not logged in/);
   assert.equal(err.running, false);
 
-  const exit = readFake('exit');
+  const exit = await readFake('exit');
   assert.equal(exit.c.state, 'unknown');
   assert.match(exit.c.message, /exited before returning usage \(exit 3\)/);
 
-  const empty = readFake('empty');
+  const empty = await readFake('empty');
   assert.equal(empty.c.state, 'unknown');
   assert.match(empty.c.message, /no rate limits/);
 
-  const none = readFake('open', { path: mkTempDir('bl-no-codex-') });
+  const none = await readFake('open', { path: mkTempDir('bl-no-codex-') });
   assert.equal(none.c.state, 'unknown');
   assert.match(none.c.message, /could not start/);
 });

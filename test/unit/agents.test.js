@@ -53,13 +53,13 @@ test('base AgentProvider optional capabilities are safe no-ops', async () => {
   assert.equal(provider.syncNativeApprovals(['git:*'], {}), null);
 });
 
-test("base AgentProvider.capacity answers unknown, scoped to the model, in the adapter's name", () => {
+test("base AgentProvider.capacity answers unknown, scoped to the model, in the adapter's name", async () => {
   class Fake extends AgentProvider {
     get name() {
       return 'fake';
     }
   }
-  assert.deepEqual(new Fake().capacity({ model: 'm' }), {
+  assert.deepEqual(await new Fake().capacity({ model: 'm' }), {
     state: 'unknown',
     scope: 'model',
     until: null,
@@ -73,8 +73,9 @@ test("base AgentProvider.capacity answers unknown, scoped to the model, in the a
   // (test/unit/claude-capacity.test.js), Codex reads app-server
   // (test/unit/codex-capacity.test.js, against a fake one) and local its
   // server's /health (test/unit/local-agent.test.js).
-  assert.equal(getProvider('gemini').capacity().state, 'unknown');
-  assert.equal(getProvider('gemini').capacity().message, 'gemini cannot report capacity');
+  const gemini = await getProvider('gemini').capacity();
+  assert.equal(gemini.state, 'unknown');
+  assert.equal(gemini.message, 'gemini cannot report capacity');
   assert.notEqual(getProvider('claude').capacity, AgentProvider.prototype.capacity);
 });
 
@@ -231,14 +232,14 @@ test('GeminiProvider.generatePolicy with no write roots grants no write tools', 
   assert.ok(policy.includes('read_file'));
 });
 
-test("GeminiProvider.spawn writes its policy file in the process's TMPDIR and removes it", () => {
+test("GeminiProvider.spawn writes its policy file in the process's TMPDIR and removes it", async () => {
   const dir = mkTempDir('bl-gemini-tmpdir-');
   const saved = process.env.TMPDIR;
   process.env.TMPDIR = dir;
   let policyPath;
   let existed;
   try {
-    new GeminiProvider().spawn({
+    await new GeminiProvider().spawn({
       name: 'x',
       prompt: 'p',
       worktreePath: '/wt',
@@ -538,7 +539,7 @@ test('translateCodexPermissions approves ./bl/bin/bl in a unit directory that ho
   assert.deepEqual(prefixes(root), [['/roost/bl/bin/bl']], 'the root itself');
 });
 
-test("CodexProvider.spawn starts in the unit directory and makes every repo worktree's git metadata writable", () => {
+test("CodexProvider.spawn starts in the unit directory and makes every repo worktree's git metadata writable", async () => {
   const tmp = mkTempDir('bl-codex-spawn-');
   const git = (cwd, ...a) =>
     execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...a], { cwd, stdio: 'ignore' });
@@ -551,7 +552,7 @@ test("CodexProvider.spawn starts in the unit directory and makes every repo work
     git(main, 'worktree', 'add', '-q', '-b', 'f1-x', join(unitDir, repo));
   }
   let spawned = null;
-  new CodexProvider().spawn({
+  await new CodexProvider().spawn({
     prompt: 'p',
     permissions: translateCodexPermissions([]),
     worktreePath: join(unitDir, 'a'),
@@ -631,10 +632,10 @@ test('ensureCodexApprovedCommandPrefixes fails open when rules file is unreadabl
   assert.match(warnings[0], /could not update Codex approved command prefixes/);
 });
 
-test('CodexProvider.spawn installs approvals and keeps prompt guidance', () => {
+test('CodexProvider.spawn installs approvals and keeps prompt guidance', async () => {
   const installed = [];
   let spawned = null;
-  const result = new CodexProvider().spawn({
+  const result = await new CodexProvider().spawn({
     prompt: 'Do the work.',
     permissions: translateCodexPermissions(['git:*', 'Read']),
     worktreePath: '/repo/worktree',

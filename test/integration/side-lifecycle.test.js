@@ -123,6 +123,10 @@ test('side_feature_lifecycle_two_repos: bl side in a story session, then the run
       calls.push({ type: 'shell', cmd, cwd });
       return real.shell(cmd, cwd, o);
     },
+    testGate(cmd, cwd, o) {
+      calls.push({ type: 'testGate', cmd, cwd });
+      return real.testGate(cmd, cwd, o);
+    },
     forge(op, vars, { repoPath }) {
       calls.push({ type: 'forge', op, repoPath });
       const repo = repoPath.includes(`${join('f1-run', 'repoB')}`) ? 'repoB' : 'repoA';

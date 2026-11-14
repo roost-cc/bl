@@ -5,7 +5,7 @@ import { ClaudeProvider, LocalProvider, claudeCapacity } from '../../src/agents/
 import { readClaudeToken } from '../../src/agents/claude-capacity.js';
 import { capacityTable } from '../../src/capacity.js';
 
-// S-1143. The cases that read a local HTTP server through the helper are in
+// S-1143. The cases that read a local HTTP server are in
 // test/integration/claude-capacity.test.js.
 
 const fixture = (name) =>
@@ -330,42 +330,36 @@ test('readClaudeToken reads claudeAiOauth.accessToken and refuses a missing or e
   assert.deepEqual(readClaudeToken(creds(undefined), path, now), { token: 'tok' }, 'no expiresAt keeps the token');
 });
 
-test('ClaudeProvider.capacity is unknown when the helper fails, and maps its body otherwise', () => {
+test('ClaudeProvider.capacity is unknown when the reader fails or rejects, and maps its body otherwise', async () => {
   const c = new ClaudeProvider();
-  const fake = (r) => () => r;
   const env = { CLAUDE_CONFIG_DIR: '/nowhere' };
-  const ask = (run) => c.capacity({ model: 'opus', run, env });
-  const spawnError = ask(fake({ error: new Error('spawnSync node ETIMEDOUT') }));
-  assert.equal(spawnError.state, 'unknown');
-  assert.equal(spawnError.scope, 'model');
-  assert.match(spawnError.message, /^claude capacity read failed \(.*ETIMEDOUT\)$/);
-  assert.equal(
-    ask(fake({ status: null, signal: 'SIGTERM', stdout: '' })).message,
-    'claude capacity read failed (signal SIGTERM)',
-  );
-  assert.equal(ask(fake({ status: 0, stdout: 'not json' })).state, 'unknown');
-  assert.deepEqual(ask(fake({ status: 0, stdout: '{"ok":false,"error":"x"}' })), {
+  const ask = (read) => c.capacity({ model: 'opus', read, env });
+  const rejected = await ask(async () => {
+    throw new Error('boom');
+  });
+  assert.deepEqual(rejected, {
+    state: 'unknown',
+    scope: 'model',
+    until: null,
+    windows: [],
+    message: 'claude capacity read failed (boom)',
+  });
+  assert.deepEqual(await ask(async () => ({ ok: false, error: 'x' })), {
     state: 'unknown',
     scope: 'model',
     until: null,
     windows: [],
     message: 'x',
   });
-  const ok = ask(fake({ status: 0, stdout: JSON.stringify({ ok: true, body: PROBE2() }) }));
+  const ok = await ask(async () => ({ ok: true, body: PROBE2() }));
   assert.deepEqual(ok, claudeCapacity(PROBE2(), 'opus'));
-  assert.equal(
-    ask(() => {
-      throw new Error('boom');
-    }).state,
-    'unknown',
-  );
-  // The helper is asked for the credentials under the env's CLAUDE_CONFIG_DIR.
-  let argv;
-  ask((cmd, args) => {
-    argv = args;
-    return { status: 0, stdout: '{"ok":false,"error":"x"}' };
+  // The reader is asked for the credentials under the env's CLAUDE_CONFIG_DIR, with the timeout.
+  let asked;
+  await ask(async (opts) => {
+    asked = opts;
+    return { ok: false, error: 'x' };
   });
-  assert.deepEqual(argv.slice(1), ['--credentials', '/nowhere/.credentials.json', '--timeout', '10000']);
+  assert.deepEqual(asked, { credentials: '/nowhere/.credentials.json', timeoutMs: 10000 });
 });
 
 test('bl capacity shows a Claude row in the Codex rows format: each window, its remaining percent and its local reset', () => {

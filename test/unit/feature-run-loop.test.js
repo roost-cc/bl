@@ -25,6 +25,7 @@ import {
   RUN_DIR,
   looksFlaky,
   shellMerged,
+  defaultRunner,
   ESCALATION_FILE,
   reviewEnd,
   roundCapStanding,
@@ -36,6 +37,7 @@ import { git, initGitBacklog } from '../helpers/git-backlog.js';
 import { holdLockInChild } from '../helpers/hold-lock.js';
 import { holderOf, holds } from '../../src/kernel-lock.js';
 import { unitLockDirs, unitLockPath } from '../../src/unit-lock.js';
+import { stopRequests, writeStopRequest } from '../../src/run-lock.js';
 import { sessionLockPath } from '../../src/story.js';
 import { parseChange, serializeChange } from '../../src/change-doc.js';
 import {
@@ -758,23 +760,205 @@ test('shellMerged keeps stdout and stderr in the order the command printed them'
   assert.match(bad.output, /ENOENT/);
 });
 
-test('the test gate asks the runner for merged streams', async () => {
+test("the default runner's testGate merges the streams, as shellMerged does, without a scope", async () => {
+  const cwd = mkTempDir('bl-gate-');
+  const { testGate } = defaultRunner();
+  assert.deepEqual(await testGate('echo one; echo two >&2; echo three; exit 3', cwd), {
+    status: 3,
+    output: 'one\ntwo\nthree\n',
+  });
+  assert.deepEqual(await testGate('echo "$CI"', cwd), { status: 0, output: 'true\n' });
+  assert.deepEqual(await testGate('echo before; kill -KILL $$', cwd), { status: 137, output: 'before\n' });
+  const bad = await testGate('true', join(cwd, 'missing'));
+  assert.equal(bad.status, 127);
+  assert.match(bad.output, /ENOENT/);
+  // A process the command left holds the output file; the wait ends when
+  // the command exits, not when the leftover does.
+  const started = Date.now();
+  const left = await testGate('setsid sleep 30 & echo $! > pid; echo done; exit 2', cwd);
+  assert.deepEqual(left, { status: 2, output: 'done\n' });
+  assert.ok(Date.now() - started < 20_000, 'not held until the leftover exits');
+  process.kill(Number(readFileSync(join(cwd, 'pid'), 'utf8')), 'SIGTERM');
+  // A stop signal that fires sends the command SIGTERM, which ends `sleep`.
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 200);
+  const stopped = await testGate('echo started; exec sleep 30', cwd, { signal: controller.signal });
+  assert.match(stopped.output, /^started\n/);
+  assert.notEqual(stopped.status, 0);
+});
+
+test('the test gate runs its commands through runner.testGate', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
     const opts = [];
     const runner = fakeRunner({ dir, feature });
-    runner.shell = ((orig) => (cmd, cwd, o) => {
-      if (cmd === 'npm test') opts.push(o);
-      return orig(cmd, cwd);
-    })(runner.shell);
+    const shell = runner.shell;
+    runner.testGate = async (cmd, cwd, o) => {
+      opts.push({ cmd, ...o });
+      return shell(cmd, cwd);
+    };
+    runner.shell = (cmd, cwd, o) => {
+      assert.notEqual(cmd, 'npm test', 'the gate command does not run through runner.shell');
+      return shell(cmd, cwd, o);
+    };
     await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
     assert.ok(opts.length > 0);
-    // No scope: this runner has no scope methods (F-70 D4).
-    for (const o of opts) assert.deepEqual(o, { mergeStreams: true, scope: null });
+    // No scope: this runner has no scope methods (F-70 D4). The stop signal
+    // is the run's `ctx.stopSignal` (F-128 D8), not fired.
+    for (const { signal, ...o } of opts) {
+      assert.deepEqual(o, { cmd: 'npm test', scope: null });
+      assert.ok(signal instanceof AbortSignal && !signal.aborted);
+    }
   } finally {
     cleanup();
   }
 });
+
+// --- an interrupt during `bl run` is a stop (F-128 D8, A1, A2) ---
+
+/**
+ * Give this process `signal` as Node delivers it (its listeners run, here
+ * `takeInterrupts`' handler, and the process goes on), and check that it fired
+ * the long child's `signal` option, which ends a real child.
+ */
+function interrupt(signal, abortSignal) {
+  process.emit(signal, signal);
+  assert.ok(abortSignal?.aborted, 'the interrupt fired the stop signal');
+}
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  test(`run_interrupt_stop: a ${signal} during a headless session stops the run, and --resume continues it`, async () => {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const base = fakeRunner({ dir, feature });
+      const runner = {
+        ...base,
+        async session(o) {
+          if (o.promptName !== 'feature-story') return base.session(o);
+          interrupt(signal, o.signal);
+          return { ok: false, isError: true, output: '', error: 'The operation was aborted', usage: null, denials: [] };
+        },
+      };
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'stopped', JSON.stringify(state.history.slice(-3)));
+      assert.equal(state.step, 'implement');
+      assert.equal(state.history.at(-1).note, `stopped by ${signal} at implement`);
+      assert.deepEqual(state.stoppedBy, []);
+      assert.equal(state.history.filter((h) => h.step === 'implement').length, 0, 'the stopped session is no attempt');
+      assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'the run lock is free');
+
+      const again = fakeRunner({ dir, feature });
+      const resumed = await runFeature({ feature, config, prep, runner: again, opts: { resume: true, maxRounds: 2 } });
+      assert.equal(resumed.status, 'clean', JSON.stringify(resumed.history.slice(-4)));
+      const first = again.calls.find((c) => c.type === 'session');
+      assert.deepEqual([first.prompt, first.story], ['feature-story', 'S-1'], 'resumes at the stopped step');
+    } finally {
+      cleanup();
+    }
+  });
+}
+
+test('run_interrupt_stop: a SIGTERM during a test-gate command stops the run at the test step', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const runner = fakeRunner({ dir, feature });
+    runner.testGate = async (cmd, cwd, o) => {
+      interrupt('SIGTERM', o.signal);
+      return { status: 127, output: 'started\nThe operation was aborted\n' };
+    };
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'stopped', JSON.stringify(state.history.slice(-3)));
+    assert.equal(state.history.at(-1).note, `stopped by SIGTERM at ${state.step}`);
+    assert.deepEqual(state.stoppedBy, []);
+    assert.ok(!runner.calls.some((c) => c.type === 'session' && c.prompt === 'feature-fix-tests'), 'not a failed gate');
+  } finally {
+    cleanup();
+  }
+});
+
+test('run_interrupt_stop: a bl stop request names bl stop and its pid, though its SIGTERM fired the signal too', async () => {
+  const { dir, cleanup, config, feature, prep } = setup();
+  try {
+    const base = fakeRunner({ dir, feature });
+    const runner = {
+      ...base,
+      async session(o) {
+        if (o.promptName !== 'feature-story') return base.session(o);
+        // What `bl stop` does (F-128 A2): write the request, then send SIGTERM.
+        writeStopRequest(config, 'F-1', process.pid);
+        interrupt('SIGTERM', o.signal);
+        return { ok: false, isError: true, output: '', error: 'The operation was aborted', usage: null, denials: [] };
+      },
+    };
+    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+    assert.equal(state.status, 'stopped');
+    assert.equal(state.history.at(-1).note, 'stopped by bl stop at implement');
+    assert.deepEqual(state.stoppedBy, [process.pid]);
+    assert.deepEqual(stopRequests(config, 'F-1'), [], 'the loop deleted the request');
+  } finally {
+    cleanup();
+  }
+});
+
+// Each row: what each capacity read answers, and the read during which the
+// SIGTERM comes. Reads before it may mark the configuration out; the read
+// with the SIGTERM must lead to no out mark, no session and no escalation.
+const unavailableIn = (ms) => (runner) => ({
+  state: 'unavailable',
+  scope: 'account',
+  until: ms == null ? null : new Date(runner.clock() + ms).toISOString(),
+  windows: [],
+  message: 'out',
+});
+for (const { name, answer, at } of [
+  { name: 'the first read, available', answer: () => ({ state: 'available', scope: 'account', windows: [] }), at: 1 },
+  { name: 'the first read, unavailable', answer: unavailableIn(null), at: 1 },
+  { name: 'the first read, unavailable with a reset', answer: unavailableIn(60_000), at: 1 },
+  {
+    name: 'the first read, rejected',
+    answer: () => {
+      throw new Error('no reading');
+    },
+    at: 1,
+  },
+  { name: 'the first read, no reading (unknown)', answer: () => null, at: 1 },
+  { name: "the escalation's read, no reset named", answer: unavailableIn(null), at: 2 },
+  { name: "the escalation's read, the reset past the cap", answer: unavailableIn(3 * 3_600_000), at: 2 },
+  { name: "the escalation's read, out again after a wait", answer: unavailableIn(60_000), at: 3 },
+]) {
+  test(`run_interrupt_during_capacity_read_stops_before_side_effects: ${name}`, async () => {
+    const { dir, cleanup, config, feature, prep } = setup(
+      {},
+      { agent: [{ agent: 'codex', model: 'gpt-6-sol' }], run: { limit_wait_max_hours: 1 } },
+    );
+    try {
+      const runner = fakeRunner({ dir, feature });
+      let reads = 0;
+      runner.capacity = async () => {
+        reads += 1;
+        // An awaited read: the SIGTERM comes while it is pending.
+        await new Promise((resolve) => setImmediate(resolve));
+        if (reads === at) process.emit('SIGTERM', 'SIGTERM');
+        return answer(runner);
+      };
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'stopped', JSON.stringify(state.history.slice(-3)));
+      assert.equal(loadRunState(config, 'F-1').status, 'stopped', 'the saved state is stopped, not escalated');
+      assert.equal(state.history.at(-1).note, 'stopped by SIGTERM at implement');
+      assert.equal(reads, at, 'no read after the stop');
+      assert.equal(runner.calls.filter((c) => c.type === 'session').length, 0, 'no session started');
+      assert.equal(
+        state.history.filter((h) => h.step === 'unavailable').length,
+        at - 1,
+        'only the reads before the stop marked the configuration out',
+      );
+      assert.equal(extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation').trim(), 'None.');
+      assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'the run lock is free');
+    } finally {
+      cleanup();
+    }
+  });
+}
 
 test('a fix-tests session returning unrelated escalates after one gate run with its reason', async () => {
   const { dir, cleanup, config, feature, prep } = setup();

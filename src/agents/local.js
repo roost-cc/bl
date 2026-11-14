@@ -18,16 +18,11 @@
  * it loads.
  */
 
-import { fileURLToPath } from 'url';
 import { isPlainObject } from '../config.js';
-import { runCapacityHelper } from './capacity-helper.js';
-import { LOCAL_CAPACITY_TIMEOUT_MS } from './local-capacity.js';
+import { LOCAL_CAPACITY_TIMEOUT_MS, probeLocalServer } from './local-capacity.js';
 import { agentEnv } from './provider.js';
 
 export { LocalProvider } from './claude.js';
-
-// The script that asks the server's /health (see its JSDoc).
-const CAPACITY_HELPER = fileURLToPath(new URL('./local-capacity.js', import.meta.url));
 
 /** The `local` key's keys, each a required non-empty string. */
 const LOCAL_KEYS = ['url', 'token'];
@@ -85,7 +80,7 @@ export function localEnv({ url, token, model, base }) {
 }
 
 /**
- * The capacity (provider.js `capacity()`) the helper's answer `out` means,
+ * The capacity (provider.js `capacity()`) the probe's answer `out` means,
  * for the server at `url`. A 200 is `available`. A refused connection is
  * `unavailable` with no `until`: nothing listens, and bl does not start the
  * server. Any other answer, a timeout or another failure is `unknown`. A
@@ -95,7 +90,7 @@ export function localEnv({ url, token, model, base }) {
  * names `url`.
  * @param {unknown} out
  * @param {string} url
- * @returns {ReturnType<import("./provider.js").AgentProvider["capacity"]>}
+ * @returns {Awaited<ReturnType<import("./provider.js").AgentProvider["capacity"]>>}
  */
 export function localCapacity(out, url) {
   const malformed = !isPlainObject(out) || typeof out.ok !== 'boolean' || (out.ok && !Number.isInteger(out.status));
@@ -153,23 +148,28 @@ export function localSpawnEnv({ headless, backlogRoot, model, topLevel }) {
 /**
  * LocalProvider.capacity(): whether the server that `topLevel` names (the
  * caller's loaded config, as for `localSpawnEnv`) answers its `/health`
- * within `timeoutMs`, asked by `local-capacity.js` through
- * `runCapacityHelper` and mapped by `localCapacity()`. Never throws: a
- * `topLevel` that names no server is `unknown` with `localServer`'s message.
- * `run`, `env` and `timeoutMs` are for tests.
+ * within `timeoutMs`, asked in the bl process by `probeLocalServer`
+ * (`local-capacity.js`) and mapped by `localCapacity()`. Never rejects: a
+ * `topLevel` that names no server is `unknown` with `localServer`'s message,
+ * and a probe that rejects is `unknown` with its message. `read` and
+ * `timeoutMs` are for tests.
  */
-export function localServerCapacity({ topLevel, run, env, timeoutMs = LOCAL_CAPACITY_TIMEOUT_MS } = {}) {
+export async function localServerCapacity({
+  topLevel,
+  timeoutMs = LOCAL_CAPACITY_TIMEOUT_MS,
+  read = probeLocalServer,
+} = {}) {
   let url;
   try {
     url = localServer(topLevel).url;
   } catch (error) {
     return reading('unknown', error.message);
   }
-  const { out, reason } = runCapacityHelper(CAPACITY_HELPER, ['--url', url, '--timeout', String(timeoutMs)], {
-    run,
-    env,
-    timeoutMs,
-  });
-  if (!out) return reading('unknown', `local server ${url}: the health check failed (${reason})`);
+  let out;
+  try {
+    out = await read({ url, timeoutMs });
+  } catch (error) {
+    return reading('unknown', `local server ${url}: the health check failed (${error?.message ?? error})`);
+  }
   return localCapacity(out, url);
 }

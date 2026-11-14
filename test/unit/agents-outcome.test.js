@@ -87,9 +87,9 @@ test('parseClaudeJsonResult validates structured_output against the schema', () 
   );
 });
 
-test('ClaudeProvider.spawn headless passes the schema and returns the outcome', () => {
+test('ClaudeProvider.spawn headless passes the schema and returns the outcome', async () => {
   let argv;
-  const r = new ClaudeProvider().spawn({
+  const r = await new ClaudeProvider().spawn({
     prompt: 'p',
     worktreePath: '/wt',
     headless: true,
@@ -129,9 +129,9 @@ test('parseCodexJsonEvents reads the thread id the resume takes', () => {
  * CodexProvider.spawn headless whose fake `codex` writes `message` to the
  * last-message file and exits with `status` (or `signal`) and `stderr`.
  */
-function codexSpawn(message, { schema = SCHEMA, status = 0, signal = null, stderr = '' } = {}) {
+async function codexSpawn(message, { schema = SCHEMA, status = 0, signal = null, stderr = '' } = {}) {
   const seen = {};
-  const r = new CodexProvider().spawn({
+  const r = await new CodexProvider().spawn({
     prompt: 'p',
     worktreePath: '/wt',
     backlogRoot: '/bl',
@@ -152,24 +152,72 @@ function codexSpawn(message, { schema = SCHEMA, status = 0, signal = null, stder
   return { r, seen };
 }
 
-/** `fn()` with `process.stderr.write` replaced; returns its result and the text written. */
-function capturingStderr(fn) {
+test('codex_concurrent_headless_spawns_keep_outputs_and_schemas_separate', async () => {
+  // Both spawns start in the same millisecond and wait at the same time; the
+  // first codex ends first.
+  const now = mock.method(Date, 'now', () => 123456789);
+  try {
+    const seen = [];
+    const run = (_cmd, args) => {
+      const index = seen.length;
+      const out = args[args.indexOf('--output-last-message') + 1];
+      const schemaFile = args[args.indexOf('--output-schema') + 1];
+      seen.push({ out, schemaFile, schema: JSON.parse(readFileSync(schemaFile, 'utf8')) });
+      writeFileSync(out, JSON.stringify({ summary: `session ${index}`, done: true }));
+      return new Promise((resolve) =>
+        setTimeout(() => resolve({ status: 0, stdout: '', stderr: '' }), 10 + 20 * index),
+      );
+    };
+    const spawn = (schema) =>
+      new CodexProvider().spawn({
+        prompt: 'p',
+        worktreePath: '/wt',
+        backlogRoot: '/bl',
+        headless: true,
+        schema,
+        ensureApprovedCommandPrefixes: () => ({ added: 0 }),
+        run,
+      });
+    const other = { ...SCHEMA, title: 'other' };
+    const [a, b] = await Promise.all([spawn(SCHEMA), spawn(other)]);
+    assert.notEqual(seen[0].out, seen[1].out, 'separate result files');
+    assert.notEqual(seen[0].schemaFile, seen[1].schemaFile, 'separate schema files');
+    assert.deepEqual(
+      seen.map((s) => s.schema),
+      [SCHEMA, other],
+      'each codex got its own schema',
+    );
+    assert.deepEqual(
+      [a.structured, b.structured],
+      [
+        { summary: 'session 0', done: true },
+        { summary: 'session 1', done: true },
+      ],
+    );
+    for (const s of seen) assert.equal(existsSync(s.out) || existsSync(s.schemaFile), false, 'both removed');
+  } finally {
+    now.mock.restore();
+  }
+});
+
+/** `fn()` with `process.stderr.write` replaced; awaits it and returns its result and the text written. */
+async function capturingStderr(fn) {
   const written = [];
   const m = mock.method(process.stderr, 'write', (chunk) => {
     written.push(String(chunk));
     return true;
   });
   try {
-    return { result: fn(), written };
+    return { result: await fn(), written };
   } finally {
     m.mock.restore();
   }
 }
 
 /** ClaudeProvider.spawn headless whose fake `claude` returns `result` (status, stdout, stderr). */
-function claudeSpawn(result) {
+async function claudeSpawn(result) {
   const seen = {};
-  const r = new ClaudeProvider().spawn({
+  const r = await new ClaudeProvider().spawn({
     prompt: 'p',
     worktreePath: '/wt',
     headless: true,
@@ -192,9 +240,9 @@ const EXIT_CASES = [
   ['zero, nothing at all', { status: 0 }, () => 'no output', ''],
 ];
 
-test('ClaudeProvider.spawn headless names the exit and stderr when there is no output (S-1398)', () => {
+test('ClaudeProvider.spawn headless names the exit and stderr when there is no output (S-1398)', async () => {
   for (const [name, exit, fault, tail] of EXIT_CASES) {
-    const { result } = capturingStderr(() => claudeSpawn(exit));
+    const { result } = await capturingStderr(() => claudeSpawn(exit));
     assert.deepEqual(
       [result.r.structured, result.r.structuredError, result.r.stderrTail],
       [null, fault('claude'), tail],
@@ -204,21 +252,21 @@ test('ClaudeProvider.spawn headless names the exit and stderr when there is no o
   }
   // An invalid outcome keeps its own fault, whatever the exit.
   const stdout = JSON.stringify({ type: 'result', result: '', structured_output: { ...VALID, verdict: 'x' } });
-  const { result } = capturingStderr(() => claudeSpawn({ status: 1, stdout, stderr: 'warn\n' }));
+  const { result } = await capturingStderr(() => claudeSpawn({ status: 1, stdout, stderr: 'warn\n' }));
   assert.equal(result.r.structuredError, 'schema violation at $/verdict: must NOT have additional properties');
   assert.equal(result.r.stderrTail, 'warn');
 });
 
-test('ClaudeProvider.spawn headless copies the CLI stderr to bl stderr once, unchanged (S-1398)', () => {
+test('ClaudeProvider.spawn headless copies the CLI stderr to bl stderr once, unchanged (S-1398)', async () => {
   const stderr = `warn\n\n${ERR}\n`;
-  const { written } = capturingStderr(() => claudeSpawn({ status: 1, stderr }));
+  const { written } = await capturingStderr(() => claudeSpawn({ status: 1, stderr }));
   assert.deepEqual(written, [stderr]);
-  assert.deepEqual(capturingStderr(() => claudeSpawn({ status: 0 })).written, [], 'no stderr, no write');
+  assert.deepEqual((await capturingStderr(() => claudeSpawn({ status: 0 }))).written, [], 'no stderr, no write');
 });
 
-test('CodexProvider.spawn headless names the exit and stderr when there is no last message (S-1398)', () => {
+test('CodexProvider.spawn headless names the exit and stderr when there is no last message (S-1398)', async () => {
   for (const [name, exit, fault, tail] of EXIT_CASES) {
-    const { result } = capturingStderr(() => codexSpawn('', exit));
+    const { result } = await capturingStderr(() => codexSpawn('', exit));
     assert.deepEqual(
       [result.r.structured, result.r.structuredError, result.r.stderrTail],
       [null, fault('codex'), tail],
@@ -226,15 +274,15 @@ test('CodexProvider.spawn headless names the exit and stderr when there is no la
     );
     assert.equal(result.seen.stdio[2], 'pipe', `${name}: stderr captured`);
   }
-  const { result, written } = capturingStderr(() => codexSpawn('DONE', { status: 1, stderr: 'warn\n' }));
+  const { result, written } = await capturingStderr(() => codexSpawn('DONE', { status: 1, stderr: 'warn\n' }));
   assert.match(result.r.structuredError, /^not JSON: /, 'an invalid outcome keeps its fault');
   assert.equal(result.r.stderrTail, 'warn');
   assert.deepEqual(written, ['warn\n'], 'stderr copied once, unchanged');
 });
 
-test('CodexProvider.spawn writes the schema file, parses the last message, and removes both files', () => {
+test('CodexProvider.spawn writes the schema file, parses the last message, and removes both files', async () => {
   for (const [name, message, expected] of CASES) {
-    const { r, seen } = codexSpawn(message);
+    const { r, seen } = await codexSpawn(message);
     assertOutcome(r, expected, name);
     assert.deepEqual(seen.schema, SCHEMA, name);
     assert.equal(seen.schemaFile.replace(/\.schema\.json$/, '.md'), seen.out, `${name}: beside the last message`);
@@ -242,16 +290,16 @@ test('CodexProvider.spawn writes the schema file, parses the last message, and r
     assert.equal(existsSync(seen.out), false, `${name}: last message removed`);
     assert.equal(r.sessionId, 'th-1');
   }
-  const { r, seen } = codexSpawn(VALID, { schema: null });
+  const { r, seen } = await codexSpawn(VALID, { schema: null });
   assert.equal(seen.schemaFile, null);
   assert.deepEqual([r.structured, r.structuredError], [null, null]);
 });
 
 // --- gemini ---
 
-test('GeminiProvider.spawn with a schema runs nothing and names the fault', () => {
+test('GeminiProvider.spawn with a schema runs nothing and names the fault', async () => {
   let ran = false;
-  const r = new GeminiProvider().spawn({
+  const r = await new GeminiProvider().spawn({
     prompt: 'p',
     worktreePath: '/wt',
     headless: true,

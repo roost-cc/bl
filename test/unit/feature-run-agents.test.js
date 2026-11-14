@@ -974,18 +974,21 @@ test('an unavailable Claude reading from claudeCapacity() keeps the walk off tha
   }
 });
 
-test('a capacity read that throws is unknown: the configuration is spawned', async () => {
-  const { dir, cleanup, config, feature, prep } = setup({}, MODELS);
-  try {
-    const runner = fakeRunner({ dir, feature });
-    runner.capacity = () => {
-      throw new Error('app-server timed out');
-    };
-    const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
-    assert.equal(state.status, 'clean');
-    assert.ok(runner.calls.filter((c) => c.prompt === 'feature-story').every((c) => c.model === 'opus'));
-  } finally {
-    cleanup();
+test('a capacity read that throws or rejects is unknown: the configuration is spawned', async () => {
+  const fail = () => {
+    throw new Error('app-server timed out');
+  };
+  for (const capacity of [fail, async () => fail()]) {
+    const { dir, cleanup, config, feature, prep } = setup({}, MODELS);
+    try {
+      const runner = fakeRunner({ dir, feature });
+      runner.capacity = capacity;
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'clean');
+      assert.ok(runner.calls.filter((c) => c.prompt === 'feature-story').every((c) => c.model === 'opus'));
+    } finally {
+      cleanup();
+    }
   }
 });
 

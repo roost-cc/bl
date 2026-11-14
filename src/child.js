@@ -1,7 +1,7 @@
 /**
- * child.js — the one module that runs a synchronous child of `bl` (F-114 D1).
+ * child.js — the one module that runs a child of `bl` (F-114 D1).
  *
- * Four entry points start a child, each through `spawnSyncFiles`
+ * Four entry points start a synchronous child, each through `spawnSyncFiles`
  * (`src/child-stdio.js`, F-70 D1), and return the `spawnSync` result shape:
  *
  * - `runChild(command, args, opts)`: an argv command, no shell.
@@ -15,13 +15,27 @@
  *   says otherwise. It sets `cwd`, not `git -C`, so the argv stays what the
  *   tests' git shims match.
  *
+ * The fifth entry point, `runLongChild(command, args, opts)`, starts a long
+ * child (a headless agent session, a test-gate command: F-128 D3). It runs
+ * an argv with no shell through `spawnFiles`, the asynchronous counterpart of
+ * `spawnSyncFiles`, and resolves to the same result shape. It never raises an
+ * interrupt: during an asynchronous wait every signal sent to `bl` reaches
+ * `bl`'s own listeners, so the reason for D2's raise (no listener runs during
+ * a synchronous wait) does not apply. A child that a signal ended is a failed
+ * child for its caller. `opts.signal` (an `AbortSignal`) sends SIGTERM to the
+ * child, then SIGKILL if it still runs `SIGKILL_AFTER_MS` (10 s) later, and
+ * the wait returns when the child exits (F-128 A6). The module's `exit`
+ * listener sends SIGTERM to every long child that is still running (F-128
+ * A1). `bl` does not wait for it and sends no SIGKILL, so a child that
+ * handles or ignores SIGTERM can outlive `bl`.
+ *
  * `gitOut(cwd, args, opts)` is `git()` for a git command that must succeed
  * (F-124 D2): it returns the trimmed stdout, and throws `describeExit`'s
  * message when the child failed. `BL_PATH` is this process's own `bl.js`
  * (F-124 D5), the `entry` for a `runBl` of this `bl`.
  *
  * **An interrupt is raised at once (D2).** If SIGINT or SIGTERM
- * (`INTERRUPT_SIGNALS`) ends a child, the module prints
+ * (`INTERRUPT_SIGNALS`) ends a synchronous child, the module prints
  * `bl: <child> was ended by <signal>` on stderr and raises the signal
  * (`raiseSignal`): the `exit` listeners run and `bl` exits 130 or 143. If a
  * listener lets the process go on, the module exits 130 or 143 itself. The
@@ -47,7 +61,7 @@
  */
 
 import { fileURLToPath } from 'url';
-import { spawnSyncFiles } from './child-stdio.js';
+import { spawnFiles, spawnSyncFiles } from './child-stdio.js';
 import { EXIT_CODES, INTERRUPT_SIGNALS, interruptOf, raiseSignal, signalExitCode } from './signal-exit.js';
 
 /** The path of this process's own `bl.js`. */
@@ -58,19 +72,52 @@ let depth = 0;
 let kept = null;
 
 /**
+ * How long a long child may run after its stop signal sends it SIGTERM, in ms,
+ * before `runLongChild` sends it SIGKILL (F-128 A6). A process scope's
+ * `TimeoutStopSec` is the same time (`src/process-scope.js`).
+ */
+export const SIGKILL_AFTER_MS = 10_000;
+
+/** The long children that are still running: the controller that sends each one SIGTERM. */
+const longChildren = new Set();
+
+/**
  * True once `bl` exits. An interrupt that ends a child of an `exit` listener
  * (the throwaway removal of `bl merge`) is not raised again: a raise there
  * would change the exit code and skip the listeners after it.
+ * The listener also sends SIGTERM to each long child that is still running.
  */
 let exiting = false;
 process.on('exit', () => {
   exiting = true;
+  for (const controller of longChildren) controller.abort();
 });
 
 /**
  * @typedef {import('child_process').SpawnSyncOptions} ChildOptions
  * @typedef {import('child_process').SpawnSyncReturns<string | Buffer>} ChildResult
  */
+
+/**
+ * Run the long child `command` with `args` and no shell, and resolve to its
+ * result. An interrupt that ends it returns to the caller too (F-128 D3).
+ * @param {string} command
+ * @param {readonly string[]} [args]
+ * @param {import('child_process').SpawnOptions & { encoding?: BufferEncoding | 'buffer' }} [opts]
+ *   `opts.signal` sends SIGTERM to the child when it fires, then SIGKILL if
+ *   the child still runs `SIGKILL_AFTER_MS` later
+ * @returns {Promise<ChildResult>}
+ */
+export async function runLongChild(command, args = [], opts = {}) {
+  const controller = new AbortController();
+  const signal = opts.signal ? AbortSignal.any([opts.signal, controller.signal]) : controller.signal;
+  longChildren.add(controller);
+  try {
+    return await spawnFiles(command, args, { ...opts, shell: false, signal, sigkillAfter: SIGKILL_AFTER_MS });
+  } finally {
+    longChildren.delete(controller);
+  }
+}
 
 /**
  * Run `command` with `args` and no shell.

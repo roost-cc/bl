@@ -4,8 +4,10 @@
  *
  * Inside Codex's sandbox a Node child whose stdout or stderr is a socket, the
  * `'pipe'` Node gives it, writes into nothing: the parent reads empty output
- * from a child that exited 0. A file works there and everywhere else. The
- * synchronous form is `spawnSyncFiles` (`src/child-stdio.js`).
+ * from a child that exited 0. A file works there and everywhere else.
+ * `src/child-stdio.js` has `spawnSyncFiles` and its asynchronous counterpart
+ * `spawnFiles` (F-128 D2). `spawnFiles` resolves only when the child exits;
+ * this helper also gives the test the child and what it has written so far.
  */
 
 import { spawn } from 'child_process';

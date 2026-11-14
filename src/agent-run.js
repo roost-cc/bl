@@ -52,7 +52,7 @@ Aliases: claude`);
   const prompt = loadPrompt('agent', {}, { agent, config });
 
   updateTabTitle({ status: 'agent' });
-  const result = provider.spawn({
+  const result = await provider.spawn({
     mode: agent,
     prompt,
     permissions: translatedPermissions,

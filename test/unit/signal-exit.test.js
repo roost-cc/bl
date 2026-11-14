@@ -13,6 +13,14 @@ import { EXIT_CODES, INTERRUPT_SIGNALS, interruptOf, isInterrupt, raiseSignal } 
 
 const SIGNAL_EXIT = fileURLToPath(new URL('../../src/signal-exit.js', import.meta.url));
 
+/** Run the module code `lines` in a Node child; its result, utf8. */
+function runNode(lines) {
+  return spawnSyncFiles(process.execPath, ['--input-type=module', '-e', lines.join('\n')], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
 test('isInterrupt is true for SIGINT and SIGTERM only', () => {
   assert.deepEqual(INTERRUPT_SIGNALS, ['SIGINT', 'SIGTERM']);
   const cases = [
@@ -65,17 +73,38 @@ test('the interrupt exit codes have one definition, EXIT_CODES, in signal-exit.j
 
 for (const signal of INTERRUPT_SIGNALS) {
   test(`exitOnSignal exits with EXIT_CODES.${signal} on ${signal}`, () => {
-    const script = [
+    const r = runNode([
       `import { exitOnSignal } from ${JSON.stringify(SIGNAL_EXIT)};`,
       'exitOnSignal();',
       `process.kill(process.pid, '${signal}');`,
       `setTimeout(() => { process.stdout.write('alive'); process.exit(0); }, 2000);`,
-    ].join('\n');
-    const r = spawnSyncFiles(process.execPath, ['--input-type=module', '-e', script], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    ]);
     assert.equal(r.status, EXIT_CODES[signal], `signal ${r.signal}, stdout ${r.stdout}: ${r.stderr}`);
+  });
+
+  // F-128 D8: `bl run` takes the first interrupt as a stop.
+  test(`takeInterrupts: a first ${signal} calls the handler and the process goes on; a second exits`, () => {
+    const r = runNode([
+      `import { takeInterrupts } from ${JSON.stringify(SIGNAL_EXIT)};`,
+      `takeInterrupts((s) => process.stdout.write('handled ' + s + '\\n'));`,
+      `process.kill(process.pid, '${signal}');`,
+      `setTimeout(() => { process.stdout.write('went on\\n'); process.kill(process.pid, '${signal}'); }, 200);`,
+      `setTimeout(() => { process.stdout.write('alive'); process.exit(0); }, 2000);`,
+    ]);
+    assert.equal(r.status, EXIT_CODES[signal], `signal ${r.signal}: ${r.stderr}`);
+    assert.equal(r.stdout, `handled ${signal}\nwent on\n`);
+  });
+
+  test(`takeInterrupts: after the release, a ${signal} exits`, () => {
+    const r = runNode([
+      `import { takeInterrupts } from ${JSON.stringify(SIGNAL_EXIT)};`,
+      `const release = takeInterrupts(() => process.stdout.write('handled'));`,
+      'release();',
+      `process.kill(process.pid, '${signal}');`,
+      `setTimeout(() => { process.stdout.write('alive'); process.exit(0); }, 2000);`,
+    ]);
+    assert.equal(r.status, EXIT_CODES[signal], `signal ${r.signal}: ${r.stderr}`);
+    assert.equal(r.stdout, '');
   });
 
   test(`raiseSignal runs the ${signal} listeners when there are some`, () => {
@@ -92,15 +121,11 @@ for (const signal of INTERRUPT_SIGNALS) {
 
   test(`raiseSignal takes the default action for ${signal} when there is no listener`, () => {
     // The child would print `alive` and exit 0 if the signal did not end it.
-    const script = [
+    const r = runNode([
       `import { raiseSignal } from ${JSON.stringify(SIGNAL_EXIT)};`,
       `raiseSignal('${signal}');`,
       `setTimeout(() => { process.stdout.write('alive'); process.exit(0); }, 2000);`,
-    ].join('\n');
-    const r = spawnSyncFiles(process.execPath, ['--input-type=module', '-e', script], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    ]);
     assert.equal(r.signal, signal, `status ${r.status}, stdout ${r.stdout}: ${r.stderr}`);
   });
 }

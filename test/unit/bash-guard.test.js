@@ -539,7 +539,7 @@ test('two_backlogs_keep_per_launch_bash_guard', async () => {
       ]) {
         for (const headless of [true, false]) {
           let launched;
-          provider.spawn({
+          await provider.spawn({
             name: 'x',
             prompt: 'p',
             cwd: own.ws,

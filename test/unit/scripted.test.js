@@ -430,6 +430,9 @@ function loopRunner({ exit = 0, dirty = ' M lock\n', sessions = {}, testExits = 
       if (cmd === 'npm test') return { status: testExits.shift() ?? 0, output: 'ok\n' };
       return { status: 0, output: '' };
     },
+    async testGate(cmd, cwd) {
+      return this.shell(cmd, cwd);
+    },
     forge() {
       return { configured: true, status: 0, stdout: 'https://github.com/x/y/pull/7\n' };
     },

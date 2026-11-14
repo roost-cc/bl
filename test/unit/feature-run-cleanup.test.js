@@ -190,10 +190,10 @@ function withScopes(runner, { available = true, leave = {}, stale = [], stopFail
       if (o.scope && leave[o.promptName]) table.set(o.scope, leave[o.promptName]);
       return r;
     },
-    shell(cmd, cwd, opts) {
-      const r = runner.shell(cmd, cwd, opts);
-      if (cmd === 'npm test') scopes.push(opts?.scope ?? null);
-      if (cmd === 'npm test' && opts?.scope && leave.gate) table.set(opts.scope, leave.gate);
+    async testGate(cmd, cwd, opts) {
+      const r = await runner.testGate(cmd, cwd, opts);
+      scopes.push(opts?.scope ?? null);
+      if (opts?.scope && leave.gate) table.set(opts.scope, leave.gate);
       return r;
     },
     scopeAvailable() {

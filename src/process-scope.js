@@ -21,17 +21,18 @@
  *   the worktree.
  * - Unit names are `bl-<unit id, lowercased>-<bl pid>-<n>`, sanitized to
  *   `[a-z0-9-]`, so a later bl can find a crashed bl's scopes by unit and see
- *   that their pid is dead (`staleScopes`), and `bl stop` can find the scopes
- *   of the bl that holds the unit's run lock (`scopesOf`).
+ *   that their pid is dead (`staleScopes`).
  * - Names are passed and returned without the `.scope` suffix.
  */
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { spawnSyncFiles } from './child-stdio.js';
-import { describeExit, runChild } from './child.js';
+import { SIGKILL_AFTER_MS, describeExit, runChild, runLongChild } from './child.js';
 
-/** How long `systemctl stop` lets a scope's processes exit on SIGTERM before SIGKILL. */
-const STOP_TIMEOUT = 'TimeoutStopSec=10s';
+/**
+ * How long `systemctl stop` lets a scope's processes exit on SIGTERM before
+ * SIGKILL: the time `runLongChild` gives a stopped long child (F-128 A6).
+ */
+const STOP_TIMEOUT = `TimeoutStopSec=${SIGKILL_AFTER_MS / 1000}s`;
 
 /**
  * Whether `pid` names a live process. Only `staleScopes` asks it, about the
@@ -130,17 +131,21 @@ export function scopedCommand(unit, command, args = []) {
 }
 
 /**
- * A `spawnSync` that runs its command inside scope `unit`: the `run` an agent
- * adapter's `spawn` takes. Captured streams go through files
- * (`spawnSyncFiles`), not pipes: `spawnSync` waits for every holder of a pipe
- * to close it, so a process the step left holding the command's stdout would
- * hang the call, and the cleanup that stops it would never run (seen at
- * implement: `bash -c 'setsid sleep 300 & exit 3'` with a piped stdout).
+ * An asynchronous function that runs its command inside scope `unit` as a
+ * long child (`runLongChild`, F-128 D4): the `run` an agent adapter's
+ * headless `spawn` takes, and the test gate's scoped command. It resolves
+ * when the command exits, though a process the step left still holds its
+ * output file, so the cleanup that stops that process runs (seen at
+ * implement: `bash -c 'setsid sleep 300 & exit 3'` with a piped stdout hung
+ * a wait for the pipe to close).
+ *
+ * @returns {(command: string, args: readonly string[], options?: object) =>
+ *   ReturnType<typeof runLongChild>}
  */
 export function scopedSpawn(unit) {
-  return (command, args, options) => {
+  return async (command, args, options) => {
     const s = scopedCommand(unit, command, args);
-    return spawnSyncFiles(s.command, s.args, options);
+    return runLongChild(s.command, s.args, options);
   };
 }
 
@@ -252,14 +257,15 @@ export function stopScope(unit) {
 }
 
 /**
- * Every scope of `unitId` that systemd has loaded, with the pid of the bl
- * that started it (from its name, `scopeUnitName`): `[{ unit, pid }]`. The
- * one listing `staleScopes` and `bl stop` (`stop.js`) filter. Throws when
+ * The scopes of `unitId` whose bl is no longer running: leftovers of a bl that
+ * crashed or was killed before it could stop them. The run's lock means no
+ * live bl other than this one owns a scope of the unit. Each scope's name
+ * holds the pid of the bl that started it (`scopeUnitName`). Throws when
  * systemctl cannot list them: an unknown list is not an empty one.
  *
- * @returns {{ unit: string, pid: number }[]}
+ * @returns {string[]}
  */
-export function unitScopes(unitId) {
+export function staleScopes(unitId) {
   const prefix = `bl-${unitSlug(unitId)}-`;
   const r = systemctl(['show', '-p', 'Id', '--value', `${prefix}*.scope`]);
   if (r.error || r.status !== 0) throw new Error(`could not list ${prefix}*.scope: ${failureText(r)}`);
@@ -269,32 +275,9 @@ export function unitScopes(unitId) {
     const name = line.trim();
     if (!name.startsWith(prefix)) continue;
     const m = re.exec(name.slice(prefix.length));
-    if (m) out.push({ unit: name.slice(0, -'.scope'.length), pid: Number(m[1]) });
+    if (!m) continue;
+    const pid = Number(m[1]);
+    if (pid !== process.pid && !isPidAlive(pid)) out.push(name.slice(0, -'.scope'.length));
   }
   return out;
-}
-
-/**
- * The scopes of `unitId` whose bl is no longer running: leftovers of a bl that
- * crashed or was killed before it could stop them. The run's lock means no
- * live bl other than this one owns a scope of the unit. Throws as `unitScopes`.
- *
- * @returns {string[]}
- */
-export function staleScopes(unitId) {
-  return unitScopes(unitId)
-    .filter((s) => s.pid !== process.pid && !isPidAlive(s.pid))
-    .map((s) => s.unit);
-}
-
-/**
- * The scopes of `unitId` that bl process `pid` started: the ones `bl stop`
- * stops, `pid` the holder of the unit's run lock. Throws as `unitScopes`.
- *
- * @returns {string[]}
- */
-export function scopesOf(unitId, pid) {
-  return unitScopes(unitId)
-    .filter((s) => s.pid === pid)
-    .map((s) => s.unit);
 }
