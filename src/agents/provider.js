@@ -98,7 +98,7 @@ export function agentEnv({ headless = false, backlogRoot = null, base = process.
  *
  * @param {{ name: string, remainingPercent: number, resetsAt: Date|null }[]} windows
  * @param {"account"|"model"} scope
- * @returns {ReturnType<AgentProvider["capacity"]>}
+ * @returns {Awaited<ReturnType<AgentProvider["capacity"]>>}
  */
 export function windowsCapacity(windows, scope) {
   const usedUp = windows.filter((w) => w.remainingPercent <= 0);
@@ -269,10 +269,10 @@ export class AgentProvider {
   }
 
   /**
-   * Whether this configuration can take work now. Synchronous, and never
-   * throws: an adapter that cannot ask, or whose asking fails (a
-   * timeout, an exit, a protocol error), answers `unknown` with the reason in
-   * `message`.
+   * Whether this configuration can take work now. Async, and never rejects:
+   * an adapter that cannot ask, or whose asking fails (a timeout, an exit, a
+   * protocol error), answers `unknown` with the reason in `message`. An
+   * adapter reads in the bl process, with no helper process (F-128 D6).
    *
    * `state` is `available`, `unavailable` or `unknown`; `scope` is
    * `account` (the reading applies to every model of this agent) or `model`;
@@ -288,13 +288,13 @@ export class AgentProvider {
    * the base ignores it.
    *
    * @param {{ model?: string|null, topLevel?: object }} [opts]
-   * @returns {{ state: "available"|"unavailable"|"unknown",
+   * @returns {Promise<{ state: "available"|"unavailable"|"unknown",
    *             scope: "account"|"model", until: Date|null,
    *             windows: { name: string, remainingPercent: number,
    *                        resetsAt: Date|null }[],
-   *             message: string, spend?: true }}
+   *             message: string, spend?: true }>}
    */
-  capacity(_opts = {}) {
+  async capacity(_opts = {}) {
     return {
       state: 'unknown',
       scope: 'model',

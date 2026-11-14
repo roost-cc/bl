@@ -556,8 +556,6 @@ const ALLOWED = new Map([
   // Asynchronous children (F-114 Out of Scope).
   ['src/agents/codex-capacity.js', ['spawn']],
   ['src/verbs.js', ['spawn']],
-  // The capacity helper: F-128 deletes it (D6).
-  ['src/agents/capacity-helper.js', ['spawnSyncFiles']],
 ]);
 
 /**

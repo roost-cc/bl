@@ -95,9 +95,9 @@ test('bl capacity shows a failed app-server read as unknown with its reason, and
   assert.match(codex.message, /exited before returning usage \(exit 1\)/);
 });
 
-test('capacityRows asks an account-scoped agent once and a model-scoped one once per model', () => {
+test('capacityRows asks an account-scoped agent once and a model-scoped one once per model', async () => {
   const asked = [];
-  const rows = capacityRows(
+  const rows = await capacityRows(
     {
       agents: [
         { agent: 'claude', model: 'opus' },
@@ -109,7 +109,7 @@ test('capacityRows asks an account-scoped agent once and a model-scoped one once
         { agent: 'claude', model: 'opus' },
       ],
     },
-    (agent, model) => {
+    async (agent, model) => {
       asked.push([agent, model]);
       return {
         state: 'unknown',
@@ -162,7 +162,7 @@ test("capacityRows's default ask gives the adapter the config's top level: local
   // the URL in the message says which backlog the adapter read.
   const url = await closedPortUrl();
   const { dir } = localBacklog(url);
-  const [row] = capacityRows(loadConfig({ backlogRoot: dir }));
+  const [row] = await capacityRows(loadConfig({ backlogRoot: dir }));
   assert.deepEqual(
     [row.agent, row.model, row.state, row.scope, row.until],
     ['local', 'qwen3.8-27b', 'unavailable', 'account', null],

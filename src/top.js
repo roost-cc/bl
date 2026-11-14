@@ -286,7 +286,7 @@ export async function main(argv) {
   if (!opts.json && !opts.stream) runTui(opts, interval);
   const config = loadConfig();
   if (opts.json) {
-    const snapshot = topSnapshot(config);
+    const snapshot = await topSnapshot(config);
     for (const line of problemLines(snapshot)) console.error(line);
     process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
     return;

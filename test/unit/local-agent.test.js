@@ -47,11 +47,11 @@ function recordingRun(envs) {
   };
 }
 
-/** `run` for capacity(): a helper that answers 200, recording the URL it was given. */
-function healthyRun(urls = []) {
-  return (_cmd, args) => {
-    urls.push(args[args.indexOf('--url') + 1]);
-    return { status: 0, stdout: '{"ok":true,"status":200}\n' };
+/** `read` for capacity(): a probe that answers 200, recording the URL it was given. */
+function healthyRead(urls = []) {
+  return async ({ url }) => {
+    urls.push(url);
+    return { ok: true, status: 200 };
   };
 }
 
@@ -105,10 +105,10 @@ test('local_spawn_keeps_replaced_role_override: spawn() reaches the server for e
   }
 });
 
-test('local_capacity_keeps_replaced_role_override: capacity() asks the server for every role list -A replaced', () => {
+test('local_capacity_keeps_replaced_role_override: capacity() asks the server for every role list -A replaced', async () => {
   for (const { label, config } of replacedRoleBacklogs()) {
     const urls = [];
-    const c = getProvider('local').capacity({ topLevel: config.topLevel, run: healthyRun(urls) });
+    const c = await getProvider('local').capacity({ topLevel: config.topLevel, read: healthyRead(urls) });
     assert.equal(c.state, 'available', `${label}: ${c.message}`);
     assert.deepEqual(urls, [LOCAL_KEY.url], label);
   }
@@ -134,13 +134,13 @@ test('local_spawn_uses_validated_configuration_snapshot: spawn() and capacity() 
     writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), local: edited }));
     const urls = [];
     const envs = [];
-    getProvider('local').capacity({ topLevel: config.topLevel, run: healthyRun(urls) });
+    await getProvider('local').capacity({ topLevel: config.topLevel, read: healthyRead(urls) });
     await spawnWith(config.topLevel, envs);
     assert.deepEqual(urls, [LOCAL_KEY.url]);
     assert.deepEqual([envs[0].ANTHROPIC_BASE_URL, envs[0].ANTHROPIC_AUTH_TOKEN], [LOCAL_KEY.url, LOCAL_KEY.token]);
     // A reload (sync.js after a pull) checks the edit, and its config uses it.
     const reloaded = loadConfig({ backlogRoot: dir, agent: 'local', model: MODEL });
-    getProvider('local').capacity({ topLevel: reloaded.topLevel, run: healthyRun(urls) });
+    await getProvider('local').capacity({ topLevel: reloaded.topLevel, read: healthyRead(urls) });
     await spawnWith(reloaded.topLevel, envs);
     assert.deepEqual(urls, [LOCAL_KEY.url, edited.url]);
     assert.deepEqual([envs[1].ANTHROPIC_BASE_URL, envs[1].ANTHROPIC_AUTH_TOKEN], [edited.url, edited.token]);
@@ -151,7 +151,7 @@ test('local_spawn_uses_validated_configuration_snapshot: spawn() and capacity() 
       const none = [];
       await assert.rejects(() => spawnWith(topLevel, none), /backlog\.json "local" is missing/, label);
       assert.equal(none.length, 0, label);
-      const c = getProvider('local').capacity({ topLevel, run: healthyRun() });
+      const c = await getProvider('local').capacity({ topLevel, read: healthyRead() });
       assert.equal(c.state, 'unknown', label);
       assert.match(c.message, /"local" is missing/, label);
     }
@@ -185,7 +185,7 @@ test('local_server_binding_survives_other_and_failed_loads: a loaded config keep
       model: MODEL,
       run: recordingRun(envs),
     });
-    getProvider('local').capacity({ topLevel: config.topLevel, run: healthyRun(urls) });
+    await getProvider('local').capacity({ topLevel: config.topLevel, read: healthyRead(urls) });
     return [envs[0].ANTHROPIC_BASE_URL, envs[0].ANTHROPIC_AUTH_TOKEN, urls[0]];
   };
   try {
@@ -256,7 +256,7 @@ test('local_server_binding_survives_other_and_failed_loads: a loaded config keep
       }
     }
     // The callers that take a config: a headless and an interactive session,
-    // and capacityRows's default ask. The ask runs the real helper; whatever
+    // and capacityRows's default ask. The ask runs the real probe; whatever
     // it answers, its message names the URL it asked.
     const envs = [];
     const provider = new (class extends LocalProvider {
@@ -289,7 +289,7 @@ test('local_server_binding_survives_other_and_failed_loads: a loaded config keep
       envs.map((e) => e.ANTHROPIC_BASE_URL),
       [serverAt(18090).url, serverAt(18090).url],
     );
-    const [row] = capacityRows(first);
+    const [row] = await capacityRows(first);
     assert.equal(row.agent, 'local');
     assert.ok(row.message.includes(serverAt(18090).url), row.message);
   } finally {
@@ -466,36 +466,30 @@ test('local_capacity_rejects_incomplete_health_records: only ok false with ECONN
   }
 });
 
-test('LocalProvider.capacity runs the helper with the backlog URL and maps its answer; never throws', () => {
+test('LocalProvider.capacity probes the backlog URL in process and maps its answer; never rejects', async () => {
   const { cleanup, config } = localBacklog();
   try {
     const p = getProvider('local');
     let seen;
-    const fake =
-      (stdout, extra = {}) =>
-      (cmd, args, opts) => {
-        seen = { cmd, args, opts };
-        return { status: 0, stdout, ...extra };
-      };
-    const up = p.capacity({ topLevel: config.topLevel, run: fake('{"ok":true,"status":200}\n'), timeoutMs: 100 });
+    const fake = (out) => async (opts) => {
+      seen = opts;
+      return out;
+    };
+    const up = await p.capacity({ topLevel: config.topLevel, read: fake({ ok: true, status: 200 }), timeoutMs: 100 });
     assert.equal(up.state, 'available');
-    assert.equal(seen.cmd, process.execPath);
-    assert.match(seen.args[0], /local-capacity\.js$/);
-    assert.deepEqual(seen.args.slice(1), ['--url', LOCAL_KEY.url, '--timeout', '100']);
+    assert.deepEqual(seen, { url: LOCAL_KEY.url, timeoutMs: 100 });
     assert.equal(
-      p.capacity({ topLevel: config.topLevel, run: fake('{"ok":false,"code":"ECONNREFUSED"}') }).state,
+      (await p.capacity({ topLevel: config.topLevel, read: fake({ ok: false, code: 'ECONNREFUSED' }) })).state,
       'unavailable',
     );
-    const crashed = p.capacity({ topLevel: config.topLevel, run: fake('', { status: 1 }) });
-    assert.equal(crashed.state, 'unknown');
-    assert.match(crashed.message, /exit 1/);
-    const thrown = p.capacity({
+    const rejected = await p.capacity({
       topLevel: config.topLevel,
-      run: () => {
-        throw new Error('spawn boom');
+      read: async () => {
+        throw new Error('probe boom');
       },
     });
-    assert.match(thrown.message, /spawn boom/);
+    assert.equal(rejected.state, 'unknown');
+    assert.equal(rejected.message, `local server ${LOCAL_KEY.url}: the health check failed (probe boom)`);
   } finally {
     cleanup();
   }
@@ -503,7 +497,7 @@ test('LocalProvider.capacity runs the helper with the backlog URL and maps its a
   const { dir: bare, cleanup: done } = mkTempBacklog({ repos: ['../demo-repo'] });
   try {
     const { topLevel } = loadConfig({ backlogRoot: bare });
-    assert.match(getProvider('local').capacity({ topLevel }).message, /"local" is missing/);
+    assert.match((await getProvider('local').capacity({ topLevel })).message, /"local" is missing/);
   } finally {
     done();
   }

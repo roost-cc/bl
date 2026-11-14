@@ -8,22 +8,16 @@
  * `[experimental]` (0.164.0), so every failure here is a reason string, never
  * a crash: the caller turns it into an `unknown` capacity.
  *
- * Why a script run by `spawnSync` and not a `spawnSync` of app-server
- * itself: app-server exits when its stdin closes, before it answers a
- * request still waiting on the network (checked 2026-10-28, 0.164.0: given
- * all three messages and EOF it answers `initialize` and exits without the
- * rate limits), so it must be held open until the answer comes. The adapter
- * interface is synchronous (`capacity()`, like `spawn()` and the loop), so
- * `CodexProvider.capacity()` runs this file with `spawnSync` and a timeout
- * a little past this one's, and this file runs the conversation
- * asynchronously, kills app-server on every exit path, and prints one JSON
- * line: `{ "ok": true, "result": {...} }` or `{ "ok": false, "error": "..." }`.
- *
- * Usage: node codex-capacity.js [--timeout <ms>]
+ * Why an asynchronous child with pipes and not a child on files: app-server
+ * exits when its stdin closes, before it answers a request still waiting on
+ * the network (checked 2026-10-28, 0.164.0: given all three messages and EOF
+ * it answers `initialize` and exits without the rate limits), so it must be
+ * held open until the answer comes, and files cannot carry the conversation
+ * (F-128 D6). `CodexProvider.capacity()` awaits `readCodexRateLimits` in the
+ * bl process; it kills app-server on every exit path.
  */
 
 import { spawn } from 'child_process';
-import { isMainModule } from './capacity-helper.js';
 
 /** How long the whole read may take before it is abandoned (D5: 20 s). */
 export const CODEX_CAPACITY_TIMEOUT_MS = 20_000;
@@ -36,13 +30,18 @@ const KILL_GRACE_MS = 2_000;
  * `account/rateLimits/read` result; rejects with an Error whose message is
  * the reason (the command is missing, it exited first, it replied with a
  * JSON-RPC error, the deadline passed). app-server is stopped before the
- * promise settles, whatever the outcome.
+ * promise settles, whatever the outcome. `env` is app-server's environment
+ * (its `PATH` finds `command`).
  *
- * @param {{ command?: string, timeoutMs?: number }} [opts]
+ * @param {{ command?: string, env?: Record<string, string|undefined>, timeoutMs?: number }} [opts]
  * @returns {Promise<object>}
  */
-export async function readCodexRateLimits({ command = 'codex', timeoutMs = CODEX_CAPACITY_TIMEOUT_MS } = {}) {
-  const child = spawn(command, ['app-server'], { stdio: ['pipe', 'pipe', 'ignore'] });
+export async function readCodexRateLimits({
+  command = 'codex',
+  env = process.env,
+  timeoutMs = CODEX_CAPACITY_TIMEOUT_MS,
+} = {}) {
+  const child = spawn(command, ['app-server'], { env, stdio: ['pipe', 'pipe', 'ignore'] });
   const exited = new Promise((resolve) => child.once('close', resolve));
   let timer;
   try {
@@ -105,19 +104,4 @@ export async function readCodexRateLimits({ command = 'codex', timeoutMs = CODEX
       clearTimeout(grace);
     }
   }
-}
-
-if (isMainModule(import.meta.url)) {
-  const i = process.argv.indexOf('--timeout');
-  const timeoutMs = i >= 0 ? Number(process.argv[i + 1]) : CODEX_CAPACITY_TIMEOUT_MS;
-  let out;
-  try {
-    out = {
-      ok: true,
-      result: await readCodexRateLimits({ timeoutMs: timeoutMs > 0 ? timeoutMs : CODEX_CAPACITY_TIMEOUT_MS }),
-    };
-  } catch (error) {
-    out = { ok: false, error: error.message };
-  }
-  process.stdout.write(`${JSON.stringify(out)}\n`);
 }

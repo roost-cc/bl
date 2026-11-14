@@ -53,13 +53,13 @@ test('base AgentProvider optional capabilities are safe no-ops', async () => {
   assert.equal(provider.syncNativeApprovals(['git:*'], {}), null);
 });
 
-test("base AgentProvider.capacity answers unknown, scoped to the model, in the adapter's name", () => {
+test("base AgentProvider.capacity answers unknown, scoped to the model, in the adapter's name", async () => {
   class Fake extends AgentProvider {
     get name() {
       return 'fake';
     }
   }
-  assert.deepEqual(new Fake().capacity({ model: 'm' }), {
+  assert.deepEqual(await new Fake().capacity({ model: 'm' }), {
     state: 'unknown',
     scope: 'model',
     until: null,
@@ -73,8 +73,9 @@ test("base AgentProvider.capacity answers unknown, scoped to the model, in the a
   // (test/unit/claude-capacity.test.js), Codex reads app-server
   // (test/unit/codex-capacity.test.js, against a fake one) and local its
   // server's /health (test/unit/local-agent.test.js).
-  assert.equal(getProvider('gemini').capacity().state, 'unknown');
-  assert.equal(getProvider('gemini').capacity().message, 'gemini cannot report capacity');
+  const gemini = await getProvider('gemini').capacity();
+  assert.equal(gemini.state, 'unknown');
+  assert.equal(gemini.message, 'gemini cannot report capacity');
   assert.notEqual(getProvider('claude').capacity, AgentProvider.prototype.capacity);
 });
 

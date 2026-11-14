@@ -64,10 +64,10 @@ export function backlogStamp(config) {
 
 /**
  * The stream's state: the sections and when each was last read. `tick()`
- * reads what is due at `now()` and returns the snapshot; `requestCapacity()`
+ * reads what is due at `now()` and resolves to the snapshot; `requestCapacity()`
  * makes the next tick read capacity.
  *
- * @param {{ readers: Record<string, (now: number) => object>, now?: () => number,
+ * @param {{ readers: Record<string, (now: number) => object | Promise<object>>, now?: () => number,
  *   stamp: () => string }} opts  `stamp`: `backlogStamp` of the backlog (a test passes its own)
  */
 export function createStream({ readers, now = Date.now, stamp }) {
@@ -78,12 +78,12 @@ export function createStream({ readers, now = Date.now, stamp }) {
   const failures = {};
   let lastStamp;
   let capacityAsked = false;
-  const read = (name, t) => {
+  const readOne = async (name, t) => {
     let ok = false;
-    sections[name] = readSection(
+    sections[name] = await readSection(
       sections[name],
-      () => {
-        const value = readers[name](t);
+      async () => {
+        const value = await readers[name](t);
         ok = true;
         return value;
       },
@@ -104,11 +104,11 @@ export function createStream({ readers, now = Date.now, stamp }) {
     requestCapacity() {
       capacityAsked = true;
     },
-    tick() {
+    async tick() {
       const t = now();
-      read('runs', t);
-      read('activity', t);
-      read('tokens', t);
+      await readOne('runs', t);
+      await readOne('activity', t);
+      await readOne('tokens', t);
       let s;
       try {
         s = stamp();
@@ -120,13 +120,13 @@ export function createStream({ readers, now = Date.now, stamp }) {
       lastStamp = s;
       // Two schedules: a section that waits for a retry is not read for a change.
       for (const name of ['attention', 'next']) {
-        if ((changed && !(name in retryAt)) || due(name, t)) read(name, t);
+        if ((changed && !(name in retryAt)) || due(name, t)) await readOne(name, t);
       }
       if (capacityAsked || due('capacity', t)) {
         capacityAsked = false;
-        read('capacity', t);
+        await readOne('capacity', t);
       }
-      if (due('history', t)) read('history', t);
+      if (due('history', t)) await readOne('history', t);
       return snapshotOf(sections, t);
     },
   };
@@ -143,7 +143,7 @@ export function createStream({ readers, now = Date.now, stamp }) {
  *   stderr?: NodeJS.WritableStream }} opts
  * @returns {Promise<void>}
  */
-export function runStream(
+export async function runStream(
   config,
   { interval, stdin = process.stdin, stdout = process.stdout, stderr = process.stderr },
 ) {
@@ -152,8 +152,17 @@ export function runStream(
     stamp: () => backlogStamp(config),
   });
   let shown = new Set();
-  const emit = () => {
-    const snapshot = stream.tick();
+  // A tick that is still reading (a capacity read waits up to its deadline) skips the next one.
+  let ticking = false;
+  const emitSnapshot = async () => {
+    if (ticking) return;
+    ticking = true;
+    let snapshot;
+    try {
+      snapshot = await stream.tick();
+    } finally {
+      ticking = false;
+    }
     let lines;
     try {
       lines = problemLines(snapshot);
@@ -164,18 +173,15 @@ export function runStream(
     shown = new Set(lines);
     stdout.write(`${JSON.stringify(snapshot)}\n`);
   };
-  return new Promise((resolve) => {
-    const timer = setInterval(emit, interval);
-    const lines = createInterface({ input: stdin });
-    lines.on('line', (line) => {
-      if (line.trim() === 'capacity') stream.requestCapacity();
-    });
-    lines.on('close', () => {
-      clearInterval(timer);
-      resolve();
-    });
-    // The reader went away (EPIPE): nobody is left to read a snapshot.
-    stdout.on('error', () => lines.close());
-    emit();
+  const lines = createInterface({ input: stdin });
+  lines.on('line', (line) => {
+    if (line.trim() === 'capacity') stream.requestCapacity();
   });
+  const closed = new Promise((resolve) => lines.on('close', resolve));
+  // The reader went away (EPIPE): nobody is left to read a snapshot.
+  stdout.on('error', () => lines.close());
+  await emitSnapshot();
+  const timer = setInterval(emitSnapshot, interval);
+  await closed;
+  clearInterval(timer);
 }

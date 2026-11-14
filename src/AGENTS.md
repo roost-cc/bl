@@ -1532,14 +1532,15 @@ against a local model server; see **The local provider** below. Besides `spawn`,
   as that load read it), for an adapter that reads `backlog.json` (`local`); the base ignores it. `state` is `available`, `unavailable` or
   `unknown`; `scope` is `account` (every model of the agent) or `model`;
   `until` is when an `unavailable` one may be tried again, or null; `windows`
-  is `[{ name, remainingPercent, resetsAt }]`. It never throws: a failed read
+  is `[{ name, remainingPercent, resetsAt }]`. It is async and never rejects: a failed read
   is `unknown` with the reason in `message`. Codex reads its quota over
   `codex app-server` (see `bl capacity`); Claude reads Claude Code's OAuth
   usage endpoint, once per model (see `bl capacity`); `local` asks its
   server's `/health`; Gemini answers the base `unknown` ("gemini cannot
-  report capacity"). Claude, Codex and `local` run their read as a Node child
-  (`runCapacityHelper`, `src/agents/capacity-helper.js`), because
-  `capacity()` is synchronous.
+  report capacity"). Claude, Codex and `local` await their reader in the bl
+  process (`readClaudeUsage`, `readCodexRateLimits`, `probeLocalServer`;
+  F-128 D6), with no helper process. The reader is each adapter's test seam
+  (`read`).
 - `checkConfiguration({ model }, { topLevel, raw })` → a reason string, or
   null when the configuration is usable. `topLevel` is `backlog.json`'s top
   level; `raw` is it with the repo's `overrides` merged over it. The config
@@ -3616,8 +3617,9 @@ bl capacity --json   # {"schema":"bl-capacity-json/v1","configurations":[{role, 
 Codex's reading comes from `codex app-server` (marked experimental), over
 the JSON-RPC requests `initialize`, `initialized` and
 `account/rateLimits/read`, the ones `~/codex-usage.py` sends.
-`src/agents/codex-capacity.js` holds the conversation in a child process
-with a 20-second deadline and stops app-server on every path;
+`src/agents/codex-capacity.js` holds the conversation with app-server, an
+asynchronous child with pipes, in the bl process, with a 20-second deadline,
+and stops app-server on every path;
 `codexCapacity()` in `codex.js` maps the answer. Every bucket of
 `rateLimitsByLimitId` (else `rateLimits`) gives its `primary` and
 `secondary` windows ("codex 5h", "codex 7d"). A window with nothing left, or

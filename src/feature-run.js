@@ -711,9 +711,10 @@ export function defaultRunner({ interactive = false, extraPrompt = '' } = {}) {
     interactive,
     /**
      * The adapter's capacity reading for one configuration (F-64 D1), with
-     * the run config's `backlog.json` top level `topLevel`; never throws.
+     * the run config's `backlog.json` top level `topLevel`; async, never
+     * rejects.
      */
-    capacity(agent, model, topLevel) {
+    async capacity(agent, model, topLevel) {
       return getProvider(agent).capacity({ model, topLevel });
     },
     /** The adapter's `{ checkCommand, billingUrl }` for an escalation's steps (S-1140). */
@@ -1895,17 +1896,17 @@ function recordSession(ctx, { step, story, configuration: c, startedAt, cwd, ses
  * The adapter's capacity reading for `c` (F-64 D1), through the runner. An
  * `account`-scoped answer is the agent's for every model, so `asked` keeps
  * it and the agent is asked once per walk. A runner without `capacity`, or
- * one that throws or answers nothing usable, reads `unknown`: a broken read
- * costs at most a refused spawn. An `unavailable` reading whose reset has
- * passed also reads `unknown`. `topLevel` is the run config's
+ * one that throws, rejects or answers nothing usable, reads `unknown`: a
+ * broken read costs at most a refused spawn. An `unavailable` reading whose
+ * reset has passed also reads `unknown`. `topLevel` is the run config's
  * `backlog.json` top level, which an adapter may read its settings from
  * (`local`).
  */
-function readCapacity(runner, c, asked, topLevel) {
+async function readCapacity(runner, c, asked, topLevel) {
   if (asked.has(c.agent)) return asked.get(c.agent);
   let reading = null;
   try {
-    reading = typeof runner.capacity === 'function' ? runner.capacity(c.agent, c.model ?? null, topLevel) : null;
+    reading = typeof runner.capacity === 'function' ? await runner.capacity(c.agent, c.model ?? null, topLevel) : null;
   } catch (e) {
     reading = { state: 'unknown', scope: 'model', until: null, message: describeThrown(e) };
   }
@@ -2106,7 +2107,7 @@ export async function runSession(
               runner.log(`  ${step}: skipping ${name}: ${skip}`);
               continue;
             }
-            const reading = readCapacity(runner, c, asked, config.topLevel);
+            const reading = await readCapacity(runner, c, asked, config.topLevel);
             if (reading.state === 'unavailable') {
               const until = reading.until == null ? NaN : new Date(reading.until).getTime();
               markOut(ctx, {
@@ -2287,20 +2288,24 @@ async function waitOrEscalate(ctx, { step, story = null, role, list, excluded = 
       : `agent unavailable: every ${roleName} configuration is out (${list.map(configurationLabel).join(', ')})`;
     // A fresh reading of each refused configuration; an account-wide one is asked once.
     const asked = new Map();
+    const configurations = [];
+    for (const { c, out, headless, implemented } of rows) {
+      configurations.push({
+        agent: c.agent,
+        model: c.model ?? null,
+        out,
+        reading: out && headless && !implemented ? await readCapacity(runner, c, asked, config.topLevel) : null,
+        remediation: remediationOf(runner, c.agent),
+        excluded: implemented?.steps ?? null,
+        headless,
+      });
+    }
     const failure = describeFailure({
       step: stepLabel(ctx, step, story),
       failedAt: now,
       roleKey: roleKey(role),
       resumeHint: resumeCommand(ctx),
-      configurations: rows.map(({ c, out, headless, implemented }) => ({
-        agent: c.agent,
-        model: c.model ?? null,
-        out,
-        reading: out && headless && !implemented ? readCapacity(runner, c, asked, config.topLevel) : null,
-        remediation: remediationOf(runner, c.agent),
-        excluded: implemented?.steps ?? null,
-        headless,
-      })),
+      configurations,
     });
     const reason = `${unavailable} — ${failure.causeLine}`;
     const details = `The ${step} session found every ${roleName} configuration out: ${why}.\n\n${failure.text}`;
