@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -33,9 +33,9 @@ const RUN_FILES = [
  * root `wt/`: S-1's clean one beside a `.codex` sandbox stub, S-4's with an
  * untracked file, S-3's, and a directory `docs` that names no work unit.
  */
-function gcBacklog() {
+function gcBacklog({ repos = {} } = {}) {
   const t = mkTempBacklog({
-    repos: { code: './code' },
+    repos: { code: './code', ...repos },
     config: { worktrees: './wt' },
     components: [{ id: 'C00', title: 'Core', repo: 'code', home: true }],
     stories: [
@@ -251,6 +251,39 @@ test('gc_keeps_unit_on_list_failure_or_late_worktree', async (t) => {
       cleanup();
     }
   });
+});
+
+test('gc_keeps_directory_when_repo_missing_or_worktree_list_malformed and gc_reports_missing_repo_prune_failure', async (t) => {
+  /** Each way a configured repo gives no complete worktree list; `repo` is a repo with no path on disk. */
+  const cases = [
+    { name: 'missing repo', repos: { gone: './gone' }, repo: 'gone' },
+    { name: 'dangling repo link', repos: { link: './link' }, repo: 'link', link: true },
+    {
+      name: 'malformed worktree list',
+      shim: `if [ "$1 $2" = "worktree list" ]; then printf 'HEAD deadbeef\\nbranch refs/heads/main\\n'; exit 0; fi`,
+    },
+  ];
+  for (const c of cases) {
+    for (const mode of ['--dry-run', 'remove']) {
+      await t.test(`${c.name}, ${mode}`, () => {
+        const { dir, wt, cleanup } = gcBacklog({ repos: c.repos });
+        try {
+          if (c.link) symlinkSync(join(dir, 'nowhere'), join(dir, c.repo));
+          const env = c.shim ? gitShim(dir, c.shim) : GIT_ENV;
+          const r = runBl(mode === 'remove' ? ['gc'] : ['gc', mode], { cwd: dir, env });
+          assert.equal(r.status, 1, r.stderr);
+          assert.match(r.stdout, new RegExp(`^kept ${join(wt, 's1-done')} \\(git cannot list the worktrees: `, 'm'));
+          assert.doesNotMatch(r.stdout, /(removed|would remove) .*\/wt\//);
+          assert.ok(existsSync(join(wt, 's1-done', 'code')), 'the closed work unit directory stays');
+          const prune = new RegExp(`^kept ${join(dir, c.repo ?? 'none')} \\(git worktree prune: no repo at `, 'm');
+          if (c.repo && mode === 'remove') assert.match(r.stdout, prune);
+          else assert.doesNotMatch(r.stdout, /git worktree prune/);
+        } finally {
+          cleanup();
+        }
+      });
+    }
+  }
 });
 
 test('gc_reports_partial_cleanup_and_prune_failure: each failed step is a failed kept line, and the rest is still printed', async (t) => {

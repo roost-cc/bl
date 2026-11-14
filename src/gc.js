@@ -301,11 +301,13 @@ export function sweepRunFiles(config, graph, { dryRun }) {
  * uncommitted changes; one that git cannot read, that has changes or that
  * git refuses to remove is kept, and so is the directory. The worktrees are
  * listed again just before the directory goes; one registered since the
- * first listing is kept, and so is the directory. A directory whose
- * worktrees git cannot list is kept. Otherwise the directory goes with
- * everything in it, reported as one path. A directory that names no work
- * unit is kept; an open work unit's is left out. Unless `dryRun`, `git
- * worktree prune` runs in each repo afterwards; a failed prune keeps the repo.
+ * first listing is kept, and so is the directory. A directory is kept when
+ * any configured repo gives no complete worktree list (its path is not
+ * there, git fails, or a record has no path). Otherwise the directory goes
+ * with everything in it, reported as one path. A directory that names no
+ * work unit is kept; an open work unit's is left out. Unless `dryRun`, `git
+ * worktree prune` runs in each repo afterwards; a failed prune, or a repo
+ * path that is not there, keeps the repo as a failure.
  *
  * @param {object} config
  * @param {import('./backlog-graph.js').BacklogGraph} graph
@@ -410,9 +412,11 @@ export function sweepWorktrees(config, graph, { dryRun }) {
   }
 
   if (!dryRun) {
-    for (const repoPath of repoPaths.filter((p) => existsSync(p))) {
-      const r = git(repoPath, ['worktree', 'prune']);
-      if (r.status !== 0) kept.push({ path: repoPath, reason: `git worktree prune: ${gitFailure(r)}`, failed: true });
+    for (const repoPath of repoPaths) {
+      // A repo path that is not there is a skipped prune, so a failure too.
+      const r = existsSync(repoPath) ? git(repoPath, ['worktree', 'prune']) : null;
+      const why = r ? r.status !== 0 && gitFailure(r) : `no repo at ${repoPath}`;
+      if (why) kept.push({ path: repoPath, reason: `git worktree prune: ${why}`, failed: true });
     }
   }
   return { removed, kept };

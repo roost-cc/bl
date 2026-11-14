@@ -275,21 +275,26 @@ export function findStoryDir(parsed, config) {
 /**
  * List all story worktrees for a given repo path. With `detached`, a
  * worktree on no branch (a detached HEAD, as `bl updates` makes) is listed
- * too, with `branch: null`. With `strict`, a failed `git worktree list`
- * throws, not an empty list.
+ * too, with `branch: null`. With `strict`, a list that may be incomplete
+ * throws, not a shorter list: a repo path that is not there, a failed
+ * `git worktree list`, or a record with no `worktree` line.
  * @param {string} repoPath
  * @param {{ detached?: boolean, strict?: boolean }} [opts]
  * @returns {{ path: string, branch: string | null }[]}
  */
 export function listWorktrees(repoPath, { detached = false, strict = false } = {}) {
   const results = [];
-  if (!existsSync(repoPath)) return results;
+  if (!existsSync(repoPath)) {
+    if (strict) throw new Error(`no repo at ${repoPath}`);
+    return results;
+  }
   try {
     const output = gitOut(repoPath, ['worktree', 'list', '--porcelain']);
     for (const entry of output.split('\n\n').filter(Boolean)) {
       const lines = entry.split('\n');
       const pathLine = lines.find((l) => l.startsWith('worktree '));
       const branchLine = lines.find((l) => l.startsWith('branch '));
+      if (!pathLine && strict) throw new Error(`git worktree list: a record has no worktree line: ${lines[0]}`);
       if (!pathLine || (!branchLine && !detached)) continue;
       const wPath = pathLine.slice('worktree '.length);
       const wBranch = branchLine ? branchLine.slice('branch refs/heads/'.length) : null;
