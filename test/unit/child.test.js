@@ -12,7 +12,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
@@ -90,6 +90,22 @@ test('git runs in cwd with utf8 output by default', () => {
   const failed = git(dir, ['rev-parse', 'no-such-ref']);
   assert.equal(failed.status, 128);
   assert.match(failed.stderr, /no-such-ref/);
+});
+
+// S-1560: git's search for a repository stops at BL_CEILING_DIRECTORIES too,
+// and a GIT_CEILING_DIRECTORIES already set still counts.
+test('git does not search above a BL_CEILING_DIRECTORIES or GIT_CEILING_DIRECTORIES entry', () => {
+  const root = mkTempDir('bl-child-ceiling-');
+  assert.equal(git(root, ['init', '-q']).status, 0);
+  const mid = join(root, 'mid');
+  const other = join(root, 'other');
+  const cwd = join(mid, 'cwd');
+  mkdirSync(cwd, { recursive: true });
+  const found = (env) => git(cwd, ['rev-parse', '--git-dir'], { env: { ...process.env, ...env } }).status;
+  assert.equal(found({ BL_CEILING_DIRECTORIES: other }), 0);
+  assert.equal(found({ BL_CEILING_DIRECTORIES: mid }), 128);
+  assert.equal(found({ GIT_CEILING_DIRECTORIES: mid, BL_CEILING_DIRECTORIES: other }), 128);
+  assert.equal(found({ GIT_CEILING_DIRECTORIES: other, BL_CEILING_DIRECTORIES: mid }), 128);
 });
 
 // F-124 D2: gitOut, for a git command that must succeed.
