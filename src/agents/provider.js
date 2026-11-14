@@ -217,7 +217,7 @@ export class AgentProvider {
    *                                       write its events where the handle
    *                                       says, so followSession() can read
    *                                       them while it runs.
-   * @param {AbortSignal} [opts.signal]  - Headless only: ends the agent with
+   * @param {AbortSignal} [opts.signal]  - Headless only: sends the agent
    *                                       SIGTERM when it fires; the session
    *                                       is then a failed one.
    * @param {Function} [opts.run]        - Test seam and process-scope hook:

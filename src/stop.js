@@ -14,10 +14,11 @@
  *    (`writeStopRequest`): JSON with its own pid, the time and `holder`, the
  *    pid of the run it stops. It deletes no other `bl stop`'s request.
  * 3. sends SIGTERM to the holder. `bl run` takes it as a stop (F-128 D8): it
- *    ends the current session or test-gate command, finds the request
- *    (`checkStop` in feature-run.js), records `stopped`, releases its locks
- *    and exits 130. A holder that is already gone (`ESRCH`) needs no signal;
- *    any other failure is one line, and the run stops at its next check.
+ *    sends SIGTERM to the current session or test-gate command. When that
+ *    exits, the run finds the request (`checkStop` in feature-run.js),
+ *    records `stopped`, releases its locks and exits 130. A holder that is
+ *    already gone (`ESRCH`) needs no signal; any other failure is one line,
+ *    and the run stops at its next check.
  * 4. waits up to STOP_WAIT_MS for that holder to let the run lock go.
  *
  * This works with or without user systemd. `bl stop` is a short
@@ -44,9 +45,10 @@ const HELP = `Usage: bl stop <F-id|B-id|S-id>
 Stop a running bl run cleanly. Continue it later with bl run <id> --resume.
 
 bl stop writes a stop request in .bl/run/<id>.stop/ and sends SIGTERM to the
-run's bl. The run then ends its agent session or test command, records
-"stopped", releases its locks and exits 130. bl stop waits up to
-${STOP_WAIT_MS / 1000} s for that. The work unit's status does not change.
+run's bl. The run then sends SIGTERM to its agent session or test command.
+When that exits, the run records "stopped", releases its locks and exits 130.
+bl stop waits up to ${STOP_WAIT_MS / 1000} s for that. The work unit's status
+does not change.
 
 A run state that says running while no bl holds the run (the bl died) is
 marked stopped at once.

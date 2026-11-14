@@ -4105,8 +4105,8 @@ step it stopped in.
    The `exit` listener of `src/child.js` sends SIGTERM to the long child.
 
 `bl review` and `bl merge` (`reviewFeature`, `integrateUnit`) take no interrupts: an interrupt
-exits 130 or 143, and the `exit` listener of `src/child.js` sends SIGTERM to their long child. An interactive
-session (`bl run -i`) keeps a synchronous wait (F-128 A3). A SIGINT that `bl` gets during it runs
+exits 130 or 143, and the `exit` listener of `src/child.js` sends SIGTERM to their long child.
+An interactive session (`bl run -i`) keeps a synchronous wait (F-128 A3). A SIGINT that `bl` gets during it runs
 the handler when the session ends, and the run stops at its next check. If the same SIGINT ended
 the agent, `src/child.js` raises it at once instead (F-114 D2). Known limits: an
 interrupt that ends a short synchronous child during `bl run` (a git child that got the same
@@ -4137,9 +4137,9 @@ without user systemd:
    each other's request, and a write that fails deletes only its own file and exits 1. The
    loop honours only a request whose `holder` is its own pid.
 3. It sends SIGTERM to the holder (`stopRun`'s `kill` option, `process.kill` by default). The
-   run takes it as a stop (**An interrupt during `bl run` is a stop**, above): it ends the
-   current agent session or test-gate command. If the holder is already gone (`ESRCH`),
-   `bl stop` goes on to the wait. Any other failure prints
+   run takes it as a stop (**An interrupt during `bl run` is a stop**, above): it sends
+   SIGTERM to the current agent session or test-gate command. If the holder is already gone
+   (`ESRCH`), `bl stop` goes on to the wait. Any other failure prints
    `bl stop: could not signal pid <n>: <message>`, and the run stops at its next check.
 4. The loop's `checkStop()` (`src/feature-run.js`) finds the request for its own pid, so the
    note is `stopped by bl stop at <step>`, not the signal's. The stopped session is not an
