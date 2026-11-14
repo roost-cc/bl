@@ -144,7 +144,7 @@ import {
   enterVerb,
   implementVerbOf,
   logOf,
-  malformedLogRefusal,
+  logRefusal,
   nowAt,
   reviewOf,
   startOf,
@@ -258,12 +258,20 @@ function exitOnStoryWithoutRepo(feature, stories) {
 }
 
 /**
- * Exit when a story of the feature has a malformed `transitions:`
- * (`malformedLogRefusal`): its log is written later (its start, its merge),
- * after a worktree, a merge or a tag that the refusal would not undo.
+ * Exit when an open story of the feature has a log that its entry to `to`
+ * (`in_progress` at its start, `done` at its merge) would leave with an
+ * error `bl validate` reports (`logRefusal`, S-1580): that entry is written
+ * after a worktree, a merge or a tag that the refusal would not undo. A
+ * closed story gets no entry.
  */
-function exitOnMalformedStoryLog(stories) {
-  const refusal = malformedLogRefusal(stories.map((s) => ({ id: s.id, fm: s.frontmatter })));
+function exitOnStoryLogFault(config, stories, to) {
+  const flow = loadFlow(config.backlogRoot);
+  const { terminal } = flow.typeOf('story');
+  const open = stories.filter((s) => !terminal.includes(statusOf('story', s.frontmatter)));
+  const refusal = logRefusal(
+    flow,
+    open.map((s) => ({ id: s.id, kind: 'story', fm: s.frontmatter, to })),
+  );
   if (refusal) {
     console.error(refusal);
     process.exit(1);
@@ -1142,7 +1150,7 @@ export async function prepareFeatureWorktree(config, feature, verb = 'run') {
     process.exit(1);
   }
   exitOnStoryWithoutRepo(feature, stories);
-  exitOnMalformedStoryLog(stories);
+  exitOnStoryLogFault(config, stories, 'in_progress');
   const names = featureRepoOrder(stories);
   for (const name of names) {
     if (!config.reposByName[name]) {
@@ -1777,7 +1785,7 @@ export async function cmdMerge(args, config, feature) {
   const { stories } = resolveFeatureStories(feature, config, all);
   // Before any repo lands: every story is merged and marked done below.
   exitOnStoryWithoutRepo(feature, stories);
-  exitOnMalformedStoryLog(stories);
+  exitOnStoryLogFault(config, stories, 'done');
 
   // The release manifest written after the merge records every deployable
   // repo (`deployable: true` in `repos`, which every entry must set).

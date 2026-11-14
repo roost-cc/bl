@@ -42,6 +42,7 @@ test('bl merge B-n tags B-<n>, writes releases/B-<n>.json, and marks the batch a
     points: 2,
     batch: 'B-3',
     transitions: [
+      { at, to: 'draft', by: 'new' },
       { at, to: 'refined', by: 'refine' },
       { at, to: 'in_progress', by: 'run' },
     ],

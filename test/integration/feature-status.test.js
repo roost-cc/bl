@@ -157,7 +157,7 @@ test('bl merge and bl review accept a unit that a merge or a review escalated, o
   const at = (n) => `2026-11-0${n}T00:00:00Z`;
   const reviewed = [
     { at: at(1), to: 'draft', by: 'new' },
-    { at: at(2), to: 'in_progress', by: 'operator' },
+    { at: at(2), to: 'in_progress', by: 'force' },
     { at: at(3), to: 'in_review', by: 'run', via: 'open_pr' },
   ];
   // The escalation a merge records after a clean review, and a review's closing round.
@@ -197,7 +197,7 @@ test('bl merge refuses a feature whose story has a malformed transitions: before
   const at = (n) => `2026-11-0${n}T00:00:00Z`;
   const started = [
     { at: at(1), to: 'draft', by: 'new' },
-    { at: at(2), to: 'in_progress', by: 'operator' },
+    { at: at(2), to: 'in_progress', by: 'force' },
   ];
   const reviewed = [
     ...started,

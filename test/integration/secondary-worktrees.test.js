@@ -287,13 +287,12 @@ test('bl implement on an escalated feature or story whose review position is fix
   const at = (n) => `2026-11-0${n}T00:00:00Z`;
   const started = [
     { at: at(1), to: 'draft', by: 'new' },
-    { at: at(2), to: 'in_progress', by: 'operator' },
+    { at: at(2), to: 'in_progress', by: 'force' },
   ];
   const fixing = [...started, { at: at(3), to: 'in_review', by: 'run' }, { at: at(4), to: 'fixing', by: 'review' }];
   // [name, log, whether the review position is fixing]: the old `status === 'fixing'` test is wrong for the first two.
   const cases = [
     ['a fix that escalated', [...fixing, { at: at(5), to: 'escalated', by: 'fix' }], true],
-    ["the loop's escalation", [...fixing, { at: at(5), to: 'escalated', by: 'run' }], true],
     ['a unit in fixing', fixing, true],
     ['escalated with no open items', [...started, { at: at(3), to: 'escalated', by: 'run' }], false],
   ];

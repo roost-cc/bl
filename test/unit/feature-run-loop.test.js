@@ -2810,7 +2810,10 @@ test('a run that enters at the cap runs only the closing round it is owed, and n
     for (const resume of [false, true]) {
       const { dir, cleanup, config, feature, prep } = setup({
         status: undefined,
-        transitions: [{ to: 'draft', by: 'new' }, { to: 'approved', by: 'operator' }, ...c.log],
+        transitions: [{ to: 'draft', by: 'new' }, { to: 'approved', by: 'force' }, ...c.log].map((e, i) => ({
+          at: `2026-11-01T00:${String(i).padStart(2, '0')}:00Z`,
+          ...e,
+        })),
         pr: '7',
       });
       try {
