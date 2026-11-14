@@ -1905,16 +1905,20 @@ function recordSession(ctx, { step, story, configuration: c, startedAt, cwd, ses
  * broken read costs at most a refused spawn. An `unavailable` reading whose
  * reset has passed also reads `unknown`. `topLevel` is the run config's
  * `backlog.json` top level, which an adapter may read its settings from
- * (`local`).
+ * (`local`). A stop that came during the read stops the run here
+ * (`checkStop`), before a caller acts on the reading.
  */
-async function readCapacity(runner, c, asked, topLevel) {
+async function readCapacity(ctx, c, asked) {
+  const { runner, config } = ctx;
   if (asked.has(c.agent)) return asked.get(c.agent);
   let reading = null;
   try {
-    reading = typeof runner.capacity === 'function' ? await runner.capacity(c.agent, c.model ?? null, topLevel) : null;
+    reading =
+      typeof runner.capacity === 'function' ? await runner.capacity(c.agent, c.model ?? null, config.topLevel) : null;
   } catch (e) {
     reading = { state: 'unknown', scope: 'model', until: null, message: describeThrown(e) };
   }
+  checkStop(ctx);
   if (reading == null || typeof reading !== 'object')
     reading = { state: 'unknown', scope: 'model', until: null, message: '' };
   // An `until` that is not a time would read as "out for the rest of the run".
@@ -2113,7 +2117,7 @@ export async function runSession(
               runner.log(`  ${step}: skipping ${name}: ${skip}`);
               continue;
             }
-            const reading = await readCapacity(runner, c, asked, config.topLevel);
+            const reading = await readCapacity(ctx, c, asked);
             if (reading.state === 'unavailable') {
               const until = reading.until == null ? NaN : new Date(reading.until).getTime();
               markOut(ctx, {
@@ -2300,7 +2304,7 @@ async function waitOrEscalate(ctx, { step, story = null, role, list, excluded = 
         agent: c.agent,
         model: c.model ?? null,
         out,
-        reading: out && headless && !implemented ? await readCapacity(runner, c, asked, config.topLevel) : null,
+        reading: out && headless && !implemented ? await readCapacity(ctx, c, asked) : null,
         remediation: remediationOf(runner, c.agent),
         excluded: implemented?.steps ?? null,
         headless,

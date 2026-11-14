@@ -900,6 +900,66 @@ test('run_interrupt_stop: a bl stop request names bl stop and its pid, though it
   }
 });
 
+// Each row: what each capacity read answers, and the read during which the
+// SIGTERM comes. Reads before it may mark the configuration out; the read
+// with the SIGTERM must lead to no out mark, no session and no escalation.
+const unavailableIn = (ms) => (runner) => ({
+  state: 'unavailable',
+  scope: 'account',
+  until: ms == null ? null : new Date(runner.clock() + ms).toISOString(),
+  windows: [],
+  message: 'out',
+});
+for (const { name, answer, at } of [
+  { name: 'the first read, available', answer: () => ({ state: 'available', scope: 'account', windows: [] }), at: 1 },
+  { name: 'the first read, unavailable', answer: unavailableIn(null), at: 1 },
+  { name: 'the first read, unavailable with a reset', answer: unavailableIn(60_000), at: 1 },
+  {
+    name: 'the first read, rejected',
+    answer: () => {
+      throw new Error('no reading');
+    },
+    at: 1,
+  },
+  { name: 'the first read, no reading (unknown)', answer: () => null, at: 1 },
+  { name: "the escalation's read, no reset named", answer: unavailableIn(null), at: 2 },
+  { name: "the escalation's read, the reset past the cap", answer: unavailableIn(3 * 3_600_000), at: 2 },
+  { name: "the escalation's read, out again after a wait", answer: unavailableIn(60_000), at: 3 },
+]) {
+  test(`run_interrupt_during_capacity_read_stops_before_side_effects: ${name}`, async () => {
+    const { dir, cleanup, config, feature, prep } = setup(
+      {},
+      { agent: [{ agent: 'codex', model: 'gpt-6-sol' }], run: { limit_wait_max_hours: 1 } },
+    );
+    try {
+      const runner = fakeRunner({ dir, feature });
+      let reads = 0;
+      runner.capacity = async () => {
+        reads += 1;
+        // An awaited read: the SIGTERM comes while it is pending.
+        await new Promise((resolve) => setImmediate(resolve));
+        if (reads === at) process.emit('SIGTERM', 'SIGTERM');
+        return answer(runner);
+      };
+      const state = await runFeature({ feature, config, prep, runner, opts: { maxRounds: 2 } });
+      assert.equal(state.status, 'stopped', JSON.stringify(state.history.slice(-3)));
+      assert.equal(loadRunState(config, 'F-1').status, 'stopped', 'the saved state is stopped, not escalated');
+      assert.equal(state.history.at(-1).note, 'stopped by SIGTERM at implement');
+      assert.equal(reads, at, 'no read after the stop');
+      assert.equal(runner.calls.filter((c) => c.type === 'session').length, 0, 'no session started');
+      assert.equal(
+        state.history.filter((h) => h.step === 'unavailable').length,
+        at - 1,
+        'only the reads before the stop marked the configuration out',
+      );
+      assert.equal(extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation').trim(), 'None.');
+      assert.equal(holderOf(runLockPath(config, 'F-1')), null, 'the run lock is free');
+    } finally {
+      cleanup();
+    }
+  });
+}
+
 test('a fix-tests session returning unrelated escalates after one gate run with its reason', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
   try {
