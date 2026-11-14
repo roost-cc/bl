@@ -19,8 +19,9 @@
  * `dependencyOrder` (targets of a multi-story `bl merge`) and the plan-file
  * reader `planFiles`. No other module defines a story or repo ordering.
  *
- * `bl run` stores the plan as `plan.yaml` in the work unit's directory
- * (`writePlan`, checked against `schemas/plan.json`), and the run, `--resume`
+ * `bl run` stores the plan as `plan.yaml` beside the change document, in the
+ * directory of the work unit's `index.md` (`writePlan`, checked against
+ * `schemas/plan.json`), and the run, `--resume`
  * and `bl merge` read it back (`readPlan`). During the run the stored plan,
  * not a new sort, decides the order.
  */
