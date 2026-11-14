@@ -324,7 +324,6 @@ test('deployableRepos: the repos entries with deployable: true, in repos order (
     name,
     path: `/r/${name}`,
     deployable,
-    updateTests: [],
     plugins: {},
     overrides: null,
   });

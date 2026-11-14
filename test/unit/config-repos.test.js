@@ -19,7 +19,6 @@ import {
 } from '../../src/config.js';
 import { findStoryDir } from '../../src/story.js';
 import { resolveFeaturePluginsReport } from '../../src/feature.js';
-import { testPluginsFor } from '../../src/updates.js';
 import { deployableRepos } from '../../src/release.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -93,7 +92,7 @@ function storyPlugins(config, id, stage) {
   }).map((p) => p.name);
 }
 
-test('loadConfig registers every repos entry with its path, deployable, update_tests and layers', () => {
+test('loadConfig registers every repos entry with its path, deployable and layers', () => {
   const { dir, cleanup } = appBacklog();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
@@ -104,7 +103,8 @@ test('loadConfig registers every repos entry with its path, deployable, update_t
     });
     const app = cfg.repos['app.acme.com'];
     assert.equal(app.deployable, true);
-    assert.deepEqual(app.updateTests, ['app-tests']);
+    // update_tests is running-man's provisioning key: bl accepts it and keeps none of it.
+    assert.deepEqual(Object.keys(app), ['name', 'path', 'deployable', 'plugins', 'overrides']);
     assert.deepEqual(app.plugins, { bootstrap: ['node-ws', 'acme-vendor'], test: ['app-tests'] });
     assert.deepEqual(app.overrides, { plugins: { 'session-stack': SESSION_STACK } });
     assert.deepEqual(cfg.repos.bl.plugins, {}, 'no plugins-<stage>: no layer');
@@ -147,22 +147,22 @@ test('a repos entry missing path or deployable fails naming the repo and the key
     raw.repos = ['bl'];
     writeFileSync(cfgPath, JSON.stringify(raw));
     assert.throws(() => loadConfig({ backlogRoot: dir }), /"repos" must be an object keyed by repo name/);
-    // An empty update_tests is allowed.
+    // update_tests is running-man's provisioning key: bl accepts an empty
+    // list, and an entry may leave it out.
     const empty = JSON.parse(good);
     empty.repos.bl.update_tests = [];
     writeFileSync(cfgPath, JSON.stringify(empty));
-    assert.deepEqual(loadConfig({ backlogRoot: dir }).repos.bl.updateTests, []);
-    // update_tests is deprecated with bl updates (F-80 G3): an entry may leave it out.
+    assert.equal(loadConfig({ backlogRoot: dir }).repos.bl.name, 'bl');
     const without = JSON.parse(good);
     delete without.repos.bl.update_tests;
     writeFileSync(cfgPath, JSON.stringify(without));
-    assert.deepEqual(loadConfig({ backlogRoot: dir }).repos.bl.updateTests, []);
+    assert.equal(loadConfig({ backlogRoot: dir }).repos.bl.name, 'bl');
   } finally {
     cleanup();
   }
 });
 
-test('updateSettings reads the updates block with no defaults; loadConfig never requires it', () => {
+test('updateSettings reads only the heartbeat, with no defaults; loadConfig never requires it', () => {
   const { dir, cleanup } = appBacklog();
   try {
     const cfgPath = join(dir, 'backlog.json');
@@ -175,31 +175,29 @@ test('updateSettings reads the updates block with no defaults; loadConfig never 
       return loadConfig({ backlogRoot: dir });
     };
     assert.equal(updateSettings(write(undefined)), null, 'no updates block: no update job');
-    // The deprecated keys stay accepted beside the new ones (F-80 G3).
+    const heartbeat = { repo: 'running-man', branch: 'updates-heartbeat' };
+    const wanted = { heartbeat };
+    assert.deepEqual(updateSettings(write({ heartbeat })), wanted, 'heartbeat alone');
+    // running-man's keys (namespace, push_attempts) and the old report beside
+    // it: bl ignores them.
     const full = {
       namespace: 'acme',
       report: 'running-man/renovate/reports/renovate-report.json',
       push_attempts: 3,
-      heartbeat: { repo: 'running-man', branch: 'updates-heartbeat' },
+      heartbeat,
     };
-    assert.deepEqual(updateSettings(write(full)), {
-      namespace: 'acme',
-      pushAttempts: 3,
-      heartbeat: { repo: 'running-man', branch: 'updates-heartbeat' },
-    });
+    assert.deepEqual(updateSettings(write(full)), wanted, 'the full block');
+    const { namespace: _n, push_attempts: _p, ...noRunnerKeys } = full;
+    assert.deepEqual(updateSettings(write(noRunnerKeys)), wanted, 'no namespace or push_attempts');
     // A backlog.json from before the cutover still loads; only the reader refuses it.
     const before = write({ namespace: 'acme', report: full.report });
-    assert.throws(() => updateSettings(before), /"updates" has no "push_attempts"/);
-    const { heartbeat: _h, ...noHeartbeat } = full;
-    assert.throws(() => updateSettings(write(noHeartbeat)), /"updates" has no "heartbeat"/);
+    assert.throws(() => updateSettings(before), /"updates" has no "heartbeat"/);
     for (const [patch, err] of [
-      [{ namespace: undefined }, /has no "namespace"/],
-      [{ namespace: ' ' }, /needs a non-empty string for "namespace"/],
-      [{ push_attempts: 0 }, /needs a positive whole number for "push_attempts"/],
-      [{ push_attempts: '3' }, /needs a positive whole number for "push_attempts"/],
       [{ heartbeat: 'running-man' }, /needs an object \{ repo, branch \} for "heartbeat"/],
       [{ heartbeat: { repo: 'running-man' } }, /has no "heartbeat\.branch"/],
+      [{ heartbeat: { branch: 'b' } }, /has no "heartbeat\.repo"/],
       [{ heartbeat: { branch: 'b', repo: '' } }, /needs a non-empty string for "heartbeat\.repo"/],
+      [{ heartbeat: { repo: 'running-man', branch: ' ' } }, /needs a non-empty string for "heartbeat\.branch"/],
     ]) {
       const u = { ...full, ...patch };
       for (const k of Object.keys(u)) if (u[k] === undefined) delete u[k];
@@ -303,13 +301,10 @@ test('the plugins resolve the same whether bl runs from the backlog, bl or app.a
   }
 });
 
-test("update_tests is an update story's plugins:, and deployable picks the release manifest's repos", () => {
+test("deployable picks the release manifest's repos", () => {
   const { dir, cleanup } = appBacklog();
   try {
     const cfg = loadConfig({ backlogRoot: dir });
-    assert.deepEqual(testPluginsFor('app.acme.com', cfg), ['app-tests']);
-    assert.deepEqual(testPluginsFor('bl', cfg), ['bl-tests']);
-    assert.equal(testPluginsFor('nowhere', cfg), null);
     assert.deepEqual(deployableRepos(cfg), ['app.acme.com']);
   } finally {
     cleanup();
