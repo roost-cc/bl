@@ -1174,7 +1174,10 @@ An entry's `from` is the `to` of the entry before it.
     - `in_review` by `fix` via `fix_self_review`, after a fix.
   - Every escalation records `escalated` (`writeEscalation`). The entry is by the verb whose
     failure branch leaves the current status. Inside the integration of `bl merge`, that verb
-    is `merge`.
+    is `merge`. The one exception is a log that the stored-log check refuses (a log that
+    `bl validate` rejects, S-1580). Then `writeEscalation` writes `## Escalation` and no
+    `escalated` entry. The run's history (`.bl/run/<id>.json`) gets a `warning` step `escalate`
+    that says the log has no `escalated` entry, and the run's output prints the same warning.
   - Each session hop carries the session summary as `outcome`.
   - `bl review` records `in_review` by `review` when it starts on a work unit that is in
     progress or ready for merge. It records its verdict too.
@@ -3882,7 +3885,8 @@ The first run writes `review_rounds_max` (2, or `--max-rounds`) to the story
 frontmatter and the branch and PR to the story's change document (its round
 is its log's); run state is `.bl/run/S-34.json`. An escalation goes to the story's
 `## Escalation`, and its log records `escalated` (F-69 D1): the open section is what blocks
-`bl run` and `bl merge`. `bl status S34` prints the status, branch, PR, review state and
+`bl run` and `bl merge`. If the stored-log check refuses the `escalated` entry (S-1580), the
+log has no such entry; a `warning` step `escalate` in the run state says so. `bl status S34` prints the status, branch, PR, review state and
 round, the last three transitions, the escalation and the run state. `--plan`, `--resume`, `--interactive` and
 `--max-rounds` behave as for a feature. A story's run computes and stores its
 execution plan too, a plan of one story, as `plan.yaml` in the story's
