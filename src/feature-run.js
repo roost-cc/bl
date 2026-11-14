@@ -146,6 +146,13 @@ import {
 export { RUN_DIR, runLockPath, ensureRunDir, acquireRunLock, releaseRunLock };
 // Its home is agent-failure.js; feature-cmd.js and capacity.js import it from here.
 export { localTime };
+/**
+ * The tab-title status while `bl merge` pushes an integrated branch or main:
+ * git runs the repo's pre-push gate inside `git push`, so bl cannot show the
+ * two apart (S-1412).
+ */
+export const PUSH_STATUS = 'pre-push gate + push';
+
 export const REVIEW_DIMENSIONS = ['correctness', 'failure-paths'];
 
 /**
@@ -4355,6 +4362,7 @@ async function integrateLocked(ctx) {
   // A stop inside the gate (a failed container cleanup) escalates as a merge
   // and rolls the merges back (`integrationThrew`), so the rerun gates again.
   ctx.integration = { details: () => `${rollBackNote(ctx, repos)}\n\n${integrationNextStep(ctx, merged)}` };
+  runner.title?.({ status: 'test gate' });
   const gate = await runTestGate(ctx);
   ctx.integration = null;
   if (gate.ok) return pushIntegrated(ctx, repos);
@@ -4652,6 +4660,7 @@ function pushIntegrated(ctx, repos) {
     )
       continue;
     const pushStartedAt = runnerNow(runner).getTime();
+    runner.title?.({ status: PUSH_STATUS });
     const push = runner.shell('git push origin HEAD', r.worktreePath);
     if (push.status !== 0) {
       const escalation = pushEscalation({

@@ -18,6 +18,7 @@ import { fileURLToPath } from 'url';
 import { parseArgs } from 'util';
 import { BL_PATH, runChild } from './child.js';
 import { loadConfig, topSettings } from './config.js';
+import { TAB_TITLE_ENV } from './tab-title.js';
 import { ACTIVITY_SHOWN, HISTORY_DAYS, problemLines, TOKEN_MINUTES, TOP_SCHEMA, topSnapshot } from './top-snapshot.js';
 import { ATTENTION_MAX_AGE_MS, CAPACITY_EVERY_MS, HISTORY_EVERY_MS, runStream } from './top-stream.js';
 
@@ -235,7 +236,10 @@ export function tuiArgs(opts, interval, push) {
  * backlog.json's `top` block (D8a), read before the build: a bad block exits
  * 1. `--no-push` passes no command. `--version` reads no backlog, so it
  * works outside one. The view runs in the backlog root, so the verbs of its
- * actions and their tmux windows run there (F-87 D7).
+ * actions and their tmux windows run there (F-87 D7). The view and every
+ * `bl` it runs in this window (its stream, a watch, an action) run with tab
+ * titles off: the tab belongs to this `bl top` (S-1412). A tmux window an
+ * action opens gets tmux's environment, so its `bl` titles that window.
  */
 function runTui(opts, interval) {
   let push = null;
@@ -251,7 +255,11 @@ function runTui(opts, interval) {
     process.exit(1);
   }
   if (tuiNeedsBuild()) buildTui();
-  const r = runChild(TOP_BIN, tuiArgs(opts, interval, push), { stdio: 'inherit', cwd });
+  const r = runChild(TOP_BIN, tuiArgs(opts, interval, push), {
+    stdio: 'inherit',
+    cwd,
+    env: { ...process.env, [TAB_TITLE_ENV]: '' },
+  });
   if (r.error) console.error(`bl top: cannot run ${TOP_BIN}: ${r.error.message}`);
   process.exit(r.status ?? 1);
 }

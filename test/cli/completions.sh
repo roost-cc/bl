@@ -143,6 +143,21 @@ assert_eq "bl watch completes its flags" "--from-start --json --help" "$(complet
 assert_eq "bl rank completes feature and story ids" "F-1 S-1" "$(complete_bash rank "")"
 assert_eq "bl rank completes its flags" "--top --bottom --before --after --remove --commit --reset --help" "$(complete_bash rank "-")"
 
+# The bl inbox --json a completion runs on Tab runs with tab titles off, so it
+# never renames the operator's window (S-1412). A stub bl records its
+# BL_TAB_TITLE: an empty line, not `unset`.
+STUB_BIN="$TMP/stub-bin"
+mkdir -p "$STUB_BIN"
+printf '#!/bin/sh\nprintf "%%s\\n" "${BL_TAB_TITLE-unset}" > "%s"\necho "[]"\n' "$TMP/stub-title" > "$STUB_BIN/bl"
+chmod +x "$STUB_BIN/bl"
+for variant in "${VARIANTS[@]}"; do
+  read -r shell file <<<"$variant"
+  command -v "$shell" >/dev/null 2>&1 || continue
+  rm -f "$TMP/stub-title"
+  (unset BL_TAB_TITLE && PATH="$STUB_BIN:$PATH" run_collector "$shell" "$file" _roost_inbox_task_ids "$REPO" >/dev/null)
+  assert_eq "$(basename "$file") _roost_inbox_task_ids runs bl with BL_TAB_TITLE empty" "" "$(cat "$TMP/stub-title" 2>/dev/null || echo missing)"
+done
+
 if (( FAIL > 0 )); then
   echo "FAIL: $FAIL test(s) failed; $PASS passed" >&2
   exit 1

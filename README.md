@@ -73,10 +73,10 @@ The backlog's configuration. A minimal one:
 
 ### Tab titles
 
-While `bl` runs a session or a loop, it names the terminal tab after the work: the tmux window
-under tmux, the terminal's window title elsewhere. The title is rendered from the fields each
-code path sets (`feature`, `story`, `status`, and `next`, the step that the operator does
-next), with the format in `BL_TAB_TITLE`:
+Every `bl` command names the terminal tab, from start to exit: the tmux window under tmux, the
+terminal's window title elsewhere. The title is rendered from the fields each code path sets
+(`feature`, `story`, `status`, and `next`, the step that the operator does next), with the
+format in `BL_TAB_TITLE`:
 
 ```sh
 export BL_TAB_TITLE='{{feature}} : {{story}} : {{status}} {{next}}'   # the default
@@ -87,6 +87,17 @@ export BL_TAB_TITLE=''                                                # titles o
 A field that is not set renders as nothing, and the title is trimmed: `: S-210 : implement`
 for a story with no feature, `F-123 :  : refine` for a feature.
 
+Before it does anything else, `bl` sets a start title: the status is the command (`merge`,
+`list` also for `bl ls`), with its subcommand for `task`, `updates`, `inbox` and `block`
+(`updates run`, `inbox done`), or `help` for `bl`, `bl help` and any `--help`. The feature and
+story fields are the unit ids the arguments name (`bl run s34` shows `: S-34 : run`), and
+several ids of one kind show as `2 features` or `3 stories`. A command that knows more, such as
+`bl run` or `bl refine`, then sets its own status. `bl merge` shows its steps: `integrate`,
+`test gate`, `pull` (each repo's main), `check` (the repo's `check` plugins),
+`pre-push gate + push` (git runs the pre-push gate inside `git push`), `install` (the main
+checkout's dependencies), `cleanup`, `sync` and `tag`. A fast command such as `bl list` ends at
+once with `ended`.
+
 When `bl` exits, the last title stays on the tab until the next `bl` in that window or you
 replace it. A command that reaches an end state shows it with the next step, for example
 `F-56 :  : clean → bl merge`, `F-56 :  : escalated → fix, --resume` or
@@ -96,8 +107,18 @@ non-zero, for example after an escalation. Any other exit sets the status from t
 `bl` leaves the window's automatic rename off; `tmux set -w automatic-rename on` gives tmux's
 own name back.
 
-`bl` sets `BL_TAB_TITLE=''` for every agent session and for the child processes that
-`bl review` starts in parallel for several targets.
+A title is plain text: `bl` removes control characters from it, and under tmux it doubles each
+`#`, so tmux shows `#{…}` and `#(…)` as typed. If tmux does not answer, `bl` waits for it for
+1 s in all, and then sets no more titles in that process.
+
+Two `bl` processes in one tmux window (split panes) write the same title, and the last write
+wins. So a short `bl list` beside a long `bl merge` leaves `ended` on the tab until the merge's
+next step sets its status.
+
+`bl` sets `BL_TAB_TITLE=''` for every agent session, for the child processes that
+`bl review` starts in parallel for several targets, and for every `bl` it starts for data:
+the `bl sync` of a merge, the `bl new` of `bl side`, and the view of `bl top`. The shell
+completions run `bl inbox --json` with it too. So only the `bl` you started renames the tab.
 
 ## Quickstart
 

@@ -26,13 +26,7 @@ const COMPARE_RES = [
 
 // Each exception names its file, the exact line (trimmed) and why it is not
 // an agent comparison.
-const EXCEPTIONS = [
-  {
-    file: 'bl.js',
-    line: 'case "claude":',
-    why: 'a verb alias for `bl agent` in the command dispatch, not an agent comparison',
-  },
-];
+const EXCEPTIONS = [];
 
 /** Two trimmed source lines, alike but for the quote style a formatter chose. */
 const sameLine = (a, b) => a.replaceAll("'", '"') === b.replaceAll("'", '"');
@@ -107,7 +101,6 @@ test('the boundary check catches imports and comparisons, and lets literals pass
   ];
   for (const line of ok) assert.deepEqual(boundaryViolations('x.js', line), [], line);
 
-  // The named exception holds in its own file only.
-  assert.deepEqual(boundaryViolations('bl.js', `    case "claude":`), []);
+  // A case label is a comparison in any file.
   assert.equal(boundaryViolations('feature-cmd.js', `    case "claude":`).length, 1);
 });

@@ -203,7 +203,8 @@ test('runBacklogSync: the child runs the bl entry from the backlog root', async 
   assert.equal(calls[0].entry, '/r/bl/src/bl.js');
   assert.deepEqual(calls[0].args, ['sync', '--commit', '-m', 'chore: mark S-9 done, sync backlog', '--story', 'S-9']);
   assert.equal(calls[0].opts.cwd, '/b');
-  assert.equal(calls[0].opts.env, process.env);
+  // This process's environment, with tab titles off: the tab belongs to `bl merge` (S-1412).
+  assert.deepEqual(calls[0].opts.env, { ...process.env, BL_TAB_TITLE: '' });
   assert.equal(calls[0].opts.stdio[0], 'inherit');
   assert.deepEqual(res, { committed: false, paths: [], child: true });
 });

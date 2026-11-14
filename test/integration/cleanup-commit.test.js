@@ -24,9 +24,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
-import { dirname, join } from 'path';
+import { delimiter, dirname, join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { main as cleanupMain } from '../../src/cleanup.js';
+import { endTabTitle } from '../../src/tab-title.js';
+import { fakeTmux, renamedTitles } from '../helpers/fake-tmux.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { parseChange } from '../../src/change-doc.js';
 import { extractSection } from '../../src/feature.js';
@@ -270,6 +272,62 @@ test('single-repo cleanup writes commit as a bare string', async () => {
   assert.equal(logStatusOf('story', fm), 'done');
   assert.equal(typeof fm.commit, 'string', 'expected a bare string commit');
   assert.match(fm.commit, /^[0-9a-f]{7,}$/);
+});
+
+test('bl merge shows check and install as statuses (S-1412)', async () => {
+  // A `check` plugin and a lockfile, so every long step of the repo runs.
+  const { backlog } = buildStoryBacklog({
+    repoNames: ['bl'],
+    backlogJsonExtra: { plugins: { 'ok-check': { check: 'true' } } },
+    setupRepo: (_name, work) => {
+      writeFileSync(join(work, 'package-lock.json'), '{}\n');
+      execSync(`git ${GIT_ENV} -C "${work}" add package-lock.json`, { stdio: ['ignore', 'pipe', 'pipe'] });
+      execSync(`git ${GIT_ENV} -C "${work}" commit -q -m lockfile`, { stdio: ['ignore', 'pipe', 'pipe'] });
+      execSync(`git -C "${work}" push -q origin main`, { stdio: ['ignore', 'pipe', 'pipe'] });
+    },
+  });
+  writeFileSync(join(backlog, 'index.md'), '---\nplugins-check: [ok-check]\n---\n');
+  const fake = fakeTmux();
+  // `npm ci` succeeds without doing anything.
+  writeFileSync(join(fake.dir, 'npm'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const fakeEnv = {
+    PATH: `${fake.dir}${delimiter}${process.env.PATH}`,
+    TMUX: '/tmp/tmux-fake,1,0',
+    BL_TMUX_WINDOW_ID: '@7',
+    BL_BACKLOG_DIR: backlog,
+    // Titles on, also when the test runs under an agent session's empty BL_TAB_TITLE.
+    BL_TAB_TITLE: undefined,
+  };
+  // withEnv is synchronous, so the variables are set and restored around the awaited merge.
+  const saved = Object.fromEntries(Object.keys(fakeEnv).map((k) => [k, process.env[k]]));
+  const setAll = (vars) => {
+    for (const [k, v] of Object.entries(vars)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+  };
+  const restore = () => setAll(saved);
+  setAll(fakeEnv);
+  let out;
+  try {
+    out = await captureStderr(() => captureExit(() => cleanupMain(['S-99'])));
+  } finally {
+    // Under the fake tmux: the exit hook that the first title registered must never reach a real one.
+    endTabTitle(0);
+    restore();
+  }
+  assert.equal(out.result.exit, null, out.stderr);
+  const statuses = renamedTitles(fake.calls())
+    .map((title) => title.split(' : ').at(-1).trim())
+    .filter((status, i, all) => status !== all[i - 1]);
+  // `pull` starts each repo of the loop (`cleanupOneRepo`), so a feature's next repo never shows the last one's `cleanup`.
+  assert.deepEqual(statuses, [
+    'integrate',
+    'pull',
+    'check',
+    'pre-push gate + push',
+    'install',
+    'cleanup',
+    'sync',
+    'ended',
+  ]);
 });
 
 test('bl merge removes the emptied unit directory, and keeps one with another worktree (F-60 D2)', async () => {
