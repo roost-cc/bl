@@ -108,8 +108,8 @@ file. No command writes an index or table (F-79). The commands commit through `s
 staged edits in the backlog stay out of the commit. The commit notice goes to stderr. If the
 backlog is not a git repo, they skip the commit. If the commit fails, they exit 1 and list the
 paths to commit by hand. `bl task` and `bl task done` commit the same way, with the task file and
-`blockers.json` among the paths. After a failed commit, a rerun of `bl done` or `bl approve`
-commits the file that the failed run left, if its content is the same (`commitAndRecord` and
+`blockers.json` among the paths. After a failed commit, a second `bl done` or `bl approve`
+commits the file that the failed command left, if its content is the same (`commitAndRecord` and
 `failedCommitPending`, S-1347).
 
 Four commands commit what changed in the backlog since they started instead: feature
@@ -915,7 +915,7 @@ exposes:
   task and an unknown id.
 
 A missing file is a `priority-file` problem and an empty order. So is a file that is not a list
-of non-empty id strings; a blank or comment-only file is one too (an empty order is `[]`). A
+of non-empty id strings. A blank or comment-only file is one too (an empty order is `[]`). A
 strict load throws on a file that is not YAML (a `PriorityError`). Entries that name no work unit
 are `priority-unit` problems, and bl skips them (see `bl validate`). The order is a preference,
 never a dependency.
