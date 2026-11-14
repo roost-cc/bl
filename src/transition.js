@@ -693,8 +693,9 @@ export function failingGuards(flow, when, ctx, { first = false } = {}) {
  * (`logRefusal`, S-1580), so the verb refuses before a worktree, a merge or
  * a tag. Then a hold on a status of the chosen verb's nominal path refuses
  * it (`holdRefusal`, F-119 D6): the one hold check of every verb that calls
- * this. Every hand-written start-state check of a verb handler became this. `bl run` passes its `then` chain
- * (`Flow.chainOf`), so it resumes a unit in review or fixing.
+ * this. Every hand-written start-state check of a verb handler became this.
+ * `bl run` passes its `then` chain (`Flow.chainOf`), so it resumes a unit in
+ * review or fixing.
  * @param {{ backlogRoot: string }} config
  * @param {"story" | "feature"} kind
  * @param {{ id: string, indexPath: string, fm: object, change?: { fm: object } | null }} unit

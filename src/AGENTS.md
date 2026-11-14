@@ -1219,9 +1219,9 @@ An entry's `from` is the `to` of the entry before it.
   step, each story of the feature that the command writes an entry for: at a merge, `done` on
   each story that is not done; at a start, `in_progress` on each unstarted story only, since a
   start writes no entry on a story that has started. A story whose `transitions:` is malformed
-  has no status, so both refuse it. The check sees only
-  the faults present at the start: `markFeatureMerged` reads the stories again after the
-  merges and tags, so a fault made during the merge refuses its `done` write then.
+  has no status, so both refuse it. The check sees only the faults present at the start:
+  `markFeatureMerged` reads the stories again after the merges and tags, so a fault made
+  during the merge refuses its `done` write then.
 
 - **A work unit with no log** (before `bl/scripts/migrate-transitions.js` runs) reads as the
   log that the migration would write, `legacyLog(kind, fm, change)`. That log is `draft` at
