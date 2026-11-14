@@ -208,14 +208,20 @@ function* subschemas(schema, path = '$') {
 
 /**
  * What OpenAI's strict mode (Codex's `--output-schema`) refuses in `schema`,
- * at any depth: a keyword outside PLAIN_KEYWORDS, an object that is open or
- * has an optional property. bl sends every agent the same schema (S-1408).
+ * at any depth: a keyword outside PLAIN_KEYWORDS, an object without a
+ * `properties` map, an object that is open or has an optional property. bl
+ * sends every agent the same schema (S-1408).
  */
 function plainViolations(schema) {
   const found = [];
   for (const [path, s] of subschemas(schema)) {
     for (const k of Object.keys(s)) if (!PLAIN_KEYWORDS.includes(k)) found.push(`${path} has ${k}`);
-    if (![s.type].flat().includes('object') && s.properties === undefined) continue;
+    const isObject =
+      [s.type].flat().includes('object') ||
+      ['properties', 'required', 'additionalProperties'].some((k) => s[k] !== undefined);
+    if (!isObject) continue;
+    if (typeof s.properties !== 'object' || s.properties === null || Array.isArray(s.properties))
+      found.push(`${path}: has no properties map`);
     if (s.additionalProperties !== false) found.push(`${path}: additionalProperties is not false`);
     const required = [...(s.required ?? [])].sort();
     if (JSON.stringify(required) !== JSON.stringify(Object.keys(s.properties ?? {}).sort()))
@@ -276,6 +282,27 @@ test('the plain-schema guard checks every nested subschema (S-1408)', () => {
     // A path below the root `$`: the nested schema's own violations.
     assert.match(found, /^\$\.[^:\s]+ has if$/m, at);
     assert.match(found, /^\$\.[^:\s]+: not every property is required$/m, at);
+  }
+});
+
+// plain_schema_guard_rejects_object_without_properties: strict mode refuses an
+// object schema without fixed properties, at the root or nested.
+test('the plain-schema guard refuses an object without a properties map (S-1408)', () => {
+  const open = { type: 'object', additionalProperties: false };
+  const refine = loadSchema('refine');
+  for (const [schema, at] of [
+    [open, '$'],
+    [{ ...open, required: [] }, '$'],
+    [{ additionalProperties: false, required: [] }, '$'],
+    [
+      { ...refine, properties: { ...refine.properties, x: open }, required: [...refine.required, 'x'] },
+      '$.properties.x',
+    ],
+    [{ type: 'array', items: open }, '$.items'],
+    [{ anyOf: [{ type: 'null' }, open] }, '$.anyOf[1]'],
+    [{ ...refine, $defs: { x: open } }, '$.$defs.x'],
+  ]) {
+    assert.ok(plainViolations(schema).includes(`${at}: has no properties map`), `${at} ${JSON.stringify(schema)}`);
   }
 });
 
