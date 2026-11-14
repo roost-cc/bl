@@ -22,6 +22,7 @@ import { holdLock, holdLockInChild } from '../helpers/hold-lock.js';
 import { BL_BIN, personEnv } from '../helpers/run-bl.js';
 import { spawnToFiles } from '../helpers/spawn-files.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { waitUntil } from '../helpers/wait-until.js';
 
 /** A runner's process-hygiene methods where user systemd scopes are unavailable (macOS). */
 const NO_SCOPES = {
@@ -136,18 +137,20 @@ function startRun(pidFile, trap = '') {
   });
 }
 
-/** Wait until the fake agent has written its pid, or the run has closed; the pid, or null. */
+/**
+ * Wait until the fake agent has written its pid, or the run has closed; the
+ * pid, or null. Rejects when neither happens within `waitUntil`'s time limit.
+ */
 async function agentPid(run, pidFile) {
   let closed = false;
   run.closed.then(() => (closed = true));
-  for (;;) {
+  return waitUntil(() => {
     if (existsSync(pidFile)) {
       const text = readFileSync(pidFile, 'utf8');
       if (text.endsWith('\n')) return Number(text);
     }
-    if (closed) return null;
-    await delay(20);
-  }
+    return closed ? null : undefined;
+  }, `the agent's pid in ${pidFile}`);
 }
 
 /** Whether process `pid` is gone, waiting up to 5 s for it to end. */
