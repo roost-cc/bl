@@ -104,18 +104,17 @@ Some commands commit their own backlog changes on the backlog's current branch:
 
 The commit holds the story they touched, and a new component directory or an appended feature
 file. No command writes an index or table (F-79). The commands commit through `syncAndCommit`
-(`src/sync.js`), in the same backlog-lock hold as their own writes. So other uncommitted or
+(`src/sync.js`), under the same backlog lock as their own writes. So other uncommitted or
 staged edits in the backlog stay out of the commit. The commit notice goes to stderr. If the
 backlog is not a git repo, they skip the commit. If the commit fails, they exit 1 and list the
 paths to commit by hand. `bl task` and `bl task done` commit the same way, with the task file and
-`blockers.json` among the paths. After a failed commit, a second `bl done` or `bl approve`
-commits the file that the failed command left, if its content is the same (`commitAndRecord` and
+`blockers.json` among the paths. A commit can fail and leave a file. Then a second `bl done` or
+`bl approve` commits that file, if its content is the same (`commitAndRecord` and
 `failedCommitPending`, S-1347).
 
-Four commands commit what changed in the backlog since they started instead: feature
-`bl merge`, story `bl merge`'s triage, `bl refine` and `bl init` (`commitChangedSince`,
-`src/backlog-commit.js`, S-1330). Each one takes a `dirtySnapshot` before it writes, and compares
-it with one taken at the end.
+Feature `bl merge`, story `bl merge`'s triage, `bl refine` and `bl init` commit what changed in the
+backlog since they started instead (`commitChangedSince`, `src/backlog-commit.js`, S-1330). Each one
+takes a `dirtySnapshot` before it writes, and compares it with one taken at the end.
 
 - **The scope.** The `scope` option is a function that returns backlog-relative directories or
   files (F-122 D8). With it, bl commits only a changed path that is equal to an entry or under
@@ -213,8 +212,8 @@ run.)
 ```
 
 - `path` (relative to the backlog) and `deployable` are required. `deployable` means that a
-  release manifest records the repo (`bl merge F-n`). If one is missing, `loadConfig` fails and
-  names the repo and the key; it has no defaults.
+  release manifest records the repo (`bl merge F-n`). `loadConfig` fails and names the repo and
+  the key; it has no defaults.
 - `update_tests` is optional since F-80 G3, and `[]` when absent. It holds the `plugins:` that
   the deprecated `bl updates sync` writes on the repo's update stories.
 - `plugins-<stage>` is the repo layer of the plugin cascade (see **Activation via
@@ -423,8 +422,8 @@ readers it calls.
   `readAllStories`, `readAllFeatures`, `readComponents`, `readAllThemes`, `readAllEpics`,
   `readAllTasks`, `readUnits` and the `find*` lookups. Each record's `fm` is a copy that the
   caller may change.
-- **The next-id lookups** use the graph's `maxNum`. It counts the directory of every unit file,
-  readable or not, so `bl new` never reuses a number.
+- **The next-id lookups** use the graph's `maxNum`. It counts every directory under a unit root,
+  even one with no readable `index.md`, so `bl new` never reuses a number.
 - **The text.** Use a node's `text()`, `body()` or `section()` rather than reading its file
   again.
 - **No other way in.** No other module lists or reads the directories of the unit files.
@@ -482,7 +481,7 @@ works in these steps:
 
 The caller passes `backlogRoot`; `updateSpecFile` never works it out from the path. A write of a
 whole new file, or a snapshot restore, calls `atomicWriteFile` directly. bl writes epic, theme
-and component index files only under the backlog lock, so they need `atomicWriteFile` only.
+and component index files only under the backlog lock, and they need `atomicWriteFile` only.
 
 - **The lock.** `withSpecLock(indexPath, fn, { waitMs })` is a kernel lock (`kernel-lock.js`
   `tryLock`, F-104). It locks a file in the temp dir, keyed by the spec's real path
@@ -577,8 +576,9 @@ and component index files only under the backlog lock, so they need `atomicWrite
   - `bl merge F-n`'s fold (`markFeatureMerged`): each story, then the feature, one spec lock at a
     time inside the backlog lock;
   - `bl done`'s one write. It collects the status, commit, completed date and transcript totals
-    while it holds the spec lock. A collection failure is non-fatal; a write failure fails `bl done`;
-  - `bl run`'s writers (`writeEscalation`, `recordStoryRunFields`);
+    while it holds the spec lock. A collection failure is non-fatal; a write failure fails
+    `bl done`;
+  - the writers in `feature-run.js` (`writeEscalation`, `recordStoryRunFields`);
   - the writers of `bl updates`: `recordMerge`, `recordOutcome`, `dropStory`, the request write
     in `requestUpdate`, and the refresh and close of `syncUpdates`. The refresh and close apply
     their change to the spec read under the lock, inside the backlog lock;
@@ -890,21 +890,21 @@ line, and nothing else:
 ```
 
 - **The order** is the operator's preference. `bl next` and `bl run` pick the first work unit
-  that is not done or superseded and that nothing holds, ranked work units first.
+  whose status does not meet `done` and that nothing holds, ranked work units first.
 - **No reasons.** The file holds no reason for the order; git history keeps the reasons
   (F-113 D2).
 - **Reading and writing.** bl reads the file with the `yaml` package (`parseRanked` takes the
   list). `bl rank` writes the whole list with the package's `stringify`, so the file keeps no
   comments.
 - **Only a person ranks.** Nothing automated writes the file (F-78 D3). `bl rank` stages every
-  edit. `bl rank --commit` writes the file. In the same commit, it takes every work unit that is
-  done or superseded out of the list (F-113 D3, see `bl rank`).
+  edit. `bl rank --commit` writes the file. In the same commit, it takes every work unit whose
+  status meets `done` out of the list (F-113 D3, see `bl rank`).
 
 `loadBacklog()` reads the file with the unit files, and revalidates it by stat like them. It
 exposes:
 
 - `backlog.ranked`: each valid entry resolved, `{ unit, position }`, whatever its status;
-- `backlog.priority`: first the ranked work units that are not done or superseded, in list
+- `backlog.priority`: first the ranked work units whose status does not meet `done`, in list
   order. Then every other such work unit, features and loose stories alike, by `added:`
   (`byAdded`). Undated ones come first (they predate the field), then features before stories on
   a tie, then by number. A work unit needs no entry: a new story lands at the end of the dated
@@ -912,7 +912,7 @@ exposes:
   unit's `done`;
 - `backlog.rankOf(idOrUnit)`: the place in `priority`, from 0. A story inside a feature takes
   its feature's place, so a listing sorts a feature's stories together at its rank. These are
-  `Infinity`, after every placed one: a work unit that is done or superseded, an update story, a
+  `Infinity`, after every placed one: a work unit whose status meets `done`, an update story, a
   task and an unknown id.
 
 A missing file is a `priority-file` problem and an empty order. So is a file that is not a list
@@ -954,8 +954,9 @@ backlog → refined → in_progress → done
 ```
 
 1. **backlog**: the story exists and has no plan yet. It lives in `stories/S<nn>-*/`.
-2. **refined**: the story has a design and a plan. `bl refine` sets this status, and it runs on
-   main. `bl implement` starts only a refined story: this status is its gate.
+2. **refined**: the story is analyzed and planned. `bl refine` sets this status, and it runs on
+   main. This status is the gate for `bl implement`: a story must be refined before
+   implementation.
 3. **in_progress**: the implementation started in a worktree. The implementing agent sets this
    status.
 4. **done**: the work is committed, and `commit` and `completed` are set. The directory stays
@@ -1004,9 +1005,9 @@ document. This section holds the notes on the code.
 
 - **Guards and capabilities** are names of functions in two registries:
   - `src/guards.js` (`GUARDS`): `gate_free:<gate>`, `escalation_cleared`, `round_within_cap`.
-  - `src/capabilities.js` (`CAPABILITIES`): every `DISPATCH` cell of `src/verbs.js`, and the
-    steps that `bl run` still runs in code. `bl <verb> <id>` calls a `DISPATCH` cell through
-    this registry.
+  - `src/capabilities.js` (`CAPABILITIES`): every `DISPATCH` cell of `src/verbs.js`, and the steps
+    that `bl run` (`feature-run.js`) and `bl refine` still run in code. `bl <verb> <id>` calls a
+    `DISPATCH` cell through this registry.
 
   A `via` may name only a step (`VIA_CAPABILITIES`), not a `DISPATCH` handler. The file wires
   the names, and the registries define them. A guard name may carry one argument after a colon.
@@ -1067,7 +1068,7 @@ document. This section holds the notes on the code.
   it, and every `Flow` helper that takes a status reads the status through it.
 - **Who reads it.** `bl validate` takes the story, feature and task statuses from it
   (`bad-status`, `task-field`). It reports `flow-json` for the faults of the file itself (see
-  **`bl validate`**). The story status sets, the checks for done or superseded and the status
+  **`bl validate`**). The story status sets, the checks whether a status meets `done` and the status
   tables all derive from it (S-1166). So a command that reads a status stops on a `flow.json`
   that it cannot read. The feature sets derive from it too (F-69 D6):
   - `isFeatureWorkable` in `src/feature.js` (`approved` up to `escalated`), for `bl side` and
@@ -1421,8 +1422,8 @@ edges. `bl block list` derives the view of each work unit.
        key gives is in the file. A story that does not match keeps its key, and MIGRATION.md
        lists it with the missing edges. A later migration removes the key once someone fixes
        that.
-    3. It removes `required_for:` and an empty `depends_on:` from every story, done or
-       superseded ones too, through `planText` (`migrate-derived-keys.js`).
+    3. It removes `required_for:` and an empty `depends_on:` from every story, also from
+       one whose status meets `done`, through `planText` (`migrate-derived-keys.js`).
     4. It commits once (`migration-txn.js`).
 
     `--dry-run` prints the counts. bl refuses a dry run wherever it refuses the migration: a dirty
@@ -1646,8 +1647,8 @@ Each repo appears once in the order. The first is the **lead repo**:
 - The review runs on `configForRepo(config, lead)`.
 - The change document's first `repos:` entry is the lead repo's. `unitChange` reads that entry
   for a feature, and `ensureChange` puts a resumed document's entries in this order.
-- The `commit:` map of a done or superseded feature flattens to its `bl` entry, or else to its
-  first entry (`flattenCommit`).
+- When a feature's status meets `done`, its `commit:` map flattens to its `bl` entry, or else to
+  its first entry (`flattenCommit`).
 
 `reposForFeature` gives that order with each repo's worktree. It reads nothing from the feature's
 frontmatter or change document. It drops a repo that the config does not know, and prep and
@@ -1668,8 +1669,8 @@ A feature's body has these sections, in this order:
 6. `## Deferred`: code work that a session found during implementation or review and did not
    do. Each bullet starts with `[points: N]`, and each is decided once, at merge.
 7. `## Notes`: dated records and hand-offs (see **`## Deferred`, `## Notes` and tasks**).
-8. `## Escalation`: an agent writes it when the agents cannot go on with the feature. Anything
-   but `None.` blocks approve, run and merge.
+8. `## Escalation`: an agent writes it when the feature cannot converge. Anything but `None.` blocks
+   approve, run and merge.
 
 bl renders the `## Stories` table after `## Acceptance` when a page is read, and the `## Tasks`
 table too when the feature has a task. Nobody commits these tables (F-79).
@@ -2266,15 +2267,15 @@ Repeated sessions of one key add up.
     totals (`addUsageTotals` returns false). So it never replaces stored usage with 0.
 - `applyTokensToFrontmatter` (the overwrite that `bl done` and the re-read use) never touches the
   map.
-  - `bl merge F-n` folds each story's map into the feature's map, key by key
-    (`mergeStepTokens`), as it folds `tokens_*`. It does both only when the feature, which it
-    re-reads under the backlog lock, is not done or superseded yet. So a second `bl merge` that
-    loaded the feature earlier folds nothing again.
+  - `bl merge F-n` folds each story's map into the feature's map, key by key (`mergeStepTokens`), as
+    it folds `tokens_*`. It does both only when the feature, which it re-reads under the backlog
+    lock, has no status that meets `done` yet. So a second `bl merge` that loaded the feature
+    earlier folds nothing again.
   - The fold reads each story under its spec lock (`markFeatureMerged`, through
     `updateSpecFile`). It sums `tokens_*` as BigInt counts (`addTokenTotals`), so it writes a
     total past 2^53 or 1e21 as its exact decimal string.
-  - The re-read of the feature totals (`recordFeatureTokens`) leaves the totals of a done or
-    superseded feature alone. So it never replaces what the fold added.
+  - The re-read of the feature totals (`recordFeatureTokens`) leaves the totals of a feature
+    whose status meets `done` alone. So it never replaces what the fold added.
 - `bl status <id>` prints a `tokens:` line with the totals, and one indented line per key
   (`feature-cmd.js` `tokensLines`). `bl report` and `bl retro` read the map through `report.js`
   `stepTokens`. `bl validate` checks it (`bad-tokens-by-step`).
@@ -2723,8 +2724,8 @@ Where the text comes from:
   `writeEscalation()` leaves it as the session wrote it. The reason that `bl run` gives
   (`agent escalated while …`) goes only into the commit message and the run state.
 - The verifier of the closing round (`review-verify`) writes `## Escalation` itself, in the same
-  shape. It writes one block per decision, and puts its diagnosis (code, design or test
-  infrastructure) under **Why the agents can't fix it** and the open items under **Details**.
+  shape. It writes one block per decision. It puts its diagnosis (code, design or test
+  infrastructure) under **Why the agents can't fix it**, and the open items under **Details**.
 - fix-tests returns `unrelated` with a short reason. So its explanation goes to
   `<scratch>/escalation.md`, which `bl run` copies in (see **The test gate**).
 - `bl run` raises some escalations on its own: a gate that failed twice, a forge failure, a round
@@ -2742,9 +2743,9 @@ Where the text comes from:
 
 ### Scratch directories
 
-Headless agents cannot delete files, and the gate refuses a dirty worktree. So every session of
-`bl run` that may need to diagnose something gets a `{{scratchDir}}` outside the worktree.
-`bl run` creates it before the session starts: `<backlog>/.bl/run/<F-id>.<slot>.scratch`.
+Headless agents cannot delete files, and the gate refuses a dirty worktree. So every session in
+the table below gets a `{{scratchDir}}` outside the worktree, for what it may need to diagnose. bl
+creates it before the session starts: `<backlog>/.bl/run/<F-id>.<slot>.scratch`.
 
 | Session                                 | Slot                                                                   |
 | --------------------------------------- | ---------------------------------------------------------------------- |
@@ -2755,8 +2756,8 @@ Headless agents cannot delete files, and the gate refuses a dirty worktree. So e
 
 The prompts tell the agent to write probe scripts, redirected test output and scratch configs
 there, never in the worktree. No prompt tells the agent to delete files. If fix-tests cannot move
-a stray file out, it ends the session with the outcome `unrelated` and the reason "stray files in
-the worktree: <paths>" for the operator.
+a stray file out, it ends the session with the outcome `unrelated`. Its reason for the operator is
+"stray files in the worktree: <paths>".
 
 ### Worktree hygiene in the loop
 
@@ -2801,8 +2802,8 @@ Instances in code that the branch did not change go to `## Deferred`.
 
 Both review passes tag every finding with its origin:
 
-- `Origin: introduced`: the defect is in lines that the branch added or changed against main, or
-  it is a pre-existing defect that the branch newly makes reachable or worse.
+- `Origin: introduced`: the defect is in lines that the branch added or changed against main. A
+  pre-existing defect that the branch newly makes reachable or worse is `introduced` too.
 - `Origin: pre-existing`: neither.
 
 `introduced` wins. A defect in lines that the branch changed is `introduced`, even if main shows
@@ -2846,7 +2847,7 @@ scope (pid and command) goes into one `hygiene:processes` history entry and one 
 Some steps first stop the leftovers of a `bl` that crashed or was killed: the start of `bl run`
 and `--resume`, `bl review`, and `bl merge`'s integration. Each stops the scopes of the work unit
 whose `bl` pid is dead, and records them in the same way. If systemctl cannot list the scopes,
-`bl run` escalates before the first step, with the `systemctl --user list-units` command to run.
+bl escalates before the first step, with the `systemctl --user list-units` command to run.
 
 Interactive sessions get no scope: the operator owns them. Without user systemd, steps run with
 no scope. That is the case on macOS, on a host or guest whose probe
