@@ -4821,14 +4821,16 @@ units' directories under the worktree root, which `bl merge` removes only when t
    cannot read it, or it has uncommitted changes, the worktree is kept with the reason. Otherwise
    `git worktree remove` (no `--force`) removes it; if git refuses, the worktree is kept with the
    first line of git's error. `bl gc` lists the registered worktrees of every repo for each
-   directory, and lists them again just before the directory goes. If a repo gives no complete
-   list (its path is not there, `git worktree list` fails, or a record has no path), the directory
-   is kept with the reason `git cannot list the worktrees`. A worktree
-   that the second listing finds and the first did not is kept with the reason
-   `registered while bl gc ran`. When no worktree is kept, the directory goes with everything left
-   in it (sandbox mount stubs, caches, a checkout git no longer lists), reported as one path. When
-   one is kept, the directory stays. Then `git worktree prune` runs once in each repo of
-   `backlog.json`. A directory whose name is no work unit's branch (an operator's own branch,
+   directory. If a repo gives no complete list (its path is not there, `git worktree list` fails,
+   or a record has no path), the directory is kept with the reason
+   `git cannot list the worktrees`. When no worktree is kept, `bl gc` moves the directory aside to
+   `<dir>.bl-gc-<pid>` and lists the worktrees again. A worktree registered in the directory since
+   the first listing, at a new path or at one git removed, moved with it: the directory goes back,
+   and the worktree is kept with the reason `registered while bl gc ran`. Otherwise the moved
+   directory goes with everything left in it (sandbox mount stubs, caches, a checkout git no
+   longer lists), reported as one path. A worktree registered after the move is made in a new
+   directory, which `bl gc` never reaches. When a worktree is kept, the directory stays. Then
+   `git worktree prune` runs once in each repo of `backlog.json`. A directory whose name is no work unit's branch (an operator's own branch,
    `docs`, a `bl-merge-*` throwaway worktree) is kept with the reason `names no work unit`.
 
 An open work unit's run files and directory are not touched and not listed. `bl gc` takes no lock.

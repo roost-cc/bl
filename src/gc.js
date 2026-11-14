@@ -18,8 +18,8 @@
  * This module decides which files are litter, so the three verbs agree.
  */
 
-import { existsSync, lstatSync, readdirSync, rmSync } from 'fs';
-import { join, sep } from 'path';
+import { existsSync, lstatSync, readdirSync, renameSync, rmSync } from 'fs';
+import { isAbsolute, join, relative, resolve, sep } from 'path';
 import { git } from './child.js';
 import { info, loadConfig, parseArgs, worktreeRoot } from './config.js';
 import { loadBacklog } from './backlog-graph.js';
@@ -293,15 +293,84 @@ export function sweepRunFiles(config, graph, { dryRun }) {
   return { removed: swept.removed, kept: [...swept.kept, ...kept] };
 }
 
+/** A kept `dir` whose worktrees git cannot list completely. */
+const listFailure = (dir, err) => ({
+  path: dir,
+  reason: `git cannot list the worktrees: ${firstLine(err.message)}`,
+  failed: true,
+});
+
+/**
+ * `path` relative to the first of `bases` that holds it (`''` for a base
+ * itself), else null.
+ *
+ * @param {string[]} bases
+ * @param {string} path
+ * @returns {string | null}
+ */
+function relativeIn(bases, path) {
+  for (const base of bases) {
+    const rel = relative(base, resolve(path));
+    if (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)) return rel;
+  }
+  return null;
+}
+
+/**
+ * Remove a closed work unit's directory `dir` once `bl gc` has removed the
+ * worktrees it checked. It moves `dir` aside to `<dir>.bl-gc-<pid>` first,
+ * then lists the worktrees of every repo again. A worktree registered in
+ * `dir` since the first listing (a path git removed counts too) moved with
+ * it: the directory goes back and stays. A worktree registered after the
+ * move is made in a new `dir`, outside the moved tree, so the removal never
+ * reaches it.
+ *
+ * @param {string} dir
+ * @param {string[]} repoPaths
+ * @returns {Sweep}
+ */
+function removeUnitDir(dir, repoPaths) {
+  const aside = `${dir}.bl-gc-${process.pid}`;
+  const bases = [...new Set([dir, realOrResolved(dir)])];
+  try {
+    renameSync(dir, aside);
+  } catch (err) {
+    return { removed: [], kept: [{ path: dir, reason: err.message, failed: true }] };
+  }
+  let held;
+  try {
+    held = repoPaths
+      .flatMap((repoPath) => listWorktrees(repoPath, { detached: true, strict: true }))
+      .filter((w) => {
+        const rel = relativeIn(bases, w.path);
+        return rel != null && existsSync(join(aside, rel));
+      })
+      .map((w) => ({ path: w.path, reason: 'registered while bl gc ran' }));
+  } catch (err) {
+    held = [listFailure(dir, err)];
+  }
+  if (held.length === 0) {
+    const swept = sweepPaths([aside], false);
+    return swept.kept.length > 0 ? swept : { removed: [{ path: dir, bytes: swept.removed[0].bytes }], kept: [] };
+  }
+  try {
+    renameSync(aside, dir);
+  } catch (err) {
+    held.push({ path: aside, reason: `could not move it back to ${dir}: ${err.message}`, failed: true });
+  }
+  return { removed: [], kept: held };
+}
+
 /**
  * The directories of closed work units under the worktree root. A directory
  * is a work unit's when its name is the work unit's directory name,
  * lowercased (its branch). For a closed one, each registered worktree in it
  * is removed with `git worktree remove` (no `--force`) when it has no
  * uncommitted changes; one that git cannot read, that has changes or that
- * git refuses to remove is kept, and so is the directory. The worktrees are
- * listed again just before the directory goes; one registered since the
- * first listing is kept, and so is the directory. A directory is kept when
+ * git refuses to remove is kept, and so is the directory. The directory is
+ * moved aside and the worktrees are listed again before it goes
+ * (`removeUnitDir`); one registered in it since the first listing is kept,
+ * and so is the directory. A directory is kept when
  * any configured repo gives no complete worktree list (its path is not
  * there, git fails, or a record has no path). Otherwise the directory goes
  * with everything in it, reported as one path. A directory that names no
@@ -346,11 +415,6 @@ export function sweepWorktrees(config, graph, { dryRun }) {
         .map((w) => ({ repoPath, path: w.path, real: realOrResolved(w.path) }))
         .filter((w) => w.real === real || w.real.startsWith(real + sep)),
     );
-  const listFailure = (dir, err) => ({
-    path: dir,
-    reason: `git cannot list the worktrees: ${firstLine(err.message)}`,
-    failed: true,
-  });
 
   for (const d of dirs) {
     const dir = join(root, d);
@@ -383,24 +447,12 @@ export function sweepWorktrees(config, graph, { dryRun }) {
         else held.push({ path: w.path, reason: gitFailure(r), failed: true });
       }
     }
-    // List again just before the directory goes: a worktree registered in
-    // it since the first listing has not been checked, so it stays.
-    if (held.length === 0) {
-      const checked = new Set(gone.map((w) => w.path));
-      try {
-        for (const w of registeredIn(real)) {
-          if (!checked.has(w.path)) held.push({ path: w.path, reason: 'registered while bl gc ran' });
-        }
-      } catch (err) {
-        held.push(listFailure(dir, err));
-      }
-    }
     if (held.length > 0) {
       removed.push(...gone);
       kept.push(...held);
       continue;
     }
-    const swept = sweepPaths([dir], dryRun);
+    const swept = dryRun ? sweepPaths([dir], true) : removeUnitDir(dir, repoPaths);
     if (swept.kept.length > 0) {
       removed.push(...gone);
       kept.push(...swept.kept);

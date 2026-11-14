@@ -253,6 +253,49 @@ test('gc_keeps_unit_on_list_failure_or_late_worktree', async (t) => {
   });
 });
 
+test('gc_keeps_worktree_registered_during_or_after_second_list', async (t) => {
+  /**
+   * Each point at which another process registers a worktree with a draft in
+   * S-1's directory: `at` is the shell test on the git arguments, `when`
+   * runs the registration before or after the real git, `path` is its name
+   * in the directory, and `kept` says whether bl gc reports it kept.
+   */
+  const cases = [
+    { name: 'after the first listing', list: 1, when: 'after', path: 'late', kept: true },
+    { name: 'at a path git removed, before the second listing', remove: true, path: 'code', kept: true },
+    { name: 'during the second listing', list: 2, when: 'after', path: 'late', kept: false },
+    { name: 'at a path git removed, during the second listing', list: 2, when: 'before', path: 'code', kept: false },
+  ];
+  for (const c of cases) {
+    await t.test(c.name, () => {
+      const { dir, code, wt, cleanup } = gcBacklog();
+      try {
+        const late = join(wt, 's1-done', c.path);
+        const count = join(dir, 'list-count');
+        const add =
+          `"${REAL_GIT}" -C '${code}' worktree add -q --detach '${late}' >/dev/null 2>&1; ` +
+          `echo draft > '${late}/draft.txt'`;
+        const prelude = c.remove
+          ? `if [ "$1 $2" = "worktree remove" ]; then "${REAL_GIT}" "$@" || exit 1; ${add}; exit 0; fi`
+          : `if [ "$1 $2" = "worktree list" ]; then c=$(cat '${count}' 2>/dev/null || echo 0); c=$((c+1)); ` +
+            `echo $c > '${count}'; if [ $c = ${c.list} ]; then ` +
+            (c.when === 'after' ? `"${REAL_GIT}" "$@"; ${add}; exit 0; fi; fi` : `${add}; fi; fi`);
+        const r = runBl(['gc'], { cwd: dir, env: gitShim(dir, prelude) });
+        assert.equal(r.status, 0, r.stderr);
+        assert.ok(existsSync(join(late, 'draft.txt')), 'the draft in the new worktree stays');
+        assert.match(git(code, 'worktree', 'list'), new RegExp(`s1-done/${c.path}`));
+        if (c.kept) {
+          assert.match(r.stdout, new RegExp(`^kept ${late} \\(registered while bl gc ran\\)$`, 'm'));
+          assert.doesNotMatch(r.stdout, new RegExp(`^removed ${join(wt, 's1-done')}$`, 'm'));
+          assert.ok(existsSync(join(wt, 's1-done', '.codex')), 'the directory goes back whole');
+        }
+      } finally {
+        cleanup();
+      }
+    });
+  }
+});
+
 test('gc_keeps_directory_when_repo_missing_or_worktree_list_malformed and gc_reports_missing_repo_prune_failure', async (t) => {
   /** Each way a configured repo gives no complete worktree list; `repo` is a repo with no path on disk. */
   const cases = [
