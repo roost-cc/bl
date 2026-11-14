@@ -1,8 +1,9 @@
 // Process scopes against the real user systemd (F-70 D4): a scoped command's
 // exit status passes through, a `setsid` child it leaves stays in the scope,
 // the listing names it, and stopping the scope removes it. A test-gate command
-// that ignores SIGTERM gets SIGKILL after a stop, in a scope and without one
-// (F-128 A6). The scoped rows are skipped, with the probe's reason, where user
+// or a headless session that ignores SIGTERM gets SIGKILL after a stop, in a
+// scope and without one (F-128 A6). The scoped rows are skipped, with the
+// probe's reason, where user
 // systemd scopes are unavailable (macOS, a sandbox, a host without a user
 // manager).
 import { test } from 'node:test';
@@ -14,7 +15,10 @@ import { isPidAlive } from '../../src/process-scope.js';
 import { defaultRunner } from '../../src/feature-run.js';
 import { SIGKILL_AFTER_MS } from '../../src/child.js';
 import { ignoresSigterm } from '../helpers/ignores-sigterm.js';
-import { mkTempDir } from '../helpers/tempdir.js';
+import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
+import { ClaudeProvider } from '../../src/agents/claude.js';
+import { loadConfig } from '../../src/config.js';
+import { runHeadlessSession } from '../../src/session.js';
 import {
   scopeAvailable,
   scopeUnitName,
@@ -133,6 +137,58 @@ for (const scoped of [false, true]) {
         assert.notEqual(r.status, 0);
         assert.match(r.output, /The operation was aborted/);
       } finally {
+        if (scoped) stopScope(unit);
+      }
+    },
+  );
+}
+
+// F-128 A6 for a headless session: a fake `claude` on PATH ignores SIGTERM.
+// The session runs through `scopedSpawn`, as the run loop's scoped session
+// does, or through the adapter's default `runLongChild`.
+for (const scoped of [false, true]) {
+  test(
+    `a headless session ${scoped ? 'in a scope' : 'without a scope'} that ignores SIGTERM gets SIGKILL 10 s after its signal`,
+    { skip: scoped && skip },
+    async () => {
+      const unit = scopeUnitName(UNIT, 9);
+      const child = ignoresSigterm(mkTempDir('bl-session-kill-'));
+      const bin = mkTempDir('bl-fake-claude-');
+      writeFileSync(join(bin, 'claude'), `#!/bin/sh\n${child.script}\n`);
+      chmodSync(join(bin, 'claude'), 0o755);
+      const { dir, cleanup } = mkTempBacklog();
+      const savedPath = process.env.PATH;
+      process.env.PATH = `${bin}${delimiter}${savedPath}`;
+      const controller = new AbortController();
+      try {
+        const cfg = loadConfig({ backlogRoot: dir });
+        const wait = runHeadlessSession({
+          mode: 'review',
+          parsed: { id: 'F-1' },
+          prompt: 'p',
+          worktreePath: mkTempDir('bl-session-kill-wt-'),
+          config: cfg,
+          roostDir: cfg.roostDir,
+          backlogRoot: dir,
+          signal: controller.signal,
+          run: scoped ? scopedSpawn(unit) : undefined,
+          provider: new (class extends ClaudeProvider {
+            spawn(opts) {
+              return super.spawn({ ...opts, ensureApprovedCommandPrefixes: () => ({ added: 0 }) });
+            }
+          })(),
+        });
+        await child.ready();
+        const aborted = Date.now();
+        controller.abort();
+        const r = await wait;
+        const ms = Date.now() - aborted;
+        assert.ok(ms >= SIGKILL_AFTER_MS && ms < SIGKILL_AFTER_MS + 5000, `the wait took ${ms} ms after the abort`);
+        assert.equal(r.isError, true);
+        assert.equal(r.error, 'The operation was aborted');
+      } finally {
+        process.env.PATH = savedPath;
+        cleanup();
         if (scoped) stopScope(unit);
       }
     },
