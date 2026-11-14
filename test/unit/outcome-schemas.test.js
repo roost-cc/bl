@@ -160,57 +160,61 @@ test("a batch sub-agent's reply is a valid entry of the batch outcome", () => {
   assert.equal(validateOutcome(loadSchema('refine-batch'), outcome).structuredError, null);
 });
 
-/** The JSON Schema 2020-12 keywords whose value is one subschema. */
-const ONE = [
-  'items',
+/**
+ * The only keywords a plain schema may use. The guard refuses every other
+ * keyword, so it needs no list of the banned ones: the eight of S-1408 (`if`,
+ * `then`, `else`, `allOf`, `oneOf`, `not`, `propertyNames`,
+ * `patternProperties`) and any keyword added to JSON Schema later are all
+ * outside this list.
+ */
+const PLAIN_KEYWORDS = [
+  '$schema',
+  'title',
+  'description',
+  'type',
+  'properties',
+  'required',
   'additionalProperties',
-  'additionalItems',
-  'contains',
-  'not',
-  'if',
-  'then',
-  'else',
-  'propertyNames',
-  'unevaluatedItems',
-  'unevaluatedProperties',
+  'items',
+  'anyOf',
+  'enum',
+  'const',
+  'pattern',
+  'minLength',
+  'maxLength',
+  'minimum',
+  'maximum',
 ];
-/** The keywords whose value is a map of subschemas. */
-const MAP = ['properties', 'patternProperties', 'dependentSchemas', '$defs', 'definitions'];
-/** The keywords whose value is an array of subschemas. */
-const LIST = ['anyOf', 'allOf', 'oneOf', 'prefixItems'];
 
 /**
  * Each subschema of `schema`, with its JSON path: the schema itself and every
- * schema under a keyword of ONE, MAP or LIST, at any depth.
+ * object under any keyword, at any depth. `properties` is a map of
+ * subschemas; `enum` and `const` hold values, not schemas. Each other object
+ * value is walked as a subschema, so a schema under a keyword the guard does
+ * not know (`contentSchema`, `$defs`) is still checked.
  */
 function* subschemas(schema, path = '$') {
   if (typeof schema !== 'object' || schema === null) return;
   yield [path, schema];
-  for (const k of ONE) yield* subschemas(schema[k], `${path}.${k}`);
-  for (const k of MAP) for (const [n, v] of Object.entries(schema[k] ?? {})) yield* subschemas(v, `${path}.${k}.${n}`);
-  for (const k of LIST) for (const [i, v] of (schema[k] ?? []).entries()) yield* subschemas(v, `${path}.${k}[${i}]`);
+  for (const [k, v] of Object.entries(schema)) {
+    if (k === 'enum' || k === 'const') continue;
+    if (k === 'properties') {
+      for (const [n, p] of Object.entries(v ?? {})) yield* subschemas(p, `${path}.properties.${n}`);
+    } else if (Array.isArray(v)) {
+      for (const [i, e] of v.entries()) yield* subschemas(e, `${path}.${k}[${i}]`);
+    } else yield* subschemas(v, `${path}.${k}`);
+  }
 }
 
 /**
  * What OpenAI's strict mode (Codex's `--output-schema`) refuses in `schema`,
- * at any depth: a conditional keyword, a map, an object that is open or has
- * an optional property. bl sends every agent the same schema (S-1408).
+ * at any depth: a keyword outside PLAIN_KEYWORDS, an object that is open or
+ * has an optional property. bl sends every agent the same schema (S-1408).
  */
 function plainViolations(schema) {
   const found = [];
   for (const [path, s] of subschemas(schema)) {
-    for (const k of [
-      'if',
-      'then',
-      'else',
-      'allOf',
-      'oneOf',
-      'not',
-      'propertyNames',
-      'patternProperties',
-      'dependentSchemas',
-    ])
-      if (s[k] !== undefined) found.push(`${path} has ${k}`);
+    for (const k of Object.keys(s)) if (!PLAIN_KEYWORDS.includes(k)) found.push(`${path} has ${k}`);
     if (![s.type].flat().includes('object') && s.properties === undefined) continue;
     if (s.additionalProperties !== false) found.push(`${path}: additionalProperties is not false`);
     const required = [...(s.required ?? [])].sort();
@@ -226,8 +230,29 @@ test('every schema is one plain schema: no conditional keyword, every property r
   }
 });
 
-// plain_schema_checks_defs: the guard finds a banned keyword and an optional
-// property in every place a subschema can sit, nested or not.
+/** The JSON Schema 2020-12 keywords whose value is one subschema. */
+const ONE = [
+  'items',
+  'additionalProperties',
+  'additionalItems',
+  'contains',
+  'contentSchema',
+  'not',
+  'if',
+  'then',
+  'else',
+  'propertyNames',
+  'unevaluatedItems',
+  'unevaluatedProperties',
+];
+/** The keywords whose value is a map of subschemas. */
+const MAP = ['properties', 'patternProperties', 'dependentSchemas', 'dependencies', '$defs', 'definitions'];
+/** The keywords whose value is an array of subschemas. */
+const LIST = ['anyOf', 'allOf', 'oneOf', 'prefixItems'];
+
+// plain_schema_checks_defs, plain_schema_checks_content_schema: the guard
+// finds a banned keyword and an optional property in every place a
+// subschema can sit, nested or not, and under a keyword it does not know.
 test('the plain-schema guard checks every nested subschema (S-1408)', () => {
   const bad = {
     if: { const: true },
@@ -241,6 +266,7 @@ test('the plain-schema guard checks every nested subschema (S-1408)', () => {
     ...MAP.map((k) => ({ [k]: { x: bad } })),
     ...LIST.map((k) => ({ [k]: [{ type: 'null' }, bad] })),
     { $defs: { outer: { anyOf: [{ items: bad }] } } },
+    { 'x-unknown': { contentSchema: bad } },
   ];
   for (const place of places) {
     const schema = { ...loadSchema('refine'), ...place };
