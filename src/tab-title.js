@@ -229,13 +229,19 @@ function showTabTitle() {
  * OSC 2 "set window title" sequence, which kitty, xterm, VTE and most other
  * terminals honour. With neither, nothing happens. Never throws: a title is
  * never worth a failed command.
+ *
+ * A title holds text from the command line (S-1412), so the title shows the
+ * words as typed and nothing in it is interpreted: control characters (ESC,
+ * BEL, newline) are removed in both branches, and tmux gets each `#` as `##`,
+ * because tmux expands `#{…}` and `#(…)` in a window name.
  */
 function sendTabTitle(title) {
   try {
+    const plain = title.replace(/\p{Cc}/gu, '');
     if (process.env.TMUX) {
-      tmux('rename-window', ...windowTarget(), '--', title);
+      tmux('rename-window', ...windowTarget(), '--', plain.replaceAll('#', '##'));
     } else if (process.stderr.isTTY) {
-      process.stderr.write(`\x1b]2;${title}\x07`);
+      process.stderr.write(`\x1b]2;${plain}\x07`);
     }
   } catch {
     // not fatal

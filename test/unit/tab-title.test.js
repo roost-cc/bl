@@ -37,11 +37,14 @@ function underFakeTmux(fn) {
   );
 }
 
-// The module keeps its fields, the end state it owes and the final mark for the process; every test starts with none.
-test.beforeEach(() => {
+/** Drop the fields, the end state owed and the final mark, without reaching a real tmux. */
+function resetTitles() {
   underFakeTmux(() => endTabTitle(0));
   withEnv({ BL_TAB_TITLE: '' }, () => clearTabTitle());
-});
+}
+
+// The module keeps its fields, the end state it owes and the final mark for the process; every test starts with none.
+test.beforeEach(resetTitles);
 // Titles off when the test process exits, so the exit hook never reaches the real tmux.
 test.after(() => {
   process.env.BL_TAB_TITLE = '';
@@ -210,6 +213,56 @@ test('a title starting with - is still a name, never a tmux option', () => {
       assert.deepEqual(fake.calls(), ['rename-window\n-t\n@7\n--\n-x\n']);
     });
   });
+});
+
+// Every field can hold command-line text: the status (an unknown command, a subcommand) and the ids.
+const UNTRUSTED = [
+  { name: 'tmux format #{…}', status: 'inbox #{session_name}', tmux: ':  : inbox ##{session_name}' },
+  { name: 'tmux command #(…)', status: 'task #(touch x)', tmux: ':  : task ##(touch x)' },
+  { name: 'a bare #', status: 'x#y', tmux: ':  : x##y' },
+  { name: 'newline', status: 'task line1\nline2', tmux: ':  : task line1line2' },
+  { name: 'ESC and BEL', status: 'a\x1b]2;evil\x07b', tmux: ':  : a]2;evilb' },
+];
+
+test('a title with #{…} or #(…) reaches tmux with the # doubled', () => {
+  for (const c of UNTRUSTED) {
+    for (const field of ['status', 'feature', 'story']) {
+      const fields = { feature: null, story: null, status: null, [field]: c.status };
+      underFakeTmux((fake) => {
+        updateTabTitle(fields);
+        finalTabTitle({});
+        const sent = fake.calls().map((call) => call.split('\n').slice(4, -1));
+        // One argument per call: no newline survived into the window name.
+        for (const args of sent) assert.equal(args.length, 1, `${c.name} in ${field}: ${JSON.stringify(args)}`);
+        const expected = renderTabTitle({ [field]: c.status }, DEFAULT_TAB_TITLE_FORMAT)
+          .replace(/\p{Cc}/gu, '')
+          .replaceAll('#', '##');
+        assert.equal(sent.at(-1)[0], expected, `${c.name} in ${field}`);
+        if (field === 'status') assert.equal(sent.at(-1)[0], c.tmux, c.name);
+      });
+      resetTitles();
+    }
+  }
+});
+
+test('a control character in a title never reaches the terminal', () => {
+  for (const c of UNTRUSTED) {
+    const out = underFakeTerminal(() => {
+      updateTabTitle({ status: c.status });
+      endTabTitle(1);
+    });
+    resetTitles();
+    for (const s of out) {
+      const inner = s.slice('\x1b]2;'.length, -1);
+      assert.ok(s.startsWith('\x1b]2;') && s.endsWith('\x07'), `${c.name}: ${JSON.stringify(s)}`);
+      assert.doesNotMatch(inner, /\p{Cc}/u, `${c.name}: ${JSON.stringify(s)}`);
+    }
+    // OSC 2 does not expand #, so it is sent as typed.
+    assert.equal(
+      out[0],
+      `\x1b]2;${renderTabTitle({ status: c.status }, DEFAULT_TAB_TITLE_FORMAT).replace(/\p{Cc}/gu, '')}\x07`,
+    );
+  }
 });
 
 test('a shorter title is padded to the widest title shown; a longer one raises the width', () => {
@@ -392,6 +445,7 @@ test('the exit hook does nothing before a title or with titles off', () => {
       finalTabTitle({ status: 'clean' });
       endTabTitle(1);
     });
+    resetTitles();
     assert.deepEqual(fake.calls(), ['rename-window\n-t\n@7\n--\n:  : x\n']);
   });
 });
