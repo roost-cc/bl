@@ -273,9 +273,9 @@ names its repo (`git -C <repo>`).
   (S-1495).
 - **F-60's migration** (`node scripts/migrate-worktree-layout.js [--dry-run] [--backlog <dir>]`,
   logic in `src/migrate-worktree-layout.js`, D4) works in these steps:
-  1. Before the first move, it pins to its real path each path that reaches a worktree through
-     a link, or leaves it through a link inside it. So the path still matches once the link
-     dangles, in a rerun too.
+  1. Before the first move, it finds each path that reaches a worktree through a link, or
+     leaves it through a link inside it. It pins that path to its real path. So the path still
+     matches once the link dangles, in a rerun too.
   2. It records the moves in a journal, `.bl/migrate-worktree-layout.json`, before it makes
      them. So a rerun after a failure part-way also points the run states at the moves already
      done.
@@ -300,11 +300,11 @@ names its repo (`git -C <repo>`).
     its git registration);
   - the journal records a move that is neither done nor still planned;
   - it cannot read a run state or the journal;
-  - the transaction's own refusals: a `bl` run is active, or the backlog is not clean at
+  - the transaction's own refusals: a `bl` run is running, or the backlog is not clean at
     `origin/main`.
 
-  A dry run prints the plan, then any refusal. The moves are outside the backlog, so a failed
-  run's git rollback does not undo them. A rerun moves the rest, and once all is done it plans
+  A dry run prints the plan, then any refusal. The moves are outside the backlog, so the git
+  rollback of a failed migration does not undo them. A rerun moves the rest, and once all is done it plans
   nothing. The operator runs the migration after `bl merge F-60` has merged `bl` (task T-14).
 
 ### Every agent session starts in its unit directory (F-60 D3)
@@ -404,8 +404,9 @@ The list keys are sequences: `stories`, `depends_on`, `required_for`, `component
   `frontmatter-list` until the migration removes it.
 - A reader takes a list key as the parsed array (`parseIdList`, `parseNameList`,
   `parsePathList`, `parsePluginList`). A list key with no value is an empty list.
-- The reader does not read any other shape: a scalar (even `S-1` or `a, b`), a mapping, or a
-  member that is not a string (not a mapping, for a change document's `repos:`). It throws
+- The reader reads no other shape: a scalar (even `S-1` or `a, b`), a mapping, or a member that
+  is not a string. (For a change document's `repos:`, it is a member that is not a mapping.) It
+  throws
   `FrontmatterListError` (`listMembers`), rather than drop a blocker or a plugin as if it were
   never written.
 
@@ -452,15 +453,15 @@ The one-off `scripts/migrate-frontmatter-yaml.js` moved the backlog to this form
    Every other line kept its YAML structure.
 
 2. It read every file that `bl validate` reads with `parseFrontmatter`. A block that was still
-   not YAML stopped the run before anything was written.
+   not YAML stopped the migration before anything was written.
 3. Each list key's string became a sequence. The migration split it where that key's retired
    reader split it (`listOfString`): at commas outside quotes and outside `{…}`/`[…]` groups. It
    split an id key at whitespace and at `[`/`]` too.
 4. `serializeFrontmatter` wrote the block.
 
-`--dry-run` prints the files and the counts. A run refuses unless the backlog is clean at
-`origin/main` with no `bl` run active. It commits once through `migration-txn.js`. A second run
-plans nothing, so a rerun after a merge picks up a block that an older bl wrote in the meantime.
+`--dry-run` prints the files and the counts. The migration refuses unless the backlog is
+clean at `origin/main` and no `bl` run is running. It commits once through `migration-txn.js`. A
+second migration plans nothing, so a rerun after a merge picks up a block that an older bl wrote in the meantime.
 
 ### Spec writes (F-67)
 
@@ -523,7 +524,7 @@ and component index files only under the backlog lock, so they need `atomicWrite
 
   The rule and the ignore check apply to the path that the write changes. bl resolves the links
   in its directory. It resolves a link at the path itself only for a write through the link
-  (`atomicWriteFile`'s `preserve`, a plugin), since a rename or removal replaces the link.
+  (`atomicWriteFile`'s `preserve`, a plugin). A rename or removal replaces the link.
 
   The three write chokepoints in `atomic-write.js` call `assertCovered` before they change
   anything: `atomicWriteFile`, `removeBacklogPath` (a file or tree) and `moveIntoBacklog` (a
@@ -563,7 +564,7 @@ and component index files only under the backlog lock, so they need `atomicWrite
   `block.js addEdge writeFileSync`.
 
   Write to a tracked backlog path through a chokepoint instead. Add an `ALLOWED` entry only for
-  a call that writes outside the backlog or to a path that git ignores, or that runs git in a
+  a call that writes outside the backlog, writes to a path that git ignores, or runs git in a
   code repository. The key is `"<file under src/> <function> <call>"`, and the value is that
   reason. An entry that matches no call fails the test. So a story that removes a call removes
   its entry.
@@ -613,14 +614,14 @@ and component index files only under the backlog lock, so they need `atomicWrite
   `withCoveringLock`, `write-lock.js`, F-126 D4). This applies to `bl sync --commit`'s format
   pass and to `bl format` / `bl lint`.
   - An existing spec file takes its spec lock.
-  - Any other file (a `tasks/T1-x.md`, a spec file that does not exist yet) takes the backlog
-    lock, and then the spec lock keyed by its own path.
+  - Any other file takes the backlog lock, and then the spec lock keyed by its own path. Examples
+    are a `tasks/T1-x.md` and a spec file that does not exist yet.
   - Only `bl report`'s pages, outside the backlog or under its ignored `reports/`, are formatted
     in one batch with no lock (`formatBacklogMarkdown`).
 
-- **A restore keeps the session's tokens.** If a review-verify session fails, the review round
-  puts back the unit file that it snapshotted before the session, with `restoreKeepingTokens`
-  (`feature-run.js`).
+- **A restore keeps the session's tokens.** The review round snapshots the unit file before a
+  review-verify session. If the session fails, the round puts the file back with
+  `restoreKeepingTokens` (`feature-run.js`).
   - It writes the snapshot's frontmatter and body, under the file's covering lock
     (`withSpecFileLock`) and through `atomicWriteFile`.
   - It keeps the current file's `tokens_*` keys (`tokens_headless_*`, `tokens_updated`,
@@ -682,9 +683,9 @@ once the feature spans two repos.
   repos landed so far. Each landing re-reads that map under the backlog lock, adds its SHA and
   replaces the file in one atomic write, inside its spec lock (`persistLandedCommits` in
   `cleanup.js`). So concurrent merges keep each other's SHAs. Mark-done collapses the union.
-- A repo whose story branch is gone locally (merged on the forge, or landed by an earlier run)
-  records the tip of its `main` after the push. It does not if an earlier run already recorded
-  its merge SHA.
+- A story branch can be gone locally: it merged on the forge, or an earlier `bl merge` landed
+  it. Then its repo records the tip of its `main` after the push, unless an earlier `bl merge`
+  already recorded its merge SHA.
 - `bl done` writes the string form by default. Pass `--commit <repo>=<sha>` (repeatable) to write
   a map. The positional `[commit-hash]` and `--commit` cannot be used together.
 
@@ -748,9 +749,11 @@ agents read. `bl` does not enforce it.
 - **Its shape.** It is a YAML sequence, like every list key. A glob that starts with `*` or holds
   `[`, `{` or `,` must be quoted in it. `bl new --component` writes the list with
   `serializeFrontmatter`, which quotes what YAML needs.
-- **What the reader keeps.** `parsePathList` (`story.js`) takes the parsed value. It keeps an
-  empty member (a bare `-` is `""`), a member that is not a string (a nested list or mapping)
-  and a `paths:` that is not a list. `bl validate` reports them, and they match no glob.
+- **What the reader keeps.** `parsePathList` (`story.js`) takes the parsed value. It keeps these
+  values, for `bl validate` to report and for no glob to match:
+  - an empty member (a bare `-` is `""`);
+  - a member that is not a string (a nested list or mapping);
+  - a `paths:` that is not a list.
 - **Overlap.** Two components may overlap: ownership is not exclusive.
 - **The check.** `bl validate` reports `component-paths` for an entry that is empty, not a
   string, absolute, or has a `..` or `.` segment. (`git diff` names no path `./src/…`, so such an
@@ -763,12 +766,13 @@ below), never with a hand edit of `component:`.
 
 ## Themes and Epics
 
-Components are the code axis; themes and epics are the value axis above features (F-51 D1).
-A **theme** is a value area that never finishes. An **epic** is an outcome under one theme
-that finishes once every feature under it is done. A **feature** names its `theme:` and,
-optionally, its `epic:`, both set by hand. A **story** has neither: it reaches them through
-its feature. A story with no feature (a chore, a bug or an update) belongs to every theme whose
-`repos` lists its component's repo.
+Components are the code axis. Themes and epics are the value axis above features (F-51 D1).
+
+- A **theme** is a value area that never finishes.
+- An **epic** is an outcome under one theme. It finishes once every feature under it is done.
+- A **feature** names its `theme:` and, optionally, its `epic:`. Both are set by hand.
+- A **story** has neither: it reaches them through its feature. A story with no feature (a
+  chore, a bug or an update) belongs to every theme whose `repos` lists its component's repo.
 
 ```yaml
 # themes/backlog/index.md
@@ -791,24 +795,34 @@ theme: backlog
 ---
 ```
 
-An epic stores no `features:` or `status:` (F-77 D3): its features are the features whose
-`epic:` names it, and its status is derived in the feature words (`epicStatus`, `backlog-graph.js`,
-F-69 D6): `draft` when it has no features or every one is `draft`, `done` when every one is done
-or superseded, else `in_progress`.
+An epic stores no `features:` or `status:` (F-77 D3). Its features are the features whose
+`epic:` names it. Its status is derived in the feature words (`epicStatus`, `backlog-graph.js`,
+F-69 D6):
 
-A theme's body is an `## Overview` paragraph and a `## State` (F-53 D4): a hand-readable
-log, newest last, that `bl merge F-<n>` appends `- <date>: F-<n> done (<title>).` to. Its
-`## Epics` and `## Features` tables are rendered when the page is read (see **Rendered
-pages** under `### bl sync`). An epic's body is an
-`## Outcome` paragraph. The theme's `brief:` is listed in the feature refine and run prompts
-(`{{themeBrief}}`, `themeBriefList` in `theme.js`: one absolute path per entry, with its
-anchor) beside `backlog/roadmap.md`; a story with no feature has no single theme and gets none.
-`bl new --theme <slug> --title <t> --brief <path,…>` creates a theme (`repos: []`; without
-`--brief` it exits 1, and an entry not on disk warns); `bl new --epic --theme <slug>
---title <t>` creates an epic with the next number (`bl next-id epic`); `bl new --feature --title
-<t> --theme <slug> [--epic E<nn>]` creates a feature with both set (`--epic` alone gives its
-theme). The CLI takes `E-50` and `E50` alike. An unknown theme or epic, or an epic of another
-theme, fails before anything is written. `bl validate` enforces the value axis:
+- `draft` when it has no features, or every one is `draft`;
+- `done` when every one is done or superseded;
+- else `in_progress`.
+
+A theme's body is an `## Overview` paragraph and a `## State` (F-53 D4). `## State` is a
+hand-readable log, newest last. `bl merge F-<n>` appends `- <date>: F-<n> done (<title>).` to it.
+The theme's `## Epics` and `## Features` tables are rendered when the page is read (see
+**Rendered pages** under `### bl sync`). An epic's body is an `## Outcome` paragraph.
+
+The feature refine and run prompts list the theme's `brief:` beside `backlog/roadmap.md`
+(`{{themeBrief}}`, `themeBriefList` in `theme.js`). They give one absolute path per entry, with
+its anchor. A story with no feature has no single theme, and its prompts list no brief.
+
+These commands create the value axis:
+
+- `bl new --theme <slug> --title <t> --brief <path,…>` creates a theme with `repos: []`. Without
+  `--brief` it exits 1. If an entry is not on disk, it warns.
+- `bl new --epic --theme <slug> --title <t>` creates an epic with the next number
+  (`bl next-id epic`).
+- `bl new --feature --title <t> --theme <slug> [--epic E<nn>]` creates a feature with both set.
+  `--epic` alone gives the feature its epic's theme.
+
+The CLI takes `E-50` and `E50` alike. An unknown theme or epic, or an epic of another theme, fails
+before anything is written. `bl validate` enforces the value axis:
 
 - `feature-theme`: a feature has no `theme:`, or its theme has no directory;
 - `feature-epic`: a feature's `epic:` has no directory, or the epic's theme is not the
@@ -816,17 +830,22 @@ theme, fails before anything is written. `bl validate` enforces the value axis:
 - `epic-theme`: an epic has no `theme:`, or its theme has no directory;
 - `theme-repo`: a theme has no `repos:`, or one of its repos is not registered in
   backlog.json;
-- `theme-brief` (F-53 D4, `findThemeBriefFindings`): a theme has no `brief:` or an empty
-  one, or an entry's file (the part before `#`) is not a file on disk under the backlog's
-  parent directory (an absolute path or one with `..` out of it is not). A `brief:` that is not a
-  list is `frontmatter-list`.
+- `theme-brief` (F-53 D4, `findThemeBriefFindings`): a theme has no `brief:` or an empty one.
+  Or an entry's file (the part before `#`) is not a file on disk under the backlog's parent
+  directory. An absolute path, or a path with `..` out of that directory, is not under it. A
+  `brief:` that is not a list is `frontmatter-list`.
 
 ### The roadmap (F-53 D2)
 
-`roadmap.md`, at the backlog root, is the project's road map: its destinations (future states), the
-directions to them, the hazards on the way (gates such as go-live) and the options along it
-(decisions put off). It is one page. The frontmatter indexes the entries and the body holds a
-preamble and one `## <title>` section per entry:
+`roadmap.md`, at the backlog root, is the project's road map. It holds:
+
+- the project's destinations (future states);
+- the directions to them;
+- the hazards on the way (gates such as go-live);
+- the options along it (decisions put off).
+
+It is one page. The frontmatter indexes the entries. The
+body holds a preamble and one `## <title>` section per entry:
 
 ```yaml
 ---
@@ -837,70 +856,84 @@ entries:
 ---
 ```
 
-The fields are informational: nothing derives a status, and nothing in bl gates, fails or
+The fields are informational. Nothing derives a status, and nothing in bl gates, fails or
 refuses on one. An agent whose work goes against an entry warns the operator, who decides.
-Entries link no features; related work stays in each entry's prose. `bl next` never reads the
-file. `bl validate` checks its shape only (`roadmap.js` `findRoadmapFindings`), both errors at
-`roadmap.md`:
+Entries link no features: related work stays in each entry's prose. `bl next` never reads the
+file. `bl validate` checks its shape only (`roadmap.js` `findRoadmapFindings`). It reports both
+errors at `roadmap.md`:
 
-- `roadmap-file`: the file is missing, its frontmatter is not YAML, `entries:` is not a list
-  of mappings, or an entry lacks a non-empty `title`, `added` or `status`, or has a status
-  outside the four;
+- `roadmap-file`: the file is missing, or its frontmatter is not YAML, or `entries:` is not a
+  list of mappings. It also covers an entry that lacks a non-empty `title`, `added` or
+  `status`, or has a status outside the four;
 - `roadmap-section`: an entry has no `## <title>` section (`extractSection`), or a `## `
   section names no entry.
 
-A backlog with no `roadmap.md` reports `roadmap-file`, and a theme with no `brief:`
-`theme-brief`. `bl init` writes `templates/roadmap.md` (empty `entries:`) and
-`templates/priority.yaml` (`[]`) into a backlog that has neither, and leaves an existing one
-alone (S-581, F-78 D1, F-113 D1). It does the same with the coding dictionary seed (see
-**Dictionaries**). (F-53's one-off migration that wrote them for the first backlog has run;
-S-581 removed it, and it is in git history.)
+A backlog with no `roadmap.md` reports `roadmap-file`, and a theme with no `brief:` reports
+`theme-brief`. `bl init` writes `templates/roadmap.md` (empty `entries:`) and `templates/priority.yaml`
+(`[]`) into a backlog that lacks them. It leaves an existing one alone (S-581, F-78 D1,
+F-113 D1). It does the same with the coding
+dictionary seed (see **Dictionaries**). (F-53's one-off migration wrote these files for the
+first backlog and has run. S-581 removed it, and it is in git history.)
 
 ### Priority (F-78 D1, F-113 D1)
 
 `<backlog>/priority.yaml` (`PRIORITY_FILE`, `src/priority.js`) is the backlog's one ranked list
-of **units**. A unit is a feature or a **loose story**, a story with no `feature:` and no
-`update_repo:` (`isLooseStory`); stories inside a feature, update stories and tasks are never
-units. The file is a YAML list of unit ids (`F-<n>` or `S-<n>`), one per line, and nothing else.
-The order is the operator's preference: `bl next` and `bl run` pick the first open unit that
-nothing holds, ranked units first. The file holds no reason for the order; git history keeps the
-reasons (F-113 D2). bl reads it with the `yaml` package (`parseRanked` takes the list), and
-`bl rank` writes the whole list with its `stringify`, so comments in the file are not kept.
-Only a person ranks: nothing automated writes the file (F-78 D3). `bl rank` stages every edit
-and `bl rank --commit` writes the file, taking every closed unit out of the list in the same
-commit (F-113 D3, see `bl rank`):
+of **work units**. Here a work unit is a feature or a **loose story**: a story with no `feature:`
+and no `update_repo:` (`isLooseStory`). Stories inside a feature, update stories and tasks are
+never ranked work units. The file is a YAML list of work unit ids (`F-<n>` or `S-<n>`), one per
+line, and nothing else:
 
 ```yaml
 - S-1
 - F-2
 ```
 
-`loadBacklog()` reads it with the units (stat-revalidated like them) and exposes:
+- **The order** is the operator's preference. `bl next` and `bl run` pick the first work unit
+  that is not done or superseded and that nothing holds, ranked work units first.
+- **No reasons.** The file holds no reason for the order; git history keeps the reasons
+  (F-113 D2).
+- **Reading and writing.** bl reads the file with the `yaml` package (`parseRanked` takes the
+  list). `bl rank` writes the whole list with the package's `stringify`, so the file keeps no
+  comments.
+- **Only a person ranks.** Nothing automated writes the file (F-78 D3). `bl rank` stages every
+  edit. `bl rank --commit` writes the file. In the same commit, it takes every work unit that is
+  done or superseded out of the list (F-113 D3, see `bl rank`).
 
-- `backlog.ranked`: each valid entry resolved, `{ unit, position }`, open or closed;
-- `backlog.priority`: the open ranked units in list order, then every other open unit,
-  features and loose stories alike, by `added:` (`byAdded`): undated first (they predate the
-  field), then features before stories on a tie, then by number. A unit needs no entry: a new
-  story lands at the end of the dated tail with no edit to the file. Computed on first read,
-  since it needs each unit's `done`;
+`loadBacklog()` reads the file with the unit files, and revalidates it by stat like them. It
+exposes:
+
+- `backlog.ranked`: each valid entry resolved, `{ unit, position }`, whatever its status;
+- `backlog.priority`: first the ranked work units that are not done or superseded, in list
+  order. Then every other such work unit, features and loose stories alike, by `added:`
+  (`byAdded`). Undated ones come first (they predate the field), then features before stories on
+  a tie, then by number. A work unit needs no entry: a new story lands at the end of the dated
+  tail with no edit to the file. bl computes the list on first read, since it needs each work
+  unit's `done`;
 - `backlog.rankOf(idOrUnit)`: the place in `priority`, from 0. A story inside a feature takes
-  its feature's place, so a listing sorts a feature's stories together at its rank; a closed
-  unit, an update story, a task or an unknown id is `Infinity`, after every placed one.
+  its feature's place, so a listing sorts a feature's stories together at its rank. These are
+  `Infinity`, after every placed one: a work unit that is done or superseded, an update story, a
+  task and an unknown id.
 
-A missing file, or one that is not a list of non-empty id strings (a blank or comment-only file
-too: an empty order is `[]`), is a `priority-file` problem and an empty order; one that is not YAML is thrown by a strict load (a `PriorityError`). Entries that name no unit are `priority-unit` problems and are
-skipped (see `bl validate`). The order is a preference, never a dependency.
+A missing file is a `priority-file` problem and an empty order. So is a file that is not a list
+of non-empty id strings; a blank or comment-only file is one too (an empty order is `[]`). A
+strict load throws on a file that is not YAML (a `PriorityError`). Entries that name no work unit
+are `priority-unit` problems, and bl skips them (see `bl validate`). The order is a preference,
+never a dependency.
 
-Every reader that orders work reads it (F-78 D2): `bl next` walks `priority` with hard
-dependencies first (see `bl next`), and `bl list`, the bare `bl status`, `bl grep`,
-`bl what-next`'s filtered pick and the component Stories tables `renderPage` renders sort stories
-by `byRank` (`src/priority.js`: `rankOf`, then the id's number). `bl list` shows a `Rank`
-column after Status: the unit's entry number in `priority.yaml`, or `-` for an unranked row. No code
-reads an order out of the root `index.md`.
+Every reader that orders work reads the file (F-78 D2):
 
-The graph derives each epic's features and status (above), and `renderPage` renders the theme
-and epic tables from them (see **Rendered pages** under `### bl sync`). `bl list`, `bl tree` and `bl what-next`
-filter by the value axis and the code axis with one filter (`src/filter.js`):
+- `bl next` walks `priority`, with hard dependencies first (see `bl next`).
+- `bl list`, the bare `bl status`, `bl grep`, `bl what-next`'s filtered pick and the component
+  Stories tables that `renderPage` renders sort stories by `byRank` (`src/priority.js`:
+  `rankOf`, then the id's number).
+- `bl list` shows a `Rank` column after Status: the work unit's entry number in
+  `priority.yaml`, or `-` for an unranked row.
+
+No code reads an order out of the root `index.md`.
+
+The graph derives each epic's features and status (above). `renderPage` renders the theme and
+epic tables from them (see **Rendered pages** under `### bl sync`). `bl list`, `bl tree` and
+`bl what-next` filter by the value axis and the code axis with one filter (`src/filter.js`):
 
 - `--theme <slug>`: stories in the theme by the membership rule above;
 - `--epic <E-id>`: stories of the epic's features (`bl list --epic` lists the features);
@@ -909,9 +942,9 @@ filter by the value axis and the code axis with one filter (`src/filter.js`):
 
 Filters combine, and every one given must match. An unknown theme, epic, feature or component
 exits 1. `bl list --epic E-50` and `bl list --features --theme <slug>` (or any filter with
-`--features`) list features grouped by epic, those with no epic last, each with stories and
-points done/total. `bl list` shows a Theme column: a story in several themes shows them
-joined, one in none shows `-`.
+`--features`) list features grouped by epic, with those with no epic last. Each feature shows its
+stories and points, done/total. `bl list` shows a Theme column. A story in several themes shows
+them joined, and a story in none shows `-`.
 
 ## Lifecycle of a Story
 
