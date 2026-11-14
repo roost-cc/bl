@@ -213,9 +213,10 @@ esac
 # ---------------------------------------------------------------------------
 # next-id does NOT log to activity log
 #
-# `src/log.js:62-67` resolves the log path via `git rev-parse --show-toplevel`
-# inside a real worktree. To exercise that code path we make a tempdir git
-# worktree (init + worktree add) and run `bl next-id` from inside it, then
+# `linkedWorktreeRoot()` in `src/log.js` resolves the log path via
+# `git rev-parse --show-toplevel` inside a linked worktree. To exercise that
+# code path we make a tempdir git worktree (init + worktree add) and run
+# `bl next-id` from inside it, then
 # check that `<git-root>/.bl/activity.log` is unchanged (or .bl/ does not
 # exist).
 # ---------------------------------------------------------------------------
