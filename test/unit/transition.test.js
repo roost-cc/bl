@@ -97,6 +97,25 @@ test('a batch that bl merge closes or bl supersede ends gets completed:, and no 
   }
 });
 
+test('reopened_batch_terminal_transition_removes_legacy_undefined', () => {
+  for (const [to, by] of [
+    ['in_progress', FORCE],
+    ['done', 'merge'],
+    ['done', FORCE],
+    ['superseded', 'supersede'],
+  ]) {
+    const fm = at('batch', 'approved');
+    applyTransition(flow, 'batch', fm, 'in_progress', { by: 'implement', at: AT });
+    applyTransition(flow, 'batch', fm, 'done', { by: 'merge', at: AT });
+    fm.undefined = '2026-11-09';
+    if (to !== 'in_progress') applyTransition(flow, 'batch', fm, 'in_progress', { by: FORCE, at: AT });
+    applyTransition(flow, 'batch', fm, to, { by, at: AT });
+    assert.equal(Object.hasOwn(fm, 'undefined'), false, `${to} by ${by}`);
+    assert.equal(fm.completed, to === 'in_progress' ? undefined : '2026-11-09', `${to} by ${by}`);
+    assert.deepEqual(findings('batch', fm), [], `${to} by ${by}`);
+  }
+});
+
 test('every type in flow.json has a completed field', () => {
   for (const kind of Object.keys(flow.types)) assert.ok(COMPLETED_KEY[kind], kind);
 });

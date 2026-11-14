@@ -449,6 +449,8 @@ export function applyTransition(flow, kind, fm, to, { by, via, outcome, note, at
   if (terminal.includes(to)) fm[COMPLETED_KEY[kind]] = dayOf(when);
   // A move out of a terminal status (`bl force` reopening `done`) leaves an open unit.
   else if (terminal.includes(current)) delete fm[COMPLETED_KEY[kind]];
+  // A batch closed before S-1573 holds its date as `undefined:`; any later entry drops it.
+  delete fm.undefined;
   return entry;
 }
 
