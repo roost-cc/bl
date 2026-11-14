@@ -9,7 +9,6 @@ test('commandTitle: the command, its subcommand and the unit ids its arguments n
     [['merge', 'S-1372'], { status: 'merge', story: 'S-1372' }],
     [['ls'], { status: 'list' }],
     [['inbox', 'done', 'T-3'], { status: 'inbox done' }],
-    [['updates', 'run'], { status: 'updates run' }],
     [['block', 'add', 'F-1', '--gate', 'merge'], { status: 'block add', feature: 'F-1' }],
     [['task', 'F-56', '--title', 'x'], { status: 'task', feature: 'F-56' }],
     [['sync', '--commit', '--story', 'S-1', '--story', 'S-2'], { status: 'sync', story: '2 stories' }],
@@ -49,9 +48,9 @@ test('findCommand: an alias resolves to its command; an unknown or Object.protot
   }
 });
 
-test('every alias names a command, and subcommands is set on exactly task, updates, inbox, block', () => {
+test('every alias names a command, and subcommands is set on exactly task, inbox, block', () => {
   for (const [alias, name] of Object.entries(ALIASES)) assert.ok(COMMANDS[name], `${alias} → ${name}`);
   const withSub = Object.keys(COMMANDS).filter((name) => COMMANDS[name].subcommands);
-  assert.deepEqual(withSub.sort(), ['block', 'inbox', 'task', 'updates']);
+  assert.deepEqual(withSub.sort(), ['block', 'inbox', 'task']);
   for (const entry of Object.values(COMMANDS)) assert.equal(typeof entry.run, 'function');
 });
