@@ -195,7 +195,8 @@ export async function runStream(
   );
   // The reader went away (EPIPE): nobody is left to read a snapshot.
   stdout.on('error', () => lines.close());
-  // The first tick runs while the stream waits for the close: a read that never ends holds no shutdown.
+  // The first tick runs while the stream waits for the close:
+  // a read that never ends holds no shutdown.
   const first = emitSnapshot();
   const timer = setInterval(emitSnapshot, interval);
   try {
