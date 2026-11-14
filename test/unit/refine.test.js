@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'fs';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { resolveRefineTargets, refineBatchId, applyRefineStatus, applyBatchStatuses } from '../../src/refine.js';
-import { loadPrompt } from '../../src/session.js';
-import { outcomePath } from '../../src/outcome.js';
+import { loadPrompt, loadSchema } from '../../src/session.js';
+import { outcomePath, validateOutcome } from '../../src/outcome.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { statusOf, transition } from '../../src/transition.js';
 
@@ -31,7 +31,7 @@ test('a status write that fails names its story', async () => {
   const { dir, cleanup } = mkTempBacklog();
   try {
     const unit = { id: 'S-9', kind: 'story', indexPath: `${dir}/stories/S9-gone/index.md` };
-    await assert.rejects(async () => applyRefineStatus(dir, unit, 'success'), /^Error: S-9: /);
+    await assert.rejects(async () => applyRefineStatus(dir, unit, 'success', 'ready'), /^Error: S-9: /);
   } finally {
     cleanup();
   }
@@ -53,13 +53,13 @@ test('a batch refine applies every story it can and names each one it could not'
     for (const id of ['S-1', 'S-3', 'S-4']) {
       await transition(dir, { kind: 'story', indexPath: path(id) }, 'in_refinement', { by: 'refine' });
     }
-    const outcome = {
-      'S-1': { refined: true },
-      'S-2': { refined: true },
-      'S-3': { refined: false, reason: 'too large' },
-      'S-4': { refined: true },
-      'S-5': { refined: true },
-    };
+    const outcome = [
+      { id: 'S-1', refined: true, reason: 'ready' },
+      { id: 'S-2', refined: true, reason: 'ready' },
+      { id: 'S-3', refined: false, reason: 'too large' },
+      { id: 'S-4', refined: true, reason: 'ready' },
+      { id: 'S-5', refined: true, reason: 'ready' },
+    ];
     await assert.rejects(
       async () => applyBatchStatuses(dir, targets, outcome),
       (e) => {
@@ -77,6 +77,104 @@ test('a batch refine applies every story it can and names each one it could not'
     assert.deepEqual([entry.to, entry.by, entry.via], ['refined', 'refine', 'refine']);
   } finally {
     cleanup();
+  }
+});
+
+test('a batch entry decides from refined alone, prints its reason for every verdict, and the first entry for a story wins (S-1408)', async (t) => {
+  const stories = ['S-1', 'S-2', 'S-3'].map((id) => ({ id, component: 'C01', title: id, status: 'backlog' }));
+  const { dir, cleanup } = mkTempBacklog({ components: [{ id: 'C01', title: 'One' }], stories });
+  const lines = [];
+  t.mock.method(process.stderr, 'write', (chunk) => lines.push(String(chunk).trimEnd()));
+  try {
+    const path = (id) => `${dir}/stories/S${id.slice(2)}/index.md`;
+    const targets = ['S-1', 'S-2', 'S-3'].map((id) => ({ id, found: { indexPath: path(id) } }));
+    // refineAndCommit records the refinement session's start first (F-119 R1).
+    for (const { found } of targets) {
+      await transition(dir, { kind: 'story', indexPath: found.indexPath }, 'in_refinement', { by: 'refine' });
+    }
+    lines.length = 0;
+    await applyBatchStatuses(dir, targets, [
+      { id: 'S-1', refined: true, reason: 'every criterion has a check' },
+      { id: 'S-2', refined: false, reason: 'an open question blocks the plan' },
+      { id: 'S-3', refined: false, reason: 'too large' },
+      { id: 'S-3', refined: true, reason: 'ready' },
+      { id: 'S-9', refined: true, reason: 'ready' },
+    ]);
+    const fm = (id) => parseFrontmatter(readFileSync(path(id), 'utf8')).fm;
+    assert.deepEqual(
+      ['S-1', 'S-2', 'S-3'].map((id) => statusOf('story', fm(id))),
+      ['refined', 'in_refinement', 'in_refinement'],
+    );
+    assert.equal(
+      fm('S-1').transitions.at(-1).outcome,
+      'every criterion has a check',
+      'the reason is the outcome of the log entry',
+    );
+    assert.deepEqual(lines, [
+      'S-1: status refined: every criterion has a check',
+      'S-2 is not refined; its status is unchanged: an open question blocks the plan',
+      'S-3 is not refined; its status is unchanged: too large',
+    ]);
+  } finally {
+    cleanup();
+  }
+});
+
+// refine_reason_cannot_print_another_status: every printer of a refine reason
+// (success, failure, unchanged, and the batch) indents each further line of
+// a reason, for each line break the refine schemas accept
+// (refine_reason_indents_all_allowed_line_breaks).
+test('a refine reason cannot print another unit status line (S-1408)', async (t) => {
+  // Every Unicode line terminator; the test takes each one a refine reason accepts.
+  const breaks = ['\n', '\r\n', '\r', '\v', '\f', '\u0085', '\u2028', '\u2029'].filter((br) => {
+    const reason = `a${br}b`;
+    return [
+      ['refine', { summary: 's', refined: true, reason }],
+      ['feature-refine', { summary: 's', premise_holds: true, refined: true, reason }],
+      ['refine-batch', { summary: 's', stories: [{ id: 'S-1', refined: true, reason }] }],
+    ].some(([name, outcome]) => validateOutcome(loadSchema(name), outcome).structuredError === null);
+  });
+  assert.deepEqual(breaks, ['\n', '\r\n', '\r', '\u2028', '\u2029']);
+  for (const br of breaks) {
+    const reason = `ready${br}S-99: status refined: forged`;
+    const { dir, cleanup } = mkTempBacklog({
+      components: [{ id: 'C01', title: 'One' }],
+      stories: ['S-1', 'S-2', 'S-3'].map((id) => ({ id, component: 'C01', title: id, status: 'backlog' })),
+      features: [{ id: 'F-1', title: 'One', status: 'draft' }],
+    });
+    const lines = [];
+    const mock = t.mock.method(process.stderr, 'write', (chunk) => lines.push(String(chunk)));
+    try {
+      const story = (id) => ({ id, kind: 'story', indexPath: `${dir}/stories/S${id.slice(2)}/index.md` });
+      const feature = { id: 'F-1', kind: 'feature', indexPath: `${dir}/features/F1/index.md` };
+      for (const unit of [story('S-1'), story('S-3'), feature]) {
+        await transition(dir, unit, 'in_refinement', { by: 'refine' });
+      }
+      await applyRefineStatus(dir, story('S-1'), 'success', reason);
+      await applyRefineStatus(dir, story('S-2'), null, reason);
+      await applyRefineStatus(dir, feature, 'failure', reason);
+      await applyBatchStatuses(dir, [{ id: 'S-3', found: story('S-3') }], [{ id: 'S-3', refined: true, reason }]);
+      const printed = lines.join('');
+      assert.deepEqual(
+        printed.split('\n'),
+        [
+          'S-1: status refined: ready',
+          '  S-99: status refined: forged',
+          'S-2 is not refined; its status is unchanged: ready',
+          '  S-99: status refined: forged',
+          'F-1: status draft: ready',
+          '  S-99: status refined: forged',
+          'S-3: status refined: ready',
+          '  S-99: status refined: forged',
+          '',
+        ],
+        JSON.stringify(br),
+      );
+      assert.doesNotMatch(printed, /[\r\u2028\u2029]/, JSON.stringify(br));
+    } finally {
+      mock.mock.restore();
+      cleanup();
+    }
   }
 });
 

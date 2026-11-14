@@ -216,15 +216,24 @@ As the last act of the session, after your commit and the walkthrough, use the {
 to write this JSON object, and nothing else, to `{{outcomePath}}`:
 
 ```json
-{ "summary": "<one line: what you decided and planned>", "premise_holds": true, "refined": true }
+{
+  "summary": "<one line: what you decided and planned>",
+  "premise_holds": true,
+  "refined": true,
+  "reason": "<one line: why the feature is ready for approval>"
+}
 ```
 
-- Set `premise_holds` to `false` when the premise does not hold (step 3), and add
-  `"reason": "<why, in one line>"`. `bl refine` then sets the feature's status to draft.
-- Set `refined` to `true` when the feature is ready for `bl approve {{featureId}}`. With
-  `premise_holds: true`, `bl refine` then sets the feature's status to refined.
+- Set `premise_holds` to `false` when the premise does not hold (step 3), and set `reason` to
+  why it does not hold. `bl refine` then sets the feature's status to draft.
+- Set `refined` to `true` when the feature is ready for `bl approve {{featureId}}`, and set
+  `reason` to why it is ready. With `premise_holds: true`, `bl refine` then sets the feature's
+  status to refined.
 - Set `refined` to `false` when it is not, for example while an open question blocks the story
-  cut, and add `"reason"`. `bl refine` prints the reason and leaves the status as it is.
+  cut, and set `reason` to what keeps it from being refined. `bl refine` prints the reason and
+  leaves the status as it is.
+- `reason` is one line. `bl refine` prints it, and records it in the feature's log when it sets
+  the status.
 
 `bl refine` reads the file when the session ends. If the file is missing or does not match this
 shape, `bl refine` changes no status.

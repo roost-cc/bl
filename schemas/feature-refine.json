@@ -4,7 +4,7 @@
   "description": "The outcome of `bl refine F-n` (feature-refine.md), written by the agent to the outcome file. `bl refine` sets the feature's status from it (F-68 D3).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["summary", "premise_holds", "refined"],
+  "required": ["summary", "premise_holds", "refined", "reason"],
   "properties": {
     "summary": {
       "description": "One line: what the session decided and planned.",
@@ -13,28 +13,18 @@
       "pattern": "^[^\\S\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*[^\\s\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029][^\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*$"
     },
     "premise_holds": {
-      "description": "false: the premise does not hold, and bl sets the feature's status to draft.",
+      "description": "false: the premise does not hold, and bl sets the feature's status to draft, whatever refined says.",
       "type": "boolean"
     },
     "refined": {
-      "description": "true: the feature is ready for approval, and bl sets its status to refined. false: bl leaves the status and prints the reason. refined is false whenever premise_holds is false.",
+      "description": "Read only when premise_holds is true. true: the feature is ready for approval, and bl sets its status to refined. false: bl leaves the status and prints the reason.",
       "type": "boolean"
     },
     "reason": {
-      "description": "Why the premise does not hold or the feature is not refined, in one line. Required unless premise_holds and refined are both true.",
+      "description": "One line, for every verdict. premise_holds false: why the premise does not hold. refined false: what keeps the feature from being refined. Both true: why the feature is ready for approval. bl decides from premise_holds, then refined. It prints reason, and records it as the outcome of the log entry when it sets the status.",
       "type": "string",
       "minLength": 1,
       "pattern": "^[^\\S\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*[^\\s\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f][^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
     }
-  },
-  "allOf": [
-    {
-      "if": { "properties": { "premise_holds": { "const": true }, "refined": { "const": true } } },
-      "else": { "properties": { "reason": true }, "required": ["reason"] }
-    },
-    {
-      "if": { "properties": { "premise_holds": { "const": false } } },
-      "then": { "properties": { "refined": { "const": false } } }
-    }
-  ]
+  }
 }

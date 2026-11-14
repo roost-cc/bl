@@ -2293,25 +2293,34 @@ test('unmet acceptance criteria get one retry with a nudge, then escalate', asyn
   }
 });
 
-test('an implement retry that returns blocked names it at the end of the escalation', async () => {
-  const { dir, cleanup, config, feature, prep } = setup();
-  try {
-    const runner = fakeRunner({ dir, feature, behaviour: { story: () => {} } });
-    const session = runner.session;
-    runner.session = (o) => {
-      const r = session(o);
-      if (o.promptName !== 'feature-story') return r;
-      return { ...r, structured: { summary: 'stopped', done: false, blocked: 'the database is not reachable' } };
-    };
-    const state = await runFeature({ feature, config, prep, runner });
-    assert.equal(state.status, 'escalated');
-    assert.match(state.lastError, /S-1 acceptance criteria unmet after two sessions/);
-    const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation').trim();
-    assert.match(esc, /\n\nThe agent was blocked: the database is not reachable$/);
-  } finally {
-    cleanup();
-  }
-});
+// The criteria decide, not done (S-1408): a contradictory pair escalates on
+// the unmet criteria too, and blocked is named only when it is a string.
+for (const [done, blocked] of [
+  [false, 'the database is not reachable'],
+  [true, 'the database is not reachable'],
+  [false, null],
+]) {
+  test(`an implement retry that returns done: ${done}, blocked: ${blocked} escalates on the unmet criteria and names a blocked string`, async () => {
+    const { dir, cleanup, config, feature, prep } = setup();
+    try {
+      const runner = fakeRunner({ dir, feature, behaviour: { story: () => {} } });
+      const session = runner.session;
+      runner.session = (o) => {
+        const r = session(o);
+        if (o.promptName !== 'feature-story') return r;
+        return { ...r, structured: { summary: 'stopped', done, blocked } };
+      };
+      const state = await runFeature({ feature, config, prep, runner });
+      assert.equal(state.status, 'escalated');
+      assert.match(state.lastError, /S-1 acceptance criteria unmet after two sessions/);
+      const esc = extractSection(readFileSync(feature.indexPath, 'utf8'), 'Escalation').trim();
+      if (blocked) assert.match(esc, /\n\nThe agent was blocked: the database is not reachable$/);
+      else assert.doesNotMatch(esc, /The agent was blocked|\bnull\b/);
+    } finally {
+      cleanup();
+    }
+  });
+}
 
 test('a first self-review that returns ok: false escalates before the review', async () => {
   const { dir, cleanup, config, feature, prep } = setup();
