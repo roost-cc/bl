@@ -3,9 +3,8 @@
 // the listing names it, and stopping the scope removes it. A test-gate command
 // or a headless session that ignores SIGTERM gets SIGKILL after a stop, in a
 // scope and without one (F-128 A6). The scoped rows are skipped, with the
-// probe's reason, where user
-// systemd scopes are unavailable (macOS, a sandbox, a host without a user
-// manager).
+// probe's reason, where user systemd scopes are unavailable (macOS, a sandbox,
+// a host without a user manager).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs, { chmodSync, writeFileSync } from 'fs';
