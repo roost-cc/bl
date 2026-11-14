@@ -34,8 +34,8 @@ import { updateSpecFile } from './spec-file.js';
  * The `FlowError` `applyTransition` throws when the table has no edge from the
  * unit's status to the one asked for: the unit moved (an operator's edit) or
  * the caller asked for a wrong one. A caller that may skip the entry catches
- * only this; any other error (a spec lock timeout, a disk error) is a write
- * that failed.
+ * only this; any other error (a spec lock timeout, a disk error, a log that
+ * `bl validate` rejects) is a write that failed.
  */
 export class NoEdgeError extends FlowError {}
 
