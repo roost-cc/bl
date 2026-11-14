@@ -87,7 +87,7 @@ export function implementVerbOf(kind, unit) {
 }
 
 /** The field that holds the date a unit reached a terminal status, per type. */
-export const COMPLETED_KEY = { story: 'completed', feature: 'completed', task: 'done' };
+export const COMPLETED_KEY = { story: 'completed', feature: 'completed', batch: 'completed', task: 'done' };
 
 const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 /** A date field's value (`added`, `completed`): `YYYY-MM-DD`. */
@@ -413,7 +413,7 @@ export function setLog(fm, log) {
  * terminal status sets `completed` (a task's `done`), each to `at`'s date,
  * and an entry from a terminal status to an open one removes it.
  * @param {import("./flow.js").Flow} flow
- * @param {"story" | "feature" | "task"} kind
+ * @param {"story" | "feature" | "batch" | "task"} kind
  * @param {object} fm  the unit's frontmatter, changed in place
  * @param {string} to
  * @param {{ by: string, via?: string, outcome?: string, note?: string, at?: string,
@@ -449,6 +449,8 @@ export function applyTransition(flow, kind, fm, to, { by, via, outcome, note, at
   if (terminal.includes(to)) fm[COMPLETED_KEY[kind]] = dayOf(when);
   // A move out of a terminal status (`bl force` reopening `done`) leaves an open unit.
   else if (terminal.includes(current)) delete fm[COMPLETED_KEY[kind]];
+  // A batch closed before S-1573 holds its date as `undefined:`; any later entry drops it.
+  delete fm.undefined;
   return entry;
 }
 
