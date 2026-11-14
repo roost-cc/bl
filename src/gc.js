@@ -18,7 +18,7 @@
  * This module decides which files are litter, so the three verbs agree.
  */
 
-import { lstatSync, readdirSync, rmSync } from 'fs';
+import { existsSync, lstatSync, readdirSync, rmSync } from 'fs';
 import { join, sep } from 'path';
 import { git } from './child.js';
 import { info, loadConfig, parseArgs, worktreeRoot } from './config.js';
@@ -304,8 +304,12 @@ export function sweepWorktrees(config, graph, { dryRun }) {
     for (const u of graph.list(kind)) if (u.id) byBranch.set(u.entry.toLowerCase(), u);
   }
   const repoPaths = [...new Set(Object.values(config.repos ?? {}).map((r) => r.path))];
+  // A registered worktree whose path is gone (deleted by hand) is not in the
+  // directory; the `git worktree prune` below drops its registration.
   const registered = repoPaths.flatMap((repoPath) =>
-    listWorktrees(repoPath, { detached: true }).map((w) => ({ repoPath, path: w.path, real: realOrResolved(w.path) })),
+    listWorktrees(repoPath, { detached: true })
+      .filter((w) => existsSync(w.path))
+      .map((w) => ({ repoPath, path: w.path, real: realOrResolved(w.path) })),
   );
 
   for (const d of dirs) {

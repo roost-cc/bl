@@ -4816,7 +4816,8 @@ units' directories under the worktree root, which `bl merge` removes only when t
    `commit-failed`) is kept with the reason `names no work unit`.
 2. **Worktree directories.** A directory under the worktree root is a work unit's when its name is
    the work unit's directory name, lowercased (its branch). For a closed work unit, `bl gc` reads
-   `git status` of each registered worktree in the directory, detached ones included. If git
+   `git status` of each registered worktree in the directory, detached ones included (a
+   registered worktree whose path is gone is skipped, and the prune below drops it). If git
    cannot read it, or it has uncommitted changes, the worktree is kept with the reason. Otherwise
    `git worktree remove` (no `--force`) removes it; if git refuses, the worktree is kept with the
    first line of git's error. When no worktree is kept, the directory goes with everything left in

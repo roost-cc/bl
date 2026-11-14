@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -131,6 +131,22 @@ test('bl gc removes the run files and the directories of closed work units and k
     assert.ok(existsSync(join(wt, 's3-open', 'code')), 'the open work unit is untouched');
     assert.ok(existsSync(join(wt, 'docs')));
     assert.doesNotMatch(r.stdout, /s3-open|S-3/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('bl gc removes a closed work unit directory whose registered worktree was deleted by hand', () => {
+  const { dir, code, wt, cleanup } = gcBacklog();
+  try {
+    git(code, 'worktree', 'add', '-q', '-b', 's2-gone', join(wt, 's2-gone', 'code'));
+    rmSync(join(wt, 's2-gone', 'code'), { recursive: true, force: true });
+    mkdirSync(join(wt, 's2-gone', '.ruff_cache'));
+    const r = runBl(['gc'], { cwd: dir, env: GIT_ENV });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, new RegExp(`^removed ${join(wt, 's2-gone')}$`, 'm'));
+    assert.ok(!existsSync(join(wt, 's2-gone')));
+    assert.doesNotMatch(git(code, 'worktree', 'list'), /s2-gone/);
   } finally {
     cleanup();
   }
