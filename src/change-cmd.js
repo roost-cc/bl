@@ -61,9 +61,10 @@ Options:
 
 Opens a read-only copy of the unit's current change document in ${editorCommand()}
 ($VISUAL → $EDITOR → vi), as bl view does. The copy is discarded when the editor
-exits; the real file is never changed. With stdout redirected (not a terminal),
-the document is printed. --open prints when stdout is not a terminal or the text
-fits it, else pages ($PAGER → less → more).`);
+exits; the real file is never changed. While the editor is open the copy follows
+the document, as bl view's copy follows its page. With stdout redirected (not a
+terminal), the document is printed. --open prints when stdout is not a terminal
+or the text fits it, else pages ($PAGER → less → more).`);
     process.exit(0);
   }
 
@@ -86,7 +87,7 @@ fits it, else pages ($PAGER → less → more).`);
   if (!cur) fail(`${target.id} has no change document (it gets one when its branch is prepared)`);
 
   if (!args.open) {
-    showReadOnly(cur.path, null, 'bl change');
+    await showReadOnly(cur.path, null, 'bl change');
     return;
   }
   const items = latestSessionOpenItems(extractReviewLog(cur.doc.body) ?? '');

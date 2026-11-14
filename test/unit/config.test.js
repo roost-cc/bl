@@ -20,6 +20,7 @@ import {
   shellQuote,
   runPager,
   runEditor,
+  runEditorAsync,
   slugify,
 } from '../../src/config.js';
 
@@ -567,6 +568,19 @@ test('runEditor runs VISUAL with its arguments and a path with a space and a quo
   chmodSync(fake, 0o755);
   const path = join(dir, "it's a file.md");
   const r = withEnv({ VISUAL: `${fake} --wait`, EDITOR: 'never-run' }, () => runEditor(path));
+  assert.equal(r.status, 4);
+  assert.equal(readFileSync(record, 'utf8'), `--wait\n${path}\n`);
+});
+
+test('runEditorAsync runs VISUAL as runEditor does and resolves to its result', async () => {
+  const dir = mkTempDir('bl-editor-');
+  const record = join(dir, 'record');
+  const fake = join(dir, 'fake-editor');
+  writeFileSync(fake, `#!/bin/sh\nfor a in "$@"; do printf '%s\\n' "$a"; done > '${record}'\nexit 4\n`);
+  chmodSync(fake, 0o755);
+  const path = join(dir, "it's a file.md");
+  // withEnv restores the env when the promise is returned: the child was started with it.
+  const r = await withEnv({ VISUAL: `${fake} --wait`, EDITOR: 'never-run' }, () => runEditorAsync(path));
   assert.equal(r.status, 4);
   assert.equal(readFileSync(record, 'utf8'), `--wait\n${path}\n`);
 });
