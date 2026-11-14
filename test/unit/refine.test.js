@@ -4,8 +4,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'fs';
 import { loadConfig, parseFrontmatter } from '../../src/config.js';
 import { resolveRefineTargets, refineBatchId, applyRefineStatus, applyBatchStatuses } from '../../src/refine.js';
-import { loadPrompt } from '../../src/session.js';
-import { outcomePath } from '../../src/outcome.js';
+import { loadPrompt, loadSchema } from '../../src/session.js';
+import { outcomePath, validateOutcome } from '../../src/outcome.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { statusOf, transition } from '../../src/transition.js';
 
@@ -122,9 +122,20 @@ test('a batch entry decides from refined alone, prints its reason for every verd
 
 // refine_reason_cannot_print_another_status: every printer of a refine reason
 // (success, failure, unchanged, and the batch) indents each further line of
-// a reason, for each kind of line break.
+// a reason, for each line break the refine schemas accept
+// (refine_reason_indents_all_allowed_line_breaks).
 test('a refine reason cannot print another unit status line (S-1408)', async (t) => {
-  for (const br of ['\n', '\r\n', '\r']) {
+  // Every Unicode line terminator; the test takes each one a refine reason accepts.
+  const breaks = ['\n', '\r\n', '\r', '\v', '\f', '\u0085', '\u2028', '\u2029'].filter((br) => {
+    const reason = `a${br}b`;
+    return [
+      ['refine', { summary: 's', refined: true, reason }],
+      ['feature-refine', { summary: 's', premise_holds: true, refined: true, reason }],
+      ['refine-batch', { summary: 's', stories: [{ id: 'S-1', refined: true, reason }] }],
+    ].some(([name, outcome]) => validateOutcome(loadSchema(name), outcome).structuredError === null);
+  });
+  assert.deepEqual(breaks, ['\n', '\r\n', '\r', '\u2028', '\u2029']);
+  for (const br of breaks) {
     const reason = `ready${br}S-99: status refined: forged`;
     const { dir, cleanup } = mkTempBacklog({
       components: [{ id: 'C01', title: 'One' }],
@@ -159,7 +170,7 @@ test('a refine reason cannot print another unit status line (S-1408)', async (t)
         ],
         JSON.stringify(br),
       );
-      assert.doesNotMatch(printed, /\r/, JSON.stringify(br));
+      assert.doesNotMatch(printed, /[\r\u2028\u2029]/, JSON.stringify(br));
     } finally {
       mock.mock.restore();
       cleanup();

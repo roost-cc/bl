@@ -176,8 +176,9 @@ export function statusBeforeRefine(flow, kind, fm, change = null) {
  */
 export async function applyRefineStatus(backlogRoot, { id, kind, indexPath }, result, reason) {
   // The agent's reason may span lines: each further line is indented, so no
-  // line of it reads as another unit's status line.
-  const printed = reason.replace(/\r\n|\r|\n/g, '\n  ');
+  // line of it reads as another unit's status line. The refine schemas accept
+  // LF, CR, CRLF, U+2028 and U+2029 as line breaks.
+  const printed = reason.replace(/\r\n|[\r\n\u2028\u2029]/g, '\n  ');
   if (result) {
     let status;
     // The error names the unit: in a batch, the units before it are set.
