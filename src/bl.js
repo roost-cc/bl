@@ -241,11 +241,7 @@ Run bl <command> --help for details on a specific command.`);
 
 async function run() {
   if (command && command !== 'log' && command !== 'help' && command !== 'next-id' && !command.startsWith('-')) {
-    try {
-      logAppend(command, subArgv);
-    } catch {
-      // logging is non-fatal
-    }
+    logAppend(command, subArgv);
   }
 
   // F-80 G3: deprecated, not removed; each subcommand still works. Help
