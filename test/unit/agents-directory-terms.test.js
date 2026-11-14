@@ -14,12 +14,8 @@ const REWRITTEN = AGENTS.slice(0, AGENTS.indexOf('\n## Tooling\n'));
 /** The rewritten part with each run of white space as one space, so a line wrap does not matter. */
 const FLAT = REWRITTEN.replace(/\s+/g, ' ');
 
-/** Each wording that calls a backlog directory of `index.md` files a work unit's directory. */
-const MISLABELS = [
-  ["work units' directories", /work units' directories/],
-  ['directories of `units`', /directories of `units`/],
-  ["the merged story's directory", /merged story's directory/],
-];
+/** Each wording that calls a backlog directory of `index.md` files a work unit's directory, found in `FLAT`. */
+const MISLABELS = ["work units' directories", 'directories of `units`', "merged story's directory"];
 
 /** Each backlog directory of the rewritten part, by the wording that names it by its `index.md`. */
 const BACKLOG_DIRECTORIES = [
@@ -39,12 +35,10 @@ test('agents_work_unit_and_backlog_directories_are_distinct: the work unit direc
 });
 
 test('agents_work_unit_and_backlog_directories_are_distinct: no backlog directory is a work unit directory', () => {
-  const found = [];
-  REWRITTEN.split('\n').forEach((line, i) => {
-    for (const [wording, re] of MISLABELS)
-      if (re.test(line)) found.push(`src/AGENTS.md:${i + 1} (${wording}): ${line.trim()}`);
-  });
-  assert.deepEqual(found, []);
+  assert.deepEqual(
+    MISLABELS.filter((wording) => FLAT.includes(wording)),
+    [],
+  );
 });
 
 for (const [place, wording] of BACKLOG_DIRECTORIES) {
