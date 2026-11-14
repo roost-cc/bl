@@ -20,7 +20,7 @@ import { batchUnit } from '../../src/unit.js';
 import { mkTempBacklog, mkTempDir } from '../helpers/tempdir.js';
 import { git, initGitBacklog } from '../helpers/git-backlog.js';
 import { writeBlockersLocked } from '../helpers/covering-lock.js';
-import { AC_BODY, CH, checkAll, creates, fakeRunner, storySetup } from '../helpers/feature-run-fixture.js';
+import { AC_BODY, CH, checkAll, creates, fakeRunner, lastTitle, storySetup } from '../helpers/feature-run-fixture.js';
 
 /** Batch B-1 of S-1 (repo demo-repo) and S-2 (repo other), S-2 after S-1 by an order edge. */
 function batchSetup() {
@@ -185,6 +185,13 @@ test('bl run B-n: the batch goes through runFeature, each story on story-run.md 
     const runner = fakeRunner({ dir, feature: batch });
     const state = await runFeature({ feature: batch, config, prep, runner, opts: { maxRounds: 2 } });
     assert.equal(state.status, 'clean');
+    assert.deepEqual(lastTitle(runner), {
+      feature: 'B-1',
+      story: '',
+      status: 'clean',
+      next: '→ bl merge',
+      final: true,
+    });
 
     // Each story on story-run.md (F-125 D1), in the plan's order, as a story run's session.
     const impl = runner.calls.filter((c) => c.type === 'session' && c.vars.storyAbsPath);

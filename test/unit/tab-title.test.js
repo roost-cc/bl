@@ -109,6 +109,7 @@ test('BL_TAB_TITLE is the format; any field name works, unknown ones render as n
 
 test('unitTitleFields names the feature or the story a unit id stands for', () => {
   assert.deepEqual(unitTitleFields('F-56'), { feature: 'F-56' });
+  assert.deepEqual(unitTitleFields('B-12'), { feature: 'B-12' });
   assert.deepEqual(unitTitleFields('S-210'), { story: 'S-210' });
   assert.deepEqual(unitTitleFields('refine-batch'), {});
   assert.deepEqual(unitTitleFields('C01'), {});

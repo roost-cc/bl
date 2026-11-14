@@ -3513,11 +3513,13 @@ bl's prompts and plugin commands use, not a new format.
 
 - A code path sets the fields it knows, by name, at any time: `updateTabTitle('story', 'S-34')`
   or `updateTabTitle({ feature: 'F-56', status: 'testing' })`. Names are not checked.
-- `launchSession` sets the unit `parsed.id` names (`F-n` the feature, `S-n` the story) and
-  the mode as `status` (`workon` shows as `implement`); a caller that knows more, such as a
-  story's `feature:`, sets it first. The `bl run` loop sets the feature, the story in hand and
-  the step in `setStep`, and the end state in `finish` and `escalateIntegration` (`finalTitle`),
-  through the runner's `title(fields, { final })`; `notify` only rings the bell now.
+- `launchSession` sets the unit `parsed.id` names (`F-n` or a story batch's `B-n` the feature,
+  `S-n` the story; through `unitTitleFields`) and the mode as `status` (`workon` shows as
+  `implement`); a caller that knows more, such as a story's `feature:`, sets it first. The
+  `bl run` loop sets the unit's fields (`unitTitleFields`: a story unit is the `story` field),
+  the story in hand and the step in `setStep`, and the end state in `finish` and
+  `escalateIntegration` (`finalTitle`), through the runner's `title(fields, { final })`; `notify`
+  only rings the bell now.
 - A code path that reaches an end state sets it with `finalTabTitle`, which marks the title
   final and sends it unpadded. It drops an earlier `next`, so the final title shows `next`
   only when the code path sets it. The run loop's ends: `clean → bl merge`,
