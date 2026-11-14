@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { dirname, join } from 'path';
 import { mkTempDir } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
 
@@ -42,6 +42,33 @@ test('bl init with the cwd as the backlog, next to a second backlog, finishes', 
   const again = init(dir);
   assert.equal(again.status, 0, again.stderr);
   assert.equal(readFileSync(join(sibling, 'backlog.json'), 'utf8'), SIBLING);
+});
+
+test('bl init settles no record of a sibling backlog', () => {
+  // The cwd with a backlog.json without "repos", and with none at all. In
+  // each, bl init exits as it does in a directory with no sibling.
+  for (const json of ['{}\n', null]) {
+    /** `b` in a new parent, beside `a` when `withSibling`. */
+    const cwd = (withSibling) => {
+      const parent = mkTempDir('bl-init-parent-');
+      let record = null;
+      if (withSibling) {
+        record = join(backlogAt(parent, 'a', SIBLING), '.bl', 'run', 'F-1.links.json');
+        mkdirSync(dirname(record), { recursive: true });
+        writeFileSync(record, 'not json');
+      }
+      const dir = json === null ? join(parent, 'b') : backlogAt(parent, 'b', json);
+      if (json === null) mkdirSync(dir);
+      return { dir, record };
+    };
+    const { dir, record } = cwd(true);
+    const alone = init(cwd(false).dir);
+
+    const r = init(dir);
+    assert.equal(r.status, alone.status, r.stderr);
+    assert.doesNotMatch(r.stderr, /settle/);
+    assert.equal(readFileSync(record, 'utf8'), 'not json');
+  }
 });
 
 test('bl init with the cwd directly below a ceiling directory finishes', () => {
