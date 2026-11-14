@@ -46,8 +46,9 @@ function logLines(dir) {
     .filter(Boolean);
 }
 
-// On `main` this test also fails because of the old header lines (804 lines,
-// not 800), so it is not a test of the race alone.
+// On `main` this test also fails because of the old header: its three comment
+// lines are counted too (803 lines with no line lost, not 800), so it is not a
+// test of the race alone.
 test('several processes that append to one log at the same time lose no line', async () => {
   const dir = mkTempDir('bl-log-');
   const src = `import { appendTo } from ${JSON.stringify(LOG_JS)};
