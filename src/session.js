@@ -11,10 +11,9 @@ import {
   symlinkSync,
   mkdtempSync,
   mkdirSync,
-  realpathSync,
   rmSync,
 } from 'fs';
-import { join, sep, dirname, resolve } from 'path';
+import { join, sep, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir, tmpdir } from 'os';
 import assert from 'node:assert';
@@ -32,6 +31,7 @@ import {
 } from './config.js';
 import { findExistingWorktree, isSessionRunning, reposForStory } from './story.js';
 import { canonical, takeDirLock } from './lock.js';
+import { realOrResolved } from './real-path.js';
 import { unitLockPath } from './unit-lock.js';
 import { reassertTabTitle, unitTitleFields, updateTabTitle } from './tab-title.js';
 import { ALLOWED_TOOLS_FILE, ensureAllowedTools, resolveAllowedTokens } from './allowed-tools.js';
@@ -403,15 +403,6 @@ export async function newWorktreeGuards(repoPath) {
       process.exit(1);
     }
     info('');
-  }
-}
-
-/** `path` with its links resolved, or resolved as given when it is not there. */
-function realOrResolved(path) {
-  try {
-    return realpathSync(path);
-  } catch {
-    return resolve(path);
   }
 }
 

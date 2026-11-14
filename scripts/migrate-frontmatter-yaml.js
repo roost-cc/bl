@@ -13,9 +13,8 @@
  * reader), and writes nothing. Without it, everything is written and the
  * backlog is committed once, with the counts in the message. `--backlog`
  * names the backlog root; by default it is found as `bl` finds it
- * ($BL_BACKLOG_DIR, else the nearest ancestor or ancestor's `backlog/`
- * with a backlog.json). Run it from F-62's worktree before `bl merge F-62`,
- * and again from the merged bl after it.
+ * (`findBacklogRoot` in `src/config.js`). Run it from F-62's worktree before
+ * `bl merge F-62`, and again from the merged bl after it.
  *
  * Exit codes: 0 done (or nothing to do), 1 the backlog is not clean at
  * origin/main with no bl run active (nothing is done), or a step or the

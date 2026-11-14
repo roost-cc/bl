@@ -13,10 +13,11 @@
  * and `drop` (updates-answer.js) are the operator's answer.
  */
 
-import { existsSync, readFileSync, mkdirSync, realpathSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { join, dirname, resolve, isAbsolute } from 'path';
 import { fileURLToPath } from 'url';
 import { git } from './child.js';
+import { realOrResolved } from './real-path.js';
 import {
   loadConfig,
   parseArgs,
@@ -278,15 +279,8 @@ export function repoForSlug(slug, config) {
  * stubbed, as the tests do. A dry run reads only and is not refused.
  */
 export function foreignCheckout(config, blRoot = resolve(__dirname, '..')) {
-  const real = (p) => {
-    try {
-      return realpathSync(p);
-    } catch {
-      return resolve(p);
-    }
-  };
-  const root = real(blRoot);
-  const base = real(worktreeRoot(config));
+  const root = realOrResolved(blRoot);
+  const base = realOrResolved(worktreeRoot(config));
   if (!isBlBranchPath(base, root)) return null;
   return `this bl runs from ${root}, a bl worktree under ${base}, not the installed checkout: a branch under test must use a temporary backlog (BL_BACKLOG_DIR=<tmp>) with the forge and git stubbed, never the real one`;
 }

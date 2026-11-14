@@ -204,6 +204,6 @@ rm -rf "$NOWHERE"
 assert_exit "bl top --version with no backlog" 0 "$VERSION_CODE"
 assert_contains "bl top --version with no backlog prints the version" "bl-top go" "$VERSION"
 assert_exit "bl top with no backlog" 1 "$CODE"
-assert_contains "bl top with no backlog says how to name one" "Set BL_BACKLOG_DIR" "$(cat "$ERR")"
+assert_contains "bl top with no backlog says how to name one" "set BL_BACKLOG_DIR" "$(cat "$ERR")"
 
 summary_and_exit

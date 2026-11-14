@@ -351,12 +351,14 @@ export function reposConfig(repos = {}) {
  * The dir is removed when the process exits (see `mkTempDir`). Pass
  * `{ keep: true }` when it must outlive this process, as for the bash suites
  * that build a backlog in a one-shot `node -e` and remove it themselves.
+ * Pass `{ parent }` to make it in a directory of the test's own, where bl's
+ * walk from a cwd finds it below the suite's ceiling.
  *
  * @param {Fixture} [fixture]
- * @param {{ keep?: boolean }} [opts]
+ * @param {{ keep?: boolean, parent?: string }} [opts]
  */
-export function mkTempBacklog(fixture = {}, { keep = false } = {}) {
-  const dir = keep ? mkdtempSync(join(tmpdir(), 'bl-test-')) : mkTempDir('bl-test-');
+export function mkTempBacklog(fixture = {}, { keep = false, parent = tmpdir() } = {}) {
+  const dir = keep ? mkdtempSync(join(parent, 'bl-test-')) : mkTempDir('bl-test-', parent);
   writeFileSync(
     join(dir, 'backlog.json'),
     JSON.stringify(

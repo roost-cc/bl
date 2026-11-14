@@ -94,7 +94,7 @@ init"); edits you made before it stay uncommitted.`);
   try {
     before = dirtySnapshot(backlogDir);
     ensureReposBlock(backlogDir, args.agent, args.model);
-    config = loadConfig({ agent: args.agent, model: args.model });
+    config = loadConfig({ backlogRoot: backlogDir, agent: args.agent, model: args.model });
     const provider = getProvider(config.agent);
 
     info(`Initializing agent: ${config.agent}...`);

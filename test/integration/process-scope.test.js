@@ -5,7 +5,8 @@
 // a host without a user manager).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, writeFileSync } from 'fs';
+import fs, { chmodSync, writeFileSync } from 'fs';
+import { syncBuiltinESMExports } from 'module';
 import { delimiter, join } from 'path';
 import { isPidAlive } from '../../src/process-scope.js';
 import { shellMerged } from '../../src/feature-run.js';
@@ -191,6 +192,38 @@ exit 1
   for (const [what, env, call, want] of cases) {
     if (want === 'throws') assert.throws(() => as(env, call), Error, what);
     else assert.deepEqual(as(env, call), want, what);
+  }
+
+  // The kernel removes the cgroup between the open and the read of
+  // `cgroup.procs`: the read fails with ENODEV, not ENOENT. A scope that is
+  // then inactive lists nothing; one still active throws.
+  const realRead = fs.readFileSync;
+  const removedWhileRead =
+    (afterwards) =>
+    (path, ...rest) => {
+      if (!String(path).endsWith('cgroup.procs')) return realRead(path, ...rest);
+      Object.assign(process.env, afterwards);
+      throw Object.assign(new Error(`ENODEV: no such device, read`), { code: 'ENODEV' });
+    };
+  const cg = { FAKE_STATE: 'active', FAKE_CG: '/' };
+  for (const [what, afterwards, want] of [
+    ['cgroup removed while read, scope gone', { FAKE_STATE: 'inactive', FAKE_ACTIVE_EXIT: '3' }, []],
+    ['cgroup removed while read, scope active', {}, 'throws'],
+  ]) {
+    fs.readFileSync = removedWhileRead(afterwards);
+    syncBuiltinESMExports();
+    try {
+      if (want === 'throws') assert.throws(() => as(cg, () => scopeProcesses(unit)), Error, what);
+      else
+        assert.deepEqual(
+          as(cg, () => scopeProcesses(unit)),
+          want,
+          what,
+        );
+    } finally {
+      fs.readFileSync = realRead;
+      syncBuiltinESMExports();
+    }
   }
 });
 
