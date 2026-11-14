@@ -440,7 +440,7 @@ for (const [signal, number] of [
   ['SIGTERM', 143],
   ['SIGINT', 130],
 ]) {
-  test(`a command that sets no title still ends on ${signal} during spawnSync`, async () => {
+  test(`a process without bl.js that sets no title still ends on ${signal} during spawnSync`, async () => {
     // config.js is the import chain most commands load; it reaches tab-title.js.
     const r = await signalChild(
       `await import(src(config.js)); await import(src(tab-title.js));

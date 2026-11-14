@@ -283,13 +283,16 @@ test('bl merge shows its steps in the tab title: integrate, pre-push gate + push
     TMUX: '/tmp/tmux-fake,1,0',
     BL_TMUX_WINDOW_ID: '@7',
     BL_BACKLOG_DIR: backlog,
+    // Titles on, also when the test runs under an agent session's empty BL_TAB_TITLE.
+    BL_TAB_TITLE: undefined,
   };
   // withEnv is synchronous, so the variables are set and restored around the awaited merge.
   const saved = Object.fromEntries(Object.keys(fakeEnv).map((k) => [k, process.env[k]]));
-  const restore = () => {
-    for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+  const setAll = (vars) => {
+    for (const [k, v] of Object.entries(vars)) v === undefined ? delete process.env[k] : (process.env[k] = v);
   };
-  Object.assign(process.env, fakeEnv);
+  const restore = () => setAll(saved);
+  setAll(fakeEnv);
   let out;
   try {
     out = await captureStderr(() => captureExit(() => cleanupMain(['S-99'])));

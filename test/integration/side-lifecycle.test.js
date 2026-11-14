@@ -223,6 +223,8 @@ test('standalone_side_batch_merge_clears_inbox: three standalone side stories ar
     PATH: `${tmux.dir}${delimiter}${process.env.PATH}`,
     TMUX: '/tmp/tmux-fake,1,0',
     BL_TMUX_WINDOW_ID: '@7',
+    // Titles on, also when the test runs under an agent session's empty BL_TAB_TITLE.
+    BL_TAB_TITLE: undefined,
   };
   for (const title of ['Side a', 'Side b', 'Side c']) {
     const r = runBl(
