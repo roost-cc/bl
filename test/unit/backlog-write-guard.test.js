@@ -211,7 +211,7 @@ const ALLOWED = new Map([
   ['session.js workonDone unlinkSync', "removes the workon marker from a code worktree's git directory"],
   ['migrate-worktree-layout.js moveWorktree rmdirSync', 'removes an empty directory it made under the worktree root'],
   ['migrate-worktree-layout.js apply rmdirSync', 'removes an empty old worktree directory under the worktree root'],
-  ['log.js appendTo writeFileSync', "appends to a worktree's .bl/ activity log"],
+  ['log.js appendTo appendFileSync', "appends to a worktree's .bl/ activity log"],
   // Writes to backlog paths git ignores (`lockFor`'s none).
   ['allow.js main writeFileSync', 'writes allowed-tools.local.json, which git ignores'],
   ['feature-links.js writeRecord writeFileSync', RUN_DIR],
