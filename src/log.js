@@ -41,6 +41,25 @@ function timestamp() {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
+/**
+ * One log field on one line (S-1581): `\` becomes `\\`, a line feed `\n`, a
+ * carriage return `\r`, and every other control character (C0, DEL, C1) and
+ * U+2028/U+2029 `\uXXXX`. No field can start a second log line or send a
+ * terminal control (such as ESC) to `bl log`.
+ * @param {string} s
+ */
+function oneLine(s) {
+  return String(s).replace(/[\\\x00-\x1f\x7f-\x9f\u2028\u2029]/g, (c) =>
+    c === '\\'
+      ? '\\\\'
+      : c === '\n'
+        ? '\\n'
+        : c === '\r'
+          ? '\\r'
+          : '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'),
+  );
+}
+
 /** Append a command entry to the activity log — only runs inside a linked worktree. */
 export function append(command, args) {
   const root = linkedWorktreeRoot();
@@ -51,13 +70,19 @@ export function append(command, args) {
  * Append a command entry to a specific worktree's activity log: one write of
  * one line to a file opened for appending (S-1560). The kernel puts each such
  * write at the end of the file, so processes that append at the same time
- * need no lock and lose no line.
+ * need no lock and lose no line. A failed write is ignored (S-1581): a log
+ * line records a command and must not stop it.
  */
 export function appendTo(worktreePath, command, args) {
-  const logDir = join(worktreePath, LOG_DIR);
-  mkdirSync(logDir, { recursive: true });
-  const line = `${timestamp()}  bl ${command}${args.length ? ' ' + args.join(' ') : ''}\n`;
-  appendFileSync(join(logDir, LOG_FILE), line);
+  try {
+    const logDir = join(worktreePath, LOG_DIR);
+    mkdirSync(logDir, { recursive: true });
+    const fields = [command, ...args].map(oneLine).join(' ');
+    const line = `${timestamp()}  bl ${fields}\n`;
+    appendFileSync(join(logDir, LOG_FILE), line);
+  } catch {
+    // logging is non-fatal
+  }
 }
 
 function showLog(worktreePath) {
