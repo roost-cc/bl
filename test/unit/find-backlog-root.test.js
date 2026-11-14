@@ -11,6 +11,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'child_process';
 import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from 'fs';
 import { delimiter, join } from 'path';
 import { findBacklogRoot } from '../../src/config.js';
@@ -55,6 +56,19 @@ test('a backlog.json without repos, with only the pre-F-51 projects, or not vali
   backlogAt(mid, 'broken', '{');
   const real = backlogAt(root, 'real');
   assert.equal(findBacklogRoot(mid), real);
+});
+
+test('a backlog.json that is not a regular file does not qualify', () => {
+  // A FIFO (named pipe) would block the read for ever; a directory cannot be read.
+  const root = mkTempDir('bl-find-');
+  const mid = dirAt(root, 'mid');
+  const pipe = dirAt(mid, 'pipe');
+  execFileSync('mkfifo', [join(pipe, 'backlog.json')]);
+  dirAt(mid, 'dir/backlog.json');
+  const real = backlogAt(root, 'real');
+  assert.equal(findBacklogRoot(mid), real);
+  // The same test guards BL_BACKLOG_DIR: a FIFO there falls through to the walk.
+  withEnv({ BL_BACKLOG_DIR: pipe }, () => assert.equal(findBacklogRoot(mid), real));
 });
 
 test('a backlog.json two levels down is never found', () => {

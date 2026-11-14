@@ -20,7 +20,7 @@
  *     `worktreePathFor`.
  */
 
-import { closeSync, existsSync, openSync, readdirSync, readFileSync } from 'fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, statSync } from 'fs';
 import { join, resolve, basename, delimiter, dirname, relative, isAbsolute, sep } from 'path';
 import { exitStatus, reportExit, runChild, runCommandLine } from './child.js';
 import { realOrResolved } from './real-path.js';
@@ -83,8 +83,9 @@ export function highlightMatches(text, re) {
 
 function isBacklogRoot(dir) {
   const cfg = join(dir, 'backlog.json');
-  if (!existsSync(cfg)) return false;
   try {
+    // Only a regular file: reading a FIFO there would block for ever.
+    if (!statSync(cfg).isFile()) return false;
     const raw = JSON.parse(readFileSync(cfg, 'utf8'));
     return Boolean(raw && typeof raw === 'object' && raw.repos);
   } catch {
