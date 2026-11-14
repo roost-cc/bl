@@ -321,9 +321,9 @@ function relativeIn(bases, path) {
  * worktrees it checked. It moves `dir` aside to `<dir>.bl-gc-<pid>` first,
  * then lists the worktrees of every repo again. A worktree registered in
  * `dir` since the first listing (a path git removed counts too) moved with
- * it: the directory goes back and stays. A worktree registered after the
- * move is made in a new `dir`, outside the moved tree, so the removal never
- * reaches it.
+ * it: the directory goes back and stays. What a failed removal leaves goes
+ * back too. A worktree registered after the move is made in a new `dir`,
+ * outside the moved tree, so the removal never reaches it.
  *
  * @param {string} dir
  * @param {string[]} repoPaths
@@ -351,7 +351,9 @@ function removeUnitDir(dir, repoPaths) {
   }
   if (held.length === 0) {
     const swept = sweepPaths([aside], false);
-    return swept.kept.length > 0 ? swept : { removed: [{ path: dir, bytes: swept.removed[0].bytes }], kept: [] };
+    if (swept.kept.length === 0) return { removed: [{ path: dir, bytes: swept.removed[0].bytes }], kept: [] };
+    // What the removal left goes back, so the next `bl gc` finds it by name.
+    held = swept.kept.map((k) => ({ ...k, path: dir }));
   }
   try {
     renameSync(aside, dir);
@@ -370,9 +372,9 @@ function removeUnitDir(dir, repoPaths) {
  * git refuses to remove is kept, and so is the directory. The directory is
  * moved aside and the worktrees are listed again before it goes
  * (`removeUnitDir`); one registered in it since the first listing is kept,
- * and so is the directory. A directory is kept when
- * any configured repo gives no complete worktree list (its path is not
- * there, git fails, or a record has no path). Otherwise the directory goes
+ * and so is the directory. A directory is kept when any configured repo
+ * gives no complete worktree list (its path is not there, git fails, or a
+ * record has no path). Otherwise the directory goes
  * with everything in it, reported as one path. A directory that names no
  * work unit is kept; an open work unit's is left out. Unless `dryRun`, `git
  * worktree prune` runs in each repo afterwards; a failed prune, or a repo

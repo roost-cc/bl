@@ -4828,10 +4828,12 @@ units' directories under the worktree root, which `bl merge` removes only when t
    the first listing, at a new path or at one git removed, moved with it: the directory goes back,
    and the worktree is kept with the reason `registered while bl gc ran`. Otherwise the moved
    directory goes with everything left in it (sandbox mount stubs, caches, a checkout git no
-   longer lists), reported as one path. A worktree registered after the move is made in a new
-   directory, which `bl gc` never reaches. When a worktree is kept, the directory stays. Then
-   `git worktree prune` runs once in each repo of `backlog.json`. A directory whose name is no work unit's branch (an operator's own branch,
-   `docs`, a `bl-merge-*` throwaway worktree) is kept with the reason `names no work unit`.
+   longer lists), reported as one path. If that removal fails, what is left goes back to the
+   directory's own name. A worktree registered after the move is made in a new directory, which
+   `bl gc` never reaches. When a worktree is kept, the directory stays. Then `git worktree prune`
+   runs once in each repo of `backlog.json`. A directory whose name is no work unit's branch (an
+   operator's own branch, `docs`, a `bl-merge-*` throwaway worktree) is kept with the reason
+   `names no work unit`.
 
 An open work unit's run files and directory are not touched and not listed. `bl gc` takes no lock.
 
@@ -4842,9 +4844,8 @@ With `--dry-run`, `bl gc` removes nothing, runs no git command that changes anyt
 cannot be removed is a `kept` line with the error, and so is a failed git command: a worktree whose
 status git cannot read, a `git worktree remove` that git refuses, a `git worktree list` that
 fails, and a failed or skipped `git worktree prune` (a `kept <repo path>` line; a repo path that
-is not there skips it). If one sweep stops on an
-error, the other sweep's lines are still printed. In each of these cases `bl gc` exits 1;
-otherwise it exits 0. A path kept for its uncommitted changes, or because it names no work unit,
+is not there skips it). If one sweep stops on an error, the other sweep's lines are still
+printed. In each of these cases `bl gc` exits 1; otherwise it exits 0. A path kept for its uncommitted changes, or because it names no work unit,
 is not a failure.
 
 ### `bl list`

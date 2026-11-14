@@ -4,7 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { mkTempBacklog } from '../helpers/tempdir.js';
 import { runBl } from '../helpers/run-bl.js';
@@ -364,6 +364,31 @@ test('gc_reports_partial_cleanup_and_prune_failure: each failed step is a failed
       }
     });
   }
+
+  await t.test(
+    'a directory that cannot be removed stays under its own name',
+    { skip: process.getuid?.() === 0 },
+    () => {
+      const { dir, wt, cleanup } = gcBacklog();
+      const locked = join(wt, 's1-done', '.codex', 'locked');
+      try {
+        mkdirSync(locked);
+        writeFileSync(join(locked, 'stub'), 'x\n');
+        chmodSync(locked, 0o500);
+        const r = runBl(['gc'], { cwd: dir, env: GIT_ENV });
+        assert.equal(r.status, 1, r.stderr);
+        assert.match(r.stdout, new RegExp(`^kept ${join(wt, 's1-done')} \\(.*EACCES.*\\)$`, 'm'));
+        assert.ok(existsSync(join(locked, 'stub')), 'what the removal left is back under its own name');
+        assert.deepEqual(
+          readdirSync(wt).filter((n) => n.includes('.bl-gc-')),
+          [],
+        );
+      } finally {
+        if (existsSync(locked)) chmodSync(locked, 0o700);
+        cleanup();
+      }
+    },
+  );
 
   await t.test('a worktree sweep that stops on an error still reports the run files removed', () => {
     const { dir, run, wt, cleanup } = gcBacklog();
