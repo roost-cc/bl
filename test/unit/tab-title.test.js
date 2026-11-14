@@ -601,6 +601,31 @@ test('a hung tmux does not hold a command back', async () => {
   }
 });
 
+test('a hung tmux costs one timeout in all, however many titles follow', () => {
+  // Each tmux call hangs for 20 s. The window id capture, eight titles, a
+  // reassert and the exit title wait for tmux once; the exit title clears the state.
+  const dir = mkTempDir('bl-tmux-hung-');
+  writeFileSync(join(dir, 'tmux'), '#!/bin/sh\nexec sleep 20\n');
+  chmodSync(join(dir, 'tmux'), 0o755);
+  const env = { PATH: `${dir}${delimiter}${process.env.PATH}`, TMUX: '/tmp/tmux-fake,1,0', BL_TAB_TITLE: undefined };
+  const started = Date.now();
+  withEnv({ ...env, BL_TMUX_WINDOW_ID: undefined }, () => captureTmuxWindowId());
+  withEnv({ ...env, BL_TMUX_WINDOW_ID: '@7' }, () => {
+    for (const status of ['integrate', 'test gate', 'pull', 'check', 'push', 'install', 'cleanup', 'sync']) {
+      updateTabTitle({ status });
+    }
+    reassertTabTitle();
+    endTabTitle(0);
+  });
+  const ms = Date.now() - started;
+  assert.ok(ms < 2 * TMUX_TIMEOUT_MS, `took ${ms} ms`);
+  // After the exit title, tmux is called again.
+  underFakeTmux((fake) => {
+    updateTabTitle({ status: 'next' });
+    assert.equal(fake.calls().length, 1);
+  });
+});
+
 test('bl --help starts with status help and ends with ended', async () => {
   const { status, calls } = await blUnderFakeTmux(['--help']);
   assert.equal(status, 0);

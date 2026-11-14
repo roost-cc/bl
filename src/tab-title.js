@@ -264,6 +264,7 @@ export function endTabTitle(code) {
   shown = false;
   width = 0;
   final = false;
+  timedOut = null;
 }
 
 /** The title status for an exit code. */
@@ -280,12 +281,24 @@ function windowTarget() {
 }
 
 /**
- * How long bl waits for one `tmux` call, in milliseconds. Every command calls
- * tmux at start and at exit, so a hung tmux server must not hold it back.
+ * How long bl waits for tmux, in milliseconds, in all for one process. Every
+ * command calls tmux at start and at exit, so a hung tmux server must not
+ * hold it back.
  */
 export const TMUX_TIMEOUT_MS = 1000;
 
-/** Run `tmux …args`; past `TMUX_TIMEOUT_MS` Node kills it and the call counts as failed. */
+/** The result of the first `tmux` call that timed out; `endTabTitle` clears it. */
+let timedOut = null;
+
+/**
+ * Run `tmux …args`; past `TMUX_TIMEOUT_MS` Node kills it and the call counts
+ * as failed. After one call times out, every later call returns that failed
+ * result at once, so a process waits for a hung tmux once, however many
+ * titles it sets.
+ */
 function tmux(...args) {
-  return runChild('tmux', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: TMUX_TIMEOUT_MS });
+  if (timedOut) return timedOut;
+  const res = runChild('tmux', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: TMUX_TIMEOUT_MS });
+  if (res.error?.code === 'ETIMEDOUT') timedOut = res;
+  return res;
 }
