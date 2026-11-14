@@ -33,9 +33,9 @@ Each sub-agent refines exactly one story, on its own. It does these steps:
 4. It formats each file it changed.
 5. It commits its story through the locked `bl validate` → `bl sync --commit` flow that its file
    describes.
-6. It ends its reply to you with its story's outcome, `{ "refined": true }` or
-   `{ "refined": false, "reason": "…" }`. It does not change the story's status: `bl refine` sets
-   it from your outcome (see **Outcome** below).
+6. It ends its reply to you with its story's outcome, `{ "refined": true, "reason": "…" }` or
+   `{ "refined": false, "reason": "…" }`. The reason says why, for either verdict. It does not
+   change the story's status: `bl refine` sets it from your outcome (see **Outcome** below).
 
 Constraints for every sub-agent (already stated in their files — enforce them):
 
@@ -96,18 +96,19 @@ JSON object, and nothing else, to `{{outcomePath}}`:
 ```json
 {
   "summary": "<one line: what the batch planned>",
-  "stories": {
-    "S-1": { "refined": true },
-    "S-2": { "refined": false, "reason": "<why, in one line>" }
-  }
+  "stories": [
+    { "id": "S-1", "refined": true, "reason": "<one line: why it is ready>" },
+    { "id": "S-2", "refined": false, "reason": "<one line: what keeps it from being refined>" }
+  ]
 }
 ```
 
-- Give `stories` one entry for each story listed above, keyed by its ID, with the object its
-  sub-agent replied with.
+- Give `stories` one entry for each story listed above: its ID as `id`, and the `refined` and
+  `reason` of the object its sub-agent replied with.
 - If a sub-agent did not finish or did not reply with an object, set its entry to
-  `{ "refined": false, "reason": "<what happened, in one line>" }`.
+  `{ "id": "<its ID>", "refined": false, "reason": "<what happened, in one line>" }`.
 
-`bl refine` reads the file when the session ends. It sets each story with `refined: true` to
-refined, and prints the reason for each other story and leaves its status as it is. If the file
-is missing or does not match this shape, `bl refine` changes no status.
+`bl refine` reads the file when the session ends and prints each story's reason. It sets each
+story with `refined: true` to refined and records its reason in the story's log. It leaves the
+status of each other story as it is. If the file is missing or does not match this shape,
+`bl refine` changes no status.

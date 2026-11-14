@@ -17,7 +17,7 @@
       "type": "boolean"
     },
     "reason": {
-      "description": "Why a merge is not resolved, in one line. reason is a string exactly when resolved is false, and null when resolved is true.",
+      "description": "Why a merge is not resolved, in one line, when resolved is false; null when resolved is true. bl only prints it.",
       "anyOf": [
         {
           "type": "string",
@@ -27,8 +27,5 @@
         { "type": "null" }
       ]
     }
-  },
-  "if": { "properties": { "resolved": { "const": true } } },
-  "then": { "properties": { "reason": { "type": "null" } } },
-  "else": { "properties": { "reason": { "type": "string" } } }
+  }
 }

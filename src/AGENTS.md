@@ -1592,9 +1592,10 @@ review` prints the prompt-guidance note for one that does not (Codex).
   their file through `followJsonl` (`src/agents/follow.js`): the last 30 events first unless
   `fromStart`, then every 500 ms, and once more when `signal` aborts. `src/agents/` imports an adapter file or compares
   a value to an agent name (`===`, `!==`, `case`); it asks the adapter.
-  `test/unit/agent-boundary.test.js` fails on either and names its one
-  exception, `bl.js`'s `case "claude":` (a verb alias for `bl agent`). Passing
-  a name as a literal (a default argument, a prompt variant) is allowed.
+  `test/unit/agent-boundary.test.js` fails on either and has no exception: the
+  verb alias `claude` for `bl agent` is an `ALIASES` key in
+  `src/command-table.js`, which is not a comparison. Passing a name as a literal
+  (a default argument, a prompt variant) is allowed.
 
 #### Session outcomes (F-68 D1, D5)
 
@@ -1631,10 +1632,31 @@ Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
 - **Schemas (D2).** `schemas/<step>.json`, one per prompt that ends a step,
   loaded by `loadSchema(name)` in `session.js` beside `loadPrompt`. Each has
   `additionalProperties: false` and a one-line `summary`.
+- **One plain schema (S-1408).** Each outcome schema is the one schema that
+  ajv and every agent use, with no translation layer and no per-provider
+  form, so it is what OpenAI's strict mode accepts (Codex's
+  `--output-schema`). Every object's `required` lists every key of its
+  `properties`. A field that can be empty is nullable
+  (`anyOf: [<its schema>, { "type": "null" }]`), and its prompt example
+  shows `null`. A refine `reason` is never empty: it says why for every
+  verdict, as fix-tests' `reason` does, so it is a required string. No
+  outcome schema has a conditional keyword (`if`, `then`, `else`, `allOf`,
+  `oneOf`, `not`) or an object without fixed properties (`propertyNames`,
+  `patternProperties`: a map), so the batch's `stories` is an array. A
+  schema does not refuse an outcome whose fields contradict each other: each
+  reader decides from one field and only prints the others, so the deciding
+  field wins (`refined`; `premise_holds`, then `refined`; `fixed`;
+  `resolved` and bl's own checks; the story's criteria for implement).
+  `null` means no value is needed; a reader that needs one and gets `null`
+  prints a fallback, as merge-resolve's `(no reason given)` for
+  `resolved: false`. `test/unit/outcome-schemas.test.js` guards the schema
+  rules. `schemas/plan.json` is not an outcome schema: it is the shape of
+  `plan.yaml` (F-125), which only ajv reads and no agent receives, so it
+  keeps its `propertyNames` map.
 - **Refine outcomes (D3).** `bl refine` passes `schemas/refine.json`
-  (`{ summary, refined, reason? }`), `refine-batch.json`
-  (`{ summary, stories: { "S-n": { refined, reason? } } }`) or
-  `feature-refine.json` (`{ summary, premise_holds, refined, reason? }`) to
+  (`{ summary, refined, reason }`), `refine-batch.json`
+  (`{ summary, stories: [{ id, refined, reason }] }`) or
+  `feature-refine.json` (`{ summary, premise_holds, refined, reason }`) to
   `launchSession`, and `refineAndCommit` (`refine.js`) applies the outcome
   before its backlog commit. `refineAndCommit(units, opts, message, apply)`
   first takes the work unit locks of `units` (`takeUnitLocksOrExit`: the story,
@@ -1645,12 +1667,16 @@ Nothing in bl reads an outcome out of prose. Two carriers deliver the value:
   holds only the units' directories, a story made for the feature during the
   session included (F-122 D3). `refined: true` records the `refine` row's
   success, `refined`; `premise_holds: false` records its failure, a feature's
-  `draft`; otherwise the status stays and `reason` is printed
-  (`applyRefineStatus`, through `transition`, with `reason` as the entry's
-  `outcome`). A batch story the outcome does not name stays as it is. A
-  session without a valid outcome file records no outcome: each unit stays at
-  the status the session started it in (the `refine` row's `during`,
-  `in_refinement`), and bl prints the fault; the agent's own commit of the refinement is not affected. No refine
+  `draft`; otherwise the status stays. `applyRefineStatus` prints `reason`
+  for every verdict. It indents each further line of `reason` (after LF, CR,
+  CRLF, U+2028 or U+2029), so no line reads as another unit's status line
+  (S-1408). When it records a status (through `transition`), the log entry's
+  `outcome` is `reason`, so the log says why a unit is refined.
+  A batch story takes the first entry with its id, and a batch story the
+  outcome does not name stays as it is. A session without a valid outcome
+  file records no outcome: each unit stays at the status the session started
+  it in (the `refine` row's `during`, `in_refinement`), and bl prints the
+  fault; the agent's own commit of the refinement is not affected. No refine
   prompt asks the agent to write a status
   (`test/unit/prompts-no-status-writes.test.js`).
 - **No valid outcome is an error, not a verdict (D5).** `runSession` in
@@ -1673,9 +1699,8 @@ status` prints the latest one of each step (`outcomeLines()` in
   criteria. fix-tests passes `fix-tests.json`
   (`{ summary, outcome: fixed | rerun | unrelated, reason }`) and the
   resolution `merge-resolve.json` (`{ summary, resolved, reason }`;
-  `resolved: false` is a resolution problem). Every property of the three is
-  required, `blocked` and the resolution's `reason` nullable, so Codex's
-  strict `--output-schema` has no optional field to refuse. The prompts end
+  `resolved: false` is a resolution problem), `blocked` and the resolution's
+  `reason` nullable (**One plain schema** above). The prompts end
   with `{{outcomeDelivery}}` and the object (`_implement-outcome.md` is
   shared by the two implement prompts). No prompt asks for a verdict line
   (`DONE S-n`, `ESCALATED`, `RESOLVED`, `FIXED`, `UNRELATED:`, `RERUN:`), and
@@ -3522,8 +3547,30 @@ next, arrow included, such as `→ bl merge`); an unset field renders as nothing
 is trimmed. The placeholder is the `{{var}}`
 bl's prompts and plugin commands use, not a new format.
 
+- Every command sets a start title (S-1412). `bl.js` calls `updateTabTitle(commandTitle(argv))`
+  right after `captureTmuxWindowId()`, before the backlog pull, `settlePending` and dispatch.
+  `commandTitle` (`src/command-table.js`) gives the status: the canonical command name
+  (`ALIASES` maps `ls` to `list`), or `<command> <subcommand>` for a `COMMANDS` entry with
+  `subcommands: true` (`task`, `updates`, `inbox`, `block`) whose first argument is a word,
+  not a flag or a unit id (`updates run`, `inbox done`). It is `help` for no command, `help`,
+  `-h`, `--help`, or `-h`/`--help` among the arguments; an unknown command shows its word.
+  The `feature` and `story` fields are the unit ids the arguments name (`classifyId`, also
+  the value of `--name=value`), one through `unitTitleFields`, several as `<n> features` or
+  `<n> stories`. `bl.js` dispatches only through `COMMANDS` and `ALIASES`, so a new command
+  needs no title code of its own; `test/unit/tab-title.test.js` runs `bin/bl <name> --help`
+  for every key under a fake tmux and fails on a run that renames nothing.
 - A code path sets the fields it knows, by name, at any time: `updateTabTitle('story', 'S-34')`
-  or `updateTabTitle({ feature: 'F-56', status: 'testing' })`. Names are not checked.
+  or `updateTabTitle({ feature: 'F-56', status: 'testing' })`. Names are not checked. Its
+  fields replace the start title's.
+- `bl merge` shows its steps as the status: `integrate` (`integrateForMerge`), `test gate`
+  (before the integration's `runTestGate`), `pull` (before each repo's `syncMain` in
+  `cleanupOneRepo`), `check` (before `checkedMerge` runs the `check` plugins),
+  `pre-push gate + push` (`PUSH_STATUS`, before each `git push` of the integrated branch and
+  of `main`: git runs the pre-push gate inside `git push`, so bl cannot show the two apart),
+  `install` (before the main checkout's `installCommand`), `cleanup` (before the PR close),
+  `sync` (before the backlog sync) and `tag` (before a feature's tags are pushed). The statuses
+  inside the integration go through the runner's `title`, so the unit tests' fake runner
+  sets none.
 - `launchSession` sets the unit `parsed.id` names (`F-n` or a story batch's `B-n` the feature,
   `S-n` the story; through `unitTitleFields`) and the mode as `status` (`workon` shows as
   `implement`); a caller that knows more, such as a story's `feature:`, sets it first. The
@@ -3541,11 +3588,23 @@ bl's prompts and plugin commands use, not a new format.
 - After a tool that had the terminal returns (the agent in `launchSession` and triage, the
   editor in `runEditor`), the caller calls `reassertTabTitle`, because that tool may have set
   its own title. What the tool set is not captured: it wrote to the terminal, not through bl.
+- A title is sent as plain text, because it holds text from the command line: `sendTabTitle`
+  removes control characters (ESC, BEL, newline) on both paths, and under tmux it doubles each
+  `#`, because tmux expands `#{…}` and `#(…)` in a window name.
+- A process waits for a hung tmux at most `TMUX_TIMEOUT_MS` (1 s) in all. Each `tmux` call has
+  that timeout, and after one call times out, every later call in the process (titles, the
+  reassert, the exit title) fails at once without tmux. `endTabTitle` clears that state.
 - An empty `BL_TAB_TITLE` (`TAB_TITLE_ENV`) turns titles off; `verbs.js` `childEnv` sets it for
   the child processes that `bl review` starts in parallel for several targets
   (`runChildren`), so the parent's window keeps the parent's title. `agentEnv` sets it for
   every agent session (S-1388): the tab belongs to the `bl` that started the session,
-  so no `bl` the agent runs, and no test it starts, renames the window.
+  so no `bl` the agent runs, and no test it starts, renames the window. Every `bl` started
+  for data runs with it too, so it does not end the parent's title `ended` mid-run:
+  `runBacklogSync`'s child `bl sync`, `bl side`'s child `bl new`, the `bl top` view (and
+  so every `bl` it runs in its window), and the `bl inbox --json` of
+  `_roost_inbox_task_ids` in the three completion files. The sequential children of
+  `mergeInOrder` and `eachInTurn` keep their titles: they run one at a time in the
+  operator's window and name the target in hand.
   `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`,
   `BL_TMUX_WINDOW_ID` and `BL_TAB_TITLE` for every `npm run test:*` script
   (`test/unit/tmux-free-env.test.js` guards it). The same wrapper unsets `BL_BACKLOG_DIR`
@@ -3565,8 +3624,9 @@ bl's prompts and plugin commands use, not a new format.
   title unpadded, so no tab keeps a working status after bl stops. The first title also calls `exitOnSignal`
   (`signal-exit.js`), the SIGINT and SIGTERM handlers that `bl.js` registers when `bl` starts:
   they end the process with `process.exit(130|143)`, so the hook sees an interrupt. They are
-  registered once per process. A process that loads `tab-title.js` without `bl.js` and sets no
-  title keeps Node's default signal action.
+  registered once per process. Since every command sets a start title, the exit hook reaches
+  every command. A process that loads `tab-title.js` without `bl.js` keeps Node's default
+  signal action until its first title, and for good with titles off.
 - The title width only grows while the process runs: `showTabTitle` pads a shorter title with
   trailing spaces to the widest title shown, so the tmux status bar does not move. A final
   title is not padded. `currentTabTitle` and `renderTabTitle` stay unpadded; `endTabTitle`

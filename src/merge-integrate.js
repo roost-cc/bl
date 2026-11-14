@@ -11,6 +11,7 @@ import { findExistingWorktree } from './story.js';
 import { featureSessionVars } from './feature.js';
 import { unitBranch } from './merge-gates.js';
 import { unitVars } from './unit.js';
+import { updateTabTitle } from './tab-title.js';
 
 /**
  * The prep for `integrateUnit`, in the shape `bl review` builds: the first
@@ -72,6 +73,7 @@ export function mergePrep(config, unit, repos) {
  * agent has no headless mode, as `bl review` chooses.
  */
 export async function integrateForMerge(config, unit, repos, { runner = null } = {}) {
+  updateTabTitle({ status: 'integrate' });
   const prep = mergePrep(config, unit, repos);
   if (!prep) {
     info('Integrate: no worktree on the branch — nothing to bring up to date.');

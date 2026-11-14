@@ -88,6 +88,7 @@ import { prepareStoryRun, otherWorktreesLine, implementNextSteps } from './worko
 import { reviewSkipped } from './scripted.js';
 import { chooseSyncRunner, cleanupOneRepo, commitFmShape, runBacklogSync, unionLandedCommits } from './cleanup.js';
 import { openItemsCommand, reviewOutcome, summarizeLatestReviewSession } from './review-log.js';
+import { updateTabTitle } from './tab-title.js';
 import {
   runStatePath,
   ensureRunDir,
@@ -1898,6 +1899,7 @@ export async function cmdMerge(args, config, feature) {
     // the feature's story directories. It writes no index (F-79 D1).
     if (t.repoName === LEAD_REPO && !result.noChanges) {
       info(`\nSyncing backlog with the merged ${t.repoName}...`);
+      updateTabTitle({ status: 'sync' });
       const res = await runBacklogSync(config, chooseSyncRunner({ primaryRepoPath: t.repoPath }), {
         message: `chore: sync backlog with the merged ${t.repoName} (${feature.id})`,
         storyIds: feature.stories,
@@ -1940,6 +1942,7 @@ export async function cmdMerge(args, config, feature) {
   // Under the backlog lock, so a second `bl merge` of the feature waits for
   // this one's tags to be pushed or rolled back (a refused rollback is named
   // in the error, and that re-run completes the set).
+  updateTabTitle({ status: 'tag' });
   const tagged = await withLock(config.backlogRoot, () =>
     tagRepos(tagTargets, release, `${feature.id}: ${feature.title}\n\nChange: ${changeRel}`),
   );
@@ -2006,6 +2009,7 @@ export async function cmdMerge(args, config, feature) {
 
   // Only the work units' directories (read again, D3), and the two files bl
   // wrote for this merge: another session's change stays out and is named.
+  updateTabTitle({ status: 'sync' });
   const commitFailed = await commitChangedSince(
     config.backlogRoot,
     backlogBefore,

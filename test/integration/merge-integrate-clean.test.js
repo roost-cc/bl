@@ -53,9 +53,13 @@ test('a branch behind main is merged in its worktree, gated and pushed', async (
     landOnMain(fx, 'other.txt', 'other\n', 'other work on main');
     const { config, unit, prep } = featureCtx(fx);
     const { runner, calls } = stubRunner('test -f other.txt');
+    // The tab title shows the gate, then the push that runs the pre-push gate (S-1412).
+    const statuses = [];
+    runner.title = (fields) => statuses.push(fields.status);
     const res = await integrateUnit({ unit, config, prep, runner });
     assert.equal(res.ok, true, res.reason);
     assert.equal(res.repos[0].state, 'merged');
+    assert.deepEqual(statuses, ['test gate', 'pre-push gate + push']);
     assert.equal(calls.gates, 1);
     assert.equal(calls.sessions, 0);
     g(fx.repo, 'fetch', '-q', 'origin');
@@ -134,6 +138,23 @@ test('a red gate after a clean merge reaches the resolution agent; its failure e
     assert.match(esc, /The agent's outcome: could not resolve/);
     assert.match(esc, /rerun `bl merge F-1`/);
     assert.equal(logStatusOf('feature', parseFrontmatter(readFileSync(featureFile(fx), 'utf8')).fm), 'escalated');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a resolution outcome of resolved: false with a null reason escalates with (no reason given) (S-1408)', async () => {
+  const fx = fixture();
+  try {
+    landOnMain(fx, 'other.txt', 'other\n', 'other work on main');
+    const { config, unit, prep } = featureCtx(fx);
+    const unresolved = { ...UNRESOLVED, structured: { ...UNRESOLVED.structured, reason: null } };
+    const { runner } = scriptedRunner({ test: 'echo boom; false', resolve: () => unresolved });
+    const res = await integrateUnit({ unit, config, prep, runner });
+    assert.equal(res.escalated, true);
+    const esc = escalation(featureFile(fx));
+    assert.match(esc, /- the agent did not resolve it: \(no reason given\)/);
+    assert.doesNotMatch(esc, /\bnull\b|\bundefined\b/);
   } finally {
     fx.cleanup();
   }

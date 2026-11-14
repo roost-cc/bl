@@ -4,7 +4,7 @@
   "description": "The outcome of `bl refine S-n` (refine.md, re-refine.md), written by the agent to the outcome file. `bl refine` sets the story's status from it (F-68 D3).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["summary", "refined"],
+  "required": ["summary", "refined", "reason"],
   "properties": {
     "summary": {
       "description": "One line: what the session planned.",
@@ -17,12 +17,10 @@
       "type": "boolean"
     },
     "reason": {
-      "description": "Why the story is not refined, in one line. Required when refined is false.",
+      "description": "One line, for every verdict. refined true: why the story is ready for an agent to implement. false: what keeps it from being refined. bl decides from refined alone. It prints reason, and records it as the outcome of the log entry when it sets the status.",
       "type": "string",
       "minLength": 1,
       "pattern": "^[^\\S\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*[^\\s\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f][^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
     }
-  },
-  "if": { "properties": { "refined": { "const": false } } },
-  "then": { "properties": { "reason": true }, "required": ["reason"] }
+  }
 }

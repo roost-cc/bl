@@ -13,27 +13,29 @@
       "pattern": "^[^\\S\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*[^\\s\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029][^\\u0000-\\u0008\\u000a-\\u001f\\u007f-\\u009f\\u2028\\u2029]*$"
     },
     "stories": {
-      "description": "One entry per story of the batch, keyed by its id (S-12).",
-      "type": "object",
-      "propertyNames": { "pattern": "^S-[0-9]+$" },
-      "additionalProperties": {
+      "description": "One entry per story of the batch. An array, not a map keyed by id: Codex's strict mode refuses an object without fixed properties (S-1408).",
+      "type": "array",
+      "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["refined"],
+        "required": ["id", "refined", "reason"],
         "properties": {
+          "id": {
+            "description": "The story's id (S-12).",
+            "type": "string",
+            "pattern": "^S-[0-9]+$"
+          },
           "refined": {
             "description": "true: the story is ready for an agent to implement, and bl sets its status to refined. false: bl leaves the status and prints the reason.",
             "type": "boolean"
           },
           "reason": {
-            "description": "Why the story is not refined, in one line. Required when refined is false.",
+            "description": "One line, for every verdict. refined true: why the story is ready for an agent to implement. false: what keeps it from being refined. bl decides from refined alone. It prints reason, and records it as the outcome of the log entry when it sets the status.",
             "type": "string",
             "minLength": 1,
             "pattern": "^[^\\S\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*[^\\s\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f][^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]*$"
           }
-        },
-        "if": { "properties": { "refined": { "const": false } } },
-        "then": { "properties": { "reason": true }, "required": ["reason"] }
+        }
       }
     }
   }

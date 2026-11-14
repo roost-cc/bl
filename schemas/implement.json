@@ -17,7 +17,7 @@
       "type": "boolean"
     },
     "blocked": {
-      "description": "What stopped the session, in one line. blocked is a string exactly when done is false, and null when done is true.",
+      "description": "What stopped the session, in one line, when done is false; null when done is true. bl only prints it, when it escalates unmet criteria.",
       "anyOf": [
         {
           "type": "string",
@@ -27,8 +27,5 @@
         { "type": "null" }
       ]
     }
-  },
-  "if": { "properties": { "done": { "const": true } } },
-  "then": { "properties": { "blocked": { "type": "null" } } },
-  "else": { "properties": { "blocked": { "type": "string" } } }
+  }
 }

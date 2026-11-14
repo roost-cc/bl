@@ -78,7 +78,7 @@ test('every schema refuses a summary of spaces only', () => {
     ['fix-tests', { summary: 's', outcome: 'unrelated', reason: ' ' }, /\$\/reason/],
     ['refine', { summary: 's', refined: false, reason: ' ' }, /\$\/reason/],
     ['feature-refine', { summary: 's', premise_holds: false, refined: false, reason: ' ' }, /\$\/reason/],
-    ['refine-batch', { summary: 's', stories: { 'S-1': { refined: false, reason: ' ' } } }, /\$\/stories\/S-1\/reason/],
+    ['refine-batch', { summary: 's', stories: [{ id: 'S-1', refined: false, reason: ' ' }] }, /\$\/stories\/0\/reason/],
   ];
   for (const [schemaName, outcome, at] of blank) {
     assert.match(validateOutcome(loadSchema(schemaName), outcome).structuredError ?? '', at, schemaName);
@@ -109,8 +109,8 @@ test('every schema refuses control characters in its text fields, and keeps a ta
     ['feature-refine', (t) => ({ summary: 's', premise_holds: false, refined: false, reason: t }), /\$\/reason/],
     [
       'refine-batch',
-      (t) => ({ summary: 's', stories: { 'S-1': { refined: false, reason: t } } }),
-      /\$\/stories\/S-1\/reason/,
+      (t) => ({ summary: 's', stories: [{ id: 'S-1', refined: false, reason: t }] }),
+      /\$\/stories\/0\/reason/,
     ],
   ];
   for (const [schemaName, outcome, at] of fields) {
@@ -140,7 +140,7 @@ test('a long text field that fails its pattern is refused in linear time (S-1405
     ['fix-tests', (t) => ({ summary: 's', outcome: 'unrelated', reason: t })],
     ['refine', (t) => ({ summary: 's', refined: false, reason: t })],
     ['feature-refine', (t) => ({ summary: 's', premise_holds: false, refined: false, reason: t })],
-    ['refine-batch', (t) => ({ summary: 's', stories: { 'S-1': { refined: false, reason: t } } })],
+    ['refine-batch', (t) => ({ summary: 's', stories: [{ id: 'S-1', refined: false, reason: t }] })],
   ];
   for (const [schemaName, outcome] of fields) {
     const schema = loadSchema(schemaName);
@@ -156,77 +156,207 @@ test('a long text field that fails its pattern is refused in linear time (S-1405
 
 test("a batch sub-agent's reply is a valid entry of the batch outcome", () => {
   const [entry] = jsonBlocks('_refine-outcome-subagent');
-  const outcome = { summary: 's', stories: { 'S-1': entry } };
+  const outcome = { summary: 's', stories: [{ id: 'S-1', ...entry }] };
   assert.equal(validateOutcome(loadSchema('refine-batch'), outcome).structuredError, null);
 });
 
-// Cross-field consistency (F-68 review round 1): bl trusts each field, so an
-// outcome whose fields contradict each other is refused at the boundary. Each
-// row is [schema, outcome, accepted].
-const CONSISTENCY = [
-  ['fix', { summary: 's', fixed: true, open: 0 }, true],
-  ['fix', { summary: 's', fixed: false, open: 2 }, true],
-  // fix outcome with fixed true and open above 0 is refused
-  ['fix', { summary: 's', fixed: true, open: 3 }, false],
-  // and its mirror: fixed false with open 0
-  ['fix', { summary: 's', fixed: false, open: 0 }, false],
-  ['implement', { summary: 's', done: true, blocked: null }, true],
-  ['implement', { summary: 's', done: false, blocked: 'no access to the repo' }, true],
-  ['implement', { summary: 's', done: true, blocked: 'no access to the repo' }, false],
-  ['implement', { summary: 's', done: false, blocked: null }, false],
-  ['merge-resolve', { summary: 's', resolved: true, reason: null }, true],
-  ['merge-resolve', { summary: 's', resolved: false, reason: 'a.js has two meanings' }, true],
-  ['merge-resolve', { summary: 's', resolved: true, reason: 'a.js has two meanings' }, false],
-  ['merge-resolve', { summary: 's', resolved: false, reason: null }, false],
-  ['feature-refine', { summary: 's', premise_holds: true, refined: true }, true],
-  ['feature-refine', { summary: 's', premise_holds: true, refined: false, reason: 'r' }, true],
-  ['feature-refine', { summary: 's', premise_holds: false, refined: false, reason: 'r' }, true],
-  ['feature-refine', { summary: 's', premise_holds: false, refined: true, reason: 'r' }, false],
-  ['feature-refine', { summary: 's', premise_holds: true, refined: false }, false],
-  ['refine', { summary: 's', refined: false, reason: 'r' }, true],
-  ['refine', { summary: 's', refined: false }, false],
-  ['refine-batch', { summary: 's', stories: { 'S-1': { refined: false } } }, false],
-  // Not contradictions: a self-review can commit a correction and still find
-  // the branch not ready, and a verifier can escalate a round with no open
-  // items (a premise or test-infrastructure problem).
-  ['self-review', { summary: 's', ok: false, changed: true }, true],
-  ['review', { summary: 's', must: 0, should: 0, nits: 0, escalated: true }, true],
+/**
+ * The only keywords a plain schema may use. The guard refuses every other
+ * keyword, so it needs no list of the banned ones: the eight of S-1408 (`if`,
+ * `then`, `else`, `allOf`, `oneOf`, `not`, `propertyNames`,
+ * `patternProperties`) and any keyword added to JSON Schema later are all
+ * outside this list.
+ */
+const PLAIN_KEYWORDS = [
+  '$schema',
+  'title',
+  'description',
+  'type',
+  'properties',
+  'required',
+  'additionalProperties',
+  'items',
+  'anyOf',
+  'enum',
+  'const',
+  'pattern',
+  'minLength',
+  'maxLength',
+  'minimum',
+  'maximum',
 ];
 
-test('outcome schemas refuse fields that contradict each other', () => {
-  for (const [schemaName, outcome, accepted] of CONSISTENCY) {
-    const { structuredError } = validateOutcome(loadSchema(schemaName), outcome);
-    assert.equal(structuredError === null, accepted, `${schemaName} ${JSON.stringify(outcome)}: ${structuredError}`);
+/**
+ * Each subschema of `schema`, with its JSON path: the schema itself and every
+ * object under any keyword, at any depth. `properties` is a map of
+ * subschemas; `enum` and `const` hold values, not schemas. Each other object
+ * value is walked as a subschema, so a schema under a keyword the guard does
+ * not know (`contentSchema`, `$defs`) is still checked.
+ */
+function* subschemas(schema, path = '$') {
+  if (typeof schema !== 'object' || schema === null) return;
+  yield [path, schema];
+  for (const [k, v] of Object.entries(schema)) {
+    if (k === 'enum' || k === 'const') continue;
+    if (k === 'properties') {
+      for (const [n, p] of Object.entries(v ?? {})) yield* subschemas(p, `${path}.properties.${n}`);
+    } else if (Array.isArray(v)) {
+      for (const [i, e] of v.entries()) yield* subschemas(e, `${path}.${k}[${i}]`);
+    } else yield* subschemas(v, `${path}.${k}`);
+  }
+}
+
+/**
+ * What OpenAI's strict mode (Codex's `--output-schema`) refuses in `schema`,
+ * at any depth: a keyword outside PLAIN_KEYWORDS, an object without a
+ * `properties` map, an object that is open or has an optional property. bl
+ * sends every agent the same schema (S-1408).
+ */
+function plainViolations(schema) {
+  const found = [];
+  for (const [path, s] of subschemas(schema)) {
+    for (const k of Object.keys(s)) if (!PLAIN_KEYWORDS.includes(k)) found.push(`${path} has ${k}`);
+    const isObject =
+      [s.type].flat().includes('object') ||
+      ['properties', 'required', 'additionalProperties'].some((k) => s[k] !== undefined);
+    if (!isObject) continue;
+    if (typeof s.properties !== 'object' || s.properties === null || Array.isArray(s.properties))
+      found.push(`${path}: has no properties map`);
+    if (s.additionalProperties !== false) found.push(`${path}: additionalProperties is not false`);
+    const required = [...(s.required ?? [])].sort();
+    if (JSON.stringify(required) !== JSON.stringify(Object.keys(s.properties ?? {}).sort()))
+      found.push(`${path}: not every property is required`);
+  }
+  return found;
+}
+
+test('every schema is one plain schema: no conditional keyword, every property required, no map', () => {
+  for (const schemaName of Object.keys(EXAMPLES)) {
+    assert.deepEqual(plainViolations(loadSchema(schemaName)), [], schemaName);
   }
 });
 
-// Each rule a CONSISTENCY row refuses, as the field's description states it
-// to the agent: [schema, the field's path in the schema, the rule's words].
-const RULES = [
-  ['fix', ['properties', 'open'], 'open is 0 exactly when fixed is true'],
-  ['implement', ['properties', 'blocked'], 'blocked is a string exactly when done is false'],
-  ['merge-resolve', ['properties', 'reason'], 'reason is a string exactly when resolved is false'],
-  ['feature-refine', ['properties', 'refined'], 'refined is false whenever premise_holds is false'],
-  ['feature-refine', ['properties', 'reason'], 'Required unless premise_holds and refined are both true'],
-  ['refine', ['properties', 'reason'], 'Required when refined is false'],
-  [
-    'refine-batch',
-    ['properties', 'stories', 'additionalProperties', 'properties', 'reason'],
-    'Required when refined is false',
-  ],
+/** The JSON Schema 2020-12 keywords whose value is one subschema. */
+const ONE = [
+  'items',
+  'additionalProperties',
+  'additionalItems',
+  'contains',
+  'contentSchema',
+  'not',
+  'if',
+  'then',
+  'else',
+  'propertyNames',
+  'unevaluatedItems',
+  'unevaluatedProperties',
+];
+/** The keywords whose value is a map of subschemas. */
+const MAP = ['properties', 'patternProperties', 'dependentSchemas', 'dependencies', '$defs', 'definitions'];
+/** The keywords whose value is an array of subschemas. */
+const LIST = ['anyOf', 'allOf', 'oneOf', 'prefixItems'];
+
+// plain_schema_checks_defs, plain_schema_checks_content_schema: the guard
+// finds a banned keyword and an optional property in every place a
+// subschema can sit, nested or not, and under a keyword it does not know.
+test('the plain-schema guard checks every nested subschema (S-1408)', () => {
+  const bad = {
+    if: { const: true },
+    type: 'object',
+    properties: { reason: { type: 'string' } },
+    required: [],
+    additionalProperties: false,
+  };
+  const places = [
+    ...ONE.map((k) => ({ [k]: bad })),
+    ...MAP.map((k) => ({ [k]: { x: bad } })),
+    ...LIST.map((k) => ({ [k]: [{ type: 'null' }, bad] })),
+    { $defs: { outer: { anyOf: [{ items: bad }] } } },
+    { 'x-unknown': { contentSchema: bad } },
+  ];
+  for (const place of places) {
+    const schema = { ...loadSchema('refine'), ...place };
+    if (place.properties) schema.properties = { ...loadSchema('refine').properties, ...place.properties };
+    const found = plainViolations(schema).join('\n');
+    const at = JSON.stringify(Object.keys(place));
+    // A path below the root `$`: the nested schema's own violations.
+    assert.match(found, /^\$\.[^:\s]+ has if$/m, at);
+    assert.match(found, /^\$\.[^:\s]+: not every property is required$/m, at);
+  }
+});
+
+// plain_schema_guard_rejects_object_without_properties: strict mode refuses an
+// object schema without fixed properties, at the root or nested.
+test('the plain-schema guard refuses an object without a properties map (S-1408)', () => {
+  const open = { type: 'object', additionalProperties: false };
+  const refine = loadSchema('refine');
+  for (const [schema, at] of [
+    [open, '$'],
+    [{ ...open, required: [] }, '$'],
+    [{ additionalProperties: false, required: [] }, '$'],
+    [
+      { ...refine, properties: { ...refine.properties, x: open }, required: [...refine.required, 'x'] },
+      '$.properties.x',
+    ],
+    [{ type: 'array', items: open }, '$.items'],
+    [{ anyOf: [{ type: 'null' }, open] }, '$.anyOf[1]'],
+    [{ ...refine, $defs: { x: open } }, '$.$defs.x'],
+  ]) {
+    assert.ok(plainViolations(schema).includes(`${at}: has no properties map`), `${at} ${JSON.stringify(schema)}`);
+  }
+});
+
+// What used to be refused as a contradiction (F-68 review round 1) is valid
+// now: each reader decides from one field and only prints the others. The
+// reader tests show the deciding field wins: refine and feature-refine in
+// test/integration/refine-outcome.test.js, the batch in test/unit/refine.test.js,
+// fix in test/unit/change-doc.test.js, implement in
+// test/unit/feature-run-loop.test.js, merge-resolve in
+// test/integration/merge-integrate-clean.test.js.
+const CONTRADICTIONS = [
+  ['fix', { summary: 's', fixed: true, open: 3 }],
+  ['fix', { summary: 's', fixed: false, open: 0 }],
+  ['implement', { summary: 's', done: true, blocked: 'no access to the repo' }],
+  ['implement', { summary: 's', done: false, blocked: null }],
+  ['merge-resolve', { summary: 's', resolved: true, reason: 'a.js has two meanings' }],
+  ['merge-resolve', { summary: 's', resolved: false, reason: null }],
+  ['feature-refine', { summary: 's', premise_holds: false, refined: true, reason: 'r' }],
 ];
 
-test("each CONSISTENCY rule is named in its schema field's description", () => {
-  for (const [schemaName, path, words] of RULES) {
-    const field = path.reduce((o, k) => o[k], loadSchema(schemaName));
-    assert.ok(field.description.includes(words), `${schemaName} ${path.at(-1)}: "${words}"`);
+test('an outcome whose fields contradict each other is valid; its reader decides', () => {
+  for (const [schemaName, outcome] of CONTRADICTIONS) {
+    const { structuredError } = validateOutcome(loadSchema(schemaName), outcome);
+    assert.equal(structuredError, null, `${schemaName} ${JSON.stringify(outcome)}`);
   }
-  // Every schema with a refused row has its rule stated.
-  for (const [schemaName, , accepted] of CONSISTENCY) {
-    if (!accepted)
-      assert.ok(
-        RULES.some(([s]) => s === schemaName),
-        `${schemaName} has a rule in RULES`,
-      );
+});
+
+test('a required field refuses a missing key, nullable or not (S-1408)', () => {
+  for (const [schemaName, outcome, at] of [
+    ['refine', { summary: 's', refined: true }, '$/reason'],
+    ['feature-refine', { summary: 's', premise_holds: true, refined: true }, '$/reason'],
+    ['refine-batch', { summary: 's', stories: [{ id: 'S-1', refined: true }] }, '$/stories/0/reason'],
+    ['implement', { summary: 's', done: true }, '$/blocked'],
+  ]) {
+    assert.equal(
+      validateOutcome(loadSchema(schemaName), outcome).structuredError,
+      `schema violation at ${at}: must have required property '${at.split('/').at(-1)}'`,
+      schemaName,
+    );
+  }
+});
+
+test('a refine reason is a string for every verdict: null is refused (S-1408)', () => {
+  for (const [schemaName, outcome, at] of [
+    ['refine', { summary: 's', refined: true, reason: null }, '$/reason'],
+    ['refine', { summary: 's', refined: false, reason: null }, '$/reason'],
+    ['feature-refine', { summary: 's', premise_holds: true, refined: true, reason: null }, '$/reason'],
+    ['feature-refine', { summary: 's', premise_holds: false, refined: false, reason: null }, '$/reason'],
+    ['refine-batch', { summary: 's', stories: [{ id: 'S-1', refined: true, reason: null }] }, '$/stories/0/reason'],
+  ]) {
+    assert.equal(
+      validateOutcome(loadSchema(schemaName), outcome).structuredError,
+      `schema violation at ${at}: must be string`,
+      `${schemaName} ${JSON.stringify(outcome)}`,
+    );
   }
 });
