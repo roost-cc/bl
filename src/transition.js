@@ -19,10 +19,12 @@
  * release; the writer sets them and `bl validate` checks them.
  *
  * `applyTransition` is the one writer: it appends an entry only along an
- * edge of `flow.json`'s table (`Flow.edges`). A work unit with no log reads
- * as the log the migration would write (`legacyLog`): its `status:` through
- * `LEGACY_STATUSES`, and an `in_progress` or `escalated` unit's review
- * position from its change document's `review_round` and `review_status`.
+ * edge of `flow.json`'s table (`Flow.edges`), and it refuses to append to a
+ * log that `bl validate` rejects, except for `by: force` (S-1580). A work
+ * unit with no log reads as the log the migration would write
+ * (`legacyLog`): its `status:` through `LEGACY_STATUSES`, and an
+ * `in_progress` or `escalated` unit's review position from its change
+ * document's `review_round` and `review_status`.
  */
 
 import { FORCE, FlowError, LEGACY_LOG, REVIEW, fromLegacy, loadFlow, statusWords } from './flow.js';
