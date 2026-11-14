@@ -23,6 +23,7 @@ import {
   findTransitionFindings,
   legacyLog,
   logOf,
+  logRefusal,
   logShape,
   requireBranch,
   reviewOf,
@@ -1122,4 +1123,35 @@ test('startOf refuses a stored log the verb’s first entry would leave rejected
   assert.match(refusal(closed, 'merge'), /^S-5 is done; merge starts from/);
   // A malformed transitions: has no status, so its refusal comes first.
   assert.match(refusal({ ...closed, transitions: 'done' }, 'merge'), /is not a list of entries/);
+});
+
+test('logRefusal checks several units in one list: one refusal per faulty unit, in order', () => {
+  const noBy = at('story', 'in_progress');
+  noBy.transitions = [...noBy.transitions.slice(0, -1), { at: T0, to: 'in_progress' }];
+  const stale = { ...at('story', 'ready_for_merge'), completed: '2026-10-01' };
+  const units = [
+    // A clean log, and a stale completed: that the entry to done sets: no line.
+    { id: 'S-1', kind: 'story', fm: at('story', 'in_progress'), to: 'in_review' },
+    { id: 'S-2', kind: 'story', fm: stale, to: 'done' },
+    // A null to adds no entry: the stored faults are still there.
+    { id: 'S-3', kind: 'story', fm: noBy, to: null },
+    { id: 'S-4', kind: 'story', fm: stale, to: null },
+    // A unit with no log reads as the log the migration would write (legacyLog).
+    { id: 'S-5', kind: 'story', fm: { story_id: 'S-5', status: 'in_progress' }, to: 'in_review' },
+    { id: 'S-6', kind: 'story', fm: { ...noBy, transitions: 'in_progress' }, to: 'in_review' },
+    { id: 'F-7', kind: 'feature', fm: at('feature', 'in_progress'), to: 'in_review' },
+  ];
+  const refusal = logRefusal(flow, units);
+  const heads = refusal.split('\n').filter((l) => !l.startsWith('  - '));
+  assert.deepEqual(heads, [
+    'S-3 has a transitions: log that bl validate rejects, so bl writes no entry to it; run bl validate:',
+    'S-4 has a transitions: log that bl validate rejects, so bl writes no entry to it; run bl validate:',
+    'S-6 has a transitions: that is not a list of entries; fix it (bl validate names the fault) before bl writes an entry',
+  ]);
+  assert.match(refusal, /^S-3 [^\n]*\n  - [^\n]*has no "by" verb/m);
+  assert.match(refusal, /^S-4 [^\n]*\n  - [^\n]*completed: 2026-10-01 is set/m);
+  // The units it was given are unchanged, and a list with no fault (or none at all) is null.
+  assert.equal(stale.completed, '2026-10-01');
+  assert.equal(logRefusal(flow, [units[0], units[1], units[4]]), null);
+  assert.equal(logRefusal(flow, []), null);
 });
