@@ -51,13 +51,18 @@ export function append(command, args) {
  * Append a command entry to a specific worktree's activity log: one write of
  * one line to a file opened for appending (S-1560). The kernel puts each such
  * write at the end of the file, so processes that append at the same time
- * need no lock and lose no line.
+ * need no lock and lose no line. A failed write is ignored (S-1581): a log
+ * line records a command and must not stop it.
  */
 export function appendTo(worktreePath, command, args) {
-  const logDir = join(worktreePath, LOG_DIR);
-  mkdirSync(logDir, { recursive: true });
-  const line = `${timestamp()}  bl ${command}${args.length ? ' ' + args.join(' ') : ''}\n`;
-  appendFileSync(join(logDir, LOG_FILE), line);
+  try {
+    const logDir = join(worktreePath, LOG_DIR);
+    mkdirSync(logDir, { recursive: true });
+    const line = `${timestamp()}  bl ${command}${args.length ? ' ' + args.join(' ') : ''}\n`;
+    appendFileSync(join(logDir, LOG_FILE), line);
+  } catch {
+    // logging is non-fatal
+  }
 }
 
 function showLog(worktreePath) {

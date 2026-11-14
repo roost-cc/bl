@@ -12,9 +12,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
+import { appendTo } from '../../src/log.js';
 import { git } from '../helpers/git-backlog.js';
 import { runBl } from '../helpers/run-bl.js';
 import { spawnToFiles } from '../helpers/spawn-files.js';
@@ -123,5 +124,19 @@ test('bl log with no argument prints the log in a linked worktree subdirectory a
     assert.equal(r.status, 0, `${cwd}: ${r.stderr}`);
     assert.equal(r.stdout, '', cwd);
     assert.match(r.stderr, /Not in a worktree/, cwd);
+  }
+});
+
+// S-1581: a failed log write must not stop the command it records. Root can
+// write to a 500 directory, so the test skips under root.
+test('appendTo ignores a failed write to an unwritable .bl/', { skip: process.getuid?.() === 0 }, () => {
+  const dir = mkTempDir('bl-log-ro-');
+  mkdirSync(join(dir, '.bl'));
+  chmodSync(join(dir, '.bl'), 0o500);
+  try {
+    assert.doesNotThrow(() => appendTo(dir, 'refine', ['S-1']));
+    assert.equal(existsSync(join(dir, '.bl', 'activity.log')), false);
+  } finally {
+    chmodSync(join(dir, '.bl'), 0o700);
   }
 });
