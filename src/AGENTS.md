@@ -3556,8 +3556,8 @@ bl's prompts and plugin commands use, not a new format.
 - A title is sent as plain text, because it holds text from the command line: `sendTabTitle`
   removes control characters (ESC, BEL, newline) on both paths, and under tmux it doubles each
   `#`, because tmux expands `#{…}` and `#(…)` in a window name.
-- A process waits for tmux at most `TMUX_TIMEOUT_MS` (1 s) in all. Each `tmux` call has that
-  timeout, and after one call times out, every later call in the process (titles, the
+- A process waits for a hung tmux at most `TMUX_TIMEOUT_MS` (1 s) in all. Each `tmux` call has
+  that timeout, and after one call times out, every later call in the process (titles, the
   reassert, the exit title) fails at once without tmux. `endTabTitle` clears that state.
 - An empty `BL_TAB_TITLE` (`TAB_TITLE_ENV`) turns titles off; `verbs.js` `childEnv` sets it for
   the child processes that `bl review` starts in parallel for several targets

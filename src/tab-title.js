@@ -48,8 +48,8 @@
  * the tool writes straight to the terminal, so bl never sees it.
  *
  * A title is sent as plain text (`sendTabTitle`): control characters are
- * removed, and tmux gets each `#` as `##`. A process waits for tmux at most
- * `TMUX_TIMEOUT_MS` in all (`tmux`).
+ * removed, and tmux gets each `#` as `##`. A process waits for a hung tmux
+ * at most `TMUX_TIMEOUT_MS` in all (`tmux`).
  *
  * When `bl` exits, the last title stays on the tab (S-1393, operator decision
  * 2026-11-09). The tab shows how the work ended until the next `bl` in that
@@ -285,9 +285,9 @@ function windowTarget() {
 }
 
 /**
- * How long bl waits for tmux, in milliseconds, in all for one process. Every
- * command calls tmux at start and at exit, so a hung tmux server must not
- * hold it back.
+ * How long bl waits for a hung tmux, in milliseconds, in all for one
+ * process. Every command calls tmux at start and at exit, so a hung tmux
+ * server must not hold it back.
  */
 export const TMUX_TIMEOUT_MS = 1000;
 
