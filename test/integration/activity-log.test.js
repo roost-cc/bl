@@ -148,6 +148,39 @@ test('appendTo writes one line per command whatever the fields hold', () => {
   }
 });
 
+// S-1581: every line separator and every terminal control, in the command and
+// in an argument, is written as `\uXXXX`: the log stays one line per command
+// and holds no control character that `bl log` would send to the terminal.
+test('appendTo keeps every line separator and terminal control on one activity log line', () => {
+  const forged = '2026-01-01 00:00:00  bl merge S-2';
+  const controls = {
+    'vertical tab': ['\u000b', '\\u000b'],
+    'form feed': ['\u000c', '\\u000c'],
+    'next line': ['\u0085', '\\u0085'],
+    'line separator': ['\u2028', '\\u2028'],
+    'paragraph separator': ['\u2029', '\\u2029'],
+    ESC: ['\u001b[1A\u001b[2K', '\\u001b[1A\\u001b[2K'],
+    NUL: ['\u0000', '\\u0000'],
+    DEL: ['\u007f', '\\u007f'],
+    CSI: ['\u009b', '\\u009b'],
+  };
+  const anyControl = /[\x00-\x09\x0b-\x1f\x7f-\x9f\u2028\u2029]/u;
+  for (const [name, [raw, escaped]] of Object.entries(controls)) {
+    for (const field of ['command', 'argument']) {
+      const dir = mkTempDir('bl-log-ctl-');
+      const command = field === 'command' ? `refine${raw}${forged}` : 'refine';
+      const args = field === 'argument' ? [`S-1${raw}${forged}`] : ['S-1'];
+      appendTo(dir, command, args);
+      const text = readFileSync(join(dir, '.bl', 'activity.log'), 'utf8');
+      const where = `${name} in ${field}: ${JSON.stringify(text)}`;
+      assert.equal(text.match(/\n/g).length, 1, where);
+      assert.doesNotMatch(text, anyControl, where);
+      const want = field === 'command' ? `bl refine${escaped}${forged} S-1` : `bl refine S-1${escaped}${forged}`;
+      assert.ok(text.endsWith(`  ${want}\n`), where);
+    }
+  }
+});
+
 // S-1581: a failed log write must not stop the command it records. Root can
 // write to a 500 directory, so the test skips under root.
 test('appendTo ignores a failed write to an unwritable .bl/', { skip: process.getuid?.() === 0 }, () => {

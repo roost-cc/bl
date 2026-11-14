@@ -42,12 +42,22 @@ function timestamp() {
 }
 
 /**
- * One log field on one line (S-1581): `\` becomes `\\`, a line feed `\n` and a
- * carriage return `\r`, so an argument cannot start a second log line.
+ * One log field on one line (S-1581): `\` becomes `\\`, a line feed `\n`, a
+ * carriage return `\r`, and every other control character (C0, DEL, C1) and
+ * U+2028/U+2029 `\uXXXX`. No field can start a second log line or send a
+ * terminal control (such as ESC) to `bl log`.
  * @param {string} s
  */
 function oneLine(s) {
-  return String(s).replace(/[\\\n\r]/g, (c) => ({ '\\': '\\\\', '\n': '\\n', '\r': '\\r' })[c]);
+  return String(s).replace(/[\\\x00-\x1f\x7f-\x9f\u2028\u2029]/g, (c) =>
+    c === '\\'
+      ? '\\\\'
+      : c === '\n'
+        ? '\\n'
+        : c === '\r'
+          ? '\\r'
+          : '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'),
+  );
 }
 
 /** Append a command entry to the activity log — only runs inside a linked worktree. */
