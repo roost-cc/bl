@@ -337,8 +337,9 @@ test('a no-commit resume with the log at fixing does not end clean', async () =>
       'clean',
     );
     editFile(unit.indexPath, (fm) => {
-      fm.transitions.push({ at: '2026-11-10T08:00:00Z', to: 'in_review', by: 'review' });
-      fm.transitions.push({ at: '2026-11-10T08:00:01Z', to: 'fixing', by: 'review' });
+      const { at } = fm.transitions.at(-1);
+      fm.transitions.push({ at, to: 'in_review', by: 'force' });
+      fm.transitions.push({ at, to: 'fixing', by: 'review' });
     });
     const runner = fakeRunner({ dir: config.backlogRoot, feature: unit, behaviour: { shell: emptyBranch } });
     const state = await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2, resume: true } });
@@ -383,7 +384,7 @@ test('a resume after a no-commit finish, with commits now on the branch, runs th
       'clean',
     );
     editFile(unit.indexPath, (fm) => {
-      fm.transitions.push({ at: '2026-11-10T08:00:00Z', to: 'in_progress', by: 'implement' });
+      fm.transitions.push({ at: fm.transitions.at(-1).at, to: 'in_progress', by: 'force' });
     });
     const runner = fakeRunner({ dir: config.backlogRoot, feature: unit });
     await runFeature({ feature: unit, config, prep, runner, opts: { maxRounds: 2, resume: true } });

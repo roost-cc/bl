@@ -275,7 +275,7 @@ const NO_COMMIT_LOG = {
   transitions: ['draft', 'refined', 'in_progress', 'in_review', 'ready_for_merge'].map((to, i) => ({
     at: `2026-11-0${i + 1}T00:00:00Z`,
     to,
-    by: i >= 3 ? 'review' : 'operator',
+    by: i === 0 ? 'new' : i >= 3 ? 'review' : 'operator',
   })),
 };
 
@@ -413,7 +413,7 @@ test('cleanupOneRepo with noCommits refuses a branch that got a commit after the
 
 test('bl merge S-n refuses as never reviewed a story reopened in_progress after ready_for_merge whose branch has no commits', () => {
   const log = {
-    transitions: [...NO_COMMIT_LOG.transitions, { at: '2026-11-06T00:00:00Z', to: 'in_progress', by: 'operator' }],
+    transitions: [...NO_COMMIT_LOG.transitions, { at: '2026-11-06T00:00:00Z', to: 'in_progress', by: 'force' }],
   };
   const fx = noCommitStory(log);
   try {
