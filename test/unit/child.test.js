@@ -12,7 +12,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnSyncFiles } from '../../src/child-stdio.js';
@@ -421,8 +421,9 @@ test('runLongChild ends its child with SIGTERM when opts.signal fires', async ()
 
 test('when bl exits 143 while a long child runs, the exit listener ends the child with SIGTERM', () => {
   // The child writes its pid, then becomes `sleep 30`; the parent exits 143
-  // once the pid is there.
+  // once the pid is there. Its own TMPDIR shows that the files are removed.
   const dir = mkTempDir('bl-child-long-');
+  const tmp = mkTempDir('bl-child-long-tmp-');
   const pidFile = join(dir, 'pid');
   const r = runScript(
     [
@@ -434,9 +435,11 @@ test('when bl exits 143 while a long child runs, the exit listener ends the chil
       `  process.exit(143);`,
       `}, 20));`,
     ].join('\n'),
+    { env: { ...process.env, TMPDIR: tmp } },
   );
   assert.equal(r.status, 143, r.stderr);
   assert.ok(r.stderr.includes('exit listener 143\n'), r.stderr);
+  assert.deepEqual(readdirSync(tmp), [], 'the long child left its stdio files');
   const pid = Number(readFileSync(pidFile, 'utf8').trim());
   assert.ok(pid > 0);
   // The parent is gone, so init reaps the child once SIGTERM ends it.

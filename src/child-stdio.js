@@ -72,6 +72,8 @@ export function spawnSyncFiles(command, args, options) {
  *   `error`, as a timeout carries `ETIMEDOUT` in `spawnSync`.
  * - A failed launch (`ENOENT`) resolves with `error` set and no output, as
  *   `spawnSync` returns it.
+ * - If the process exits during the wait, an `exit` listener removes the
+ *   files.
  *
  * @param {string} command
  * @param {readonly string[] | import('child_process').SpawnOptions} [args]
@@ -80,6 +82,7 @@ export function spawnSyncFiles(command, args, options) {
  */
 export async function spawnFiles(command, args, options) {
   const files = stdioFiles(args, options);
+  waiting.add(files);
   try {
     const result = await new Promise((resolve) => {
       const child = spawn(command, files.args, { ...files.options, killSignal: 'SIGTERM' });
@@ -95,9 +98,20 @@ export async function spawnFiles(command, args, options) {
     });
     return files.readBack(result);
   } finally {
+    waiting.delete(files);
     files.close();
   }
 }
+
+/**
+ * The files of each `spawnFiles` call that still waits. If the process exits
+ * during the wait, the `finally` above never runs, so this listener removes
+ * them.
+ */
+const waiting = new Set();
+process.on('exit', () => {
+  for (const files of waiting) files.close();
+});
 
 /**
  * The files of one `spawnSyncFiles` or `spawnFiles` call, made from its
