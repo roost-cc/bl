@@ -73,6 +73,14 @@ entries:
     avoid: [bundle, group, set, feature]
     decided: bl src/AGENTS.md, "Story batches" (F-125 Design 1, Decision A4)
 
+  - term: unit file
+    meaning: >-
+      The file of one backlog entry that `loadBacklog()` reads, of any of its seven kinds: a
+      story, feature, story batch, component, theme, epic or task. It is a directory's `index.md`,
+      or a task's flat file. A unit file is not always a work unit's file.
+    avoid: [unit (alone), spec (for a component, theme, epic or task)]
+    decided: bl src/AGENTS.md, "Reading the backlog" (F-86)
+
   - term: execution plan
     meaning: >-
       What `bl run` computes from a work unit's stories at run start and stores as `plan.yaml`:

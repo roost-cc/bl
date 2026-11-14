@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "execution plan",
-  "description": "plan.yaml in a work unit's directory (F-125 D2): the execution plan bl run computes at run start and follows during the run. readPlan and writePlan (src/execution-plan.js) check it. An agent that changes the plan adds a changes entry that says why.",
+  "description": "plan.yaml beside a work unit's change document, in the directory of its index.md (F-125 D2): the execution plan bl run computes at run start and follows during the run. readPlan and writePlan (src/execution-plan.js) check it. An agent that changes the plan adds a changes entry that says why.",
   "type": "object",
   "additionalProperties": false,
   "required": [
