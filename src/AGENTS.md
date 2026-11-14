@@ -304,8 +304,8 @@ names its repo (`git -C <repo>`).
     `origin/main`.
 
   A dry run prints the plan, then any refusal. The moves are outside the backlog, so the git
-  rollback of a failed migration does not undo them. A rerun moves the rest, and once all is done it plans
-  nothing. The operator runs the migration after `bl merge F-60` has merged `bl` (task T-14).
+  rollback of a failed migration does not undo them. A rerun moves the rest, and once all is done it
+  plans nothing. The operator runs the migration after `bl merge F-60` has merged `bl` (task T-14).
 
 ### Every agent session starts in its unit directory (F-60 D3)
 
@@ -406,9 +406,8 @@ The list keys are sequences: `stories`, `depends_on`, `required_for`, `component
   `parsePathList`, `parsePluginList`). A list key with no value is an empty list.
 - The reader reads no other shape: a scalar (even `S-1` or `a, b`), a mapping, or a member that
   is not a string. (For a change document's `repos:`, it is a member that is not a mapping.) It
-  throws
-  `FrontmatterListError` (`listMembers`), rather than drop a blocker or a plugin as if it were
-  never written.
+  throws `FrontmatterListError` (`listMembers`), rather than drop a blocker or a plugin as if it
+  were never written.
 
 `bl validate` reports both shapes that bl will not read: `frontmatter-yaml` and
 `frontmatter-list` (see **bl validate**).
@@ -461,7 +460,8 @@ The one-off `scripts/migrate-frontmatter-yaml.js` moved the backlog to this form
 
 `--dry-run` prints the files and the counts. The migration refuses unless the backlog is
 clean at `origin/main` and no `bl` run is running. It commits once through `migration-txn.js`. A
-second migration plans nothing, so a rerun after a merge picks up a block that an older bl wrote in the meantime.
+second migration plans nothing, so a rerun after a merge picks up a block that an older bl wrote
+in the meantime.
 
 ### Spec writes (F-67)
 
@@ -844,8 +844,8 @@ before anything is written. `bl validate` enforces the value axis:
 - the hazards on the way (gates such as go-live);
 - the options along it (decisions put off).
 
-It is one page. The frontmatter indexes the entries. The
-body holds a preamble and one `## <title>` section per entry:
+It is one page. The frontmatter indexes the entries. The body holds a preamble and one `## <title>`
+section per entry:
 
 ```yaml
 ---
@@ -869,10 +869,10 @@ errors at `roadmap.md`:
   section names no entry.
 
 A backlog with no `roadmap.md` reports `roadmap-file`, and a theme with no `brief:` reports
-`theme-brief`. `bl init` writes `templates/roadmap.md` (empty `entries:`) and `templates/priority.yaml`
-(`[]`) into a backlog that lacks them. It leaves an existing one alone (S-581, F-78 D1,
-F-113 D1). It does the same with the coding
-dictionary seed (see **Dictionaries**). (F-53's one-off migration wrote these files for the
+`theme-brief`. `bl init` writes `templates/roadmap.md` (empty `entries:`) and
+`templates/priority.yaml` (`[]`) into a backlog that lacks them. It leaves an existing one alone
+(S-581, F-78 D1, F-113 D1). It does the same with the coding dictionary seed (see
+**Dictionaries**). (F-53's one-off migration wrote these files for the
 first backlog and has run. S-581 removed it, and it is in git history.)
 
 ### Priority (F-78 D1, F-113 D1)
@@ -1234,9 +1234,9 @@ An entry's `from` is the `to` of the entry before it.
 
   The migration skips these work units and lists them:
   - a work unit whose run lock (`.bl/run/<id>.lock`) or session lock (`liveSessionLocks`, by the
-    worktree's branch) another process holds (`otherHolder`). The migration skips the
-    stories of such a feature too. The PID in a lock file decides nothing, so the lock of a parent `bl` run counts
-    too.
+    worktree's branch) another process holds (`otherHolder`). The migration skips the stories of
+    such a feature too. The PID in a lock file decides nothing, so the lock of a parent `bl` run
+    counts too.
   - a work unit whose `transitions:` is malformed (`logShape`).
 
   A rerun converts a held work unit, and a malformed one once someone fixes it. With nothing
@@ -1424,9 +1424,10 @@ edges. `bl block list` derives the view of each work unit.
        superseded ones too, through `planText` (`migrate-derived-keys.js`).
     4. It commits once (`migration-txn.js`).
 
-    `--dry-run` prints the counts. bl refuses a dry run wherever it refuses the migration: a dirty work tree, a backlog behind `origin/main`, or a `bl run` that is
-    running. `readEdges` gives the file's edge where a key gave the same identity. So after the
-    migration, every verb reads the same edges.
+    `--dry-run` prints the counts. bl refuses a dry run wherever it refuses the migration: a dirty
+    work tree, a backlog behind `origin/main`, or a `bl run` that is running. `readEdges` gives the
+    file's edge where a key gave the same identity. So after the migration, every verb reads the
+    same edges.
 
 - **The schema.** bl reads `bl-blockers/v1` (the same shape, with no merge or order edge) and
   `bl-blockers/v2`. It writes `v2` (`BLOCKERS_SCHEMA`, `BLOCKERS_SCHEMAS`). The merge driver
@@ -1456,9 +1457,8 @@ edges. `bl block list` derives the view of each work unit.
   - a change on one side and a remove on the other;
   - a side that lists one edge twice, or is blank.
 
-  Only a
-  zero-byte base, a file that both sides added, is an empty graph. A merge can close a deadlock
-  that neither side had. `bl validate` reports it (`blockers-cycle`).
+  Only a zero-byte base, a file that both sides added, is an empty graph. A merge can close a
+  deadlock that neither side had. `bl validate` reports it (`blockers-cycle`).
 
 - **Met edges stay** as history. Nothing prunes them.
 - **A feature's hold check** also checks the edges on each of its stories. The reason is that
@@ -1466,8 +1466,8 @@ edges. `bl block list` derives the view of each work unit.
   whose feature it is.
 - **The hold checks** (F-66 D3, F-119 D6). `heldBy(config, id, verb)` is the one check. It finds
   every active, unmet edge on a member of `gateIds(units, id)` or on `*`. The edge must be at a
-  status on the nominal path of `verb`, in that member's own type (`Flow.nominalPath`). So a feature honours
-  the holds of its stories with the story type's row of the verb. The check gives each edge
+  status on the nominal path of `verb`, in that member's own type (`Flow.nominalPath`). So a feature
+  honours the holds of its stories with the story type's row of the verb. The check gives each edge
   once, with its line `<unit> is held at <gate> by <blocker> (<status>, needs <until>)`
   (`heldLine`). It names a wildcard edge on the work unit that it was asked about. So:
   - a hold at `in_progress` holds `run` and `implement`;
@@ -2635,8 +2635,8 @@ If a session gives no valid outcome, bl resumes it once and then escalates (D5).
   `escalation.md` in its scratch directory (`ESCALATION_FILE`). When that file has content, it
   replaces the bare reason in `## Escalation`. After it come the line
   ``fix-tests returned `unrelated`: <reason>`` and the gate's details (`unrelatedDetails()`).
-  `bl run` clears the file before every fix-tests session. So a session that was sent back never inherits the file of the
-  session before it.
+  `bl run` clears the file before every fix-tests session. So a session that was sent back
+  never inherits the file of the session before it.
 
   On F-4 the agent diagnosed an expired dev certificate correctly. A rerun would have cost five
   minutes, and a second identical failure would have replaced the reason. After the operator
@@ -2783,7 +2783,8 @@ ignores it.
 ### Defect classes
 
 Every Must and Should item carries a class line,
-`Class: <defect class> — instances: <list>; also check: <where>`. Each step of a round works on the whole class:
+`Class: <defect class> — instances: <list>; also check: <where>`. Each step of a round works on the
+whole class:
 
 - The review passes name the class, and look for its other instances in the branch's diff.
 - The verifier merges the findings of one class into one item.
