@@ -2,6 +2,7 @@
  * codex.js — Codex CLI implementation of AgentProvider.
  */
 
+import { randomUUID } from 'crypto';
 import {
   closeSync,
   existsSync,
@@ -908,7 +909,8 @@ export class CodexProvider extends AgentProvider {
       ...codexRepoWorktrees(cwd).flatMap((wt) => resolveCodexWritableGitRoots({ worktreePath: wt, backlogRoot })),
       ...(scopes.write ?? []),
     ];
-    const fileBase = join(tmpdir(), `bl-codex-${process.pid}-${Date.now()}`);
+    // Unique per spawn: headless spawns may wait at the same time.
+    const fileBase = join(tmpdir(), `bl-codex-${process.pid}-${randomUUID()}`);
     const outputFile = headless ? `${fileBase}.md` : null;
     // The step's schema (F-68 D1), beside the last-message file.
     const schemaFile = headless && schema ? `${fileBase}.schema.json` : null;

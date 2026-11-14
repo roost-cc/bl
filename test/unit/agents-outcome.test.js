@@ -152,6 +152,54 @@ async function codexSpawn(message, { schema = SCHEMA, status = 0, signal = null,
   return { r, seen };
 }
 
+test('codex_concurrent_headless_spawns_keep_outputs_and_schemas_separate', async () => {
+  // Both spawns start in the same millisecond and wait at the same time; the
+  // first codex ends first.
+  const now = mock.method(Date, 'now', () => 123456789);
+  try {
+    const seen = [];
+    const run = (_cmd, args) => {
+      const index = seen.length;
+      const out = args[args.indexOf('--output-last-message') + 1];
+      const schemaFile = args[args.indexOf('--output-schema') + 1];
+      seen.push({ out, schemaFile, schema: JSON.parse(readFileSync(schemaFile, 'utf8')) });
+      writeFileSync(out, JSON.stringify({ summary: `session ${index}`, done: true }));
+      return new Promise((resolve) =>
+        setTimeout(() => resolve({ status: 0, stdout: '', stderr: '' }), 10 + 20 * index),
+      );
+    };
+    const spawn = (schema) =>
+      new CodexProvider().spawn({
+        prompt: 'p',
+        worktreePath: '/wt',
+        backlogRoot: '/bl',
+        headless: true,
+        schema,
+        ensureApprovedCommandPrefixes: () => ({ added: 0 }),
+        run,
+      });
+    const other = { ...SCHEMA, title: 'other' };
+    const [a, b] = await Promise.all([spawn(SCHEMA), spawn(other)]);
+    assert.notEqual(seen[0].out, seen[1].out, 'separate result files');
+    assert.notEqual(seen[0].schemaFile, seen[1].schemaFile, 'separate schema files');
+    assert.deepEqual(
+      seen.map((s) => s.schema),
+      [SCHEMA, other],
+      'each codex got its own schema',
+    );
+    assert.deepEqual(
+      [a.structured, b.structured],
+      [
+        { summary: 'session 0', done: true },
+        { summary: 'session 1', done: true },
+      ],
+    );
+    for (const s of seen) assert.equal(existsSync(s.out) || existsSync(s.schemaFile), false, 'both removed');
+  } finally {
+    now.mock.restore();
+  }
+});
+
 /** `fn()` with `process.stderr.write` replaced; awaits it and returns its result and the text written. */
 async function capturingStderr(fn) {
   const written = [];
