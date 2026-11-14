@@ -1795,7 +1795,10 @@ export async function cmdMerge(args, config, feature) {
 
   const all = readAllStories(config);
   const { stories } = resolveFeatureStories(feature, config, all);
-  // Before any repo lands: every story is merged and marked done below.
+  // Before any repo lands: every story is merged and marked done below. The
+  // log check sees the faults present now; `markFeatureMerged` reads the
+  // stories again after the merges and tags, so a fault made meanwhile
+  // refuses its done write then.
   exitOnStoryWithoutRepo(feature, stories);
   exitOnStoryLogFault(config, stories, 'merge');
 
