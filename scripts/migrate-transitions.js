@@ -18,9 +18,10 @@
  * committed once, with the counts in the message; a rerun with nothing left
  * prints "nothing to do".
  * An update story (`update_repo:`) keeps its `status:` and its change
- * documents as they are, because the updates flow still reads and writes its
- * `status:` (F-69 Out of Scope). The run prints how many update stories it
- * kept in the old shape; the counts and the commit message leave them out.
+ * documents as they are. F-69 left them out because the updates flow then
+ * read and wrote their `status:` (F-69 Out of Scope); S-1559 removed that
+ * flow, and the tolerant reader (`legacyLog`) reads the old shape. The run
+ * prints how many update stories it kept in the old shape; the counts and the commit message leave them out.
  * `--backlog` names the backlog root; by default it is found as `bl` finds it.
  *
  * Exit codes: 0 done (or nothing to do), 1 a step or the commit failed (run

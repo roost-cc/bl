@@ -1269,8 +1269,10 @@ An entry's `from` is the `to` of the entry before it.
   the same counts and the paths that it would carry, and writes nothing.
 
   The migration leaves an update story (`update_repo:`, `isUpdateStory` in `src/priority.js`)
-  and its change documents in the old shape. The reason is that the updates flow still reads and
-  writes the story's `status:` (F-69 Out of Scope). The migration and the dry run print
+  and its change documents in the old shape. F-69 left them out because the updates flow then
+  read and wrote the story's `status:` (F-69 Out of Scope). S-1559 removed that flow and kept the
+  rule: the tolerant reader (`legacyLog`) reads the old shape, so the kept stories need no
+  conversion. The migration and the dry run print
   `kept in the old shape (update stories, F-69 Out of Scope): <n>`. The counts and the commit
   message leave those stories out.
 
