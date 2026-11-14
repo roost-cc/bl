@@ -3528,10 +3528,12 @@ bl's prompts and plugin commands use, not a new format.
   or `updateTabTitle({ feature: 'F-56', status: 'testing' })`. Names are not checked. Its
   fields replace the start title's.
 - `bl merge` shows its steps as the status: `integrate` (`integrateForMerge`), `test gate`
-  (before the integration's `runTestGate`), `pre-push gate + push` (`PUSH_STATUS`, before
-  each `git push` of the integrated branch and of `main`: git runs the pre-push gate inside
-  `git push`, so bl cannot show the two apart), `cleanup` (before the PR close), `sync`
-  (before the backlog sync) and `tag` (before a feature's tags are pushed). The statuses
+  (before the integration's `runTestGate`), `pull` (before each repo's `syncMain` in
+  `cleanupOneRepo`), `check` (before `checkedMerge` runs the `check` plugins),
+  `pre-push gate + push` (`PUSH_STATUS`, before each `git push` of the integrated branch and
+  of `main`: git runs the pre-push gate inside `git push`, so bl cannot show the two apart),
+  `install` (before the main checkout's `installCommand`), `cleanup` (before the PR close),
+  `sync` (before the backlog sync) and `tag` (before a feature's tags are pushed). The statuses
   inside the integration go through the runner's `title`, so the unit tests' fake runner
   sets none.
 - `launchSession` sets the unit `parsed.id` names (`F-n` or a story batch's `B-n` the feature,

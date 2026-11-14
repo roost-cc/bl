@@ -610,6 +610,7 @@ export async function cleanupOneRepo({
 
   info(`\n=== ${repoName} ===`);
   info('Pulling latest main...');
+  updateTabTitle({ status: 'pull' });
   // Under the per-repo lock (S-865). A failed fetch is a warning and the
   // merge goes on from local main; a failed fast-forward or a lock timeout
   // stops this repo.
@@ -697,6 +698,7 @@ export async function cleanupOneRepo({
   const install = installCommand(repoPath);
   if (install) {
     info(`Installing ${repoName}'s dependencies in the main checkout (${install})...`);
+    updateTabTitle({ status: 'install' });
     // No shell: `install` is one of two fixed commands with no quoted words.
     const [cmd, ...args] = install.split(' ');
     const r = runChild(cmd, args, { cwd: repoPath, stdio: ['ignore', process.stderr, process.stderr] });
@@ -852,6 +854,7 @@ export async function checkedMerge({ parsed, repoName, repoPath, branchName, plu
     // A repo with no `check` plugin has nothing to check.
     let passed = plugins.length === 0;
     let output = '';
+    if (!passed) updateTabTitle({ status: 'check' });
     for (let run = 1; run <= CHECK_RUNS && !passed; run++) {
       output = '';
       passed = true;

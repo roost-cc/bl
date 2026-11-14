@@ -275,9 +275,22 @@ test('single-repo cleanup writes commit as a bare string', async () => {
   assert.match(fm.commit, /^[0-9a-f]{7,}$/);
 });
 
-test('bl merge shows its steps in the tab title: integrate, pre-push gate + push, cleanup, sync (S-1412)', async () => {
-  const { backlog } = buildStoryBacklog({ repoNames: ['bl'] });
+test('bl merge shows check and install as statuses (S-1412)', async () => {
+  // A `check` plugin and a lockfile, so every long step of the repo runs.
+  const { backlog } = buildStoryBacklog({
+    repoNames: ['bl'],
+    backlogJsonExtra: { plugins: { 'ok-check': { check: 'true' } } },
+    setupRepo: (_name, work) => {
+      writeFileSync(join(work, 'package-lock.json'), '{}\n');
+      execSync(`git ${GIT_ENV} -C "${work}" add package-lock.json`, { stdio: ['ignore', 'pipe', 'pipe'] });
+      execSync(`git ${GIT_ENV} -C "${work}" commit -q -m lockfile`, { stdio: ['ignore', 'pipe', 'pipe'] });
+      execSync(`git -C "${work}" push -q origin main`, { stdio: ['ignore', 'pipe', 'pipe'] });
+    },
+  });
+  writeFileSync(join(backlog, 'index.md'), '---\nplugins-check: [ok-check]\n---\n');
   const fake = fakeTmux();
+  // `npm ci` succeeds without doing anything.
+  writeFileSync(join(fake.dir, 'npm'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   const fakeEnv = {
     PATH: `${fake.dir}${delimiter}${process.env.PATH}`,
     TMUX: '/tmp/tmux-fake,1,0',
@@ -303,11 +316,20 @@ test('bl merge shows its steps in the tab title: integrate, pre-push gate + push
   withEnv(fakeEnv, () => endTabTitle(0));
   process.env.BL_TAB_TITLE = '';
   assert.equal(out.result.exit, null, out.stderr);
-  const steps = ['integrate', 'pre-push gate + push', 'cleanup', 'sync'];
   const statuses = renamedTitles(fake.calls())
     .map((title) => title.split(' : ').at(-1).trim())
-    .filter((status, i, all) => steps.includes(status) && status !== all[i - 1]);
-  assert.deepEqual(statuses, steps);
+    .filter((status, i, all) => status !== all[i - 1]);
+  // `pull` starts each repo of the loop (`cleanupOneRepo`), so a feature's next repo never shows the last one's `cleanup`.
+  assert.deepEqual(statuses, [
+    'integrate',
+    'pull',
+    'check',
+    'pre-push gate + push',
+    'install',
+    'cleanup',
+    'sync',
+    'ended',
+  ]);
 });
 
 test('bl merge removes the emptied unit directory, and keeps one with another worktree (F-60 D2)', async () => {

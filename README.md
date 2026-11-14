@@ -90,8 +90,10 @@ Before it does anything else, `bl` sets a start title: the status is the command
 story fields are the unit ids the arguments name (`bl run s34` shows `: S-34 : run`), and
 several ids of one kind show as `2 features` or `3 stories`. A command that knows more, such as
 `bl run` or `bl refine`, then sets its own status. `bl merge` shows its steps: `integrate`,
-`test gate`, `pre-push gate + push` (git runs the pre-push gate inside `git push`), `cleanup`,
-`sync` and `tag`. A fast command such as `bl list` ends at once with `ended`.
+`test gate`, `pull` (each repo's main), `check` (the repo's `check` plugins),
+`pre-push gate + push` (git runs the pre-push gate inside `git push`), `install` (the main
+checkout's dependencies), `cleanup`, `sync` and `tag`. A fast command such as `bl list` ends at
+once with `ended`.
 
 When `bl` exits, the last title stays on the tab until the next `bl` in that window or you
 replace it. A command that reaches an end state shows it with the next step, for example
