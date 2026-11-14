@@ -24,9 +24,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
-import { dirname, join } from 'path';
+import { delimiter, dirname, join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { main as cleanupMain } from '../../src/cleanup.js';
+import { endTabTitle } from '../../src/tab-title.js';
+import { fakeTmux, renamedTitles } from '../helpers/fake-tmux.js';
+import { withEnv } from '../helpers/fake-pagers.js';
 import { parseFrontmatter } from '../../src/config.js';
 import { parseChange } from '../../src/change-doc.js';
 import { extractSection } from '../../src/feature.js';
@@ -270,6 +273,38 @@ test('single-repo cleanup writes commit as a bare string', async () => {
   assert.equal(logStatusOf('story', fm), 'done');
   assert.equal(typeof fm.commit, 'string', 'expected a bare string commit');
   assert.match(fm.commit, /^[0-9a-f]{7,}$/);
+});
+
+test('bl merge shows its steps in the tab title: integrate, pre-push gate + push, cleanup, sync (S-1412)', async () => {
+  const { backlog } = buildStoryBacklog({ repoNames: ['bl'] });
+  const fake = fakeTmux();
+  const fakeEnv = {
+    PATH: `${fake.dir}${delimiter}${process.env.PATH}`,
+    TMUX: '/tmp/tmux-fake,1,0',
+    BL_TMUX_WINDOW_ID: '@7',
+    BL_BACKLOG_DIR: backlog,
+  };
+  // withEnv is synchronous, so the variables are set and restored around the awaited merge.
+  const saved = Object.fromEntries(Object.keys(fakeEnv).map((k) => [k, process.env[k]]));
+  const restore = () => {
+    for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+  };
+  Object.assign(process.env, fakeEnv);
+  let out;
+  try {
+    out = await captureStderr(() => captureExit(() => cleanupMain(['S-99'])));
+  } finally {
+    restore();
+  }
+  // The exit hook that the first title registered must never reach a real tmux.
+  withEnv(fakeEnv, () => endTabTitle(0));
+  process.env.BL_TAB_TITLE = '';
+  assert.equal(out.result.exit, null, out.stderr);
+  const steps = ['integrate', 'pre-push gate + push', 'cleanup', 'sync'];
+  const statuses = renamedTitles(fake.calls())
+    .map((title) => title.split(' : ').at(-1).trim())
+    .filter((status, i, all) => steps.includes(status) && status !== all[i - 1]);
+  assert.deepEqual(statuses, steps);
 });
 
 test('bl merge removes the emptied unit directory, and keeps one with another worktree (F-60 D2)', async () => {

@@ -48,7 +48,7 @@ import {
 } from './story.js';
 import { getAllowedTools, loadPrompt } from './session.js';
 import { addGateLine, gateLine, recordMerge } from './change-doc.js';
-import { shellMerged } from './feature-run.js';
+import { PUSH_STATUS, shellMerged } from './feature-run.js';
 import { GATE_TAIL_LINES, tail } from './command-output.js';
 import { codeSpan } from './escalation.js';
 import { interpolateCommand } from './scripted.js';
@@ -60,7 +60,7 @@ import { extractSection } from './feature.js';
 import { DEFERRED_HEADING } from './deferred.js';
 import { resolvePermissionScopes } from './permissions.js';
 import { getProvider } from './agents/index.js';
-import { reassertTabTitle, updateTabTitle } from './tab-title.js';
+import { reassertTabTitle, TAB_TITLE_ENV, updateTabTitle } from './tab-title.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { atomicWriteFile } from './atomic-write.js';
 import { readSpecText, specText, withSpecLock } from './spec-file.js';
@@ -279,7 +279,8 @@ export async function runBacklogSync(config, runner, { message, storyIds = [] },
     r = exec(args[0], args.slice(1), {
       cwd: config.backlogRoot,
       stdio: ['inherit', process.stderr, process.stderr],
-      env: process.env,
+      // A child for data: the tab belongs to this `bl merge` (S-1412).
+      env: { ...process.env, [TAB_TITLE_ENV]: '' },
     });
   } catch (err) {
     // A runner that throws (the capture files cannot be made) failed too.
@@ -680,6 +681,7 @@ export async function cleanupOneRepo({
 
   if (!pushed) {
     info(`Pushing main in ${repoName}...`);
+    updateTabTitle({ status: PUSH_STATUS });
     const push = runGit(repoPath, ['push', 'origin', 'main'], { stdio: ['inherit', process.stderr, process.stderr] });
     if (push.status !== 0) {
       console.error(
@@ -709,6 +711,7 @@ export async function cleanupOneRepo({
   // The branch's open PR is closed through the forge ops (F-42 D4):
   // `change.find` by branch, then `change.close`. Without a forge, an op or
   // the binary, or with no open PR, there is nothing to close — not fatal.
+  updateTabTitle({ status: 'cleanup' });
   try {
     const found = findChange(branchName, { config, repoPath });
     const open = found.ok ? found.prs.find((p) => p.state === 'OPEN') : null;
@@ -902,6 +905,7 @@ export async function checkedMerge({ parsed, repoName, repoPath, branchName, plu
     }
 
     info(`Pushing ${commit} to main in ${repoName}...`);
+    updateTabTitle({ status: PUSH_STATUS });
     // Streamed: a pre-push hook's test run prints as it goes.
     const push = runGit(wt, ['push', 'origin', `${commit}:refs/heads/main`], {
       stdio: ['ignore', process.stderr, process.stderr],
@@ -1229,6 +1233,7 @@ the main checkout as it was.`);
       storyIds: [parsed.id],
     };
     let res = null;
+    updateTabTitle({ status: 'sync' });
     await acquireLock(config.backlogRoot);
     try {
       const today = new Date().toISOString().slice(0, 10);
