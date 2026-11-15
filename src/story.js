@@ -423,7 +423,7 @@ export function reposForStory(storyId, config) {
  * (`no-forge`, `no-op`, `failed`, …).
  *
  * The caller gives a nonempty `unit.branch` or a nonempty `unit.featureEntry`
- * (the unit's directory name, from which the branch is derived); at least one
+ * (the work unit's directory name, from which the branch is derived); at least one
  * is required. An empty string is not a branch source.
  *
  * @param {object} config — loaded backlog config (see `loadConfig`)
