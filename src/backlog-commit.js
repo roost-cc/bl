@@ -11,7 +11,7 @@
  *
  * The backlog is shared through its remote (F-50 D4): every commit made here
  * is pushed to `origin main` (`pushBacklog`), and the commands that commit,
- * plus `bl inbox` and `bl updates status`, first rebase onto `origin/main`
+ * plus `bl inbox`, first rebase onto `origin/main`
  * (`pullBacklog`) and push a `main` still ahead of it. A push rejected
  * because origin moved is rebased the same way and pushed again (F-74 D1).
  * Neither fails the command: a push or pull that cannot
@@ -749,12 +749,10 @@ export function leaveRegenerationPending(root) {
  * Whether `bl <command> <argv>` rebases the backlog onto `origin/main`
  * before it runs (F-50 D4): every command that commits the backlog (`new`,
  * `side`, `attach`, `batch`, `move`, `run`, `implement`, `merge`, `done`, `force`, `refine`,
- * `approve`, `init`, `updates`, `sync --commit`,
+ * `approve`, `init`, `sync --commit`,
  * `block add`, `block remove`, `block list --fix`, `task`,
  * `task done`), a bare `bl sync`, whose whole job is the pull and push
- * (F-79 D1), and the
- * readers of update state, `bl inbox` and
- * `bl updates status`. Help output never pulls. `bl rank` never pulls here:
+ * (F-79 D1), and `bl inbox`. Help output never pulls. `bl rank` never pulls here:
  * an edit writes only the staged copy, and `bl rank --commit` pulls itself,
  * only when a staged copy exists (`rank-cmd.js`, F-113 D3).
  */
@@ -776,8 +774,6 @@ export function commandPullsBacklog(command, argv) {
     case 'init':
     case 'inbox':
       return true;
-    case 'updates':
-      return argv.length > 0;
     case 'block':
       return argv[0] === 'add' || argv[0] === 'remove' || (argv[0] === 'list' && argv.includes('--fix'));
     case 'task':

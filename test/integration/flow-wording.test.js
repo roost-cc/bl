@@ -14,7 +14,6 @@ import { Flow, loadFlow, statusWords } from '../../src/flow.js';
 import { buildHistory } from '../../src/history.js';
 import { moveRefusal } from '../../src/move.js';
 import { buildReport, renderMarkdown } from '../../src/report.js';
-import { selectStories } from '../../src/updates-run.js';
 import { runBl } from '../helpers/run-bl.js';
 import { commitAt, committedBacklog, put, story } from '../helpers/scripted-backlog.js';
 import { FLOW_TEMPLATE } from '../helpers/tempdir.js';
@@ -82,10 +81,6 @@ test('flow_derived_diagnostics_match_decisions', () => {
       storyMoveRefusal('S-2', fm, 'F-1', flow),
       `S-2 is done; only a ${UNSTARTED[name]} story moves into a feature.`,
     );
-    assert.throws(
-      () => selectStories([{ id: 'S-2', fm }], ['S-2'], flow),
-      new RegExp(`only a ${RUNNABLE[name]} story runs$`),
-    );
   }
 });
 
@@ -122,7 +117,6 @@ test('help words its status lists from the flow, and from the template outside a
     [['attach', '--help'], `a feature that is ${CLOSED_FEATURES[name]}`],
     [['attach', '--help'], `a story that is not ${UNSTARTED[name]}`],
     [['move', '--help'], `a story that is not ${UNSTARTED[name]}`],
-    [['updates', '--help'], `status lists every ${RUNNABLE[name]} update story`],
   ];
   for (const [name, raw] of flows) {
     const cwd = dir(raw());
@@ -144,10 +138,6 @@ test('wrapped help keeps its line break on the shipped flow', () => {
   assert.match(
     runBl(['new', '--help'], { cwd }).stdout,
     /stories \(draft, in_refinement or\n {23}refined, in no feature\)/,
-  );
-  assert.match(
-    runBl(['updates', '--help'], { cwd }).stdout,
-    /\(else every refined, in_progress, in_review, fixing, ready_for_merge or\n {33}escalated update story\)/,
   );
 });
 

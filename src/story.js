@@ -25,7 +25,6 @@ import {
   worktreePathFor,
   unitDirFor,
   findChange,
-  STORIES_DIR,
   COMPONENTS_DIR,
 } from './config.js';
 import { storyEffort } from './effort.js';
@@ -96,10 +95,6 @@ export function storyRepoOrExit(parsed, found) {
 // Layout (F-49 D3): stories/, components/ and features/ at the backlog root.
 // A unit's directory never moves; its status is frontmatter only.
 // ---------------------------------------------------------------------------
-
-export function storiesRoot(config) {
-  return join(config.backlogRoot, STORIES_DIR);
-}
 
 export function componentsRoot(config) {
   return join(config.backlogRoot, COMPONENTS_DIR);

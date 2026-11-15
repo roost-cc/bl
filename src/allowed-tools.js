@@ -31,8 +31,8 @@
  * spec lock (`withSpecFileLock`, F-126 D3; the backlog lock too when the file
  * is missing), so two `bl` processes regenerate it one after the other.
  *
- * Forge commands are bl's own (F-42 D4): `bl run`, `bl review`, `bl merge`
- * and `bl updates` make every forge call, so the configured forge plugin
+ * Forge commands are bl's own (F-42 D4): `bl run`, `bl review` and
+ * `bl merge` make every forge call, so the configured forge plugin
  * contributes nothing to any mode and no mode has a `gh pr:*` baseline.
  */
 

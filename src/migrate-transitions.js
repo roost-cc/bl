@@ -30,9 +30,11 @@
  * what is left, and reports nothing to do when nothing is.
  *
  * The migration leaves an update story (`update_repo:`, `isUpdateStory`) and
- * its change documents in the old shape, and counts it as kept: the updates
- * flow still reads and writes its `status:` (F-69 Out of Scope), and the
- * tolerant reader (`legacyLog`) reads it.
+ * its change documents in the old shape, and counts it as kept. F-69 left
+ * them out because the updates flow then read and wrote their `status:` (F-69
+ * Out of Scope). S-1559 removed that flow and kept the rule: the tolerant
+ * reader (`legacyLog`) reads the old shape, so the kept stories need no
+ * conversion.
  */
 
 import { existsSync, readdirSync } from 'fs';

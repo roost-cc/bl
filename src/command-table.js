@@ -76,7 +76,6 @@ export const COMMANDS = {
   next: moduleMain('./next.js'),
   rank: moduleMain('./rank-cmd.js'),
   deps: moduleMain('./deps.js'),
-  updates: { ...moduleMain('./updates.js'), subcommands: true },
   inbox: { ...moduleMain('./inbox.js'), subcommands: true },
   block: { ...moduleMain('./block.js'), subcommands: true },
   sync: moduleMain('./sync.js'),

@@ -27,11 +27,6 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const EXEMPT = new Set([
   // The one writer.
   'src/transition.js',
-  // The updates flow keeps its `status:` writes (F-69 Out of Scope): `bl
-  // updates`, its run, and `bl updates vulns`, the third module of it.
-  'src/updates.js',
-  'src/updates-run.js',
-  'src/updates-vulns.js',
 ]);
 
 /** Every status word of a story, a feature or a task, the v1 words included. */
@@ -94,7 +89,7 @@ function statusWrites(source) {
   return found;
 }
 
-test('no module but transition.js (and the exempt updates modules) writes a work unit status', () => {
+test('no module but transition.js writes a work unit status', () => {
   const found = [];
   for (const file of jsFiles(join(ROOT, 'src')).sort()) {
     const rel = relative(ROOT, file);

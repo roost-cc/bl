@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, readdirSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '../../src/config.js';
 import { dirLockPath, LOCK_FILE, withLock } from '../../src/lock.js';
-import { acquireRunLock, releaseRunLock, RUN_LOCK_ID, runLockPath } from '../../src/run-lock.js';
+import { acquireRunLock, releaseRunLock, runLockPath } from '../../src/run-lock.js';
 import { takeSessionLock } from '../../src/session.js';
 import { isSessionRunning, sessionLockPath } from '../../src/story.js';
 import { git, initGitBacklog } from '../helpers/git-backlog.js';
@@ -24,7 +24,7 @@ test('every lock bl takes in a git backlog lives under .bl/ and leaves git statu
     const unitDir = mkTempDir('bl-unit-');
 
     await withLock(dir, () => {});
-    for (const id of ['F-1', RUN_LOCK_ID]) releaseRunLock(acquireRunLock(config, id).taken);
+    for (const id of ['F-1', 'F-2']) releaseRunLock(acquireRunLock(config, id).taken);
     // A unit directory's session, and a refine's in the backlog root.
     for (const where of [unitDir, dir]) {
       const lock = takeSessionLock(dir, where, 'test');
@@ -35,7 +35,7 @@ test('every lock bl takes in a git backlog lives under .bl/ and leaves git statu
     const files = [
       join(dir, LOCK_FILE),
       runLockPath(config, 'F-1'),
-      runLockPath(config, RUN_LOCK_ID),
+      runLockPath(config, 'F-2'),
       sessionLockPath(dir, unitDir),
       sessionLockPath(dir, dir),
     ];

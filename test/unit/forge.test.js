@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { runForgeOp, findChange, FORGE_OPS, BODY_READING_OP } from '../../src/config.js';
+import { runForgeOp, findChange, FORGE_OPS } from '../../src/config.js';
 import { generateAllowedTools } from '../../src/allowed-tools.js';
 import { findForgeFindings } from '../../src/validate.js';
 import { runAfterExitOnSignal } from '../helpers/exit-on-signal-script.js';
@@ -46,10 +46,7 @@ test("FORGE_OPS is the D4 op set with each op's variables", () => {
     'change.describe': ['number', 'body'],
     'change.find': ['branch'],
     'change.close': ['number', 'comment'],
-    'change.ready': ['number'],
-    'update.notes': ['number'],
   });
-  assert.equal(BODY_READING_OP, 'update.notes');
 });
 
 test('templates/forge-github.json holds exactly the D4 ops, each using only its variables', () => {
@@ -357,25 +354,32 @@ test('findForgeFindings rejects each missing required forge op', () => {
       assert.match(o[0].message, /must be a command string/);
     }
   }
-  // Only change.open: the other five are each reported.
-  assert.deepEqual(codes(check({ 'change.open': tpl['change.open'] })), Array(5).fill('forge-op'));
-  assert.deepEqual(codes(check({})), Array(6).fill('forge-op'));
+  // Only change.open: the other three are each reported.
+  assert.deepEqual(codes(check({ 'change.open': tpl['change.open'] })), Array(3).fill('forge-op'));
+  assert.deepEqual(codes(check({})), Array(4).fill('forge-op'));
 });
 
-test('validate: only update.notes may read a PR body or comments', () => {
+test('validate: no forge op may read a PR body or comments', () => {
   const readers = {
     'change.find': 'gh pr list --head {{branch}} --json number,body',
     'change.describe': 'gh pr view {{number}} && gh pr edit {{number}} --body {{body}}',
     'change.close': 'gh pr view {{number}} --comments; gh pr close {{number}}',
-    'change.ready': 'gh pr ready {{number}}',
     'change.open': 'gh pr create --title {{title}} --body {{body}} --json=comments',
-    'update.notes': 'gh pr view {{number}} --json body --jq .body',
   };
   const out = findForgeFindings({ topLevel: { forge: 'github', plugins: { github: readers } } });
   assert.deepEqual(codes(out), Array(4).fill('forge-op-reads-body'));
-  assert.ok(!out.some((f) => f.message.includes('"update.notes"')));
-  // Writing a body is not reading one.
+  assert.ok(out.every((f) => f.message.endsWith('reads a PR body or comments; no forge op may')));
+  // An op the removed bl updates used is no forge op now (S-1559).
   const tpl = JSON.parse(readFileSync(TEMPLATE, 'utf8'));
+  const notes = findForgeFindings({
+    topLevel: {
+      forge: 'github',
+      plugins: { github: { ...tpl, 'update.notes': 'gh pr view {{number}} --json body --jq .body' } },
+    },
+  });
+  assert.deepEqual(codes(notes), ['forge-op']);
+  assert.match(notes[0].message, /"update\.notes" is not a forge op/);
+  // Writing a body is not reading one.
   assert.deepEqual(
     findForgeFindings({
       topLevel: {

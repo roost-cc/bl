@@ -89,7 +89,6 @@ function repoConfig(root, repos, repoName, topLevel = TOP_LEVEL) {
       name,
       path: join(root, '..', name),
       deployable: false,
-      updateTests: [],
       plugins: {},
       overrides: plugins === null ? null : { plugins },
     };

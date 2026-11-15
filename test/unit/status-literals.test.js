@@ -34,8 +34,6 @@ const ALLOWED = {
   'src/done.js': 1,
   // `ROADMAP_STATUSES` is `roadmap.md`'s own vocabulary; it shares two words with story statuses.
   'src/roadmap.js': 1,
-  // A ternary choosing which closing status a write sets, not a set of statuses.
-  'src/updates.js': 1,
 };
 
 /**
