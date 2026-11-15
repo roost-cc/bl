@@ -3377,31 +3377,35 @@ written into `## Deferred`, not into a session block.
 
 ## Tooling
 
-All backlog operations use the `bl` CLI (or equivalent agent skills).
-Run `bl --help` for the full command list, or `bl <command> --help` for details.
+All backlog operations use the `bl` CLI (or equivalent agent skills). For the full command
+list, run `bl --help`. For the details of one command, run `bl <command> --help`.
 
-To target a different repo, use `--repo` as the first argument:
+To target a different repo, give `--repo` as the first argument:
 
 ```bash
 bl --repo ../other-repo <command> [args...]
 ```
 
-Subcommands share one argument parser (`parseArgs` in `src/config.js`). A value given as the
-next token may not begin with `-` (a lone `-` is fine), for long and short flags alike:
-`--title -m msg` leaves `--title` without a value (the subcommand reports `requires a value`)
-and parses `-m msg` as its own option. A value that starts with `-` goes inline:
-`--title=-draft`, `--points=-1`. `bl sync` has its own parser with the same rule; `bl fix` has
-its own too and refuses any following `-` token, a lone `-` included.
+Subcommands share one argument parser (`parseArgs` in `src/config.js`). For long and short
+flags alike, a value given as the next token may not begin with `-`; a lone `-` is fine. So
+`--title -m msg` leaves `--title` without a value (the subcommand reports `requires a value`),
+and the parser reads `-m msg` as its own option. Give a value that starts with `-` inline:
+`--title=-draft`, `--points=-1`. `bl sync` has its own parser with the same rule. `bl fix` has
+its own parser too, and it refuses any next token that starts with `-`, a lone `-` included.
 
 ### `bl new`
 
-Creates a new story in `stories/S<n>-<slug>/` (or, with `--component` and no C-id, a component
-in `components/C<n>-<slug>/`; with `--theme <slug>` on its own, a theme in `themes/<slug>/`;
-with `--epic --theme <slug>`, an epic in `epics/E<n>-<slug>/`) with the correct next ID,
-today's `added` date, and a scaffolded `index.md`. Always use this instead of creating story,
-component, theme or epic files manually.
+`bl new` creates a new story in `stories/S<n>-<slug>/`. With other flags, it creates another
+kind of unit file:
 
-Parallel `bl new` calls are safe — a lockfile serializes ID assignment.
+- with `--component` and no C-id, a component in `components/C<n>-<slug>/`;
+- with `--theme <slug>` on its own, a theme in `themes/<slug>/`;
+- with `--epic --theme <slug>`, an epic in `epics/E<n>-<slug>/`.
+
+Each one gets the correct next ID, today's `added` date and a scaffolded `index.md`. Always use
+`bl new` to create a story, component, theme or epic file. Do not create one by hand.
+
+Parallel `bl new` calls are safe: they take turns at ID assignment through the backlog lock.
 
 ```bash
 bl new C00 --title "My Story" --points 3
@@ -3413,24 +3417,26 @@ bl new --epic --theme backlog --title "Backlog taxonomy" # a new epic, E50 upwar
 bl new --feature --title "Taxonomy" --theme backlog --epic E62   # a feature in both
 ```
 
-A story names its component (`C<nn>`, positionally or with `--component`); its repo is the
-component's `repo` (F-49 D4), and `bl new` writes no `primary_repo` on it (F-52 D1).
-With no component, `bl new` takes the `--plugins-from` story's, else the home component of
-`--repo`, else prompts on a terminal. A `--repo` that is not the component's repo is an error.
-An old component's id (E00–E49) is refused with the hint that components are C-ids; an
-`E50`-upward id where a component is meant is a plain invalid component id. `--epic-title` is
-gone; `--epic` names an epic (see **Themes and Epics**).
+A story names its component (`C<nn>`), positionally or with `--component`. The story's repo is
+the component's `repo` (F-49 D4), and `bl new` writes no `primary_repo` on the story (F-52 D1).
+If no component is named, `bl new` takes the component of the `--plugins-from` story. Else it
+takes the home component of `--repo`, and else it prompts on a terminal. A `--repo` that is not
+the component's repo is an error. `bl new` refuses an old component's id (E00–E49), with the
+hint that components are C-ids. An id from `E50` upward, where a component is meant, is a plain
+invalid component id. `--epic-title` is gone; `--epic` names an epic (see **Themes and
+Epics**).
 
-`--plugins-from S-<n>` copies the `plugins` / `plugins-<stage>` frontmatter keys (for example
-`plugins-test: [bl-tests]`) of story S-<n> into the new story when both have the same repo
-(their components'). With no component named, the new story takes S-<n>'s component, so the keys are
-copied; a component in another repo copies nothing and warns on stderr. An unknown id fails
-before anything is written. Nothing is inherited unless the caller names a source: one repo's
-components may use different test plugins, so there is no default. `bl merge` triage passes
-`--plugins-from <merged story>` on every `bl new` so follow-ups keep the parent's component and
-test gate, and names another component only for an item that belongs elsewhere.
+`--plugins-from S-<n>` copies the `plugins` and `plugins-<stage>` frontmatter keys of story
+S-<n> (for example `plugins-test: [bl-tests]`) into the new story. It copies them when both
+stories have the same repo (their components' repo). If no component is named, the new story
+takes the component of S-<n>, so the keys are copied. If the component is in another repo,
+nothing is copied and `bl new` warns on stderr. An unknown id fails before anything is written.
+Nothing is inherited unless the caller names a source. One repo's components may use different
+test plugins, so there is no default. `bl merge` triage passes `--plugins-from <merged story>`
+on every `bl new`, so the new stories keep the parent's component and test gate. Triage names
+another component only for a story that belongs elsewhere.
 
-The body of a story can be supplied from a file:
+A file can give the body of a story:
 
 ```bash
 bl new --print-template story > /tmp/s.md
@@ -3438,18 +3444,18 @@ $EDITOR /tmp/s.md          # fill in the sections, leave {{storyId}} etc.
 bl new C00 --title "My Story" --points 3 --body-file /tmp/s.md
 ```
 
-`--print-template story` (or `story-feature`, `component`, `feature`, `change`, `theme`, `epic`) writes the raw template to stdout — fill
-it in, leave `{{storyId}}`/`{{title}}` etc. as placeholders, and `bl`
-substitutes them on ingest. HTML comments outside fenced code blocks are
-stripped automatically. Use `--body-file -` to read from stdin (in stdin
-mode `--title`, `--points`, and a component or `--repo` must be passed on the command line).
+`--print-template story` writes the raw template to stdout. The other kinds are
+`story-feature`, `component`, `feature`, `change`, `theme` and `epic`. Fill the template in,
+and leave `{{storyId}}`, `{{title}}` and the other placeholders as they are: `bl` substitutes
+them on ingest. `bl` strips HTML comments outside fenced code blocks. Use `--body-file -` to
+read the body from stdin. In stdin mode, pass `--title`, `--points` and a component or `--repo`
+on the command line.
 
 #### `--json` output
 
-Pass `--json` to get a machine-readable description of the created story.
-A single JSON object is written to stdout (schema string `bl-new-json/v3`)
-and all other output (sync output, plugin output, "Created story" lines)
-is routed to stderr.
+Pass `--json` to get a machine-readable description of the created story. `bl new` writes a
+single JSON object to stdout (schema string `bl-new-json/v3`). It sends all other output (sync
+output, plugin output, "Created story" lines) to stderr.
 
 ```bash
 bl new --json C10 --title "My Story" --points 1
@@ -3470,17 +3476,17 @@ Schema (v3; v2 also had `project`, and v1 an `epic` object in place of `componen
 
 `bl new --component --json` writes `{"schema":"bl-new-component-json/v1","id","path","repo","home","paths"}`.
 `bl new --theme --json` writes `{"schema":"bl-new-theme-json/v1","id","path"}`, and
-`bl new --epic --json` `{"schema":"bl-new-epic-json/v1","theme","id","path"}`.
+`bl new --epic --json` writes `{"schema":"bl-new-epic-json/v1","theme","id","path"}`.
 
-On error (e.g. missing `--title`), `bl new --json` exits non-zero with a
-human-readable error on stderr; stdout is empty (no partial JSON).
+On an error (for example a missing `--title`), `bl new --json` exits non-zero with a
+human-readable error on stderr. stdout is then empty: no partial JSON.
 
 #### `--from <spec.json>` (batch mode)
 
-Create N stories (and optionally a new component) in one call from a JSON spec. Use this when a
-planning session has produced a coherent set of stories that should land
-together — the spec becomes a reviewable artifact and IDs are assigned
-atomically.
+`bl new --from` creates N stories, and optionally a new component, in one call from a JSON
+spec. Use it when a planning session has written stories that belong together and should land
+together. The spec is then a file that someone can review, and `bl new` assigns all the IDs in
+one step.
 
 ```bash
 bl new --from plan.json
@@ -3495,242 +3501,257 @@ edge stated as `required_for`, and a per-story component).
 
 Highlights:
 
-- `"component": "C<nn>"` names an existing component; an object
-  `{ "repo", "title", "paths", "body_file" }` creates one (`paths` an optional array of globs; left out, the component has no `paths:` key). A story's own `"component"`
-  overrides it, and every story's repo is its component's repo.
-  An `"epic"` block is refused.
-- `stories[].id` is a **placeholder** name (e.g. `bootstrap`), not a real ID.
-- Cross-refs in `depends_on` / `required_for` use `@<placeholder>` for
-  siblings in the spec, or bare `S-<n>` for already-existing stories.
-- `depends_on` and `required_for` are input only (F-111 D5): `bl new` writes
-  each as an edge in `blockers.json` once the batch is in place (an order edge
-  when both stories are in one feature, else a run edge), and `blockers.json`
-  joins the batch's commit; no story file gets `depends_on:` or
-  `required_for:`. The plan lists the edges. An unknown bare id warns and gets
-  no edge. A refused edge undoes the batch. `bl new --depends-on` and
+- `"component": "C<nn>"` names an existing component. An object
+  `{ "repo", "title", "paths", "body_file" }` creates one. `paths` is an optional array of
+  globs; without it, the component has no `paths:` key. A story's own `"component"` overrides
+  the spec's, and the repo of every story is its component's repo. `bl new` refuses an
+  `"epic"` block.
+- `stories[].id` is a **placeholder** name (for example `bootstrap`), not a real ID.
+- In `depends_on` and `required_for`, a cross-reference is `@<placeholder>` for a sibling in the
+  spec, or a bare `S-<n>` for a story that already exists.
+- `depends_on` and `required_for` are input only (F-111 D5). When every story of the spec is in
+  place, `bl new` writes each one as an edge in `blockers.json`. The edge is an order edge when
+  both stories are in one feature, else a run edge. `blockers.json` joins the commit of the new stories, and
+  no story file gets `depends_on:` or `required_for:`. The plan lists the edges. An unknown bare
+  id warns and gets no edge. A refused edge undoes the whole call. `bl new --depends-on` and
   `--required-for` do the same for one story.
-- `body_file` paths resolve against the spec file's directory. Body files
+- `bl new` resolves the `body_file` paths against the directory of the spec file. A body file
   must not contain frontmatter.
-- Validation errors exit **2** with messages keyed by spec path
-  (`stories[2].depends_on[0]: unknown placeholder '@foo'`); IO/system
-  errors exit 1.
-- `--from` rejects single-story flags (`--title`, `--component`, `--body-file`,
-  etc.) — the spec is the source of truth.
-- Atomic: every file is staged in the ignored `<backlogRoot>/.bl/tmp/new-<pid>/`
-  and moved into place at the end (`moveIntoBacklog`, under the backlog lock).
-  On any error mid-write nothing partial remains.
-- JSON output schema is `bl-new-batch-json/v2` (a `component` object in
-  place of v1's `epic`, and each story's `component`).
+- A spec that fails the check exits **2**, with messages keyed by spec path
+  (`stories[2].depends_on[0]: unknown placeholder '@foo'`). An IO or system error exits 1.
+- `--from` refuses the single-story flags (`--title`, `--component`, `--body-file` and the
+  others): the spec is the source of truth.
+- All or nothing: `bl new` stages every file in the ignored `<backlogRoot>/.bl/tmp/new-<pid>/`,
+  and moves the files into place at the end (`moveIntoBacklog`, under the backlog lock). If an
+  error happens part way through the writes, nothing partial remains.
+- The JSON output schema is `bl-new-batch-json/v2`: a `component` object in place of v1's
+  `epic`, and the `component` of each story.
 
 ### `bl side`
 
-A change to another repo, as a story with its worktree (F-48 D1):
+`bl side` makes a change to another repo as a story with its own worktree (F-48 D1):
 
 ```bash
 bl side <repo|C-id> --from <F-n|S-n> --title <t> --points <n> [--type chore|bug|feature] [--body-file <p>] [--json]
 ```
 
-- **Component.** A C-id is used as given; a repo name takes that repo's home
-  component (`homeComponent`), as `bl new --repo` does. An unknown repo or
-  component, or a component with no `repo`, exits 1 naming it.
-- **`--from` is required**: the unit the session is working on. There is no
-  "current unit". The story records it as `found_by:` (F-48 D2).
+- **Component.** `bl side` uses a C-id as given. A repo name takes that repo's home component
+  (`homeComponent`), as `bl new --repo` does. An unknown repo or component, or a component with
+  no `repo`, exits 1 and names it.
+- **`--from` is required.** It names the work unit that the session works on; there is no
+  "current" work unit. The story records it as `found_by:` (F-48 D2).
 - **Attach rule.** The story joins a feature when `--from` is a feature that
-  `isFeatureWorkable` accepts (`approved` up to `escalated`) or a story
-  of one: `feature:` is set (which makes it the feature's, F-77 D3), its
-  worktree is on the feature's branch (`prepareFeatureRepo`, prepared before
-  the story is written) and the feature's change document gets the repo, in
-  `featureRepoOrder`. Otherwise (a draft or refined feature, a standalone
-  story) it is a standalone story on its own branch (`prepareStoryRepo`) with
-  its own `change.md`. Neither switches a main checkout.
-- **Creation.** The story is written by `bl new [<F-n>] <C-id> … --no-sync
---json`, run as a child, so story creation keeps one implementation; `bl
-side` then records `in_progress` by `side` in its log and sets `found_by:`
-  through `updateSpecFile`. `--type` defaults to `chore`; the `--body-file`
-  text (stdin for `-`) is read and checked by `bl side` first, then given to
-  `bl new` on its stdin.
-- **Commit.** One hold of the backlog lock covers `bl new`, the marks, the
-  change document and one `syncAndCommit` of the story directory and the
-  change document: `chore: add S-<n> (bl side, found by <id>)`. The `bl new`
-  child works under the parent's lock: `bl side` passes the locked descriptor
-  as the child's fd 3 and names it in `BL_LOCK_FD`, and the child adopts it
-  (`lock.js`, F-104 D5). So no other bl commits a half-made story.
-- **No dependency edge** to the `--from` story: its run edge would then hold
-  `bl run <from> --resume` (`heldBy`) until the side story merged. If the source
-  cannot merge without the side change, that is an escalation.
-- Every refusal (no target, unknown repo or component, missing or unknown
-  `--from`, missing `--title` or `--points`, a bad `--points` or `--type`, a
-  `--body-file` that cannot be read or carries frontmatter, and a new
-  worktree's guards: uncommitted changes or an unpushed local `main` in the
-  repo's main checkout, `newWorktreeGuards`) exits 1 before anything is
-  written.
-- **Failures** leave the whole unit or none of it. Before the commit, a
-  failing step (the bootstrap of an attached worktree, `bl new`, the marks,
-  the change document, the sync) undoes only what this run made: a worktree
-  or branch it created, and backlog files no commit holds, the feature's
-  change document put back as it was when the lock was taken (earlier
-  uncommitted edits included); a story some commit already holds is left as it is, and an
-  undo that fails says what it left. A worktree it created stays when a
-  committed story of the feature is in its repo (a concurrent `bl side` took
-  it up), when it has changes in it, or when its branch has commits `main`
-  lacks; a `bl side` whose prepared worktree went while it waited for the lock
-  stops before writing anything. A failed
-  commit leaves the written files for a commit by hand. A standalone story's
-  branch is named after it, so its worktree comes after the commit; when that
-  fails (the bootstrap), the committed story stays and the message says
+  `isFeatureWorkable` accepts (`approved` up to `escalated`), or a story of one. Then:
+  1. `bl side` sets `feature:`, which makes the story the feature's (F-77 D3).
+  2. The story's worktree is on the feature's branch (`prepareFeatureRepo`, prepared before the
+     story is written).
+  3. The feature's change document gets the repo, in `featureRepoOrder`.
+
+  Otherwise, the new story is a standalone story on its own branch (`prepareStoryRepo`), with
+  its own `change.md`. That is the case when `--from` is a draft or refined feature, or a
+  standalone story. Neither case switches a main checkout.
+
+- **Creation.** `bl side` runs `bl new [<F-n>] <C-id> … --no-sync --json` as a child to write
+  the story, so story creation keeps one implementation. Then `bl side` records `in_progress`
+  by `side` in the story's log, and sets `found_by:` through `updateSpecFile`. `--type`
+  defaults to `chore`. `bl side` reads and checks the `--body-file` text (stdin for `-`) first.
+  Then it gives the text to `bl new` on its stdin.
+- **Commit.** `bl side` takes the backlog lock once, and holds it for `bl new`, the marks, the
+  change document and one `syncAndCommit`. That commit holds the story directory and the change
+  document: `chore: add S-<n> (bl side, found by <id>)`. The `bl new` child works under the
+  parent's lock. `bl side` passes the locked descriptor to the child as fd 3 and names it in
+  `BL_LOCK_FD`, and the child adopts it (`lock.js`, F-104 D5). So no other bl commits a
+  half-made story.
+- **No dependency edge** to the `--from` story. Its run edge would hold
+  `bl run <from> --resume` (`heldBy`) until the side story merged. If the source cannot merge
+  without the side change, that is an escalation.
+- Every refusal exits 1 before anything is written. The refusals are:
+  - no target;
+  - an unknown repo or component;
+  - a missing or unknown `--from`;
+  - a missing `--title` or `--points`, or a bad `--points` or `--type`;
+  - a `--body-file` that cannot be read or carries frontmatter;
+  - the guards of a new worktree (`newWorktreeGuards`): uncommitted changes, or an unpushed
+    local `main`, in the repo's main checkout.
+- **Failures** leave the whole change or none of it. Before the commit, a step may fail: the
+  bootstrap of an attached worktree, `bl new`, the marks, the change document or the sync. Such
+  a failure undoes only what this `bl side` made:
+  - a worktree or branch that it created;
+  - backlog files that no commit holds;
+  - the feature's change document, which it puts back as it was when the lock was taken
+    (earlier uncommitted edits included).
+
+  It leaves a story that some commit already holds as it is. An undo that fails says what it
+  left. A worktree that it created stays in three cases:
+  - a committed story of the feature is in its repo (a concurrent `bl side` took it up);
+  - the worktree has changes in it;
+  - its branch has commits that `main` lacks.
+
+  If its prepared worktree went away while `bl side` waited for the lock, `bl side` stops before
+  it writes anything. A failed commit leaves the written files for a commit by hand. A
+  standalone story's branch is named after the story, so its worktree comes after the commit.
+  If that step (the bootstrap) fails, the committed story stays. The message then says that
   `bl implement S-<n>` prepares the worktree, not another `bl side`.
-- A change across N repos is N `bl side` calls with the same `--from`, then
-  `bl run` on each story (it takes one target, F-125 A3) and
-  `bl merge S-a S-b …`.
+
+- A change across N repos is N `bl side` calls with the same `--from`. Then run `bl run` on
+  each story (`bl run` takes one target, F-125 A3), and `bl merge S-a S-b …`.
 
 ### `bl attach`
 
-Put an existing story in a feature (S-1095, `src/attach.js`):
+`bl attach` puts an existing story in a feature (S-1095, `src/attach.js`):
 
 ```bash
 bl attach <S-n> <F-n> [--no-sync] [--json]
 ```
 
-- **Membership.** A story's `feature:` is the only statement of membership
-  (F-77 D3): `bl run` runs, the feature's page lists and `bl merge` marks done the
-  stories naming the feature. `bl attach` sets it (an empty key filled in
-  place, a missing one last), the write `bl new F-<n>` makes for a story it
-  creates, and writes nothing to the feature. It does not change `status:`,
-  `found_by:` or the story's sections.
-- **Ids** in either order, in any form `normalizeId` / `normalizeFeatureId`
-  accept; anything other than one of each exits 1.
-- **Already in the feature.** A story that already names the feature (in any
-  form `normalizeFeatureId` accepts) keeps its file, but its run edges are
-  still turned (see **Order edges**), and `blockers.json` is written and
-  committed. With no edge to turn, it is a no-op: exit 0, nothing written or
-  committed, and stderr says so. `--json` `changed` is the `feature:` line
-  alone, so it is `false` for a rerun that turned edges.
-- **Refusals** (exit 1, nothing written), checked under the backlog lock on
-  the files as they are then: a missing story or feature; a feature file
-  whose `feature_id:` is not its directory's feature; a story whose
-  component names no repo, or is absent or unknown (`storyRepoOrExit`, in
-  every feature status); a `done` or
-  `superseded` feature (`closedFeatureRefusal`, as `bl new F-<n>`); a story
-  whose `feature:` names another feature, or that is not `draft` or
-  `refined` (`storyMoveRefusal`, as `bl new --feature … S-<n>`: an
-  `in_progress` story is someone's work in flight, and this feature's merge
-  would mark it done); a run edge with `active_when` between the story and a
-  story of the feature (`joinRefusal`: an order edge takes no `active_when`);
-  and, for a started feature (`isFeatureBranched`), a
-  story whose component's repo is not in `reposForFeature`. Only those have
-  branches and worktrees, so before the feature runs a story in a new repo
-  simply joins it. The message names `bl side <repo> --from F-<n>` as the way
-  to bring a repo in; attach prepares no worktree and stays a backlog edit.
-- **Order edges.** Each run edge in `blockers.json` between the story and a
-  story of the feature becomes an order edge (`orderJoinedEdges`, F-111 D5),
-  since a run edge inside one feature would hold the feature on itself. A
-  story already in the feature gets the same turn, so a rerun finishes what a
-  failure between the two writes left. If that write fails, the story gets
-  its old text back and attach exits 1. When `blockers.json` or the story
-  cannot be put back, attach also exits 1, and the message names each file
-  left changed (`left`, `unrecovered`).
-- **Commit.** `syncAndCommit` of the story directory, with `blockers.json`
-  when an edge changed: `chore: attach S-<n> to F-<n>`. `--no-sync` writes the
-  story and `blockers.json` under the lock and commits nothing, as
-  `bl new --no-sync` does.
-- **Failure.** Attach creates nothing, so there is no repair record
-  (`feature-links.js`): the story is written through `updateSpecFile`, and a
-  write that fails part way leaves it whole.
-- **In the blocked-by-bug prompt** (`prompts/_blocked-by-bug.md`), an agent
-  whose bug already has a story runs `bl attach S-<id> <F-n> --no-sync` in
-  place of `bl new`. A repo outside the feature goes through `bl side`
-  (naming the existing story); any other refusal or failure leaves the bug
-  fixed and recorded as an operator task (`bl task … --gate none`), never a
-  second story. None of attach's refusals is an escalation.
+- **Membership.** A story's `feature:` is the only statement of membership (F-77 D3). `bl run`
+  runs the stories that name the feature, the feature's page lists them, and `bl merge` marks
+  them done. `bl attach` sets the key: it fills an empty key in place, or adds a missing one
+  last. That is the same write that `bl new F-<n>` makes for a story it creates. `bl attach`
+  writes nothing to the feature. It does not change `status:`, `found_by:` or the story's
+  sections.
+- **Ids** come in either order, in any form that `normalizeId` and `normalizeFeatureId` accept.
+  Anything other than one story id and one feature id exits 1.
+- **Already in the feature.** A story that already names the feature (in any form that
+  `normalizeFeatureId` accepts) keeps its file. But `bl attach` still turns its run edges (see
+  **Order edges**), and writes and commits `blockers.json`. With no edge to turn, it is a no-op:
+  it exits 0, writes and commits nothing, and says so on stderr. The `changed` field of `--json`
+  covers the `feature:` line alone, so it is `false` for a rerun that turned edges.
+- **Refusals** exit 1 and write nothing. `bl attach` checks them under the backlog lock, on the
+  files as they are then:
+  - a missing story or feature;
+  - a feature file whose `feature_id:` is not its directory's feature;
+  - a story whose component names no repo, or is absent or unknown (`storyRepoOrExit`, in every
+    feature status);
+  - a `done` or `superseded` feature (`closedFeatureRefusal`, as `bl new F-<n>` refuses it);
+  - a story whose `feature:` names another feature, or whose status is not `draft` or `refined`
+    (`storyMoveRefusal`, as `bl new --feature … S-<n>` refuses it). An `in_progress` story is
+    someone's work in flight, and this feature's merge would mark it done.
+  - a run edge with `active_when` between the story and a story of the feature (`joinRefusal`):
+    an order edge takes no `active_when`;
+  - for a started feature (`isFeatureBranched`), a story whose component's repo is not in
+    `reposForFeature`. Only a started feature has branches and worktrees, so before the feature
+    runs, a story in a new repo joins it.
+
+  The message of the last refusal names `bl side <repo> --from F-<n>` as the way to bring a
+  repo in. `bl attach` prepares no worktree and stays a backlog edit.
+
+- **Order edges.** Each run edge in `blockers.json` between the story and a story of the
+  feature becomes an order edge (`orderJoinedEdges`, F-111 D5). A run edge inside one feature
+  would hold the feature on itself. A story already in the feature gets the same turn, so a
+  rerun finishes what a failure between the two writes left. If the write of `blockers.json`
+  fails, the story gets its old text back and `bl attach` exits 1. If `blockers.json` or the
+  story cannot be put back, `bl attach` also exits 1, and the message names each file left
+  changed (`left`, `unrecovered`).
+- **Commit.** `bl attach` runs `syncAndCommit` on the story directory, with `blockers.json`
+  when an edge changed: `chore: attach S-<n> to F-<n>`. With `--no-sync`, it writes the story
+  and `blockers.json` under the lock and commits nothing, as `bl new --no-sync` does.
+- **Failure.** `bl attach` creates nothing, so it has no repair record (`feature-links.js`). It
+  writes the story through `updateSpecFile`, and a write that fails part way leaves the story
+  whole.
+- **In the blocked-by-bug prompt** (`prompts/_blocked-by-bug.md`), an agent whose bug already
+  has a story runs `bl attach S-<id> <F-n> --no-sync` in place of `bl new`. If the story's repo
+  is outside the feature, the agent uses `bl side` and names the existing story. Any other
+  refusal or failure leaves the bug fixed and recorded as an operator task
+  (`bl task … --gate none`), never as a second story. No refusal of `bl attach` is an
+  escalation.
 
 ### `bl batch`
 
-Build a story batch (F-125 D1, `src/batch-cmd.js`):
+`bl batch` builds a story batch (F-125 D1, `src/batch-cmd.js`):
 
 ```bash
 bl batch <S-n> <S-n>… --title <t> [-A <agent>] [--model <m>]
 ```
 
-- **Refusals** (exit 1, nothing written), checked once before the backlog
-  lock and again under it: fewer than two stories, no `--title`, a story not
-  found, not refined and unstarted, in a feature, in a batch, or held at its
-  `run` gate by an edge whose blocker is not one of the stories
-  (`heldBy`); and a run edge with `active_when` between two of them
-  (`joinRefusal`). Each line names the story and the reason
-  (`batchRefusals`). Then bl takes each story's work unit lock and holds it
-  to its end; a story that another process holds refuses the batch, with
-  nothing written.
-- **Writes** under the backlog lock: `batches/B<n>-<slug>/index.md` from
-  `templates/batch.md`, with the flow's initial `batch` status (`approved`
-  by `new`); `batch: B-<n>` on each story; and each run edge between two of
-  them turned into an order edge (`orderJoinedEdges`). A repair record
-  (`.bl/run/B-<n>.links.json`, `feature-links.js`, as `bl new --feature`
-  writes) holds each story's bytes before the first write. A failed write
-  restores the stories and removes the directory (`settleFailedWrite`). When
-  a restore fails, the record stays, and the next bl command rolls the batch
-  back: a batch record settles as complete only when every story names the
-  batch and no run edge is left between two of them. Then `syncAndCommit`
-  commits them as `chore: add B-<n>`. A `flow.json` without the `batch` type
-  refuses with the `FlowError` that names it.
-- **The cross-story pass.** One headless session on `prompts/batch-build.md`
-  (mode `refine`, in the backlog root), under the work unit locks of the
-  batch and its stories (the stories' taken again, one depth deeper). It
-  carries `{{executionInputs}}`. It may correct the
-  stories' Implementation Plans and add order edges between them with
-  `bl block add` (which commits `blockers.json`), and nothing else. bl then
-  commits what changed in the batch's and the stories' directories
-  (`commitChangedSince`, `chore: B-<n> cross-story pass`). A session that
-  fails leaves the batch built and exits 1.
-- **stdout** is the new batch's `index.md`, relative to the backlog root.
+- **Refusals** exit 1 and write nothing. `bl batch` checks them once before it takes the
+  backlog lock, and again under the lock:
+  - fewer than two stories, or no `--title`;
+  - a story that is not found, is not both refined and unstarted, is in a feature, or is in a
+    story batch;
+  - a story held at its `run` gate by an edge whose blocker is not one of the stories
+    (`heldBy`);
+  - a run edge with `active_when` between two of the stories (`joinRefusal`).
+
+  Each line names the story and the reason (`batchRefusals`). Then bl takes the work unit lock
+  of each story, and holds it to the end of `bl batch`. If another process holds the lock of a
+  story, `bl batch` refuses, with nothing written.
+
+- **Writes**, under the backlog lock:
+  - `batches/B<n>-<slug>/index.md` from `templates/batch.md`, with the flow's initial `batch`
+    status (`approved` by `new`);
+  - `batch: B-<n>` on each story;
+  - each run edge between two of the stories, turned into an order edge (`orderJoinedEdges`).
+
+  Before the first write, a repair record holds the bytes of each story
+  (`.bl/run/B-<n>.links.json`, `feature-links.js`, as `bl new --feature` writes it). If a write
+  fails, `bl batch` restores the stories and removes the directory (`settleFailedWrite`). If a
+  restore fails, the record stays, and the next bl command rolls the story batch back. The record
+  settles as complete only when every story names the story batch, and no run edge is left
+  between two of the stories. After the writes, `syncAndCommit` commits them as
+  `chore: add B-<n>`. A `flow.json` without the `batch` type refuses with the `FlowError` that
+  names it.
+
+- **The cross-story pass.** bl runs one headless session on `prompts/batch-build.md` (mode
+  `refine`, in the backlog root). The session runs under the work unit locks of the story batch
+  and its stories; bl takes the stories' locks again, one depth deeper. The prompt carries
+  `{{executionInputs}}`. The session may correct the stories' Implementation Plans, and add
+  order edges between the stories with `bl block add` (which commits `blockers.json`). It may
+  do nothing else. bl then commits what changed in the directories of the story batch and its
+  stories (`commitChangedSince`, `chore: B-<n> cross-story pass`). If the session fails, the
+  story batch stays built and `bl batch` exits 1.
+- **stdout** is the path of the new story batch's `index.md`, relative to the backlog root.
 
 ### `bl move`
 
-Move backlog stories to another component (F-61 D5, `src/move.js`):
+`bl move` moves backlog stories to another component (F-61 D5, `src/move.js`):
 
 ```bash
 bl move <S-n>… <C-n> [--no-sync] [--json]
 ```
 
-- **What moves.** A story's component is its `component:` key, and its one
-  repo is that component's (F-52 D1), so re-homing a mis-filed story is that
-  key and nothing else. `bl move` rewrites it through `updateSpecFile` for
-  every story named; the story's status, feature and sections stay. A move to
-  a component in another repo moves the story to that repo, which is allowed
-  for any story nothing has branched.
-- **Ids** in any order, in any form `normalizeId` / `normalizeComponentId`
-  accept: exactly one component and at least one story (a repeat counts
-  once); anything else exits 1.
-- **Unchanged.** A story already in the component is left alone, whatever
-  its status, and stderr says so. With every story unchanged nothing is
-  written or committed.
-- **Refusals** (exit 1, nothing written, every offending story listed),
-  checked under the backlog lock on the files as they are then, before any
-  write: an unknown component, or one that names no repo; an unknown story;
-  a story that is not `draft` or `refined` (an `in_progress` story has a
-  worktree in its current repo); and a story whose repo would change while
-  its feature has started (`isFeatureBranched`: that feature's branches span a
-  fixed set of repos, as `bl attach` refuses a story in another repo). A
-  story is in the feature its `feature:` names (F-77 D3). A move within the
-  repo is fine there. A story whose
-  component is unknown is moved, not refused: `bl move` is how it is fixed.
-- **Commit.** `syncAndCommit` of the moved stories' directories:
-  `chore: move S-<a>, S-<b> to C<n>`. `--no-sync` writes the stories under
-  the lock and commits nothing.
-- **Failure.** When a write fails, the stories written before it get their
-  `component:` from before the move back through `updateSpecFile`, read
-  under the spec lock, so what another writer saved since (a token total, a
-  status, the body) stays, and the command exits 1 naming the failed story
-  and what was restored (or, when a restore fails too, which stories to set
-  back by hand).
-  `BL_INTERNAL_TEST_FAIL_ON_LINK=<S-n>` fails that story's write.
-- **`--json`** prints `{ schema: "bl-move-json/v1", component, moved,
-unchanged }`: the canonical component id and the story ids of each kind.
+- **What moves.** A story's component is its `component:` key, and its one repo is that
+  component's (F-52 D1). So to re-home a mis-filed story, `bl move` changes that key and
+  nothing else. It rewrites the key through `updateSpecFile` for every story named. The story's
+  status, feature and sections stay. A move to a component in another repo moves the story to
+  that repo. bl allows that for any story that nothing has branched.
+- **Ids** come in any order, in any form that `normalizeId` and `normalizeComponentId` accept.
+  There must be exactly one component and at least one story; a repeated story counts once.
+  Anything else exits 1.
+- **Unchanged.** `bl move` leaves a story that is already in the component alone, whatever its
+  status, and says so on stderr. If every story is unchanged, nothing is written or committed.
+- **Refusals** exit 1, write nothing and list every story at fault. `bl move` checks them under
+  the backlog lock, on the files as they are then, before any write:
+  - an unknown component, or one that names no repo;
+  - an unknown story;
+  - a story that is not `draft` or `refined` (an `in_progress` story has a worktree in its
+    current repo);
+  - a story whose repo would change while its feature has started (`isFeatureBranched`). The
+    branches of that feature span a fixed list of repos. `bl attach` refuses a story in another
+    repo for the same reason.
+
+  A story is in the feature that its `feature:` names (F-77 D3). A move within the repo is
+  allowed in a started feature. `bl move` moves a story whose component is unknown, and does not
+  refuse it: `bl move` is how that story is fixed.
+
+- **Commit.** `bl move` runs `syncAndCommit` on the directories of the moved stories:
+  `chore: move S-<a>, S-<b> to C<n>`. With `--no-sync`, it writes the stories under the lock
+  and commits nothing.
+- **Failure.** If a write fails, each story written before it gets back its `component:` from
+  before the move, through `updateSpecFile`. `updateSpecFile` reads the story under the spec
+  lock, so what another writer saved since (a token total, a status, the body) stays. The
+  command exits 1, and names the failed story and what it restored. If a restore fails too, the
+  message names the stories to set back by hand. `BL_INTERNAL_TEST_FAIL_ON_LINK=<S-n>` fails the
+  write of that story.
+- **`--json`** prints `{ schema: "bl-move-json/v1", component, moved, unchanged }`: the
+  canonical component id, and the story ids of each kind.
 
 ### `bl task`
 
-A task is an action with an owner and no branch (F-65 D1, `src/task.js`): run a migration
-between the run and the merge, re-mint a key, reinstall something on every machine. It is not
-a story: no repo, branch, change document, points or review.
+A task is an action with an owner and no branch (F-65 D1, `src/task.js`). Examples are a
+migration to run between `bl run` and `bl merge`, a key to re-mint, and something to reinstall
+on every machine. A task is not a story: it has no repo, branch, change document, points or
+review.
 
 ```bash
 bl task F-53 --gate merge --title "Run the tasks migration" --body-file b.md  # → T-7
@@ -3740,82 +3761,108 @@ bl task list [--open] [F-53]     # T-7  F-53  draft  Run the tasks migration
 bl task done T-7 "ran it, 13 tasks filed"                                     # operator only
 ```
 
-- **The file.** `tasks/T<n>-<slug>.md`, one flat file per task, never moved. YAML frontmatter
-  (`parseFrontmatter` / `serializeFrontmatter`), keys in this order: `task_id` (`T-<n>`),
-  `title`, `unit` (the `F-<n>` or `S-<n>` it belongs to), `owner` (`operator`, the only one so
-  far), `status` (`draft` or `done`, `flow.json`'s `task` type), `added`, and at done `done`
-  (the date) and `note` (what was done, or why it is moot). No `points`, no `gate`. The body
-  starts `# T-<n> · <title>` and holds the task: what to do, the exact commands as pasteable
-  blocks with their expected output, and why it is a task and not code.
-- **Ids** come from a global counter like stories': one past the highest `T<n>` file or
-  `task_id` (`bl next-id task`). `bl task` takes the next one under the backlog lock, so two
+- **The file.** `tasks/T<n>-<slug>.md` is one flat file per task, and it never moves. Its YAML
+  frontmatter (`parseFrontmatter` / `serializeFrontmatter`) has these keys, in this order:
+  - `task_id` (`T-<n>`);
+  - `title`;
+  - `unit`: the `F-<n>` or `S-<n>` that the task belongs to;
+  - `owner`: `operator`, the only value so far;
+  - `status`: `draft` or `done`, the `task` type of `flow.json`;
+  - `added`;
+  - when the task is done, `done` (the date) and `note` (what was done, or why the task is
+    moot).
+
+  A task has no `points` and no `gate`. The body starts `# T-<n> · <title>` and holds the task.
+  It says what to do, with the exact commands as pasteable blocks and their expected output. It
+  also says why it is a task and not code.
+
+- **Ids** come from a global counter, as story ids do: one past the highest `T<n>` file or
+  `task_id` (`bl next-id task`). `bl task` takes the next id under the backlog lock, so two
   calls in a row get consecutive ids.
 - **`bl task <F-n|B-n|S-n> --title <t> --gate <merge|next|none> [--body-file <path>|-] [--json]`**
-  checks the unit exists, takes the backlog lock, writes the file (the log's first entry,
-  `draft` by `new`; `owner: operator`; `added: <today>`), then the task's edge in `blockers.json` (below), and
-  commits the task file and `blockers.json` (with `.gitattributes` while HEAD lacks the merge
-  driver's line) in one commit: `chore: task T-<n> (<unit>)`. The unit's file is not
-  written: its `## Tasks` table is rendered when the page is read. stdout is `T-<n>`; `--json` prints
-  `{ schema: "bl-task-json/v1", id, path, unit, edges }`. An unknown unit, a missing `--title`,
-  a missing `--gate` or one outside the three, a `Decide:` title with a gate other than `merge`,
-  an unreadable body file or one with frontmatter is one `bl task: <reason>` line on stderr and exit 1, with nothing written. A
-  failure before the commit puts the files back.
-- **`--gate`** is a shorthand for the task's edge (F-65 D2), the one `bl block add` would file
-  and checked the same way (`writeEdge` in `src/block.js`, which `bl block add` shares:
-  `edgeProblems`, a duplicate, `wouldCycle`, the merge driver readied first). The holds are
-  F-66's checks (`mergeGates`, `dispatch`); `bl task` adds none.
+  does these steps:
+  1. It checks that the work unit exists, and takes the backlog lock.
+  2. It writes the task file: the log's first entry (`draft` by `new`), `owner: operator` and
+     `added: <today>`.
+  3. It writes the task's edge in `blockers.json` (see `--gate` below).
+  4. It commits the task file and `blockers.json` in one commit:
+     `chore: task T-<n> (<unit>)`. While HEAD lacks the line of the merge driver, the commit
+     also holds `.gitattributes`.
+
+  `bl task` does not write the work unit's file: bl renders its `## Tasks` table when the page
+  is read. stdout is `T-<n>`. `--json` prints
+  `{ schema: "bl-task-json/v1", id, path, unit, edges }`. Each of these errors prints one
+  `bl task: <reason>` line on stderr, exits 1 and writes nothing:
+  - an unknown work unit;
+  - a missing `--title`;
+  - a missing `--gate`, or one outside the three;
+  - a `Decide:` title with a gate other than `merge`;
+  - a body file that cannot be read, or that has frontmatter.
+
+  A failure before the commit puts the files back.
+
+- **`--gate`** is a shorthand for the task's edge (F-65 D2). It is the edge that `bl block add`
+  would file, and bl checks it the same way. Both use `writeEdge` in `src/block.js`
+  (`edgeProblems`, a duplicate, `wouldCycle`, the merge driver readied first). The holds are F-66's checks (`mergeGates`, `dispatch`); `bl task` adds none.
 
   - `merge`: `{ blocker: T-<n>, gate: done, unit: <unit>, until: done }`. `bl merge <unit>`
-    refuses until `bl task done`: a step between the run and the merge (F-53's migration).
-  - `next`: `{ blocker: T-<n>, gate: in_progress, unit: "*", until: done, active_when: … }` with
-    `active_when: { unit: <unit>, status: done }`. Nothing while the unit is open; once it is done, `bl run` and
-    `bl implement` of every unit refuse until `bl task done`. The `task` type has no
-    `in_progress`, so the wildcard never holds a task and is no `blockers-cycle`.
-  - `none`: no edge. Listed in the inbox, holds nothing: a dated reminder, or a fact the
-    operator must see once; `bl task done` is the acknowledgement.
+    refuses until `bl task done`. Use it for a step between `bl run` and `bl merge` (F-53's
+    migration).
+  - `next`: `{ blocker: T-<n>, gate: in_progress, unit: "*", until: done, active_when: … }`,
+    with `active_when: { unit: <unit>, status: done }`. It holds nothing until the work unit
+    is done. Then `bl run` and `bl implement` of every work unit refuse until `bl task done`.
+    The `task` type has no `in_progress`, so the wildcard never holds a task and is no
+    `blockers-cycle`.
+  - `none`: no edge. The inbox lists the task, and it holds nothing. Use it for a dated
+    reminder, or for a fact the operator must see once; `bl task done` is the acknowledgement.
 
-  An edge `writeEdge` refuses is `bl block add`'s reason on a `bl task: <reason>` line, exit 1,
-  with the task file removed and nothing committed. Any other hold (on another unit, at another
-  gate) is `bl block add T-<n> …`. There is no override flag: `bl task done` with a note saying
-  what was done, or why the hold is moot, is the record.
+  If `writeEdge` refuses an edge, `bl task` prints the reason that `bl block add` gives, on a
+  `bl task: <reason>` line, and exits 1. It removes the task file and commits nothing. For any
+  other hold (on another work unit, at another gate), use `bl block add T-<n> …`. There is no
+  override flag. The record is `bl task done` with a note that says what was done, or why the
+  hold is moot.
 
 - **A decision task** has a title that starts with `Decide:` (`DECISION_PREFIX` in
-  `src/task.js`, case as written) and takes `--gate merge` only, so no unit merges past an open
-  decision (S-1403); `bl task` refuses `none` and `next` for it.
+  `src/task.js`, case as written). It takes `--gate merge` only, so no work unit merges past a
+  decision task that is not done (S-1403). `bl task` refuses `none` and `next` for it.
 
-- **`bl task done <T-n> [note]`** records `done` by `done` (which sets `done: <today>`) and `note:`, syncs and
-  commits `chore: task T-<n> done[: <note>]`; a task already done refuses. Its edges stay in
-  `blockers.json`, met. It is the operator's: `MODE_DENY` in `src/allowed-tools.js` denies
-  `bl task done:*` in every mode (generator v15), beside `bl block remove:*`, since closing a
-  task lifts the holds its edges make. `bl task` and `bl task list` stay allowed through `bl:*`.
+- **`bl task done <T-n> [note]`** records `done` by `done`, which sets `done: <today>`, and
+  sets `note:`. Then it syncs and commits `chore: task T-<n> done[: <note>]`. It refuses a task
+  that is already done. The task's edges stay in `blockers.json`, met. The command is the
+  operator's: `MODE_DENY` in `src/allowed-tools.js` denies `bl task done:*` in every mode
+  (generator v15), beside `bl block remove:*`. The reason is that a task marked done lifts the
+  holds that its edges make. `bl task` and `bl task list` stay allowed through `bl:*`.
 
-- **`bl task list [--open] [<F-n|S-n>]`** prints one line per task,
-  `T-<n>  <unit>  <status>[ <done date>]  <title>`, in id order. `--open` keeps the tasks that
-  are not `done`.
-- **A unit lists no tasks.** A unit's page renders a `## Tasks` table (ID, Title, Holds,
-  Status, Done) from the task files' `unit:` when it is read (`renderPage`), after `## Stories`
-  in a feature and after `## Dependencies` in a story, only when the unit has a task; nothing
-  writes it into the unit's file. Holds names each edge the task is the blocker of in
-  `blockers.json` by the verbs whose nominal path enters its gate's status (`holdsText`,
-  `Flow.nominalPath`, less `UNHELD_VERBS`), for example `bl merge F-3` or
-  `bl run, bl implement (every unit) once F-54 is done`; `none` when it has none. A
-  `bl block add T-<n> …` shows there at the next read.
-- **A task is a unit in the graph** (`unitIndex`): it can be the `blocker` of an edge or its
-  `active_when` unit (`bl block add T-7 --gate done --unit F-53 --until done`). A hold on a
-  task can gate only a task status, `draft` or `done`; any other gate is `blockers-gate`.
-- `bl task` and `bl task done` pull the backlog first (`commandPullsBacklog`); `bl task list`
+- **`bl task list [--open] [<F-n|S-n>]`** prints one line per task, in id order:
+  `T-<n>  <unit>  <status>[ <done date>]  <title>`. `--open` keeps the tasks that are not
+  `done`.
+- **A work unit lists no tasks.** When a work unit's page is read, bl renders a `## Tasks`
+  table from the `unit:` of the task files (`renderPage`). Its columns are ID, Title, Holds,
+  Status and Done. The
+  table comes after `## Stories` in a feature and after `## Dependencies` in a story. It is
+  there only when the work unit has a task, and nothing writes it into the work unit's file.
+  The Holds column names each edge in `blockers.json` that the task is the blocker of. It names
+  the edge by the verbs whose nominal path enters the status of the edge's gate (`holdsText`,
+  `Flow.nominalPath`, less `UNHELD_VERBS`). Examples are `bl merge F-3` and
+  `bl run, bl implement (every unit) once F-54 is done`. The column says `none` when the task
+  is the blocker of no edge. A `bl block add T-<n> …` shows there at the next read.
+- **A task is a node in the graph** (`unitIndex`). It can be the `blocker` of an edge, or the
+  `unit` of its `active_when` (`bl block add T-7 --gate done --unit F-53 --until done`). A
+  hold on a task can gate only a task status, `draft` or `done`. Any other gate is a
+  `blockers-gate` problem.
+- `bl task` and `bl task done` pull the backlog first (`commandPullsBacklog`). `bl task list`
   does not.
-- `bl validate` checks the files: `task-unit` and `task-field` (see **`bl validate`**).
+- `bl validate` checks the task files: `task-unit` and `task-field` (see **`bl validate`**).
 
 ### `bl next-id`
 
-Print the next available story, component, epic or task ID(s) to stdout. Pure
-query — no reservation, no lockfile. Concurrent callers may receive the same
-answer; the reservation points are `bl new` and `bl task`, which hold the
-backlog lock during ID assignment.
+`bl next-id` prints the next available story, component, epic or task ID or IDs to stdout. It
+is a pure query: it reserves nothing and takes no lock file. Concurrent callers may get the same
+answer. The reservation points are `bl new` and `bl task`, which hold the backlog lock while
+they assign the ID.
 
-Story, component, epic and task IDs are globally unique across the backlog repo.
-Epics are numbered from E50 (E00–E49 were components).
+Story, component, epic and task IDs are globally unique across the backlog repo. Epics are
+numbered from E50 (E00–E49 were components).
 
 ```bash
 bl next-id story                 # → S-391
@@ -3826,23 +3873,25 @@ bl next-id epic                  # → E69
 bl next-id task                  # → T-14
 ```
 
-`--count` defaults to 1 and must be a positive integer ≤ 1000. The first
+`--count` defaults to 1, and it must be a positive integer of at most 1000. The first
 positional argument must be exactly `story`, `component`, `epic` or `task`. `bl next-id` does
 not append to the activity log.
 
 ### `bl refine`
 
-Launches an agent session **on main** to refine and plan a story:
+`bl refine` launches an agent session **on main** to refine and plan a story. Before the session,
+it takes the work unit locks of its targets. If another bl process holds the lock of a target,
+`bl refine` refuses (F-122 D4). The session:
 
-- Explores the codebase to understand scope
-- Refines acceptance criteria and resolves ambiguities
-- Creates a detailed execution plan with concrete steps
-- Can create child stories via `bl new` if the story should be split
-- Ends by writing its outcome file (F-68 D1); when the session ends, `bl refine` sets the
-  status from it (see **Refine outcomes** under **Session outcomes**), then commits and pushes
-  what the session left uncommitted in its work units' directories
-- Takes the work unit locks of its targets first; a target another bl process holds refuses the
-  refine (F-122 D4)
+- explores the codebase to understand the scope;
+- refines the acceptance criteria and resolves ambiguities;
+- creates a detailed execution plan with concrete steps;
+- can create child stories with `bl new` if the story should be split;
+- ends when it writes its outcome file (F-68 D1).
+
+When the session ends, `bl refine` sets the status from the outcome file (see **Refine
+outcomes** under **Session outcomes**). Then it commits and pushes what the session left
+uncommitted in the directories of its work units' `index.md` files.
 
 ```bash
 bl refine S34
@@ -3851,12 +3900,13 @@ bl refine -t S34              # detach into a new tmux window
 
 ### `bl implement`
 
-Starts from what `flow.json`'s `implement` row allows (`draft`, `refined`, `in_progress`,
-`escalated`), or, for a story whose review position is `fixing`, with the `fix` session
-(`implementVerbOf`, `startOf`), which records `fixing` first. Records `in_progress` by
-`implement` before the session (F-69 D3), creates a git worktree and launches an agent session to
-implement the story. Refused while an unmet `blockers.json` edge holds the
-story at its `run` gate (F-66 D3; see "The gate checks" above), naming each blocker.
+`bl implement` creates a git worktree and launches an agent session to implement the story.
+Before the session, it records `in_progress` by `implement` (F-69 D3). It starts from the
+statuses that the `implement` row of `flow.json` allows: `draft`, `refined`, `in_progress` and
+`escalated`. For a story whose review position is `fixing`, it starts the `fix` session instead
+(`implementVerbOf`, `startOf`), and that session records `fixing` first. If an unmet
+`blockers.json` edge holds the story at its `run` gate, `bl implement` refuses and names each
+blocker (F-66 D3; see "The gate checks" above).
 
 ```bash
 bl implement S34
@@ -3864,210 +3914,250 @@ bl implement S34
 
 ### `bl run` for a story
 
-`bl run S34` takes a `refined` or `in_progress` story with no `feature:`
-through the feature loop (`runFeature` in `feature-run.js`), nothing copied:
-`storyUnit` (`unit.js`) gives the story the field names the loop reads from
-a feature, with `kind: "story"`, and
-`prepareStoryRun` (`workon.js`) makes the story's own worktree and branch (its
-directory name, lower case) and returns `prepareFeatureWorktree`'s shape with
-`ordered: [story]` and the PR title `S34: <title>`. The implement step uses
-`prompts/story-run.md`; the gate, self-review, review passes, verifier and
-fix rounds use the feature prompts, which read `{{unitKind}}` and
-`{{premise}}`. The test gate layers the story's
-component under the story file's `plugins-test`.
+`bl run S34` takes a `refined` or `in_progress` story with no `feature:` through the same code as
+a feature (`runFeature` in `feature-run.js`). Nothing is copied:
 
-The first run writes `review_rounds_max` (2, or `--max-rounds`) to the story
-frontmatter and the branch and PR to the story's change document (its round
-is its log's); run state is `.bl/run/S-34.json`. An escalation goes to the story's
-`## Escalation`, and its log records `escalated` (F-69 D1): the open section is what blocks
-`bl run` and `bl merge`. If the stored-log check refuses the `escalated` entry (S-1580), the
-log has no such entry; a `warning` step `escalate` in the run state says so. `bl status S34`
-prints the status, branch, PR, review state and
-round, the last three transitions, the escalation and the run state. `--plan`, `--resume`, `--interactive` and
-`--max-rounds` behave as for a feature. A story's run computes and stores its
-execution plan too, a plan of one story, as `plan.yaml` in the story's
-directory (F-125 A5; see **The execution plan** above), so `--resume` and
-`--plan` take one code path for every unit. A story with `feature:` set is
-refused: run its feature. Like `bl run F-n` (whose gate also checks each of
-its stories), it is refused while an unmet `blockers.json` edge holds it at
-its `run` gate (F-66 D3; see "The gate checks" above), one line per edge
-naming the blocker, its status and `until`.
+- `storyUnit` (`unit.js`) gives the story the field names that `bl run` reads from a feature,
+  with `kind: "story"`.
+- `prepareStoryRun` (`workon.js`) makes the story's own worktree and branch (its directory name,
+  in lower case). It returns the shape of `prepareFeatureWorktree`, with `ordered: [story]` and
+  the PR title `S34: <title>`.
+- The implement step uses `prompts/story-run.md`. The gate, the self-review, the review passes,
+  the verifier and the fix rounds use the feature prompts, which read `{{unitKind}}` and
+  `{{premise}}`.
+- The test gate layers the story's component under the `plugins-test` of the story file.
 
-**A branch with no commits (S-1437).** Some stories change only the backlog.
-After the self-review passes, a story run whose branch has no commits ahead of
-main (`branchEmpty`: `git rev-list --count main..HEAD` is 0 in the worktree)
-and that has no pull request yet runs no push, no `change.open` and no review.
-The guard is the self-review: it passes such a branch only when each acceptance
-item already holds where the work landed. The run history gets a `pr` and a
-`review` entry with the note "skipped: no commits, nothing to review", the log
-records `in_review` and then `ready_for_merge` by `review`, and the run ends
-`clean`. A run resumed after a `pr` step that opened no pull request (the
-S-1379 escalation) takes the same path. The path is taken only by a story
-with no Review Log session, at a status the `review` verb starts from
-(flow.json). The run records the history entries after the log is at
-`ready_for_merge`, and escalates when the log could not record it. A resumed
-story that this path already took to `ready_for_merge` ends `clean` again and
-records nothing. A failed self-review escalates as
-always, a scripted story keeps its own path, and a feature run (`bl run F-n`)
-never takes this path.
+The first `bl run` writes `review_rounds_max` (2, or `--max-rounds`) to the story frontmatter. It
+writes the branch and the PR to the story's change document; the round of the story is its
+log's. The run state is `.bl/run/S-34.json`.
 
-**One repo per story (F-52 D1, D2).** A story's repo is its component's
-(`unitRepo`), and `reposForStory` returns that one repo; `primary_repo` and
-`secondary_repos` on a story are never read, and a story whose component has
-no `repo` makes `bl implement` / `bl run` / `bl merge` exit 1 naming the
-component (`storyRepoOrExit`, `story.js`). `bl implement`, `bl review`,
-`bl merge` and `bl run` refuse `--repo` (`-r`) on a story as an unknown option
-(`refuseStoryRepo`). Work in another repo is another story in a component of
-that repo, linked by an edge in `blockers.json` (`prompts/workon.md`, `story-run.md`,
-`workon-review.md`); in a feature, a repo no story of the feature is in is a
-missing story, which the agent escalates (`feature-story.md`,
-`feature-workon.md`).
+An escalation goes to the story's `## Escalation`, and the story's log records `escalated`
+(F-69 D1). The section, while it holds other text than `None.`, is what blocks `bl run` and
+`bl merge`. If the stored-log check refuses the `escalated` entry (S-1580), the log has no such
+entry. Then a `warning` step `escalate` in the run state says so.
 
-**Worktree preparation (S-862).** Every story worktree comes through one
-function, `prepareStoryRepo` (`workon.js`): the worktree on the story branch
-at `<root>/<branch>/<repo>` (`worktreePathFor`) with `ensureWorktree`'s guards, that repo's
-bootstrap (`installDeps` limited to the repo), and the `workon` stage plugins
-on a new worktree. It builds no prompt variables and launches no session;
-`bl implement` calls it and then launches its interactive session.
-`prepareStoryRun` (`bl run S-n`) calls it with `strict`: a guard refusal,
-unknown repo, failed bootstrap or failed `workon` plugin exits naming the
-repo, before any agent starts; its `otherWorktrees` is always empty. A
-headless session cannot make a worktree the `bl` way, so `bl run F-n` and
-`bl implement F-n` prepare every repo of the feature, strictly and in the
-feature's repo order (`featureRepoOrder`, F-52 D3), before the agent starts
-(`prepareFeatureWorktree`, through `prepareFeatureRepo`), and start the
-session in the lead repo's worktree (`targetRepoName`; the others are
-`otherWorktrees`). A story added after approval gets its worktree on the next
-run or `--resume` with no edit to the feature (or at once from `bl side`). A feature with no stories exits
-1 asking for them to be cut, and a story whose component has no repo, or a
-repo the config does not know, stops the prep naming the story.
-`bl implement F-n` and `bl run F-n` refuse `--repo` as an unknown option
-(`verbs.js`); `bl review F-n --repo <r>` still narrows a review to one PR.
+`bl status S34` prints the status, branch, PR, review state and round, the last three
+transitions, the escalation and the run state. `--plan`, `--resume`, `--interactive` and
+`--max-rounds` behave as for a feature.
 
-**Repos added during a run (F-48 D3).** After every agent session (each
-story and its retry, fix-tests, the self-review, each review round, the fix
-and its self-review) `bl run F-n` calls `refreshRepos` (`feature-run.js`):
-it re-reads the unit's stories (every story whose `feature:`, or a batch's
-`batch:`, names it), adds any new story to the stored execution plan
-(`replan` on `plan.yaml` as the session left it, so the session's own
-`changes` entries stay) after the stories the run has taken, puts those not
-taken yet in dependency order again (on the current `readEdges`, as at the
-start), writes and commits `plan.yaml`, and makes `prep.ordered` follow its
-`order`, so the implement loop reaches each after its prerequisites
-and skips it when its criteria are checked; and for each repo of
-`featureRepoOrder` the run has not
-prepared, takes that repo's worktree on the branch (`git worktree list` in its
-main checkout, where `bl side` put it), appends it to `prep.otherWorktrees`,
-adds its `repos:` entry to the change document, refreshes
-`{{otherWorktrees}}`, and records one `step: "repos"` history entry naming the
-repos and stories. From then on the gate, the repo guard, the push, the PR
-step and the review cover the repo: every push covers each prepared repo
-with commits ahead of main, and each such repo without a PR in the run gets
-one through `change.open` (or `change.find`), recorded on its `repos:` entry
-and passed to every later review round as `otherRepos`. Each review round
-covers and snapshots every prepared repo, PR or not (`reviewOtherRepos`).
-The lead repo and its worktree never change. A new repo with no worktree on
-the branch escalates, naming the story and the repo, before the gate;
-`--resume` prepares it. A story list the refresh cannot resolve (it does not
-parse, a story is missing, or a new story fails the checks
-`prepareFeatureWorktree` makes at start) escalates too, as does a change
-document that cannot name a new repo. After a session that is not an
-implementation, `rescope` implements any story it added; the self-review
-gates again when any repo moved or the scope grew; a round that ends
-`ready_for_merge` after adding scope is gated and reviewed again (in the closing
-round it escalates); and a resumed `ready_for_merge` run finishes without a round
-only when nothing was implemented and the last round's `reviewedScope`
-covers every current story and repo. `bl run S-n` has one repo and skips the
-refresh.
+`bl run` for a story computes and stores an execution plan too, a plan of one story. It stores
+it as `plan.yaml` in the story's directory (F-125 A5; see **The execution plan** above). So
+`--resume`
+and `--plan` take one code path for every work unit. `bl run` refuses a story with `feature:`
+set: run its feature. Like `bl run F-n`, it refuses while an unmet `blockers.json` edge holds the
+story at its `run` gate (F-66 D3; see "The gate checks" above). For `bl run F-n`, the gate also
+checks each story of the feature. The refusal prints one line per edge, which names the blocker,
+its status and `until`.
 
-`feature-story.md` prints the repos in order as `{{storyRepos}}` and the
-other paths as `{{otherWorktrees}}` under `Lead worktree:`, below
-`Unit dir :` (`{{unitDir}}`, the working directory) (`(none)` with one
-repo) and tells the agent to work
-only in the listed worktrees, commit each repo's changes there without
-pushing, and, for a repo that is not listed, use `bl side` for a drive-by
-change and escalate missing design scope (never a hand-made worktree). `story-run.md` names the one worktree. `{{storyRepos}}` is the
-story's repo, or a feature's derived set.
+**A branch with no commits (S-1437).** Some stories change only the backlog. For such a story,
+`bl run` runs no push, no `change.open` and no review when all of these hold:
 
-`bl merge S34` merges the story's one repo; a worktree on the story's branch
-in another repo is refused, naming the repo, before anything merges.
-`bl merge F-n` passes `isSecondary` to `cleanupOneRepo`
-for every repo but the lead. Such a worktree with uncommitted changes (tracked or
-untracked, the session lock aside) is refused before anything is touched. Its
-branch with no commits ahead of `origin/main` (local `main` when
-there is no origin) is not merged, pushed or recorded in `commit:`: the merge
-reports "no changes in <repo>" and removes the worktree and branch.
-`bl merge S34` passes `noCommits` for a story `mergeGates` let through with
-a branch with no commits (S-1437), and that story's repo takes the same path.
-If the branch has commits ahead when `cleanupOneRepo` counts again (a commit
-landed after the gate), it refuses and merges nothing: that commit had no
-review. The `## Merge` line names only the repos that took the no-changes path.
+- the self-review passed;
+- the story's branch has no commits ahead of main (`branchEmpty`:
+  `git rev-list --count main..HEAD` is 0 in the worktree);
+- the story has no pull request yet.
+
+The self-review is the guard: it passes such a branch only when each acceptance item already
+holds where the work landed. The run history gets a `pr` and a `review` entry with the note
+"skipped: no commits, nothing to review". The log records `in_review` and then `ready_for_merge`
+by `review`, and the run ends `clean`.
+
+- A run resumed after a `pr` step that opened no pull request (the S-1379 escalation) takes the
+  same path.
+- Only a story with no Review Log session takes the path, and only at a status that the `review`
+  verb starts from (flow.json).
+- `bl run` records the history entries after the log is at `ready_for_merge`. If the log could
+  not record `ready_for_merge`, `bl run` escalates.
+- If this path already took a resumed story to `ready_for_merge`, the run ends `clean` again and
+  records nothing.
+- A failed self-review escalates as always. A scripted story keeps its own path. A feature run
+  (`bl run F-n`) never takes this path.
+
+**One repo per story (F-52 D1, D2).** A story's repo is the repo of its component (`unitRepo`),
+and `reposForStory` returns that one repo. bl never reads `primary_repo` or `secondary_repos` on
+a story. If the story's component has no `repo`, `bl implement`, `bl run` and `bl merge` exit 1
+and name the component (`storyRepoOrExit`, `story.js`). `bl implement`, `bl review`, `bl merge`
+and `bl run` refuse `--repo` (`-r`) on a story as an unknown option (`refuseStoryRepo`).
+
+Work in another repo is another story, in a component of that repo, linked by an edge in
+`blockers.json` (`prompts/workon.md`, `story-run.md`, `workon-review.md`). In a feature, a repo
+that no story of the feature is in is a missing story, and the agent escalates it
+(`feature-story.md`, `feature-workon.md`).
+
+**Worktree preparation (S-862).** Every story worktree comes through one function,
+`prepareStoryRepo` (`workon.js`). It makes three things:
+
+- the worktree on the story branch at `<root>/<branch>/<repo>` (`worktreePathFor`), with the
+  guards of `ensureWorktree`;
+- that repo's bootstrap (`installDeps`, limited to the repo);
+- on a new worktree, the `workon` stage plugins.
+
+It builds no prompt variables and launches no session. `bl implement` calls it and then launches
+its interactive session. `prepareStoryRun` (`bl run S-n`) calls it with `strict`. Then a guard
+refusal, an unknown repo, a failed bootstrap or a failed `workon` plugin exits and names the
+repo, before any agent starts. Its `otherWorktrees` is always empty.
+
+A headless session cannot make a worktree the `bl` way. So `bl run F-n` and `bl implement F-n`
+prepare every repo of the feature before the agent starts (`prepareFeatureWorktree`, through
+`prepareFeatureRepo`). They prepare the repos strictly, in the feature's repo order
+(`featureRepoOrder`, F-52 D3). They start the session in the lead repo's worktree
+(`targetRepoName`); the other repos are `otherWorktrees`.
+
+- A story added after approval gets its worktree on the next `bl run` or `--resume`, with no
+  edit to the feature (or at once from `bl side`).
+- A feature with no stories exits 1 and asks for the stories to be cut.
+- A story whose component has no repo, or a repo that the config does not know, stops the
+  preparation and names the story.
+- `bl implement F-n` and `bl run F-n` refuse `--repo` as an unknown option (`verbs.js`).
+  `bl review F-n --repo <r>` still narrows a review to one PR.
+
+**Repos added during a run (F-48 D3).** `bl run F-n` calls `refreshRepos` (`feature-run.js`)
+after every agent session. These sessions are each story and its retry, fix-tests, the
+self-review, each review round, the fix and its self-review. `refreshRepos` does these steps:
+
+1. It reads the work unit's stories again: every story whose `feature:` names it, or whose
+   `batch:` names it for a story batch.
+2. It adds each new story to the stored execution plan, after the stories that `bl run` has
+   taken. It calls `replan` on `plan.yaml` as the session left it, so the session's own `changes`
+   entries stay.
+3. It puts the stories not taken yet in dependency order again, on the current `readEdges`, as
+   at the start.
+4. It writes and commits `plan.yaml`, and makes `prep.ordered` follow its `order`. So the
+   implement loop reaches each new story after its prerequisites, and skips it when its criteria
+   are checked.
+5. For each repo of `featureRepoOrder` that `bl run` has not prepared, it takes that repo's
+   worktree on the branch. It finds the worktree with `git worktree list` in the repo's main
+   checkout, where `bl side` put it. It
+   appends the worktree to `prep.otherWorktrees`, adds the repo's `repos:` entry to the change
+   document and refreshes `{{otherWorktrees}}`.
+6. It records one `step: "repos"` history entry that names the repos and the stories.
+
+From then on, the gate, the repo guard, the push, the PR step and the review cover the new repo:
+
+- Every push covers each prepared repo with commits ahead of main.
+- Each such repo without a PR in this `bl run` gets one through `change.open` (or
+  `change.find`). bl records the PR on the repo's `repos:` entry, and passes it to every later
+  review round as `otherRepos`.
+- Each review round covers and snapshots every prepared repo, with a PR or not
+  (`reviewOtherRepos`).
+
+The lead repo and its worktree never change. These cases escalate:
+
+- A new repo with no worktree on the branch escalates before the gate, and names the story and
+  the repo. `--resume` prepares it.
+- A story list that the refresh cannot resolve escalates. The cases are a list that does not
+  parse, a missing story, and a new story that fails the checks of `prepareFeatureWorktree` at
+  the start.
+- A change document that cannot name a new repo escalates.
+
+After a session that is not an implementation, `rescope` implements any story that the session
+added. The self-review gates again when any repo moved or the scope grew. A round that ends
+`ready_for_merge` after it added scope is gated and reviewed again; in the closing round, it
+escalates. A resumed `ready_for_merge` run can finish without a round. It does so only when
+nothing was implemented, and the last round's `reviewedScope` covers every current story and
+repo. `bl run S-n` has one repo and skips the refresh.
+
+`feature-story.md` prints the repos in order as `{{storyRepos}}`. It prints the other paths as
+`{{otherWorktrees}}` under `Lead worktree:`, below `Unit dir :` (`{{unitDir}}`, the working
+directory); with one repo, it prints `(none)`. It tells the agent these rules:
+
+- Work only in the listed worktrees.
+- Commit each repo's changes there, and do not push.
+- For a repo that is not listed, use `bl side` for a drive-by change, and escalate missing
+  design scope. Never make a worktree by hand.
+
+`story-run.md` names the one worktree. `{{storyRepos}}` is the story's repo, or the derived set
+of a feature.
+
+`bl merge S34` merges the story's one repo. If another repo has a worktree on the story's
+branch, `bl merge S34` refuses before anything merges, and names the repo. `bl merge F-n` passes
+`isSecondary` to `cleanupOneRepo` for every repo but the lead:
+
+- If such a worktree has uncommitted changes (tracked or untracked, the session lock aside), the
+  merge refuses before it touches anything.
+- Its branch may have no commits ahead of `origin/main` (local `main` when there is no origin).
+  Then the merge does not merge or push it, and does not record it in `commit:`. The merge reports "no
+  changes in <repo>" and removes the worktree and the branch.
+
+`bl merge S34` passes `noCommits` for a story that `mergeGates` let through with a branch with no
+commits (S-1437). That story's repo takes the same path. When `cleanupOneRepo` counts again, the
+branch can have commits ahead (a commit landed after the gate). Then it refuses and merges
+nothing, because that commit had no review. The `## Merge` line names only the repos that took
+the no-changes path.
 
 ### `bl review`
 
-One review round on the review agent, the step `bl run` takes: two dimension
-passes (`review-correctness.md`, `review-failure-paths.md`) and the verifier
-(`review-verify.md`), one session in the Review Log and one verdict in the
-unit's transition log. For a story, the open PRs are found by title (`S34 in:title`) in every
-repo, each worktree is synced with main first (a conflict exits, pointing at
-`bl implement S34`), and every repo's PR is recorded on its `repos:` entry in
-the change document. With no
-open PR it says why, including a PR that merged before review.
+`bl review` runs one review round on the review agent: the step that `bl run` takes. The round
+has two dimension passes (`review-correctness.md`, `review-failure-paths.md`) and the verifier
+(`review-verify.md`). It writes one session in the Review Log and one verdict in the work unit's
+transition log.
 
-`bl review` ends with the round's outcome and, when there is one, the next
-command (`reviewEnd`, `src/feature-run.js`, S-1348). It reads the unit's
-review state from its transition log (`reviewOf`, F-69 D5): `<n>` is the
-rounds with a verdict.
+For a story, `bl review` finds the open PRs by title (`S34 in:title`) in every repo. It syncs
+each worktree with main first; a conflict exits and points at `bl implement S34`. It records
+every repo's PR on the repo's `repos:` entry in the change document. If there is no open PR,
+`bl review` says why, for example a PR that merged before the review.
 
-- Open items (`fixing`): `Review round <n> done: <k> open item(s) (<a> Must fix, <b> Should fix, <c> nit(s)).`
-  The counts come from the latest Review Log session, zero counts are left
-  out, and boxes under any other heading count as `<o> other`. A round in
-  `fixing` whose session has no open box says so with
+`bl review` ends with the round's outcome and, when there is one, the next command (`reviewEnd`,
+`src/feature-run.js`, S-1348). It reads the work unit's review state from its transition log
+(`reviewOf`, F-69 D5): `<n>` is the number of rounds with a verdict. The first line is the
+outcome:
+
+- Unchecked items (`fixing`):
+  `Review round <n> done: <k> open item(s) (<a> Must fix, <b> Should fix, <c> nit(s)).` The
+  counts come from the latest Review Log session. The line leaves out zero counts, and counts
+  boxes under any other heading as `<o> other`. If a round is in `fixing` but its session has no
+  unchecked box, the line says so with
   `fixing, but the latest Review Log session has no open item`.
-- Nothing left (`ready_for_merge`): `Review round <n> done: nothing left to fix.`,
-  or `nothing left to fix (<c> open nit(s) left).` while the session has open nits.
-  If the session still has an open Must fix or Should fix box, the line is
+- Nothing left (`ready_for_merge`): `Review round <n> done: nothing left to fix.`, or
+  `nothing left to fix (<c> open nit(s) left).` while the session has unchecked nits. If the
+  session still has an unchecked Must fix or Should fix box, the line is
   `ready_for_merge, but the latest Review Log session has <k> open Must fix/Should fix item(s)`.
-- No verdict (a round open, or none yet): `Review round <n> done: no verdict recorded (<position>).`
-  (`never reviewed` when there is none), with no `Next:` line. Escalated:
-  `Review round <n>: escalated.`
-- A round that did not finish (an error and no escalation, for example a
-  verifier that failed): `The review round did not finish.`, then the error
-  line, with no `done` line and no `Next:` line. The round recorded no
-  verdict, so `bl review` builds no outcome from it. A verifier with no valid
-  outcome after its retry escalates (F-68 D5).
+- No verdict: a round has started and has no verdict yet, or there is no round yet. The line is
+  `Review round <n> done: no verdict recorded (<position>).`, with no `Next:` line. With no
+  round, `<position>` is `never reviewed`.
+- Escalated: `Review round <n>: escalated.`
+- A round that did not finish (an error and no escalation, for example a verifier that failed):
+  `The review round did not finish.`, then the error line. There is no `done` line and no
+  `Next:` line. The round recorded no verdict, so `bl review` builds no outcome from it. If the
+  verifier has no valid outcome after its retry, the round escalates (F-68 D5).
 
 The second line is `Next: <command>`:
 
-- `ready_for_merge`: `bl merge <id>`. If the session still has an open Must fix
-  or Should fix box, the merge gate (`featureReviewGate`) blocks the merge, so
-  the command is `bl review <id>`: a review checks the boxes again, and the
-  table's `implement` row does not start from `ready_for_merge`.
-  `bl status` prints no next command.
-- Open items below the round cap: `bl run <id> --resume`.
-- Open items in the round that reached the cap: the outcome line adds
+- `ready_for_merge`: `bl merge <id>`. If the session still has an unchecked Must fix or Should
+  fix box, the merge gate (`featureReviewGate`) blocks the merge. Then the command is
+  `bl review <id>`: a review checks the boxes again, and the `implement` row of the table does
+  not start from `ready_for_merge`. `bl status` prints no next command.
+- Unchecked items below the round cap: `bl run <id> --resume`.
+- Unchecked items in the round that reached the cap: the outcome line adds
   ` The round cap (<cap>) is reached: the next run fixes these items and runs one closing round on them.`
-  and the command is `bl run <id> --resume`. If the session has no open box,
-  the outcome line adds only ` The round cap (<cap>) is reached.`.
-- Open items past what the cap allows: the outcome line adds
-  ` The round cap (<cap>) is reached.` and the command is
+  and the command is `bl run <id> --resume`. If the session has no unchecked box, the outcome
+  line adds only ` The round cap (<cap>) is reached.`.
+- Unchecked items past what the cap allows: the outcome line adds
+  ` The round cap (<cap>) is reached.`, and the command is
   `bl run <id> --resume --max-rounds <n+1>`.
 - Escalated: `read ## Escalation in <the unit's index.md>`.
 
-The cap cases come from `roundCapStanding`, the check by which `bl run`
-refuses a run at the cap, so the two cannot disagree. `bl status <id>` prints
-the unit's status, then the same outcome words on its `review:` line
-(`review: round <r>/<cap> done: <outcome>`; `review: round <r>/<cap>, <position>`
-for a round with no verdict; `review: none (round <r>/<cap>)` before the first
-review; each with `, latest session <date>` when the change document has a
-session; `<r>` is the log's round), then the last three entries of the
-transition log, one per line: `<at>  <to>  by <verb> via <capability>: <outcome> (<note>)`
-under `transitions (last 3 of <n>):` (a unit with no log shows the log
-`legacyLog` reads). With several targets, each child that exited 0 gets
-`<id>: reviewed, round <n> done: <outcome><pr> — next: <command>`, the review
-state read from the unit's log after the child ran (`its file cannot be read`
-when it cannot be). The exit codes are as before: 0 after a round that
-recorded a verdict with no error and no escalation, else 1.
+The cap cases come from `roundCapStanding`, the check by which `bl run` refuses a run at the
+cap. So the two cannot disagree.
+
+`bl status <id>` prints the work unit's status first. Then it prints the same outcome words on
+its `review:` line:
+
+- `review: round <r>/<cap> done: <outcome>` after a round with a verdict;
+- `review: round <r>/<cap>, <position>` for a round with no verdict;
+- `review: none (round <r>/<cap>)` before the first review.
+
+Each form adds `, latest session <date>` when the change document has a session. `<r>` is the
+log's round. Last, `bl status` prints the last three entries of the transition log, one per line,
+under `transitions (last 3 of <n>):`. Each line is
+`<at>  <to>  by <verb> via <capability>: <outcome> (<note>)`. For a work unit with no log,
+`bl status` shows the log that `legacyLog` reads.
+
+With several targets, each child that exited 0 gets the line
+`<id>: reviewed, round <n> done: <outcome><pr> — next: <command>`. `bl review` reads the review
+state from the work unit's log after the child ran. If it cannot read the file, the line says
+`its file cannot be read`. The exit codes are as before. `bl review` exits 0 after a round that
+recorded a verdict with no error and no escalation, and 1 otherwise.
 
 ```bash
 bl review S34                 # alias: bl pr S34
@@ -4075,25 +4165,27 @@ bl review S34                 # alias: bl pr S34
 
 ### Several targets
 
-`bl run` and `bl implement` take one target (F-125 Decision A3). `dispatch` (`verbs.js`)
-refuses two or more ids before it reads the backlog or checks a gate
-(`ONE_TARGET_VERBS`, `oneTargetRefusal`); the message names `bl batch`, the deliberate way to
-group stories. Every other id-dispatched verb takes several ids (`dispatchSeveral`):
+`bl run` and `bl implement` take one target (F-125 Decision A3). `dispatch` (`verbs.js`) refuses
+two or more ids before it reads the backlog or checks a gate (`ONE_TARGET_VERBS`,
+`oneTargetRefusal`). The message names `bl batch`, the deliberate way to group stories. Every
+other verb that `dispatch` sends by id takes several ids (`dispatchSeveral`):
 
-- `review`: each target runs as a child `bl review <id>` with its output in
-  `.bl/run/<id>.out` (`runChildren`); when all exit, one line each (outcome, PR, next step).
-  Exit 1 if any failed or escalated. `--interactive` takes one target.
-- `merge`: one at a time in dependency order (`dependencyOrder`, `execution-plan.js`),
-  stopping at the first failure.
-- `refine`: stories and components go to the refine batch; with a feature among the
-  targets, each opens its own tmux window.
-- `status`, `approve`, `done`: each target on its own; a component's status lists
-  its open stories.
+- `review`: each target runs as a child `bl review <id>`, with its output in `.bl/run/<id>.out`
+  (`runChildren`). When all children exit, `bl review` prints one line for each: the outcome, the
+  PR and the next step. It exits 1 if any child failed or escalated. `--interactive` takes one
+  target.
+- `merge`: one target at a time, in dependency order (`dependencyOrder`, `execution-plan.js`). It
+  stops at the first failure.
+- `refine`: stories and components go to the batch refine. If a feature is among the targets,
+  each feature opens its own tmux window.
+- `status`, `approve`, `done`: each target on its own. A component's status lists its stories
+  whose status does not meet `done`.
 
-Separate `bl` processes on one repo serialise the `main` sync (fetch, ahead-of-origin check,
-`merge --ff-only origin/main`) through `<git-common-dir>/bl-main-sync.lock` (`main-sync.js`),
-so none of them races the other's `FETCH_HEAD`; a failed fetch is a warning naming the local
-`main` commit the worktree is cut from, a failed fast-forward stops the process.
+Separate `bl` processes on one repo take turns at the `main` sync: the fetch, the
+ahead-of-origin check and `merge --ff-only origin/main`. They do this through
+`<git-common-dir>/bl-main-sync.lock` (`main-sync.js`), so none of them races the `FETCH_HEAD` of
+another. A failed fetch is a warning, which names the local `main` commit that the worktree is
+cut from. A failed fast-forward stops the process.
 
 ```bash
 bl run S-1 S-2                # refused: bl run takes one target; group stories with bl batch
@@ -4102,109 +4194,132 @@ bl merge S-2 S-1              # S-2 depends on S-1: S-1 merges first
 
 ### Tab titles (`src/tab-title.js`)
 
-Every title `bl` gives a terminal tab goes through `updateTabTitle`: the tmux window name
-under tmux (targeting the window `bl` started in, captured at startup), the OSC 2 window
-title when stderr is a terminal outside tmux, nothing otherwise. The title is rendered from
-named fields with the `BL_TAB_TITLE` format, default
-`{{feature}} : {{story}} : {{status}} {{next}}` (`next` is the step that the operator does
-next, arrow included, such as `→ bl merge`); an unset field renders as nothing and the result
-is trimmed. The placeholder is the `{{var}}`
-bl's prompts and plugin commands use, not a new format.
+Every title that `bl` gives a terminal tab goes through `updateTabTitle`:
+
+- under tmux, the tmux window name, in the window that `bl` started in (captured at startup);
+- outside tmux, when stderr is a terminal, the OSC 2 window title;
+- otherwise, nothing.
+
+`bl` renders the title from named fields with the `BL_TAB_TITLE` format. The default is
+`{{feature}} : {{story}} : {{status}} {{next}}`. `next` is the step that the operator does next,
+with its arrow, such as `→ bl merge`. An unset field renders as nothing, and `bl` trims the
+result. The placeholder is the `{{var}}` that bl's prompts and plugin commands use, not a new
+format.
 
 - Every command sets a start title (S-1412). `bl.js` calls `updateTabTitle(commandTitle(argv))`
   right after `captureTmuxWindowId()`, before the backlog pull, `settlePending` and dispatch.
-  `commandTitle` (`src/command-table.js`) gives the status: the canonical command name
-  (`ALIASES` maps `ls` to `list`), or `<command> <subcommand>` for a `COMMANDS` entry with
-  `subcommands: true` (`task`, `inbox`, `block`) whose first argument is a word, not a
-  flag or a unit id (`inbox done`). It is `help` for no command, `help`,
-  `-h`, `--help`, or `-h`/`--help` among the arguments; an unknown command shows its word.
-  The `feature` and `story` fields are the unit ids the arguments name (`classifyId`, also
-  the value of `--name=value`), one through `unitTitleFields`, several as `<n> features` or
-  `<n> stories`. `bl.js` dispatches only through `COMMANDS` and `ALIASES`, so a new command
-  needs no title code of its own; `test/unit/tab-title.test.js` runs `bin/bl <name> --help`
-  for every key under a fake tmux and fails on a run that renames nothing.
-- A code path sets the fields it knows, by name, at any time: `updateTabTitle('story', 'S-34')`
-  or `updateTabTitle({ feature: 'F-56', status: 'testing' })`. Names are not checked. Its
-  fields replace the start title's.
-- `bl merge` shows its steps as the status: `integrate` (`integrateForMerge`), `test gate`
-  (before the integration's `runTestGate`), `pull` (before each repo's `syncMain` in
-  `cleanupOneRepo`), `check` (before `checkedMerge` runs the `check` plugins),
-  `pre-push gate + push` (`PUSH_STATUS`, before each `git push` of the integrated branch and
-  of `main`: git runs the pre-push gate inside `git push`, so bl cannot show the two apart),
-  `install` (before the main checkout's `installCommand`), `cleanup` (before the PR close),
-  `sync` (before the backlog sync) and `tag` (before a feature's tags are pushed). The statuses
-  inside the integration go through the runner's `title`, so the unit tests' fake runner
-  sets none.
-- `launchSession` sets the unit `parsed.id` names (`F-n` or a story batch's `B-n` the feature,
-  `S-n` the story; through `unitTitleFields`) and the mode as `status` (`workon` shows as
-  `implement`); a caller that knows more, such as a story's `feature:`, sets it first. The
-  `bl run` loop sets the unit's fields (`unitTitleFields`: a story unit is the `story` field),
-  the story in hand and the step in `setStep`, and the end state in `finish` and
-  `escalateIntegration` (`finalTitle`), through the runner's `title(fields, { final })`; `notify`
-  only rings the bell now.
-- A code path that reaches an end state sets it with `finalTabTitle`, which marks the title
-  final and sends it unpadded. It drops an earlier `next`, so the final title shows `next`
-  only when the code path sets it. The run loop's ends: `clean → bl merge`,
-  `escalated → fix, --resume` (`→ fix, bl review` under `bl review`, `→ fix, bl merge` under
-  `bl merge`), `done` for no change, `failed`.
-  A later `updateTabTitle` or `clearTabTitle` clears the mark.
-- After a tool that had the terminal returns (the agent in `launchSession` and triage, the
-  editor in `runEditor`), the caller calls `reassertTabTitle`, because that tool may have set
-  its own title. What the tool set is not captured: it wrote to the terminal, not through bl.
-- A title is sent as plain text, because it holds text from the command line: `sendTabTitle`
-  removes control characters (ESC, BEL, newline) on both paths, and under tmux it doubles each
-  `#`, because tmux expands `#{…}` and `#(…)` in a window name.
+  - `commandTitle` (`src/command-table.js`) gives the status: the canonical command name
+    (`ALIASES` maps `ls` to `list`). For a `COMMANDS` entry with `subcommands: true` (`task`,
+    `inbox`, `block`), the status is `<command> <subcommand>` when the first argument is a word,
+    not a flag or a work unit id (`inbox done`).
+  - The status is `help` for no command, for `help`, `-h` or `--help`, or for `-h` or `--help`
+    among the arguments. An unknown command shows its word.
+  - The `feature` and `story` fields are the work unit ids that the arguments name (`classifyId`,
+    also the value of `--name=value`). One id goes through `unitTitleFields`; several show as
+    `<n> features` or `<n> stories`.
+  - `bl.js` dispatches only through `COMMANDS` and `ALIASES`, so a new command needs no title
+    code of its own. `test/unit/tab-title.test.js` runs `bin/bl <name> --help` for every key
+    under a fake tmux. The test fails on a command that renames nothing.
+- A code path sets the fields it knows, by name, at any time:
+  `updateTabTitle('story', 'S-34')` or `updateTabTitle({ feature: 'F-56', status: 'testing' })`.
+  bl does not check the names. These fields replace the fields of the start title.
+- `bl merge` shows its steps as the status:
+  - `integrate` (`integrateForMerge`);
+  - `test gate` (before the integration's `runTestGate`);
+  - `pull` (before each repo's `syncMain` in `cleanupOneRepo`);
+  - `check` (before `checkedMerge` runs the `check` plugins);
+  - `pre-push gate + push` (`PUSH_STATUS`, before each `git push` of the integrated branch and
+    of `main`). git runs the pre-push gate inside `git push`, so bl cannot show the two apart;
+  - `install` (before the main checkout's `installCommand`);
+  - `cleanup` (before the PR close);
+  - `sync` (before the backlog sync);
+  - `tag` (before the tags of a feature are pushed).
+
+  The statuses inside the integration go through the runner's `title`, so the fake runner of
+  the unit tests sets none.
+
+- `launchSession` sets the work unit that `parsed.id` names, through `unitTitleFields`. `F-n`,
+  or the `B-n` of a story batch, is the feature; `S-n` is the story. It sets the mode as
+  `status`; `workon` shows as `implement`. A caller that knows more, such as a story's
+  `feature:`, sets it first.
+- `bl run` sets these fields through the runner's `title(fields, { final })`:
+  - the work unit's fields (`unitTitleFields`: a story fills the `story` field);
+  - the story in hand, and the step in `setStep`;
+  - the end state, in `finish` and `escalateIntegration` (`finalTitle`).
+
+  `notify` now only rings the bell.
+
+- A code path that reaches an end state sets it with `finalTabTitle`. `finalTabTitle` marks the
+  title final and sends it unpadded. It drops an earlier `next`, so the final title shows `next`
+  only when the code path sets it. A later `updateTabTitle` or `clearTabTitle` clears the mark.
+  The end states of `bl run` are `clean → bl merge`, `escalated → fix, --resume`
+  (`→ fix, bl review` under `bl review`, `→ fix, bl merge` under `bl merge`), `done` for no
+  change, and `failed`.
+- A tool can have the terminal: the agent in `launchSession` and triage, or the editor in
+  `runEditor`. After the tool returns, the caller calls `reassertTabTitle`, because that tool may
+  have set its own title. bl does not capture what the tool set: the tool wrote to the terminal,
+  not through bl.
+- bl sends a title as plain text, because the title holds text from the command line.
+  `sendTabTitle` removes control characters (ESC, BEL, newline) on both paths. Under tmux, it
+  doubles each `#`, because tmux expands `#{…}` and `#(…)` in a window name.
 - A process waits for a hung tmux at most `TMUX_TIMEOUT_MS` (1 s) in all. Each `tmux` call has
-  that timeout, and after one call times out, every later call in the process (titles, the
-  reassert, the exit title) fails at once without tmux. `endTabTitle` clears that state.
-- An empty `BL_TAB_TITLE` (`TAB_TITLE_ENV`) turns titles off; `verbs.js` `childEnv` sets it for
-  the child processes that `bl review` starts in parallel for several targets
-  (`runChildren`), so the parent's window keeps the parent's title. `agentEnv` sets it for
-  every agent session (S-1388): the tab belongs to the `bl` that started the session,
-  so no `bl` the agent runs, and no test it starts, renames the window. Every `bl` started
-  for data runs with it too, so it does not end the parent's title `ended` mid-run:
-  `runBacklogSync`'s child `bl sync`, `bl side`'s child `bl new`, the `bl top` view (and
-  so every `bl` it runs in its window), and the `bl inbox --json` of
-  `_roost_inbox_task_ids` in the three completion files. The sequential children of
-  `mergeInOrder` and `eachInTurn` keep their titles: they run one at a time in the
-  operator's window and name the target in hand.
-  `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`,
-  `BL_TMUX_WINDOW_ID` and `BL_TAB_TITLE` for every `npm run test:*` script
-  (`test/unit/tmux-free-env.test.js` guards it). The same wrapper unsets `BL_BACKLOG_DIR`
-  and refuses a temporary directory (`os.tmpdir()`) inside a git repository, where git in a
-  test's temp dir would act on that repository (S-1394; `test/unit/repo-free-env.test.js`
-  guards both). It also sets `BL_CEILING_DIRECTORIES` to that temporary directory, so
-  `findBacklogRoot`'s walk never looks above it (S-1155; the same test guards it).
-  `openTmuxWindow` names a new window
-  with `renderTabTitle` of the fields the inner bl will set, so the shape never changes.
-- When `bl` exits, the last title stays (S-1393): under tmux `rename-window` turned the
-  window's `automatic-rename` off and bl leaves it off (`tmux set -w automatic-rename on`
-  gives tmux's name back); outside tmux bl never pushes or pops the terminal's title.
-  `endTabTitle`, the `exit` hook registered on the first title, sends nothing after a final
-  title, whatever the exit code (an `OutcomeError` after an escalation exits non-zero and
-  keeps the escalated title). Otherwise it sets the status from the exit code (`ended` for 0,
-  `interrupted` for 130 or 143, `failed (exit N)` otherwise), unsets `next` and sends the
-  title unpadded, so no tab keeps a working status after bl stops. The first title also calls `exitOnSignal`
-  (`signal-exit.js`), the SIGINT and SIGTERM handlers that `bl.js` registers when `bl` starts:
-  they end the process with `process.exit(130|143)`, so the hook sees an interrupt. They are
-  registered once per process. While the editor of `bl view` or `bl change` runs (`showReadOnly`),
-  `ignoreSignals` makes them return at once, so bl ignores the interrupt (S-1182). Since every
-  command sets a start title, the exit hook reaches every command. A process that loads `tab-title.js` without `bl.js` keeps Node's default
-  signal action until its first title, and for good with titles off.
-- The title width only grows while the process runs: `showTabTitle` pads a shorter title with
-  trailing spaces to the widest title shown, so the tmux status bar does not move. A final
-  title is not padded. `currentTabTitle` and `renderTabTitle` stay unpadded; `endTabTitle`
-  resets the width at exit.
+  that timeout. After one call times out, every later call in the process (titles, the reassert,
+  the exit title) fails at once without tmux. `endTabTitle` clears that state.
+- An empty `BL_TAB_TITLE` (`TAB_TITLE_ENV`) turns titles off. These set it:
+  - `childEnv` in `verbs.js`, for the child processes that `bl review` starts in parallel for
+    several targets (`runChildren`). So the parent's window keeps the parent's title.
+  - `agentEnv`, for every agent session (S-1388). The tab belongs to the `bl` that started the
+    session. So no `bl` that the agent runs renames the window, and no test that it starts does.
+  - Every `bl` started for data, so that it does not end the parent's title `ended` while the
+    parent works. These are the child `bl sync` of `runBacklogSync` and the child `bl new` of
+    `bl side`. They are also the `bl top` view (and so every `bl` it runs in its window), and
+    the `bl inbox --json` of `_roost_inbox_task_ids` in the three completion files.
+
+  The sequential children of `mergeInOrder` and `eachInTurn` keep their titles. They run one at
+  a time in the operator's window and name the target in hand.
+
+  `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`, `BL_TMUX_WINDOW_ID` and
+  `BL_TAB_TITLE` for every `npm run test:*` script (`test/unit/tmux-free-env.test.js` guards
+  it). The same wrapper unsets `BL_BACKLOG_DIR`. It also refuses a temporary directory
+  (`os.tmpdir()`) inside a git repository. There, git in a test's temp dir would act on that
+  repository (S-1394; `test/unit/repo-free-env.test.js` guards both). It also sets
+  `BL_CEILING_DIRECTORIES` to that temporary directory, so the walk of `findBacklogRoot` never
+  looks above it (S-1155; the same test guards it).
+
+  `openTmuxWindow` names a new window with `renderTabTitle` of the fields that the inner bl will
+  set, so the shape never changes.
+
+- When `bl` exits, the last title stays (S-1393). Under tmux, `rename-window` turned the
+  window's `automatic-rename` off, and bl leaves it off; `tmux set -w automatic-rename on` gives
+  tmux's name back. Outside tmux, bl never pushes or pops the terminal's title.
+  - `endTabTitle` is the `exit` hook that the first title registers. After a final title, it
+    sends nothing, whatever the exit code. An `OutcomeError` after an escalation exits non-zero
+    and keeps the escalated title.
+  - Otherwise, `endTabTitle` sets the status from the exit code: `ended` for 0, `interrupted`
+    for 130 or 143, `failed (exit N)` otherwise. It unsets `next` and sends the title unpadded,
+    so no tab keeps a working status after bl stops.
+  - The first title also calls `exitOnSignal` (`signal-exit.js`): the SIGINT and SIGTERM
+    handlers that `bl.js` registers when `bl` starts. The handlers end the process with
+    `process.exit(130|143)`, so the hook sees an interrupt. bl registers them once per process.
+  - While the editor of `bl view` or `bl change` runs (`showReadOnly`), `ignoreSignals` makes
+    the handlers return at once, so bl ignores the interrupt (S-1182).
+  - Every command sets a start title, so the exit hook reaches every command. A process that
+    loads `tab-title.js` without `bl.js` keeps Node's default signal action until its first
+    title, and for good with titles off.
+- The title width only grows while the process runs. `showTabTitle` pads a shorter title with
+  trailing spaces to the widest title shown, so the tmux status bar does not move. A final title
+  is not padded. `currentTabTitle` and `renderTabTitle` stay unpadded. `endTabTitle` resets the
+  width at exit.
 
 ### Pre-task discussion (`-P, --prompt`)
 
-`bl refine` and `bl implement` accept a `-P, --prompt "<text>"` flag that
-prepends a short discussion preamble to the launched session. The agent
-reads the text, converses with you about it first, and only proceeds
-with the underlying task (refine / workon) after you explicitly say yes.
-If you say no, the agent exits without touching the story file or
-worktree. `bl review -P "<text>"` instead adds the text to every review
-session's prompt as instructions from the operator.
+`bl refine` and `bl implement` accept a `-P, --prompt "<text>"` flag. It puts a short discussion
+preamble before the prompt of the launched session. The agent reads the text and talks with you
+about it first. It goes on with the underlying task (refine or workon) only after you
+explicitly say yes.
+If you say no, the agent exits without a change to the story file or the worktree.
+`bl review -P "<text>"` works another way: it adds the text to the prompt of every review
+session, as instructions from the operator.
 
 ```bash
 bl implement -P "the AC may no longer match the auth refactor" S34
@@ -4212,24 +4327,27 @@ bl refine -t -P "it's risky — let's scope it down" S34
 bl review -P "focus on the retry logic, the rest looks fine" S34
 ```
 
-The preamble lives in `prompts/_pre-task-discussion.md` and is
-prepended by `session.js` so both launchers stay in lockstep.
-The preamble carries the collaboration rules (`_collaboration.md`, F-97 D2)
-unless the session prompt already has them, so a session has them once.
-Empty string (`--prompt ""`) behaves identically to omitting the flag.
+The preamble lives in `prompts/_pre-task-discussion.md`. `session.js` puts it before the prompt,
+so both launchers stay in step. The preamble carries the collaboration rules
+(`_collaboration.md`, F-97 D2), unless the session prompt already has them, so a session has
+them once. An empty string (`--prompt ""`) does the same as no flag.
 
 ### `bl capacity`
 
-Shows whether each agent configuration can take work now (F-64 D6): one row
-per configuration of `agent`, then `review_agent`, in list order, with its
-role, agent, model (`-` for the account's own), state (`available`,
-`unavailable`, `unknown`), each quota window's remaining percent and reset in
-local time, and the adapter's message. It calls each adapter's
-`capacity({ model, topLevel })`, the call the run loop makes, so it shows
-what the loop will see. An
-`account`-scoped answer (Codex) is asked once per agent, a `model`-scoped one
-once per model. It reports and does not gate: it exits 0 whatever the
-states, and 1 only when the backlog or its `backlog.json` cannot be loaded.
+`bl capacity` shows whether each agent configuration can take work now (F-64 D6). It prints one
+row per configuration of `agent`, then of `review_agent`, in list order. Each row has these
+columns:
+
+- the role, the agent, and the model (`-` for the account's own);
+- the state: `available`, `unavailable` or `unknown`;
+- the remaining percent of each quota window, and its reset in local time;
+- the adapter's message.
+
+`bl capacity` calls the `capacity({ model, topLevel })` of each adapter. `bl run` makes the same
+call, so `bl capacity` shows what `bl run` will see. bl asks an `account`-scoped answer (Codex)
+once per agent, and a `model`-scoped one once per model. `bl capacity` reports and does not
+gate. It exits 0 whatever the states, and 1 only when bl cannot load the backlog or its
+`backlog.json`.
 
 ```bash
 bl capacity
@@ -4240,50 +4358,61 @@ bl capacity --json   # {"schema":"bl-capacity-json/v1","configurations":[{role, 
                      #   state, scope, until, windows:[{name, remainingPercent, resetsAt}], message}]}
 ```
 
-Codex's reading comes from `codex app-server` (marked experimental), over
-the JSON-RPC requests `initialize`, `initialized` and
-`account/rateLimits/read`, the ones `~/codex-usage.py` sends.
-`src/agents/codex-capacity.js` holds the conversation with app-server, an
-asynchronous child with pipes, in the bl process, with a 20-second deadline,
-and stops app-server on every path;
-`codexCapacity()` in `codex.js` maps the answer. Every bucket of
-`rateLimitsByLimitId` (else `rateLimits`) gives its `primary` and
-`secondary` windows ("codex 5h", "codex 7d"). A window with nothing left, or
-`spendControlReached`, makes every Codex model `unavailable` until the latest
-such reset (none for a spend cap, which also sets `spend: true`). A timeout, an exit, a JSON-RPC error or an
-answer with no windows is `unknown`, with the reason.
+Codex's reading comes from `codex app-server` (marked experimental). bl sends the JSON-RPC
+requests `initialize`, `initialized` and `account/rateLimits/read`, the ones that
+`~/codex-usage.py` sends.
+
+- `src/agents/codex-capacity.js` holds the conversation with app-server in the bl process, as an
+  asynchronous child with pipes. It has a 20-second deadline, and it stops app-server on every
+  path.
+- `codexCapacity()` in `codex.js` maps the answer. Every bucket of `rateLimitsByLimitId` (else
+  `rateLimits`) gives its `primary` and `secondary` windows ("codex 5h", "codex 7d").
+- A window with nothing left, or `spendControlReached`, makes every Codex model `unavailable`
+  until the latest such reset. A spend cap gives no reset time, and it also sets `spend: true`.
+- A timeout, an exit, a JSON-RPC error or an answer with no windows is `unknown`, with the
+  reason.
 
 Claude's reading comes from Claude Code's OAuth usage endpoint,
 `GET https://api.anthropic.com/api/oauth/usage` (undocumented; S-1143).
-`src/agents/claude-capacity.js` reads the token from
-`$CLAUDE_CONFIG_DIR/.credentials.json` (else `~/.claude`) and asks within 10
-seconds; bl never refreshes the token, because Claude Code owns it.
-`claudeCapacity()` in `claude.js` maps the answer. Each entry of `limits`
-(else `five_hour` and `seven_day`) is a window: `claude 5h` for `session`,
-`claude 7d` for `weekly_all`, `claude 7d <model>` for `weekly_scoped`. A
-limit with no scope applies to every model. A model-scoped one applies only
-to the configuration whose model it names (its `id`, or its `display_name`
-as the model or one dash-separated part of it: `Fable` ↔ `claude-fable-5-2`).
-The reading is `account` only when no limit names a model, so Claude is
-asked once per model. A window at 0% makes the configuration `unavailable`
-until the latest such reset. `extra_usage` and `spend` are not read: bl never
-spends paid credits on its own. Missing credentials, an expired token, a
-non-200 answer, the deadline, a body that is not JSON, an answer with no
-windows, a percent that is not a number, a reset that is not a time, a
-`limits` that is not a list, or a `five_hour` / `seven_day` that is not an
-object or `null` is `unknown`, with the reason.
 
-The `local` row comes from the server's `/health` (see **The local
-provider**): `available` on a 200, `unavailable` when the connection is
-refused, `unknown` otherwise; the message names the URL.
+- `src/agents/claude-capacity.js` reads the token from `$CLAUDE_CONFIG_DIR/.credentials.json`
+  (else `~/.claude`), and asks within 10 seconds. bl never refreshes the token, because Claude
+  Code owns it.
+- `claudeCapacity()` in `claude.js` maps the answer. Each entry of `limits` (else `five_hour` and
+  `seven_day`) is a window: `claude 5h` for `session`, `claude 7d` for `weekly_all`, and
+  `claude 7d <model>` for `weekly_scoped`.
+- A limit with no scope applies to every model. A model-scoped limit applies only to the
+  configuration whose model it names. It names the model by its `id`, or by its `display_name`
+  as the model or as one dash-separated part of it: `Fable` ↔ `claude-fable-5-2`.
+- The reading is `account` only when no limit names a model, so bl asks Claude once per model.
+- A window at 0% makes the configuration `unavailable` until the latest such reset.
+- bl does not read `extra_usage` and `spend`: bl never spends paid credits on its own.
+- These answers are `unknown`, with the reason:
+  - missing credentials, an expired token, a non-200 answer or the deadline;
+  - a body that is not JSON, or an answer with no windows;
+  - a percent that is not a number, or a reset that is not a time;
+  - a `limits` that is not a list, or a `five_hour` or `seven_day` that is not an object or
+    `null`.
+
+The `local` row comes from the server's `/health` (see **The local provider**). It is
+`available` on a 200, `unavailable` when the connection is refused, and `unknown` otherwise. The
+message names the URL.
 
 ### `bl top`
 
-`bl top` is a live view of bl (F-87, F-88): the runs, what waits on the operator, what `bl next`
-picks, token use and agent capacity, the stories done per day, the newest run events, and the
-selected run's step timeline and live agent feed. It has two halves. The JSON half,
-`--json` and `--stream` (`src/top.js`), reads the backlog. The view, a terminal UI in Go
-(`top/`), draws the stream's snapshots and never reads a backlog file.
+`bl top` is a live view of bl (F-87, F-88). It shows:
+
+- the runs;
+- what waits on the operator;
+- what `bl next` picks;
+- token use and agent capacity;
+- the stories done per day;
+- the newest run events;
+- the selected run's step timeline and live agent feed.
+
+`bl top` has two halves. The JSON half, `--json` and `--stream` (`src/top.js`), reads the
+backlog. The view, a terminal UI in Go (`top/`), draws the stream's snapshots and never reads a
+backlog file.
 
 ```bash
 bl top                             # the view, refreshed every 2000 ms
@@ -4298,110 +4427,148 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
 
 #### The view
 
-- **Build.** `top/` is a Go module of its own (`top/go.mod`): its `go` line and its Charm v2
+- **Build.** `top/` is a Go module of its own (`top/go.mod`). Its `go` line and its Charm v2
   versions (Bubble Tea, Lipgloss, Bubbles) are logr's. With no `--json` or `--stream`,
-  `src/top.js` runs `go build -o top/bin/bl-top` in `top/` when `top/bin/bl-top` is missing or
-  older than a file under `top/` outside `top/bin/`. The build's output goes to stderr. If the
-  build is needed and `go` is not on `PATH`, `bl top` exits 1 and names the Go version of
-  `top/go.mod`. Then it runs `top/bin/bl-top` with the terminal's stdio, passes `--interval`
-  and `--version` on, and exits with its code. `top/bin/` is in `.gitignore`. `bin/bl` does
-  not change, so no other command checks the build.
+  `src/top.js` runs `go build -o top/bin/bl-top` in `top/` when `top/bin/bl-top` is missing, or
+  older than a file under `top/` outside `top/bin/`. The build writes its output to stderr. If
+  the build is needed and `go` is not on `PATH`, `bl top` exits 1 and names the Go version of
+  `top/go.mod`. Next, `src/top.js` runs `top/bin/bl-top` with the terminal's stdio, passes
+  `--interval` and `--version` on, and exits with its code. `top/bin/` is in `.gitignore`.
+  `bin/bl` does not change, so no other command checks the build.
 - **Stream.** The view starts `bl top --stream --interval <ms>` once, through
-  `--bl-argv '<JSON array>'` (`[node, src/bl.js]`, from `src/top.js`), and redraws on each line
+  `--bl-argv '<JSON array>'` (`[node, src/bl.js]`, from `src/top.js`). It redraws on each line
   (`top/internal/stream`). Bubble Tea redraws only the cells that change, so the screen does not
-  flicker. The stream runs in a process group of its own. A line that is not a `bl-top-json/v1`
-  snapshot kills that group and ends the stream. When the stream ends, the view exits 1 with
-  `bl top: the snapshot stream ended: <its last stderr line>`.
-- **Boxes and layout** (D4, F-127 Decision 1, `top/internal/ui/layout.go`). Each box has a
-  name, which is its identity (`boxName`): runs, attention, next, tokens (sections `tokens` and
-  `capacity`), activity (sections `activity` and `history`) and detail (section `runs`, and
-  `bl watch`). Code, help groups, comments and docs name a box by its name ("the next box"),
-  never by its number. Each box's drawer is in the `boxes` table, keyed by name. A layout is a
-  tree of box names. At 171×50 or larger the view draws the two columns of Mockup A
-  (`fullLayout`); from 80×24 up to that it stacks the boxes (`stackedLayout`): runs, attention,
-  detail, tokens beside activity, then next, each with Mockup B's height; below 80×24 it prints
-  `bl top needs at least 80x24`. Each node of a layout takes its weight's share of its parent; a
-  hidden box's share goes to the boxes left in its split.
+  flicker. The stream runs in a process group of its own. If a line is not a `bl-top-json/v1`
+  snapshot, the view kills that group, and the stream ends. When the stream ends, the view exits
+  1 with `bl top: the snapshot stream ended: <its last stderr line>`.
+- **Boxes and layout** (D4, F-127 Decision 1, `top/internal/ui/layout.go`). Each box has a name,
+  which is its identity (`boxName`). The boxes are:
+  - runs;
+  - attention;
+  - next;
+  - tokens (sections `tokens` and `capacity`);
+  - activity (sections `activity` and `history`);
+  - detail (section `runs`, and `bl watch`).
+
+  Code, help groups, comments and docs name a box by its name ("the next box"), never by its
+  number. The `boxes` table holds each box's drawer, keyed by name. A layout is a tree of box
+  names. The view picks the layout by the terminal's size:
+  - At 171×50 or larger, it draws the two columns of Mockup A (`fullLayout`).
+  - From 80×24 up to that size, it stacks the boxes (`stackedLayout`), each with Mockup B's
+    height: runs, attention, detail, tokens beside activity, then next.
+  - Below 80×24, it prints `bl top needs at least 80x24`.
+
+  Each node of a layout takes its weight's share of its parent. A hidden box's share goes to the
+  boxes left in its split.
+
 - **Box numbers and the Tab order** (F-127 Decisions 1 and 3, `order`). A box's number is its
-  position in the layout that is drawn: each box's top-left cell at the screen's size, as if no
-  box were hidden, sorted by row and then by column. Nothing stores a number. So the full layout
-  numbers ¹ runs, ² attention, ³ detail, ⁴ tokens, ⁵ next, ⁶ activity, and the stacked one
-  ¹ runs, ² attention, ³ detail, ⁴ tokens, ⁵ activity, ⁶ next: next and activity swap numbers
-  when the terminal crosses 171×50. `tab` and `⇧tab` follow the same order and skip hidden
-  boxes. Another layout tree changes the numbers and the Tab order with no other change.
-- **Look** (D5, `top/internal/ui/box.go`, `styles.go`). btop's rounded box, with the
-  superscript number and the name in the top border and the options at its right; the key bar
+  position in the layout that is drawn. The view sorts the boxes by their top-left cells at the
+  screen's size, by row and then by column, as if no box were hidden. Nothing stores a number.
+  So the full layout numbers ¹ runs, ² attention, ³ detail, ⁴ tokens, ⁵ next, ⁶ activity. The
+  stacked one numbers ¹ runs, ² attention, ³ detail, ⁴ tokens, ⁵ activity, ⁶ next. So next and
+  activity swap numbers when the terminal crosses 171×50. `tab` and `⇧tab` follow the same order
+  and skip hidden boxes. Another layout tree changes the numbers and the Tab order with no other
+  change.
+- **Look** (D5, `top/internal/ui/box.go`, `styles.go`). Each box is btop's rounded box. Its top
+  border holds the superscript number and the name, and the options at its right. The key bar
   is the screen's bottom border. Colors are Catppuccin Mocha with logr's names: border surface2,
-  number and name mauve, key letters peach, the screen's background base. The box with the
+  number and name mauve, key letters peach, and the screen's background base. The box with the
   focus has a mauve border. The runs box's options are the time of the last snapshot and the
-  interval (`- 2000ms +`). A section whose last read failed (`error`) keeps its last good data, and its
-  box's top border shows a red `! <error>`.
+  interval (`- 2000ms +`). A section whose last read failed (`error`) keeps its last good data,
+  and its box's top border shows a red `! <error>`.
 - **Graphs and meters** (`top/internal/ui/braille.go`, `meter.go`). A graph is a braille area
-  graph: two samples per cell, four dot rows per cell, the highest sample at full height. A
-  series longer than the graph keeps the highest value of each share, so a peak stays. Each
-  graph line takes btop's gradient by its height: green at the bottom, yellow in the middle, red
-  at the top. A quota meter has a `■` for each share left and a `·` for each share used. Its
-  `■` are green above 50 % left, yellow from 20 to 50 %, and red below 20 %.
-- **The runs box** (`runs.go`). A row per `runs` row: id, state (`● run`, `◌ stale`, `■ stop`,
-  `✗ esc`, `✗ fail`, `? unk` for no status (a missing or mistyped one), and `✓ done` for every
-  other status, such as `clean`), step, story, round
-  (`1/2`), elapsed (to the snapshot while it runs or is stale, else to its last update), output
-  tokens, agent, model and effort (from an inner width of 103, so not in Mockup B), and the pull
-  request as `<repo>#<n>`. A done row is dim. The summary line counts the runs that are running,
-  stopped and stale, and the stories and points of the newest `history` day, labelled
-  `done today (UTC)`: `history` days are UTC dates, as `bl report` counts them.
-- **The attention box** (`attention.go`). A row per inbox item: its kind tag (`RUN` teal, `ESC`
-  red, `TASK` yellow, `CHG` blue, `UPD` peach), id, unit and line. The last line is
-  `next: <the selected item's next>`. In the stacked layout two or more update items fold into
-  one row, `UPD   <n> red updates`; `↵` on it opens the group (the items follow it) or closes it.
-- **The next box** (`next.go`, F-113 D4, D5). Every ranked unit, a divider line, then every
-  unranked unit: rank (none for an unranked unit), id, status, points (`-` for none), held by
-  (`heldBy`) and title. The divider names the unranked units' order, `not ranked · oldest first`
-  (the snapshot's order, by `added:`) or `not ranked · newest first` after `d`. Without the
-  focus the box shows the committed order (`ranked`, `unranked`). With the focus and a staged
-  copy (`staged` set), it shows the staged order with a marker column before the rank: `+` (green)
-  newly ranked, `~` (peach) moved, `-` (red) taken out of the ranked list. While `staged` is set,
-  the box's name is `next · staged edits`. The line under the list is the pick, the ranked unit it
-  unblocks when that is another.
+  graph: two samples per cell and four dot rows per cell, with the highest sample at full
+  height. If a series is longer than the graph, the graph keeps the highest value of each share,
+  so a peak stays. Each graph line takes btop's gradient by its height: green at the bottom,
+  yellow in the middle, red at the top. A quota meter has a `■` for each share left and a `·`
+  for each share used. Its `■` are green above 50 % left, yellow from 20 to 50 %, and red below
+  20 %.
+- **The runs box** (`runs.go`). The box has a row per `runs` row, with these columns:
+  - id;
+  - state: `● run`, `◌ stale`, `■ stop`, `✗ esc`, `✗ fail`, `? unk` for no status (a missing or
+    mistyped one), and `✓ done` for every other status, such as `clean`;
+  - step, story and round (`1/2`);
+  - elapsed: to the snapshot while the run runs or is stale, else to its last update;
+  - output tokens;
+  - agent, model and effort, from an inner width of 103 (so not in Mockup B);
+  - the pull request, as `<repo>#<n>`.
+
+  A done row is dim. The summary line counts the runs that are running, stopped and stale. It
+  also counts the stories and points of the newest `history` day, labelled `done today (UTC)`:
+  `history` days are UTC dates, as `bl report` counts them.
+
+- **The attention box** (`attention.go`). The box has a row per inbox item. Each row shows its kind
+  tag (`RUN` teal, `ESC` red, `TASK` yellow, `CHG` blue, `UPD` peach), id, work unit and line. The last line
+  is `next: <the selected item's next>`. In the stacked layout, two or more update items fold
+  into one row, `UPD   <n> red updates`. `↵` on that row opens the group (the items follow it) or
+  closes it.
+- **The next box** (`next.go`, F-113 D4, D5). The box lists every ranked work unit, a divider
+  line, then every unranked work unit. Each row shows the rank (none for an unranked work unit),
+  id, status, points (`-` for none), held by (`heldBy`) and title. The divider names the order of
+  the unranked work units: `not ranked · oldest first` (the snapshot's order, by `added:`), or
+  `not ranked · newest first` after `d`. Without the focus, the box shows the committed order
+  (`ranked`, `unranked`). With the focus and a staged copy (`staged` set), it shows the staged
+  order, with a marker column before the rank:
+  - `+` (green): newly ranked;
+  - `~` (peach): moved;
+  - `-` (red): taken out of the ranked list.
+
+  While `staged` is set, the box's name is `next · staged edits`. The line under the list is the
+  pick. When the pick unblocks another ranked work unit, the line also names that work unit.
+
 - **Conflict line** (`layout.go`, F-113 Decision A3). While the `next` section's `conflict` is
-  set, the screen's first line is `! <conflict>` in red across the full width, also when the next
-  box is hidden, and the boxes take the lines under it.
+  set, the screen's first line is `! <conflict>` in red across the full width. The line shows also
+  when the next box is hidden. The boxes take the lines under it.
 - **Selection** (`selection.go`). The runs, the attention and the next box each have a selected
-  row, kept by its id (`sel`, by box name): after a new snapshot the same row stays selected
-  while its id is there, else the row at its place. `↑` and `↓` move the selection of the box
-  with the focus, and the box scrolls to keep it on screen. The next box's divider is no row:
-  `↑` and `↓` pass over it. The selected row has the surface0 background. A cell that does not fit is cut with `…`.
-- **The tokens box** (`tokens.go`). The graph of output tokens per minute over 2 h, labelled
-  `ended sessions` (D3b), with its peak and an axis of the local half hours and `now`. Then
-  one meter per quota window of `bl capacity`, with the percent left and the reset (local
-  `15:04` within a day, else `Nov 12`). A window that two configurations report (Codex's
-  account quota) shows once. A configuration with no window shows `<agent>  <state>: <message>`,
-  for example `unknown: gemini cannot report capacity`, once per distinct line. Then today's
-  totals of the four kinds, and the local time capacity was last read.
-- **The activity box** (`activity.go`). The graph of points done per UTC day over the `history`
-  days (`points done / UTC day`), with the total of the last 7 days and a date axis. Then the
-  `activity` events, newest first, as many as fit: local time, work unit, step with its story or
-  round, `✓` or `✗` and the duration, then the agent, model and effort, or the note for a failed
-  session or an event with no agent.
-- **The detail box** (`detail.go`, F-88 S-1334). `↵` on a run row in the runs box, or on a row
-  of the attention or the next box whose unit (an item's `unit`, a unit's id in the next box)
-  has a `runs` row, makes the detail box show that run; its id is in the box's top border. With
-  no run shown, the detail box says `select a run (↑↓ in runs, then ↵)`.
-  From an inner height of 12 (Mockup A): the run's id and title; its branch, lead worktree,
-  pull request and local start time; the `timeline` as columns, `✓` done with its duration
-  (and `(n att.)` for two or more test entries), `●` current with its elapsed time, `·` not
-  started, over a bar; the denied tools (the count, and the step and tool of the first), the
-  run's test attempts, and the tokens of the current stage's ended sessions (else the last done
-  stage's). Below 12 (Mockup B): one line with the id, story and step, elapsed time and agent,
-  and the timeline on one line. Then the live feed, and the keys on the last line.
-- **The feed** (`top/internal/watch`). Showing a run starts `bl watch <id> --json` (through
-  `--bl-argv`) in a process group of its own; the view stops it (SIGTERM to the group) when
-  another run is shown or the view quits, and drops the messages of a watch it replaced. When
-  the watch of the run shown has ended, and a later snapshot shows that run not running and then
-  running again (a `--resume`), the view starts a new watch of it; the feed keeps its lines
-  (`resumeWatch`). After a watch that exited 0, the first snapshot read after the end that shows
-  the run running does the same: that watch ends only when no bl holds the run. Each line is a
-  feed line, cut to the box:
+  row, kept by its id (`sel`, by box name). After a new snapshot, the same row stays selected
+  while its id is there; else the row at its place is selected. `↑` and `↓` move the selection
+  of the box with the focus, and the box scrolls to keep the selection on screen. The next box's
+  divider is not a row: `↑` and `↓` pass over it. The selected row has the surface0 background.
+  A cell that does not fit is cut with `…`.
+- **The tokens box** (`tokens.go`). First, the box shows the graph of output tokens per minute
+  over 2 h, labelled `ended sessions` (D3b). The graph has its peak and an axis of the local half
+  hours and `now`. Then the box shows one meter per quota window of `bl capacity`, with the
+  percent left and the reset (local `15:04` within a day, else `Nov 12`). A window that two
+  configurations report (Codex's account quota) shows once. A configuration with no window shows
+  `<agent>  <state>: <message>`, for example `unknown: gemini cannot report capacity`, once per
+  distinct line. Last come today's totals of the four kinds, and the local time of the last
+  capacity read.
+- **The activity box** (`activity.go`). First, the box shows the graph of points done per UTC
+  day over the `history` days (`points done / UTC day`). The graph has the total of the last 7
+  days and a date axis. Then it shows the `activity` events, newest first, as many as fit. Each event shows
+  the local time, the work unit, the step with its story or round, `✓` or `✗` and the duration.
+  Then it shows the agent, model and effort, or the note for a failed session or an event with
+  no agent.
+- **The detail box** (`detail.go`, F-88 S-1334). `↵` makes the detail box show a run, on one of
+  these rows:
+  - a run row in the runs box;
+  - a row of the attention or the next box whose work unit has a `runs` row. That work unit is
+    an item's `unit`, or a work unit's id in the next box.
+
+  The run's id is in the box's top border. With no run shown, the detail box says
+  `select a run (↑↓ in runs, then ↵)`. From an inner height of 12 (Mockup A), the box shows:
+  - the run's id and title;
+  - its branch, lead worktree, pull request and local start time;
+  - the `timeline` as columns, over a bar: `✓` done with its duration (and `(n att.)` for two or
+    more test entries), `●` current with its elapsed time, and `·` not started;
+  - the denied tools (the count, and the step and tool of the first) and the run's test
+    attempts;
+  - the tokens of the current stage's ended sessions (else the last done stage's).
+
+  Below 12 (Mockup B), the box shows one line with the id, story and step, elapsed time and
+  agent, and the timeline on one line. Then come the live feed, and the keys on the last line.
+
+- **The feed** (`top/internal/watch`). When the view shows a run, it starts
+  `bl watch <id> --json` (through `--bl-argv`) in a process group of its own. The view stops that
+  watch (SIGTERM to the group) when it shows another run or quits. It drops the messages of a
+  watch that it replaced. In two cases, the view starts a new watch of the run shown, and the
+  feed keeps its lines (`resumeWatch`):
+  - The watch of the run shown has ended, and a later snapshot shows that run not running and
+    then running again (a `--resume`).
+  - A watch exited 0, and a snapshot read after its end shows the run running. The first such
+    snapshot starts the new watch: a watch that exits 0 ends only when no bl holds the run.
+
+  Each line of the watch is a feed line, cut to the box:
 
   | `bl watch --json` line | Feed line                                                       |
   | ---------------------- | --------------------------------------------------------------- |
@@ -4410,208 +4577,244 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   | `tool`                 | `<local time>  tool  <tool>  <summary>`, on one line            |
   | `end`                  | `── run ended: <status> ──`                                     |
 
-  A stderr line of `bl watch`, and why it failed when it exits other than 0, show dim. The
-  feed keeps its newest 1000 lines. With follow on (the default) it shows its newest lines; with
-  follow off, `↑` and `↓` in the detail box scroll it, and a new line leaves the lines on screen
-  where they are.
+  A stderr line of `bl watch` shows dim. So does the reason when `bl watch` exits other than 0.
+  The feed keeps its newest 1000 lines. With follow on (the default), it shows its newest lines.
+  With follow off, `↑` and `↓` in the detail box scroll it, and a new line leaves the lines on
+  screen where they are.
 
 - Below an inner height of 12 lines, the tokens and the activity box leave out their axis and
   blank lines (Mockup B).
-- **Three kinds of keys** (F-127; `key`, `localKey`, `helpGroups` in `top/internal/ui/model.go`).
-  Global keys work in every box. Box keys belong to the box with the focus: in the next box `y`,
-  `p`, `P`, `x`, `esc`, `C`, `R`, `d`; in the detail box `f`, `w`. Row action keys are the keys of
-  the selected row's `actions` in the snapshot: any of them picks that action (`actKey`), and a
-  key that none of them has does nothing. The view checks the global keys first, then the
-  focused box's box keys, then the row's actions, so a box key wins over a row action key with
-  the same letter (`p` in the next box puts).
+- **Three kinds of keys** (F-127; `key`, `localKey`, `helpGroups` in `top/internal/ui/model.go`):
+  - Global keys work in every box.
+  - Box keys belong to the box with the focus: `y`, `p`, `P`, `x`, `esc`, `C`, `R` and `d` in
+    the next box, and `f` and `w` in the detail box.
+  - Row action keys are the keys of the selected row's `actions` in the snapshot. Each of them
+    picks the action with that key (`actKey`). A key that none of them has does nothing.
+
+  The view checks the global keys first, then the box keys of the box with the focus, then the
+  row's actions. So a box key wins over a row action key with the same letter (`p` in the next
+  box puts).
+
 - **Key bar** (F-127 Decision 5, `Model.barKeys`, `keyBar` in `top/internal/ui/box.go`). The
-  bottom border shows, in this order: the focused box's box keys with their word from
-  `helpGroups`; the selected row's action keys with their `short` label, each key once and none
-  that is a box key or a global key; then `tab box`, `↑↓ select`, `↵ detail`, `a act`,
-  `h help`, `q quit` (the global keys that have a word in `helpGroups`). The tokens and the
-  activity box have no rows, so they show the global keys alone. The note line (below) comes
-  first: its notes share the bar, a note longer than its share is cut with `…`, and the keys take
-  the room the notes leave. The command that runs and the note of the last key or failed action
-  clear when the job ends or at the next key, so they may take the whole bar. A sender warning
-  stays until its sender succeeds, so with neither of those the sender warnings share only the
-  room that every key without its label leaves, and `h` and `q` always show. When the labels do
-  not fit, the bar shows the keys alone; when those do not fit either, it leaves out the keys at
-  its end.
-- **Keys** (D6, F-127 Decision 3, `top/internal/ui/model.go`): key `n` (`1`–`6`) hides or shows
-  the box at position `n` of the drawn layout; every box of the layout counts, hidden or not, so
-  a second press shows the box again. The view keeps the hidden boxes by name (`hidden`), so a
-  resize keeps the same boxes hidden under their new numbers. `tab` and `⇧tab` move the focus
-  to the next or previous shown box in the drawn order; `↑` and `↓` select a row, and in the
-  detail box with follow off scroll the feed; `↵` shows the selected row's run in the detail box,
-  or on the grouped update row opens or closes it; in the detail box, `f` turns follow on or
-  off and `w` opens `bl watch <id>` of the detail box's run in a new tmux window, in bl top's
-  directory, named `<id> watch` (D7's `tmux new-window`, then `exec ${SHELL:-sh}`, so the
-  window stays open after `bl watch` exits), as an action of the queue (below), and outside
-  tmux (`$TMUX` unset) says `w needs tmux` in red in the bottom border until the next key; `a`
-  opens the action menu of the selected row, and a row action key picks its action with that
-  key (below); `d` in the next box shows the unranked units newest or oldest first
-  (`bl top` starts oldest first, and the choice lasts until it exits); in the next box, the
-  ranking keys (below); `c` writes `capacity` to the stream's stdin, so the next snapshot
-  reads capacity; `+` and `-` change the interval by 500 ms within
-  500 to 10000 and, 400 ms after the last press, start the stream again with it; `h` opens the
-  help, and any key closes it; `q` or `ctrl+c` quits. The help lists the global keys, then
-  each box's box keys with its current number and name beside the first of them (`helpGroups`,
-  by box name), then the line `the selected row's actions; a lists them`. Its top border says
+  bottom border shows, in this order:
+  1. the box keys of the box with the focus, with their word from `helpGroups`;
+  2. the selected row's action keys with their `short` label, each key once, and none that is a
+     box key or a global key;
+  3. `tab box`, `↑↓ select`, `↵ detail`, `a act`, `h help`, `q quit`: the global keys that have a
+     word in `helpGroups`.
+
+  The tokens and the activity box have no rows, so they show the global keys alone. The note
+  line (below) gets its room first. Its notes share the bar, and a note longer than its share is
+  cut with `…`. The keys take the room that the notes leave. Two notes clear when the job ends or
+  at the next key: the command that runs, and the note of the last key or failed action. So
+  these two notes may take the whole bar. A sender warning stays until its sender succeeds. So when neither
+  of those two notes shows, the sender warnings share only the room that every key without its
+  label leaves. Then `h` and `q` always show. When the labels do not fit, the bar shows the keys
+  alone. When the keys alone do not fit either, the bar leaves out the keys at its end.
+
+- **Keys** (D6, F-127 Decision 3, `top/internal/ui/model.go`):
+  - `1`–`6`: key `n` hides or shows the box at position `n` of the drawn layout. Every box of the
+    layout counts, hidden or not, so a second press shows the box again. The view keeps the
+    hidden boxes by name (`hidden`), so a resize keeps the same boxes hidden under their new
+    numbers.
+  - `tab` and `⇧tab` move the focus to the next or previous shown box in the drawn order.
+  - `↑` and `↓` select a row. In the detail box with follow off, they scroll the feed.
+  - `↵` shows the selected row's run in the detail box. On the grouped update row, it opens or
+    closes the group.
+  - `f` in the detail box turns follow on or off.
+  - `w` in the detail box opens `bl watch <id>` of the detail box's run in a new tmux window, as
+    an action of the queue (below). The window is in bl top's directory and is named
+    `<id> watch`. The command is D7's `tmux new-window`, then `exec ${SHELL:-sh}`, so the window
+    stays open after `bl watch` exits. Outside tmux (`$TMUX` unset), `w` says `w needs tmux` in
+    red in the bottom border until the next key.
+  - `a` opens the action menu of the selected row. A row action key picks its action with that
+    key (below).
+  - `d` in the next box shows the unranked work units newest or oldest first. `bl top` starts
+    oldest first, and the choice lasts until it exits.
+  - In the next box, the ranking keys work (below).
+  - `c` writes `capacity` to the stream's stdin, so the next snapshot reads capacity.
+  - `+` and `-` change the interval by 500 ms, within 500 to 10000. 400 ms after the last press,
+    the view starts the stream again with the new interval.
+  - `h` opens the help, and any key closes it.
+  - `q` or `ctrl+c` quits.
+
+  The help lists the global keys first. Then it lists the box keys of each box, with the box's
+  current number and name beside the first of them (`helpGroups`, by box name). Last comes the
+  line `the selected row's actions; a lists them`. The help's top border says
   `any key closes this help`. Blank lines part the groups when the help fits the screen with
-  them; without them it fits from 80×24.
-- **Ranking keys** (F-113 D6, D7; `rankKey`, `top/internal/ui/dialog.go`). They act only while
-  the next box has the focus, so `p` keeps F-88's meaning in the other boxes. `y` yanks the
-  selected unit, ranked or not, and the next box marks it with a peach `↕` after its rank until a
-  put or `esc`. `p`, `P` and `x` pick the selected row's action of that key; `C` and `R` pick
-  the box's (`next.actions`), which belong to no row. Each runs at once, as every action does
-  (below). A key with no such action does nothing: an unranked row has no `p`, `P` or `x`, and
-  with no staged copy there is no `C` or `R`. While
-  `next.conflict` is set, every ranking key but `R` refuses with its text in the bottom border.
-  Each pick renders the action's argv (`actions.Render`, below) with `Selected` (the selected
-  row's id) and `Yanked` (only while a unit is yanked): a put with nothing yanked refuses with
-  `yank a work unit first (y)`, and the menu shows that line in place of its command. A put
-  takes the yanked id at the key press, and the yank ends then. `bl rank --commit` runs with no
-  stdin, so a merge conflict ends it with `conflict: run bl rank --commit in a terminal`, which
-  the note line shows.
+  them. Without them, the help fits from 80×24.
+
+- **Ranking keys** (F-113 D6, D7; `rankKey`, `top/internal/ui/dialog.go`). The ranking keys act
+  only while the next box has the focus, so `p` keeps F-88's meaning in the other boxes:
+  - `y` yanks the selected work unit, ranked or not. The next box marks it with a peach `↕`
+    after its rank until a put or `esc`.
+  - `p`, `P` and `x` pick the selected row's action of that key.
+  - `C` and `R` pick the box's actions (`next.actions`), which belong to no row.
+
+  Each action runs at once, as every action does (below). A key with no such action does
+  nothing. An unranked row has no `p`, `P` or `x`, and with no staged copy there is no `C` or
+  `R`. While `next.conflict` is set, every ranking key but `R` refuses with the conflict's text in
+  the bottom border. Each pick renders the action's argv (`actions.Render`, below) with `Selected`
+  (the selected row's id) and `Yanked` (only while a work unit is yanked). If nothing is yanked,
+  a put refuses with `yank a work unit first (y)`, and the menu shows that line in place of its
+  command. A put takes the yanked id at the key press, and the yank ends then. `bl rank --commit`
+  runs with no stdin. So a merge conflict ends it with
+  `conflict: run bl rank --commit in a terminal`, which the note line shows.
+
 - **Actions** (D7, F-88 S-1336, F-127 Decisions 2 and 4; `top/internal/ui/dialog.go`,
   `top/internal/ui/queue.go`, `top/internal/actions`). The selected row of the box with the
-  focus (in the detail box, the run it shows) has the `actions` of its snapshot row (below).
-  `a` opens the action menu (Mockup C): `↑` `↓` and `↵`, or an action's key, pick one, and
-  `esc` cancels. A row action key picks the action with that key directly; a key that the
-  row's actions do not have does nothing. No action asks y/n: a pick runs at once (`pick`). An
-  action with `input` first opens its text box: `note` is optional, `reason` refuses an empty one; `enter`
-  runs it, and `esc` cancels it. The menu and the text box are the only action dialogs.
-  - **The queue.** bl top has at most one action child process (`Model.jobs`, a `job` each). An
-    action picked while another runs waits, and the queue runs in the order of the key presses
-    (`enqueue`, `jobDone`). The note line, at the right of the bottom border, shows the command
-    that runs (`command`), in the text color. On success the line clears and the next action
-    starts. On a failure the actions that waited are dropped, and the line shows
-    `exit <code>[, dropped <n> queued action(s)]: <command>: <last stderr line>` in red until
-    the next key. The exit code and the count come first, so a cut never hides them. A long
-    child holds the queue: `bl merge` for minutes,
-    `bl stop` for up to 30 s. `q` quits while a child runs, and the child goes on. The next
-    snapshot shows the change.
-  - an action with `window` opens a new tmux window of that name, in bl top's directory (the
-    backlog root: `src/top.js` runs the view there), running the command and then
-    `exec ${SHELL:-sh}` (`actions.TmuxArgs`; `w` is such an action too). Its child is
-    `tmux new-window` (`actions.Window`), which ends at once, so the command in the window holds
-    no queue. Outside tmux the action says `<key> needs tmux` and does nothing. A tmux that
-    fails reports like any other failed action.
-  - any other action runs as a child with no stdin and stdout: a bl command through
-    `--bl-argv`, a `url` through `xdg-open` (`open` on macOS).
-  - an action with `stops` marks its run with the pid of its `bl stop` child (D8,
-    `Differ.Quiet`), when the child starts. The view starts the child before it reads the next
-    snapshot (`actions.Start`), so the mark is there first. A stop that the queue drops never
-    starts and marks nothing. The run's `stopped` end does not notify when that pid is one of
-    the run's `stoppedBy`, the pids of the `bl stop`s whose requests stopped
-    it (`markStopped`). So a stop of this view that timed out and stops the run later stays quiet,
-    and another shell's stop notifies, also while this view's stop runs or after it failed. The
-    marks go when the run ends with any status.
+  focus has the `actions` of its snapshot row (below). In the detail box, that row is the run
+  that the box shows. `a` opens the action menu (Mockup C). In the menu, `↑` `↓` and `↵`, or an
+  action's key, pick an action, and `esc` cancels. A row action key picks the action with that
+  key directly. A key that the row's actions do not have does nothing. No action asks y/n: a
+  pick runs at once (`pick`). An action with `input` first opens its text box: `note` is
+  optional, and `reason` refuses an empty one. `enter` runs the action, and `esc` cancels it. The
+  menu and the text box are the only action dialogs.
+  - **The queue.** bl top has at most one action child process (`Model.jobs`, a `job` each). If
+    an action is picked while another runs, it waits. The queue runs the actions in the order of
+    the key presses (`enqueue`, `jobDone`). The note line, at the right of the bottom border,
+    shows the command that runs (`command`), in the text color. On success, the line clears and
+    the next action starts. On a failure, the view drops the actions that waited. The line then
+    shows `exit <code>[, dropped <n> queued action(s)]: <command>: <last stderr line>` in red
+    until the next key. The exit code and the count come first, so a cut never hides them. A
+    long child holds the queue: `bl merge` for minutes, `bl stop` for up to 30 s. `q` quits while
+    a child runs, and the child goes on. The next snapshot shows the change.
+  - An action with `window` opens a new tmux window of that name, in bl top's directory. That
+    directory is the backlog root: `src/top.js` runs the view there. The window runs the command
+    and then `exec ${SHELL:-sh}` (`actions.TmuxArgs`; `w` is such an action too). The action's
+    child is `tmux new-window` (`actions.Window`), which ends at once, so the command in the
+    window holds no queue. Outside tmux, the action says `<key> needs tmux` and does nothing. A
+    tmux that fails reports like any other failed action.
+  - Any other action runs as a child with no stdin and stdout: a bl command through
+    `--bl-argv`, or a `url` through `xdg-open` (`open` on macOS).
+  - An action with `stops` marks its run with the pid of its `bl stop` child when the child
+    starts (D8, `Differ.Quiet`). The view starts the child before it reads the next snapshot
+    (`actions.Start`), so the mark is there first. A stop that the queue drops never starts and
+    marks nothing. The run's `stopped` end does not notify when that pid is one of the run's
+    `stoppedBy`. `stoppedBy` holds the pids of the `bl stop`s whose requests stopped the run
+    (`markStopped`). So if a
+    stop of this view timed out and stops the run later, the end stays quiet. A stop from
+    another shell notifies, also while this view's stop runs or after it failed. The marks go
+    when the run ends with any status.
 - **Notifications** (D8, `top/internal/notify`). The view compares each snapshot with the one
-  before. A new `escalation` or `task` item (by item id) and a run that gets an end status
-  (every status but `running`, `stale` and none: `clean`, `no-change`, `reviewed`, `escalated`,
-  `failed`, `stopped`; `stream.Ended`; by run id and status), except a `stopped` end by a
-  `bl stop` that this view started, each make a note
-  `<id> <kind>` with a line: the item's line, or `ended at <step> (<story>)` (`ended` for a run
-  with no step). The first read of a
-  section only sets its baseline, so an item notifies once, and again only after it left the
-  inbox and came back. For the notes of a snapshot the view rings the terminal bell (`\a`) once,
-  unless `--no-bell`, and hands each note to each sender. A sender is a command argv to which
-  it appends `<id> <kind>` and `<line>`; it runs in the background, in a process group of its
-  own, and is killed after 10 s. The command's own exit is the result: after it exits, the
-  sender waits at most 1 s for a child that holds its stderr, so an exit 0 is never `timeout`.
-  The stream's end waits the same 1 s for its stderr. The desktop sender is
-  `notify-send -a "bl top" --`, when `notify-send` is on `PATH` and there is no `--no-desktop`.
-  A sender that exits other than 0 or times out puts
-  `<name> failed: <its last stderr line, or timeout>` in red at the right of the bottom border,
-  until its command next exits 0. A sender may take only some kinds of note (`Sender.Kinds`).
-  `src/top.js` refuses `--no-bell`, `--no-desktop` and `--no-push` with `--json` or `--stream`.
+  before. Each of these makes a note `<id> <kind>` with a line:
+  - a new `escalation` or `task` item (by item id), with the item's line;
+  - a run that gets an end status (by run id and status), with `ended at <step> (<story>)`, or
+    `ended` for a run with no step.
+
+  The end statuses are every status but `running`, `stale` and none: `clean`, `no-change`,
+  `reviewed`, `escalated`, `failed`, `stopped` (`stream.Ended`). A `stopped` end by a `bl stop`
+  that this view started makes no note. The first read of a section only sets its baseline. So
+  an item notifies once, and again only after it left the inbox and came back. For the notes of
+  a snapshot, the view rings the terminal bell (`\a`) once, unless `--no-bell`. It hands each
+  note to each sender.
+
+  A sender is a command argv, to which the view appends `<id> <kind>` and `<line>`. The sender
+  runs in the background, in a process group of its own, and is killed after 10 s. The
+  command's own exit is the result. After the command exits, the sender waits at most 1 s for a
+  child that holds its stderr, so an exit 0 is never `timeout`. The stream's end waits the same
+  1 s for its stderr. The desktop sender is `notify-send -a "bl top" --`, when `notify-send` is
+  on `PATH` and there is no `--no-desktop`. If a sender exits other than 0 or times out, the view
+  puts `<name> failed: <its last stderr line, or timeout>` in red at the right of the bottom
+  border. The warning stays until the sender's command next exits 0. A sender may take only
+  some kinds of note (`Sender.Kinds`). `src/top.js` refuses `--no-bell`, `--no-desktop` and
+  `--no-push` with `--json` or `--stream`.
+
 - **Phone push** (D8a, `notify.Push`). The push sender, named `push`, is the command of
-  backlog.json's `top` block (below), and it gets only `escalation` and `task` notes, never a
-  run that ends (Decision A6). `src/top.js` reads the block before the build (not for
-  `--version`, which reads no backlog) and passes the argv to the view as
-  `--push-argv '<JSON array>'`, an internal flag that the view decodes with `encoding/json`, so
-  the view still reads no backlog file. `--no-push` (passed on to the view) drops the sender. A
-  push that fails warns as `push failed: …` in the bottom border. bl holds no secret and names
-  no push service: the command does that. The view cannot put `--` before the two arguments it
-  appends, because it does not know the command's options. So a line that starts with `-` can
-  reach the command as an option: when the command needs it, the operator puts `--` at the end
-  of `top.push`.
+  backlog.json's `top` block (below). It gets only `escalation` and `task` notes, never a run
+  that ends (Decision A6). `src/top.js` reads the block before the build, but not for
+  `--version`, which reads no backlog. It passes the argv to the view as
+  `--push-argv '<JSON array>'`. That is an internal flag that the view decodes with
+  `encoding/json`, so the view still reads no backlog file. `--no-push` (passed on to the view)
+  drops the sender. A push that fails warns as `push failed: …` in the bottom border. bl holds
+  no secret and names no push service: the command does that. The view cannot put `--` before
+  the two arguments that it appends, because it does not know the command's options. So a line
+  that starts with `-` can reach the command as an option. If the command needs it, the operator
+  puts `--` at the end of `top.push`.
 - **backlog.json `top`.** `"top": { "push": ["<command>", "<arg>", …] }`. `topSettings`
-  (`src/config.js`) reads it as `updateSettings` reads `updates`: only when used, never by
-  `loadConfig`, and only for the view (`--json` and `--stream` do not read it). No `top` block
-  means no phone push. With one, `push` is required, with no default: a non-empty array of
-  non-empty strings. Otherwise `bl top` exits 1 with an error that names `backlog.json "top"`
-  and the key.
+  (`src/config.js`) reads it as `updateSettings` reads `updates`: only when used, and never by
+  `loadConfig`. It reads it only for the view: `--json` and `--stream` do not read it. With no `top`
+  block, there is no phone push. With a `top` block, `push` is required and has no default: it
+  must be a non-empty array of non-empty strings. Otherwise `bl top` exits 1 with an error that
+  names `backlog.json "top"` and the key.
 - **Tests.** `npm test` runs `go test ./...` in `top/` (script `test:top`). The golden files
-  `top/internal/ui/testdata/*.golden` hold the two action dialogs, the menu and the text box
-  (`actions.golden`), the
-  empty frame at 171×63, 100×40 and 79×23, the
-  frame at 100×40 with a fake `notify-send` that exited 1 and with a fake push command that
-  exited 1, one set of boxes, and the screen at 171×63 and 100×40 drawn from the recorded snapshot
-  `testdata/snapshot.json` (Mockup A's data) in a fixed zone (UTC−5), without colors, with a row
-  selected in the runs, the attention and the next box, and the same screen with S-1330 shown in
-  the detail box and the recorded
-  `bl watch --json` lines of the S-1272 fixtures (`top/internal/watch/testdata/watch.jsonl`) as
-  its feed (`detail-*.golden`);
-  `go test ./internal/ui -update` writes them again. `top/internal/watch`'s tests run a fake
-  `bl` that prints those lines. The action tests put a fake `bl`, `tmux`, `xdg-open` and `open`
-  on `PATH`, each of which writes its arguments to a file and adds them as a line to a log, so
-  a test reads the order of the queue's runs.
-  `test/cli/top.sh` removes `top/bin/` and checks the build, with and without Go on `PATH`. It
-  then checks a bad `top` block, and swaps in a fake view for a moment to check `--push-argv`
-  and `--no-push`.
+  `top/internal/ui/testdata/*.golden` hold:
+  - the two action dialogs, the menu and the text box (`actions.golden`);
+  - the empty frame at 171×63, 100×40 and 79×23;
+  - the frame at 100×40 with a fake `notify-send` that exited 1, and with a fake push command
+    that exited 1;
+  - one set of boxes;
+  - the screen at 171×63 and 100×40, drawn from the recorded snapshot `testdata/snapshot.json`
+    (Mockup A's data). The screen is drawn in a fixed zone (UTC−5), without colors, with a row
+    selected in the runs, the attention and the next box;
+  - the same screen with S-1330 shown in the detail box, and the recorded `bl watch --json` lines
+    of the S-1272 fixtures (`top/internal/watch/testdata/watch.jsonl`) as its feed
+    (`detail-*.golden`).
+
+  `go test ./internal/ui -update` writes them again. The tests of `top/internal/watch` run a
+  fake `bl` that prints those lines. The action tests put a fake `bl`, `tmux`, `xdg-open` and
+  `open` on `PATH`. Each fake writes its arguments to a file and adds them as a line to a log.
+  So a test reads from the log the order in which the queue ran its actions. `test/cli/top.sh` removes `top/bin/`
+  and checks the build, with and without Go on `PATH`. Then it checks a bad `top` block. Last, it
+  swaps in a fake view for a moment to check `--push-argv` and `--no-push`.
 
 #### The snapshot
 
 The snapshot is one object, schema `bl-top-json/v1`:
-`{ schema, at, runs, attention, next, capacity, history, activity, tokens }`. `at` and every time in it are ISO
-times with a zone. Each section is an object with `read_at`, the ISO time of its last good
-read. A section whose read throws keeps its last good value and carries `error`, the message;
-the next good read drops `error`. Each section comes from bl's own reader, in the same process
-(`src/top-snapshot.js`), so nothing else parses a backlog file:
+`{ schema, at, runs, attention, next, capacity, history, activity, tokens }`. `at` and every
+time in it are ISO times with a zone. Each section is an object with `read_at`, the ISO time of
+its last good read. If the read of a section throws, the section keeps its last good value and
+carries `error`, the message. The next good read drops `error`. Each section comes from bl's own
+reader, in the same process (`src/top-snapshot.js`), so nothing else parses a backlog file:
 
-| Section     | Holds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Read (`--stream`)                                        |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
-| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's holder, or null), `agent`, `model`, `effort` of its newest session entry, `title` (its unit's), `testAttempts`, `stoppedBy` (the `bl stop` pids that stopped it; `[]` unless `stopped`), `timeline` and `denied` (below)                                                                                                                                                                                                                                                                                                                                                                                          | every snapshot                                           |
-| `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | when the backlog changes, and at least every 30 s        |
-| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (every committed ranked unit: `position`, `id`, `title`, `status`, `points`, `holds`, `heldBy`: the ids of the holders, `actions`), `unranked` (every other open unit, oldest `added:` first, the same fields with `position: null`): `nextPlan()`, the walk `bl next` prints; `staged`: null with no staged copy (`.bl/priority.staged.yaml`), else `{ ranked, unranked }` in the staged order (`readStaged`, `orderOf`), each row with `position` in the staged list and `mark` (`+`, `~`, `-` or `""`, `marks()`); `conflict`: null, or F-113 Decision A3's message while the staged copy is in conflict (then `staged` is null); `actions`: `C` and `R` while a staged copy exists, in conflict or not, else `[]` | as `attention`                                           |
-| `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | every 5 min, and at the snapshot after a `capacity` line |
-| `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | every 5 min                                              |
-| `activity`  | `events`: the newest 50 history entries of all run states, newest first, each `{ at, unit, step, story, round, ok, durationMs, agent, model, effort, note }`; `durationMs` is `at` minus `startedAt` (null without one), and `note` is cut to 80 characters                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | every snapshot                                           |
-| `tokens`    | `from`, `minutes`, `today`: the output tokens of each of the last 120 minutes from `from`, oldest first, the last the snapshot's minute, from each history entry's `usage` spread evenly from its `startedAt` to its `at`; `today` sums the four kinds of each entry whose `at` is on today's local date                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | every snapshot                                           |
+| Section     | Holds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Read (`--stream`)                                        |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's holder, or null), `agent`, `model`, `effort` of its newest session entry, `title` (its work unit's), `testAttempts`, `stoppedBy` (the `bl stop` pids that stopped it; `[]` unless `stopped`), `timeline` and `denied` (below)                                                                                                                                                                                                                                                                                                                                                                                                                            | every snapshot                                           |
+| `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | when the backlog changes, and at least every 30 s        |
+| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (every committed ranked work unit: `position`, `id`, `title`, `status`, `points`, `holds`, `heldBy`: the ids of the holders, `actions`), `unranked` (every other work unit whose status does not meet `done`, oldest `added:` first, the same fields with `position: null`): `nextPlan()`, the walk `bl next` prints; `staged`: null with no staged copy (`.bl/priority.staged.yaml`), else `{ ranked, unranked }` in the staged order (`readStaged`, `orderOf`), each row with `position` in the staged list and `mark` (`+`, `~`, `-` or `""`, `marks()`); `conflict`: null, or F-113 Decision A3's message while the staged copy is in conflict (then `staged` is null); `actions`: `C` and `R` while a staged copy exists, in conflict or not, else `[]` | as `attention`                                           |
+| `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | every 5 min, and at the snapshot after a `capacity` line |
+| `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | every 5 min                                              |
+| `activity`  | `events`: the newest 50 history entries of all run states, newest first, each `{ at, unit, step, story, round, ok, durationMs, agent, model, effort, note }`; `durationMs` is `at` minus `startedAt` (null without one), and `note` is cut to 80 characters                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | every snapshot                                           |
+| `tokens`    | `from`, `minutes`, `today`: the output tokens of each of the last 120 minutes from `from`, oldest first, the last the snapshot's minute, from each history entry's `usage` spread evenly from its `startedAt` to its `at`; `today` sums the four kinds of each entry whose `at` is on today's local date                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | every snapshot                                           |
 
-- `activity` and `tokens` read the run states' history entries (F-87 D3b, D3c). A session that
-  is still running counts only when it ends: its run state holds no usage until then. The
+- `activity` and `tokens` read the history entries of the run states (F-87 D3b, D3c). A session
+  that is still running counts only when it ends: its run state holds no usage until then. The
   `runs`, `activity` and `tokens` readers share one parse cache (`runStatesReader`).
-- A `runs` row carries no `history` (F-88 S-1334); the detail box reads what it needs from it:
-  - `timeline` (`runTimeline`): the stages of `planSteps()` (`src/feature-run.js`): setup,
-    one implement stage for all stories, `fix-tests` (with the test gate), self-review, then
-    `review` and `fix` (with its self-review) of each round, and `closing`. Each is
+- A `runs` row carries no `history` (F-88 S-1334). The detail box reads what it needs from these
+  fields of the row:
+  - `timeline` (`runTimeline`): the stages of `planSteps()` (`src/feature-run.js`). They are
+    setup, one implement stage for all stories, `fix-tests` (with the test gate), self-review,
+    then `review` and `fix` (with its self-review) of each round, and `closing`. Each stage is
     `{ step, round, state, durationMs, tests, usage }`. The history entries go to stages in
-    order: a review pass to the round after the last `review:round` entry, a fix to that
-    entry's round. A stage never goes back, so an entry of an earlier stage (the test gate after
-    a fix, the setup of `--resume`) goes to the latest stage so far; an entry outside the
-    timeline (`pr`, hygiene) is left out. A stage with an entry is `done`; the stage of the
-    run's `step` is `current` while the row is `running`; any other is `pending`. A stage lasts
-    from the end of the stage before it (the run's start for the first) to its last entry, or
-    to the snapshot while current. `tests` counts its `test` entries; `usage` sums its entries'
-    usage, or is null.
-  - `denied` (`deniedOf`): `{ count, step, tool }`, the denied tools of the history entries'
+    order: a review pass to the round after the last `review:round` entry, and a fix to that
+    entry's round. A stage never goes back. So an entry of an earlier stage (the test gate after
+    a fix, the setup of `--resume`) goes to the latest stage so far. An entry outside the
+    timeline (`pr`, hygiene) is left out. A stage with an entry is `done`. The stage of the
+    run's `step` is `current` while the row is `running`. Any other stage is `pending`. A stage
+    starts at the end of the stage before it, or at the run's start for the first stage. It ends
+    at its last entry, or at the snapshot while it is current. `tests` counts its `test` entries. `usage` sums the
+    usage of its entries, or is null.
+  - `denied` (`deniedOf`): `{ count, step, tool }`: the denied tools of the history entries'
     `denials`, and the step and tool of the first.
   - `title` comes from `loadBacklog()`, which reuses its graph while the backlog's files are
-    unchanged; null for a unit the backlog does not hold, or when it cannot be loaded.
-- `actions` (F-87 D7, F-88 S-1336): each `runs` row, each `attention` item and each unit of
-  `next` carries a list of `{ key, label, short, argv, input, window, url, stops }`, which
-  `src/top-snapshot.js` builds (`runActions`, `itemActions`), so the view holds no backlog
-  logic. `label` is what the `a` menu shows; `short` is the action's word on the key bar
-  (F-127 Decision 5, for example `resume`, `page` or `PR`). `argv` is a bl command
-  (`["bl", …]`) or null for `url` (a page the view opens); `input` is null, `"note"` (optional text) or `"reason"` (needed text), added as the last
-  word; `window` names the tmux window the command opens in, or is null for a child that
-  reports on the note line; `stops` is the run the action stops.
-  Each `argv` element is a Go `text/template` (F-113 D7, Decision A4): the view renders it with
-  `missingkey=error` against `Selected` (the selected row's id) and `Yanked` (the yanked unit's
-  id, only while one is yanked). An element without `{{ }}` renders as itself.
+    unchanged. It is null for a work unit that the backlog does not hold, or when the backlog
+    cannot be loaded.
+- `actions` (F-87 D7, F-88 S-1336): each `runs` row, each `attention` item and each work unit
+  of `next` carries a list of `{ key, label, short, argv, input, window, url, stops }`.
+  `src/top-snapshot.js` builds the list (`runActions`, `itemActions`), so the view holds no
+  backlog logic. The fields are:
+  - `label`: what the `a` menu shows.
+  - `short`: the action's word on the key bar (F-127 Decision 5), for example `resume`, `page`
+    or `PR`.
+  - `argv`: a bl command (`["bl", …]`), or null for `url` (a page that the view opens).
+  - `input`: null, `"note"` (optional text) or `"reason"` (needed text), added as the last word.
+  - `window`: the tmux window that the command opens in, or null for a child that reports on the
+    note line.
+  - `stops`: the run that the action stops.
+
+  Each `argv` element is a Go `text/template` (F-113 D7, Decision A4). The view renders it with
+  `missingkey=error` against `Selected` (the selected row's id) and `Yanked` (the yanked work
+  unit's id, only while one is yanked). An element without `{{ }}` renders as itself.
 
   | Row                                     | Actions (key: command)                                                                                                                                                 |
   | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -4626,67 +4829,71 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
   | `next.actions`                          | `C`: `bl rank --commit`; `R`: `bl rank --reset`, while a staged copy exists                                                                                            |
   | runner, update; every row               | last, `g`: `bl agent` in window `agent`                                                                                                                                |
 
-- Each run state is read on its own. A file that cannot be read (not JSON, not a run state, or
-  gone since the listing; a read can race `saveRunState`, which truncates the file first) keeps
-  its last good parse, or is left out when it has none, and `runs`, `activity` and `tokens`
-  still read the others: each carries `error: "skipped: <why>"` and `skipped: [<id>, …]` with
-  its new `read_at`. The view's notifications keep the last status of a skipped run, and a run
-  skipped before the view saw it only sets its baseline when it is read. The `error` stays for
-  as long as the file cannot be read. `--stream` writes it to stderr once when it first
-  appears, as one line per section: three lines for one bad file. A history entry that is not
-  an object is left out, and so is an `activity` entry with no time.
-- The view decodes each field as one Go type, and a field of another type would end its
-  stream. So each run-state field that `runs`, `activity` and `tokens` copy is null when it does
-  not have its type (a hand-edited `round: "2"`), a token count that is not a whole
-  non-negative number counts 0, and an
-  `activity` `at` is a full ISO time in the years 0000 to 9999 (Go reads four-digit years only):
-  an entry with another `at` is left out, and a `startedAt` outside them gives no duration.
-- A `runs` row whose run state says `running` while nobody holds its run lock
-  (`.bl/run/<id>.lock`, checked with a try-lock) has `status: "stale"`: its bl was killed. The
-  stream parses a run state again only when the file's mtime changes.
-- "The backlog changes" means git `HEAD` moves, or a unit file, change document or
-  `priority.yaml` or the staged copy changes: `backlogStamp()` (`src/top-stream.js`) compares
-  `HEAD`, `backlogSignature()`, the stat signature `loadBacklog()` compares
-  (`src/backlog-graph.js`), and the staged copy's `statKey()`.
+- The snapshot reads each run state on its own. A file may not be readable: not JSON, not a run
+  state, or gone since the listing. A read can race `saveRunState`, which truncates the file
+  first. Such a file keeps its last good parse, or is left out when it has none. `runs`,
+  `activity` and `tokens` still read the other files. Each of them carries
+  `error: "skipped: <why>"` and `skipped: [<id>, …]` with its new `read_at`. The view's
+  notifications keep the last status of a skipped run. A run that was skipped before the view
+  saw it only sets its baseline when it is read. The `error` stays for as long as the file
+  cannot be read. `--stream` writes it to stderr once, when it first appears, as one line per
+  section: three lines for one bad file. A history entry that is not an object is left out, and
+  so is an `activity` entry with no time.
+- The view decodes each field as one Go type, and a field of another type would end its stream.
+  So:
+  - Each run-state field that `runs`, `activity` and `tokens` copy is null when it does not have
+    its type (a hand-edited `round: "2"`).
+  - A token count that is not a whole non-negative number counts 0.
+  - An `activity` `at` is a full ISO time in the years 0000 to 9999 (Go reads four-digit years
+    only). An entry with another `at` is left out, and a `startedAt` outside those years gives
+    no duration.
+- A `runs` row has `status: "stale"` when its run state says `running` while nobody holds its
+  run lock: its bl was killed. bl checks the run lock (`.bl/run/<id>.lock`) with a try-lock. The stream parses
+  a run state again only when the file's mtime changes.
+- "The backlog changes" means that git `HEAD` moves, or that a unit file, a change document,
+  `priority.yaml` or the staged copy changes. `backlogStamp()` (`src/top-stream.js`) compares
+  three things: `HEAD`, `backlogSignature()` (the stat signature that `loadBacklog()` compares,
+  in `src/backlog-graph.js`) and the staged copy's `statKey()`.
 - The first `--stream` snapshot reads every section. `attention` and `next` have a schedule
-  each. When the read of `attention`, `next`, `capacity` or `history` throws, the section is
-  read again after 10 s, then after twice as long at each further failure, never later than its
-  period, and a backlog change does not read it sooner (`RETRY_FIRST_MS`). A good read goes
-  back to the usual schedule. A `stamp()` that throws counts as a change once, not at every
-  snapshot. A line `capacity` on stdin makes the next snapshot read capacity. When stdin
+  each. If the read of `attention`, `next`, `capacity` or `history` throws, the stream reads the
+  section again after 10 s. At each further failure, it waits twice as long, never longer than
+  the section's period, and a backlog change does not read it sooner (`RETRY_FIRST_MS`). A good
+  read goes back to the usual schedule. A `stamp()` that throws counts as a change once, not at
+  every snapshot. A line `capacity` on stdin makes the next snapshot read capacity. When stdin
   closes, the stream exits 0.
-- stdout carries only the JSON. A section that could not be read
-  (`bl top: <section> not read: <message>`) and each inbox warning (`warning: …`) go to stderr,
-  in `--stream` once when they first appear.
+- stdout carries only the JSON. Two kinds of line go to stderr: a section that could not be read
+  (`bl top: <section> not read: <message>`), and each inbox warning (`warning: …`). In
+  `--stream`, each goes to stderr once, when it first appears.
 
 ### `bl watch`
 
-`bl watch <F-id|B-id|S-id> [--from-start] [--json]` (`src/watch.js`, S-1272) follows the live agent
-session of a headless `bl run`, `bl review` or `bl merge` integration: one line per agent
-message or tool call. When the run moves to its next step's session (implement, self-review,
-review, fix), it prints a new header and follows that session. `bl top`'s detail box (S-1334)
-reads its `--json` stream.
+`bl watch <F-id|B-id|S-id> [--from-start] [--json]` (`src/watch.js`, S-1272) follows the live
+agent session of a headless `bl run`, `bl review` or `bl merge` integration. It prints one line
+per agent message or tool call. When the run moves to its next step's session (implement,
+self-review, review, fix), `bl watch` prints a new header and follows that session. `bl top`'s
+detail box (S-1334) reads its `--json` stream.
 
 1. Before each spawn, `runSession` (`recordSession` in `src/feature-run.js`) asks the step's
-   adapter for a follow handle (`followHandle()`, see **The adapter interface**), writes the
+   adapter for a follow handle (`followHandle()`, see **The adapter interface**). It writes the
    run state's `session` (`{ step, story, agent, model, id, path, startedAt }`) and saves the
-   run state. It passes the handle to the spawn (`runner.session({ follow })`, then
-   `runHeadlessSession({ follow })`, then `provider.spawn({ follow })`). An interactive session
-   and an adapter that cannot follow one have `id` and `path` null.
-2. `bl watch` reads `.bl/run/<id>.json` every 2 s. When its `session` names another file
-   than the one it follows, it prints the header and asks that agent's adapter for the events
-   (`followSession()`). A session with the same file is the same session: the outcome retry
-   resumes a Claude session in its own transcript. A read that races `saveRunState` is tried
-   again at the next poll.
-3. When no bl holds the run lock any more (a `bl run`, a standalone `bl review` or a
-   `bl merge` integration, whatever the saved `status` says while it works), it reads the
-   session's last events, prints the end line with the run state's `status` (`stale` for one
-   that says `running`, as in `bl top`) and exits 0. With no run state for the id, it says so on
-   stderr and exits 1.
+   run state. It passes the handle to the spawn: `runner.session({ follow })`, then
+   `runHeadlessSession({ follow })`, then `provider.spawn({ follow })`. An interactive session,
+   and a session of an adapter that cannot follow one, have `id` and `path` null.
+2. `bl watch` reads `.bl/run/<id>.json` every 2 s. When its `session` names another file than
+   the one that `bl watch` follows, `bl watch` prints the header and asks that agent's adapter
+   for the events (`followSession()`). A session with the same file is the same session: the
+   outcome retry resumes a Claude session in its own transcript. If a read races
+   `saveRunState`, `bl watch` tries it again at the next poll.
+3. When no bl holds the run lock any more, `bl watch` reads the session's last events. The
+   holder can be a `bl run`, a standalone `bl review` or a `bl merge` integration, whatever the
+   saved `status` says while it works. Then `bl watch` prints the end line with the run state's
+   `status` and exits 0. The status is `stale` for a run state that says `running`, as in
+   `bl top`. With no run state for the id, `bl watch` says so on stderr and exits 1.
 
-The first session starts with its last 30 events (`--from-start`: all of them); every later
-session is new, so `watch` prints it from its start. `watch` takes no lock and writes nothing
-to the backlog. It never reads an agent's files itself: the adapter knows where they are.
+`bl watch` prints the first session from its last 30 events (`--from-start`: all of them).
+Every later session is new, so `bl watch` prints it from its start. `bl watch` takes no lock and
+writes nothing to the backlog. It never reads an agent's files itself: the adapter knows where
+they are.
 
 | Line (text)                                          | `--json`                                             |
 | ---------------------------------------------------- | ---------------------------------------------------- |
@@ -4696,149 +4903,178 @@ to the backlog. It never reads an agent's files itself: the adapter knows where 
 | `── <id> · <status> ──`                              | `{kind: "end", status}`, the last line               |
 
 A text line is on one line and cut to the terminal width (80 when stdout is not a terminal).
-The header's session is the session id, or the events file's name when the adapter knows no
-id before the spawn (Codex); `--json`'s `session` is the id or null. `at` is an ISO time:
-the transcript record's time for Claude, the time `watch` read the event for Codex. No
-thinking and no tool output is printed. A session with no live feed (interactive, or Gemini,
-which has no headless mode) gets its header and one stderr line that says so.
+The header's session is the session id. When the adapter knows no id before the spawn (Codex),
+it is the events file's name. `--json`'s `session` is the id or null. `at` is an ISO time: the
+transcript record's time for Claude, and the time `bl watch` read the event for Codex.
+`bl watch` prints no thinking and no tool output. A session with no live feed (interactive, or
+Gemini, which has no headless mode) gets its header and one stderr line that says so.
 
 ### An interrupt during `bl run` is a stop
 
-While `bl run`'s loop holds the run, the first SIGINT or SIGTERM stops the run cleanly, as
-`bl stop` does (F-128 D8, Decisions A1 and A2). `bl run <id> --resume` continues it from the
-step it stopped in.
+While `bl run` holds the run, the first SIGINT or SIGTERM stops the run cleanly, as `bl stop`
+does (F-128 D8, Decisions A1 and A2). `bl run <id> --resume` continues it from the step it
+stopped in.
 
 1. `runFeature` (`src/feature-run.js`) makes an `AbortController` and calls
-   `takeInterrupts(handler)` (`src/signal-exit.js`) before `takeRunLocks`. It releases it after
-   it releases the locks. So a SIGTERM that `bl stop` sends to the run lock's holder always
-   finds the handler.
-2. While the handler is set, `exitOnSignal`'s listener calls it for the first interrupt and does
-   not exit. The handler aborts the controller with the signal's name as its reason.
-   `takeInterrupts` registers `exitOnSignal`'s listeners itself, so a process that never ran
-   `bl.js` (a test) gets them too.
-3. The controller's signal is `ctx.stopSignal`. Each long child of the loop gets it: the session
-   in `runSession` (`runner.session({ signal })`) and each test-gate command
-   (`runner.testGate(cmd, cwd, { signal })`). When it fires, the child gets SIGTERM, then SIGKILL
-   if it still runs 10 s later (F-128 A6), and its wait returns when the child exits.
-4. `checkStop` stops the run when it finds a stop request for this process or when
+   `takeInterrupts(handler)` (`src/signal-exit.js`) before `takeRunLocks`. It removes the
+   handler after it releases the locks. So a SIGTERM that `bl stop` sends to the holder of the
+   run lock always finds the handler.
+2. While the handler is set, the listener of `exitOnSignal` calls it for the first interrupt
+   and does not exit. The handler aborts the controller, with the signal's name as its reason.
+   `takeInterrupts` registers the listeners of `exitOnSignal` itself, so a process that never
+   ran `bl.js` (a test) gets them too.
+3. The controller's signal is `ctx.stopSignal`. `bl run` gives it to each of its long children:
+   the session in `runSession` (`runner.session({ signal })`) and each test-gate command
+   (`runner.testGate(cmd, cwd, { signal })`). When the signal fires, the child gets SIGTERM,
+   then SIGKILL if it still runs 10 s later (F-128 A6). Its wait returns when the child exits.
+4. `checkStop` stops the run when it finds a stop request for this process, or when
    `ctx.stopSignal` has fired. It runs where it ran before: at each step start, after each long
    child, and in each one-second slice of a usage-limit wait. With a request, the note is
-   `stopped by bl stop at <step>` and `stoppedBy` lists the requests' pids. Without one, the
-   note is `stopped by SIGINT at <step>` or `stopped by SIGTERM at <step>`, and `stoppedBy` is
-   `[]`. The run records `stopped`, releases its locks, and `bl run` exits 130 (`runExitCode`).
+   `stopped by bl stop at <step>`, and `stoppedBy` lists the pids of the requests. Without one,
+   the note is `stopped by SIGINT at <step>` or `stopped by SIGTERM at <step>`, and `stoppedBy`
+   is `[]`. The run records `stopped` and releases its locks, and `bl run` exits 130
+   (`runExitCode`).
 5. A second interrupt exits at once with 130 or 143, as `exitOnSignal` does without a handler.
    The `exit` listener of `src/child.js` sends SIGTERM to the long child.
 
-`bl review` and `bl merge` (`reviewFeature`, `integrateUnit`) take no interrupts: an interrupt
+`bl review` and `bl merge` (`reviewFeature`, `integrateUnit`) take no interrupts. An interrupt
 exits 130 or 143, and the `exit` listener of `src/child.js` sends SIGTERM to their long child.
-An interactive session (`bl run -i`) keeps a synchronous wait (F-128 A3). A SIGINT that `bl` gets during it runs
-the handler when the session ends, and the run stops at its next check. If the same SIGINT ended
-the agent, `src/child.js` raises it at once instead (F-114 D2). Known limits: an
-interrupt that ends a short synchronous child during `bl run` (a git child that got the same
-Ctrl-C) still raises at once (F-114 D2), and `bl` exits 130 with the run state `running`. A first
-interrupt during a lock wait is taken at the next check after the wait.
+An interactive session (`bl run -i`) keeps a synchronous wait (F-128 A3). If `bl` gets a SIGINT
+during that wait, the handler runs when the session ends, and the run stops at its next check.
+If the same SIGINT ended the agent, `src/child.js` raises it at once instead (F-114 D2). Known
+limits:
+
+- An interrupt that ends a short synchronous child during `bl run` still raises at once (F-114
+  D2). An example is a git child that got the same Ctrl-C. Then `bl` exits 130 with the run state
+  `running`.
+- A first interrupt during a lock wait is taken at the next check after the wait.
 
 ### `bl stop`
 
-`bl stop <F-id|B-id|S-id>` (`src/stop.js`, S-1335, F-87 D7a) stops a running `bl run` cleanly, so
-that `bl run <id> --resume` continues it from the step it stopped in. `bl top`'s stop action
-runs it. `bl stop` writes a stop request and sends SIGTERM to the run's bl (F-128 D9), with or
-without user systemd:
+`bl stop <F-id|B-id|S-id>` (`src/stop.js`, S-1335, F-87 D7a) stops a running `bl run` cleanly,
+so that `bl run <id> --resume` continues it from the step it stopped in. `bl top`'s stop action
+runs `bl stop`. `bl stop` writes a stop request and sends SIGTERM to the run's bl (F-128 D9),
+with or without user systemd:
 
-1. It reads the run state. With none, or one that is not `running`, it exits 1 with
-   `no running run for <id>`, whoever holds the run lock: a live holder is then a `bl review`
-   or a `bl merge`, which take the run lock too. Then it reads the holder of the run lock
-   (`runHolder()` in `src/run-lock.js`). With no holder (the run's bl died), it takes the run
-   lock, reads the run state again, marks it stopped itself (`markStopped`) and releases the
-   lock (`markDead`). So a `bl run` that took the run after the check is never marked. It
-   prints `stopped <id> at <step> (no live bl held the run); resume: …` and exits 0. A holder
-   that is not a `bl run` (the run lock's info line, `bl review <id>` or `bl merge <id>`,
-   which `takeRunLocks` writes) holds a state that a dead bl left `running`: `bl stop` exits 1
-   and writes no request. `bl top` offers no stop action for it either. A holder whose lock
-   file names no pid yet gets exit 1 and `try again`.
-2. It writes its stop request, a new file of its own in `.bl/run/<id>.stop/`
-   (`writeStopRequest()` in `src/run-lock.js`): one JSON object, `{ pid, at, holder }`: its
-   own pid, the time and the pid of the run it stops. So two `bl stop`s never write or delete
-   each other's request, and a write that fails deletes only its own file and exits 1. The
-   loop honours only a request whose `holder` is its own pid.
-3. It sends SIGTERM to the holder (`stopRun`'s `kill` option, `process.kill` by default). The
-   run takes it as a stop (**An interrupt during `bl run` is a stop**, above): it sends
-   SIGTERM to the current agent session or test-gate command, then SIGKILL if it still runs
-   10 s later (F-128 A6). If the holder is already gone
-   (`ESRCH`), `bl stop` goes on to the wait. Any other failure prints
+1. `bl stop` reads the run state. If there is none, or it is not `running`, `bl stop` exits 1
+   with `no running run for <id>`, whoever holds the run lock. A live holder is then a
+   `bl review` or a `bl merge`, which take the run lock too. Next, `bl stop` reads the holder of
+   the run lock (`runHolder()` in `src/run-lock.js`):
+   - With no holder (the run's bl died), `bl stop` takes the run lock and reads the run state
+     again. It marks the run state stopped itself (`markStopped`) and releases the lock
+     (`markDead`). So a
+     `bl run` that took the run after the check is never marked. `bl stop` prints
+     `stopped <id> at <step> (no live bl held the run); resume: …` and exits 0.
+   - A holder that is not a `bl run` holds a state that a dead bl left `running`. The run lock's
+     info line, which `takeRunLocks` writes, then says `bl review <id>` or `bl merge <id>`.
+     `bl stop` exits 1 and writes no request. `bl top` offers no stop action for it either.
+   - If the holder's lock file names no pid yet, `bl stop` exits 1 with `try again`.
+2. `bl stop` writes its stop request, a new file of its own in `.bl/run/<id>.stop/`
+   (`writeStopRequest()` in `src/run-lock.js`). The file holds one JSON object,
+   `{ pid, at, holder }`: the pid of `bl stop`, the time and the pid of the run that it stops.
+   So two `bl stop`s never write or delete each other's request. If the write fails, `bl stop`
+   deletes only its own file and exits 1. `bl run` honours only a request whose `holder` is its own
+   pid.
+3. `bl stop` sends SIGTERM to the holder (the `kill` option of `stopRun`, `process.kill` by
+   default). The run takes it as a stop (**An interrupt during `bl run` is a stop**, above). The
+   run sends SIGTERM to the current agent session or test-gate command, then SIGKILL if it
+   still runs 10 s later (F-128 A6). If the holder is already gone (`ESRCH`), `bl stop` goes on
+   to the wait. For any other failure, `bl stop` prints
    `bl stop: could not signal pid <n>: <message>`, and the run stops at its next check.
-4. The loop's `checkStop()` (`src/feature-run.js`) finds the request for its own pid, so the
-   note is `stopped by bl stop at <step>`, not the signal's. The stopped session is not an
-   attempt and does not escalate, and its tokens are lost, as for a killed bl (**Tokens per
-   step**). The loop records a `{ step: "stopped" }` history entry, writes `status: stopped`,
-   `stoppedAt` and `stoppedBy` (the pids of the `bl stop`s whose requests it read;
-   `markStopped`), deletes the requests for its own pid and throws a `StopRequestError`. Its
-   step cleanups run, `runFeature` releases the run lock and the work unit locks, and `bl run`
-   exits 130.
-5. `bl stop` waits up to 30 s for that holder to let the run lock go, then prints
-   `stopped <id> at <step>; resume: bl run <id> --resume` on stderr and exits 0. If the lock is
-   still held, it exits 1 with `stop requested: <id> (pid <n>) stops at its next check`
-   and the request stays. A run that ended on its own before it read the request gets a line
-   that says so, and `bl stop` deletes its own request file.
+4. The `checkStop()` of `bl run` (`src/feature-run.js`) finds the request for its own pid, so
+   the note is `stopped by bl stop at <step>`, not the signal's. The stopped session is not an
+   attempt and does not escalate. Its tokens are lost, as for a killed bl (**Tokens per
+   step**). `bl run` then:
+   1. records a `{ step: "stopped" }` history entry;
+   2. writes `status: stopped`, `stoppedAt` and `stoppedBy` (the pids of the `bl stop`s whose
+      requests it read; `markStopped`);
+   3. deletes the requests for its own pid;
+   4. throws a `StopRequestError`.
 
-The work unit's `status:` does not change: `--resume` continues any run state (`driveFeature`
-sets it back to `running` and drops `stoppedAt` and `stoppedBy`). `takeRunLocks` deletes each leftover stop
-request once it holds the locks: one for another pid, or one written before it took the run
-lock. So a request never stops a later run, `bl review` or `bl merge`, and a request for the
-new holder stays. `bl stop` is a short command (F-122 D2): it neither takes nor checks work unit
-locks, since the run it stops holds them. `bl status <id>` shows a stopped run as
-`run: stopped at <step> (<local time>)`.
+   Its step cleanups run, `runFeature` releases the run lock and the work unit locks, and
+   `bl run` exits 130.
+
+5. `bl stop` waits up to 30 s for that holder to let the run lock go. Then it prints
+   `stopped <id> at <step>; resume: bl run <id> --resume` on stderr and exits 0. If the lock is
+   still held after the wait, `bl stop` exits 1 with
+   `stop requested: <id> (pid <n>) stops at its next check`, and the request stays. If the run
+   ended on its own before it read the request, `bl stop` prints a line that says so and
+   deletes its own request file.
+
+The work unit's `status:` does not change: `--resume` continues any run state. `driveFeature`
+sets the run state back to `running` and drops `stoppedAt` and `stoppedBy`. When `takeRunLocks`
+holds the locks, it deletes each leftover stop request: one for another pid, or one written
+before it took the run lock. So a request never stops a later run, `bl review` or `bl merge`,
+and a request for the new holder stays. `bl stop` is a short command (F-122 D2): it neither takes
+nor checks work unit locks, since the run that it stops holds them. `bl status <id>` shows a
+stopped run as `run: stopped at <step> (<local time>)`.
 
 ### `bl gc`
 
 `bl gc [--dry-run]` (`src/gc.js`, S-1112) removes what done and superseded work units (stories,
-features and story batches) leave behind. `bl merge` and `bl done` remove a work unit's run files
-when they mark it done; `bl gc` removes them for every closed work unit, and removes the work
-units' directories under the worktree root, which `bl merge` removes only when they are empty.
+features and story batches) leave behind. In `bl gc`, a done work unit is one whose status
+meets `done`. `bl merge` and `bl done` remove a work unit's run files when they mark it
+done. `bl gc` removes them for every done work unit. It also removes the directories of those
+work units under the worktree root. `bl merge` removes such a directory only when it is empty.
 
-1. **Run files.** The leading segment of each `.bl/run` entry's name, up to its first `.`, is its
-   work unit id. For a closed work unit, `bl gc` removes each `<id>.*.scratch` directory and each
-   `<id>.test-<n>.log` but the one with the highest `n`. The run state (`<id>.json`), the lock,
-   the review findings and the event logs stay. An entry whose leading segment is not exactly the
-   id of a story, feature or story batch (`F-89-spec.json`, `updates.S-927.gate-1.log`,
-   `commit-failed`) is kept with the reason `names no work unit`.
-2. **Worktree directories.** A directory under the worktree root is a work unit's when its name is
-   the work unit's directory name, lowercased (its branch). For a closed work unit, `bl gc` reads
-   `git status` of each registered worktree in the directory, detached ones included (a
-   registered worktree whose path is gone is skipped, and the prune below drops it). If git
-   cannot read it, or it has uncommitted changes, the worktree is kept with the reason. Otherwise
-   `git worktree remove` (no `--force`) removes it; if git refuses, the worktree is kept with the
-   first line of git's error. `bl gc` lists the registered worktrees of every repo for each
-   directory. If a repo gives no complete list (its path is not there, `git worktree list` fails,
-   or a record has no path), the directory is kept with the reason
-   `git cannot list the worktrees`. When no worktree is kept, `bl gc` moves the directory aside to
-   `<dir>.bl-gc-<pid>` and lists the worktrees again. A worktree registered in the directory since
-   the first listing, at a new path or at one git removed, moved with it: the directory goes back,
-   and the worktree is kept with the reason `registered while bl gc ran`. Otherwise the moved
-   directory goes with everything left in it (sandbox mount stubs, caches, a checkout git no
-   longer lists), reported as one path. If that removal fails, what is left goes back to the
-   directory's own name. A worktree registered after the move is made in a new directory, which
-   `bl gc` never reaches. When a worktree is kept, the directory stays. Then `git worktree prune`
-   runs once in each repo of `backlog.json`. A directory whose name is no work unit's branch (an
-   operator's own branch, `docs`, a `bl-merge-*` throwaway worktree) is kept with the reason
-   `names no work unit`.
+1. **Run files.** The work unit id of each `.bl/run` entry is the leading segment of its name, up
+   to its first `.`. For a done work unit, `bl gc` removes each `<id>.*.scratch` directory. It
+   also removes each `<id>.test-<n>.log`, except the one with the highest `n`. The run state
+   (`<id>.json`), the lock, the review findings and the event logs stay. `bl gc` keeps an entry
+   with the reason `names no work unit` when its leading segment is not exactly the id of a story,
+   feature or story batch. Examples are `F-89-spec.json`, `updates.S-927.gate-1.log` and
+   `commit-failed`.
+2. **Worktree directories.** A directory under the worktree root belongs to a work unit when its
+   name is the work unit's directory name, lowercased (its branch). The steps for a done work
+   unit are these:
+   1. `bl gc` reads `git status` of each registered worktree in the directory, detached ones
+      too. It skips a registered worktree whose path is gone, and the prune below drops it.
+   2. If git cannot read a worktree, or the worktree has uncommitted changes, `bl gc` keeps it,
+      with the reason. Otherwise `git worktree remove` (no `--force`) removes it. If git refuses,
+      `bl gc` keeps the worktree, with the first line of git's error.
+   3. `bl gc` lists the registered worktrees of every repo for each directory. A repo may give no
+      complete list: its path is not there, `git worktree list` fails, or a record has no path.
+      Then `bl gc` keeps the directory, with the reason `git cannot list the worktrees`.
+   4. When it keeps no worktree, `bl gc` moves the directory aside to `<dir>.bl-gc-<pid>`, and
+      lists the worktrees again.
+   5. A worktree may have been registered in the directory since the first listing, at a new path
+      or at one that git removed. That worktree moved with the directory. Then the directory goes
+      back, and `bl gc` keeps the worktree with the reason `registered while bl gc ran`.
+   6. Otherwise `bl gc` removes the moved directory with everything left in it: sandbox mount
+      stubs, caches, or a checkout that git no longer lists. The output reports it as one path. If
+      that removal fails, what is left goes back to the directory's own name. A worktree
+      registered after the move is made in a new directory, which `bl gc` never reaches.
 
-An open work unit's run files and directory are not touched and not listed. `bl gc` takes no lock.
+   When `bl gc` keeps a worktree, the directory stays. Then `git worktree prune` runs once in
+   each repo of `backlog.json`. `bl gc` keeps a directory whose name is no work unit's branch,
+   with the reason `names no work unit`. Examples are an operator's own branch, `docs`, and a
+   `bl-merge-*` throwaway worktree.
 
-Output: one stdout line per path, run files first: `removed <path>`, or `kept <path> (<reason>)`.
-With `--dry-run`, `bl gc` removes nothing, runs no git command that changes anything, and writes
-`would remove <path>` in place of `removed`. Then one stderr line:
-`bl gc: removed <n> paths, <size>; kept <k>.` (`would remove` with `--dry-run`). A path that
-cannot be removed is a `kept` line with the error, and so is a failed git command: a worktree whose
-status git cannot read, a `git worktree remove` that git refuses, a `git worktree list` that
-fails, and a failed or skipped `git worktree prune` (a `kept <repo path>` line; a repo path that
-is not there skips it). If one sweep stops on an error, the other sweep's lines are still
-printed. In each of these cases `bl gc` exits 1; otherwise it exits 0. A path kept for its uncommitted changes, or because it names no work unit,
-is not a failure.
+`bl gc` does not touch or list the run files and directory of a work unit whose status does not
+meet `done`. `bl gc` takes no lock.
+
+**Output.** stdout has one line per path, run files first: `removed <path>`, or
+`kept <path> (<reason>)`. With `--dry-run`, `bl gc` removes nothing and runs no git command that
+changes anything. It writes `would remove <path>` in place of `removed`. Then it writes one
+stderr line: `bl gc: removed <n> paths, <size>; kept <k>.` (`would remove` with `--dry-run`).
+
+These cases are each a `kept` line with the error:
+
+- a path that `bl gc` cannot remove;
+- a worktree whose status git cannot read;
+- a `git worktree remove` that git refuses;
+- a `git worktree list` that fails;
+- a failed or skipped `git worktree prune`, as a `kept <repo path>` line. A repo path that is not
+  there skips it.
+
+If one of the two parts stops on an error, `bl gc` still prints the lines of the other part. In each of
+these cases, `bl gc` exits 1. Otherwise it exits 0. A path kept for its uncommitted changes, or
+because it names no work unit, is not a failure.
 
 ### `bl list`
 
-List backlog stories. Active worktrees show their worktree status with a trailing `*`.
+`bl list` lists the backlog's stories. A story with a worktree shows its worktree status with a
+trailing `*`.
 
 ```bash
 bl list                       # alias: bl ls
@@ -4853,27 +5089,36 @@ bl tree --epic E62            # trees containing the epic's pending stories
 bl what-next --theme backlog  # next startable story in the theme
 ```
 
-A Theme column leads once the backlog has a theme. `bl tree` and `bl what-next` take the same
-filters; a component argument (`bl tree C32`) is the `--component` filter, and a story id with
-a filter is refused.
+Once the backlog has a theme, a Theme column comes first. `bl tree` and `bl what-next` take the
+same filters. For them, a component argument (`bl tree C32`) is the `--component` filter, and they
+refuse a story id with a filter.
 
-`bl status` with no arguments prints the same table for the open stories, in a different order:
-strictly by status, furthest along first as `flow.json` has it (`Flow.openStatusesOf('story')`:
-`escalated`, `ready_for_merge`, `fixing`, `in_review`, `in_progress`, `refined`, then `draft` in the
-shipped flow), the backlog's priority
-(`byRank`, see **Priority**) then numeric id within each. A story is open when its status does not meet `done`; a status `flow.json` does not
-name meets nothing, so it stays listed, last. A `flow.json` bl cannot read stops the command with
-its `FlowError`, even with no stories. `bl list` and `bl grep` read `flow.json` the same way, and
-stop the same way, but sort differently: worktree stories first, then `Flow.listRankOf('story', …)`
-(`in_progress` up to `escalated`; then `draft`, `refined` and any status `flow.json` does not name,
-equally; then `done`, then `superseded`). Here a story with a worktree keeps its status group and shows the `*`.
-Any flag with no id is a usage error, not a filter.
+`bl status` with no arguments prints the same table for each story whose status does not meet
+`done`, in another order. It sorts by three keys, strictly by status first:
+
+1. the status, furthest along first, as `flow.json` orders them (`Flow.openStatusesOf('story')`:
+   `escalated`, `ready_for_merge`, `fixing`, `in_review`, `in_progress`, `refined`, then `draft`
+   in the shipped flow);
+2. the backlog's priority (`byRank`, see **Priority**);
+3. the numeric id.
+
+A status that `flow.json` does not name meets nothing, so its story stays listed, last. Here a
+story with a worktree keeps its status group and shows the `*`. If bl cannot read `flow.json`,
+the command stops with its `FlowError`, even with no stories. `bl status` with a flag and no id is
+a usage error, not a filter.
+
+`bl list` and `bl grep` read `flow.json` the same way, and stop the same way, but they sort
+differently:
+
+1. the stories with a worktree first;
+2. then by `Flow.listRankOf('story', …)`: `in_progress` up to `escalated`; then `draft`, `refined`
+   and any status that `flow.json` does not name, as equals; then `done`; then `superseded`.
 
 ### `bl history`
 
-The backlog's state over time (F-40 D1, D2; `src/history.js`, the command in
-`src/history-cmd.js`): one snapshot per calendar day with a commit, the series `bl report`
-builds on.
+`bl history` shows the backlog's state over time (F-40 D1, D2; `src/history.js`, the command in
+`src/history-cmd.js`). It makes one snapshot per calendar day with a commit. `bl report` builds on
+this series.
 
 ```bash
 bl history                    # ISO weeks × points per status, and the scope
@@ -4882,43 +5127,47 @@ bl history --since 2026-09-01 # only days from that date
 bl history --scope F-40       # a theme (slug), an epic (E<n>), a feature or a component (C<n>)
 ```
 
-- **Days.** The last commit of each committer date (a UTC day, whatever time zone the commit
-  was stamped in, so the last day holds HEAD) reachable from HEAD. A day is read from git
-  objects only: one `git ls-tree -r`, then one `git cat-file --batch` for the `index.md` blobs
-  not already parsed in the run. A blob is a story when its frontmatter has `story_id`, a
-  feature when it has `feature_id`; the path is ignored, so the pre-F-49
+- **Days.** A day is the last commit of each committer date that HEAD can reach. The date is a
+  UTC day, whatever time zone the commit was stamped in, so the last day holds HEAD. bl reads a
+  day from git objects only: one `git ls-tree -r`, then one `git cat-file --batch` for the
+  `index.md` blobs not already parsed in this call. A blob is a story when its frontmatter
+  has `story_id`, and a feature when it has `feature_id`. bl ignores the path, so the pre-F-49
   `projects/<p>/E<nn>-…/[.completed/]S<n>-…/` layout reads like `stories/`. A day records each
-  story's `status`, `points` and `feature` and each feature's `status` and `stories:` (which a
-  commit from before F-77 D3 stored), nothing else.
-- **Parsing.** `parseFrontmatter`; a block it rejects goes through `legacyRepaired` and `yaml`
-  (failsafe), for the pre-F-62 blobs only (Decision A1, argued at the call in `parseBlob`). A
-  blob that still fails is skipped; `unreadable` counts the distinct ones over the days shown,
-  and a count above zero warns on stderr.
-- **Grouping** is the current tree's (`groups`): each story's `feature`, `component`, `added`
-  and `completed`, each feature's `epic` and `theme`.
-- **Backfill.** Each calendar day from the earliest `added` to the day before the first commit
-  is projected from the current stories: in scope from `added`, `done` (or `superseded`) from
+  story's `status`, `points` and `feature`, and each feature's `status` and `stories:`, nothing
+  else. A commit from before F-77 D3 stored a feature's `stories:`.
+- **Parsing.** bl parses a blob with `parseFrontmatter`. A block that it rejects
+  goes through `legacyRepaired` and `yaml` (failsafe), for the pre-F-62 blobs only (Decision A1,
+  argued at the call in `parseBlob`). bl skips a blob that still fails. `unreadable` counts the
+  distinct skipped blobs over the days shown, and a count above zero warns on stderr.
+- **Grouping** comes from the current tree (`groups`): each story's `feature`, `component`,
+  `added` and `completed`, and each feature's `epic` and `theme`.
+- **Backfill.** bl projects each calendar day from the earliest `added` to the day before the
+  first commit from the current stories: in scope from `added`, `done` (or `superseded`) from
   `completed`, current points, any other status `draft`, no features. Such a day has
-  `backfilled: true` and `commit: null`; the table marks it `(backfilled)`.
-- **Scope.** A feature's stories are the union of the stories whose `feature:` named it that
-  day and the `stories:` it listed that day (a commit before F-77 D3; a backfilled day has
-  neither); an epic's, its current
-  features'; a theme's, its current features' (its epics' and those with no epic); a
-  component's, the current stories in it. A scope holds only stories in the current tree; a
-  story with no feature is in no theme. An unknown scope exits 1 naming it.
-- **Cache.** `.bl/report-cache.json` maps each commit to its parsed day under a `version`
-  (`CACHE_VERSION`); a run reads only the commits it lacks and writes it back through
-  `atomicWriteFile`. Another version discards the file; a day of another shape
-  (`validCachedDay`) is read from git again; deleting it is safe.
-- **Since.** `--since` drops the days before it from `days` (and `--json`); `buildHistory` keeps
-  them as `earlier`, which only `bl report`'s first transitions read.
-- No lock and no activity log: it only reads git objects and the working tree. Exit 1 on a
-  git error.
+  `backfilled: true` and `commit: null`, and the table marks it `(backfilled)`.
+- **Scope.** A scope's stories:
+  - a feature's: the union of the stories whose `feature:` named it that day and the `stories:`
+    it listed that day (a commit before F-77 D3). A backfilled day has neither.
+  - an epic's: those of its current features.
+  - a theme's: those of its current features (its epics' and those with no epic).
+  - a component's: the current stories in it.
+
+  A scope holds only stories in the current tree, and a story with no feature is in no theme. An
+  unknown scope exits 1, and the error names it.
+
+- **Cache.** `.bl/report-cache.json` maps each commit to its parsed day, under a `version`
+  (`CACHE_VERSION`). Each call reads only the commits that the cache lacks, and writes the cache
+  back through `atomicWriteFile`. bl discards a cache of another version. It reads a cached day of
+  another shape (`validCachedDay`) from git again. Deleting the file is safe.
+- **Since.** `--since` drops the days before its date from `days` (and from `--json`).
+  `buildHistory` keeps them as `earlier`, and only `bl report`'s first transitions read them.
+- `bl history` takes no lock and writes no activity log: it only reads git objects and the
+  working tree. It exits 1 on a git error.
 
 ### `bl report`
 
-The backlog progress report (F-40 D1, D3, D5; the numbers in `src/report.js`, the command in
-`src/report-cmd.js`), built on `bl history`'s snapshots.
+`bl report` writes the backlog progress report (F-40 D1, D3, D5; the numbers in `src/report.js`,
+the command in `src/report-cmd.js`). It builds on `bl history`'s snapshots.
 
 ```bash
 bl report                    # write <backlog>/reports/ and print the path of index.md
@@ -4928,105 +5177,130 @@ bl report --out <dir>        # write there instead (links assume <backlog>/repor
 bl report --charts vega-lite # pick the chart adapter (vega-lite is the default and only one)
 ```
 
-- **Output.** `reports/index.md`, `reports/data.json` (every figure and series, version
-  `REPORT_VERSION`) and `reports/.gitignore` holding `*`, so the output ignores itself and the
-  backlog's `git status` stays clean. A run writes the whole report in `.reports.new`
-  beside it, then swaps it for the last run's by two renames, so a failed run leaves the last
-  report whole (if moving it back fails too, it stays in `.reports.old`, and the next run
-  restores it before staging); a directory that holds files but no such `.gitignore` is refused (exit 1),
-  never replaced. The page goes through the backlog's `.md` format plugin.
-- **Documentation root** (F-79 D4, `src/report-site.js` `writeSite`). The same staged run
-  also writes `reports/site/`, the backlog's complete root, which a documentation site copies
-  as it is. It holds `PUBLISHED` (`stories/`, `themes/`, `epics/`, `components/`, `features/`,
-  `tasks/`, `docs/`, `roadmap.md`, `priority.yaml`) copied with their timestamps; the root
-  `index.md` and every page of a `GENERATED_SECTIONS` kind rendered by `renderPage` and
-  formatted, each with its committed file's timestamp (a page with nothing generated stays a
-  copy); and the report's own files under `site/reports/`, so the report's `../` links resolve
-  inside the root. Nothing under `.bl/` is copied. Every symlink is resolved; one that points to
-  nothing, or outside the backlog (outside the stage for a report file), fails the run naming
-  it, and a directory link back at one being copied is a loop and is left out. With
-  `--out <dir>` the root is `<dir>/site`.
+- **Output.** `bl report` writes `reports/index.md`, `reports/data.json` (every figure and
+  series, version `REPORT_VERSION`) and `reports/.gitignore` holding `*`. So the output ignores
+  itself, and the backlog's `git status` stays clean. A call writes the whole report in
+  `.reports.new` beside it, then swaps it for the last one by two renames. So a failed call leaves
+  the last report whole. If moving that back fails too, it stays in `.reports.old`, and the next
+  call restores it before staging. A directory that holds files but no such `.gitignore` is
+  refused (exit 1), never replaced. The page goes through the backlog's `.md` format plugin.
+- **Documentation root** (F-79 D4, `src/report-site.js` `writeSite`). The same staged write also
+  writes `reports/site/`, the backlog's complete root, which a documentation site copies as it
+  is. It holds:
+  - `PUBLISHED` (`stories/`, `themes/`, `epics/`, `components/`, `features/`, `tasks/`, `docs/`,
+    `roadmap.md`, `priority.yaml`), copied with their timestamps;
+  - the root `index.md` and every page of a `GENERATED_SECTIONS` kind, rendered by `renderPage`
+    and formatted, each with its committed file's timestamp. A page with nothing generated stays
+    a copy.
+  - the report's own files under `site/reports/`, so the report's `../` links resolve inside the
+    root.
+
+  Nothing under `.bl/` is copied. Every symlink is resolved. If a link points to nothing, or
+  outside the backlog (outside the stage for a report file), the call fails, naming it. A
+  directory link back at one being copied is a loop, and is left out. With `--out <dir>`, the
+  root is `<dir>/site`.
+
 - **Counts** are the last snapshot's (HEAD's day): stories and points by status, features by
-  status, epics open or done (done once every feature is done or superseded), themes, the open
-  total (what the top-level `index.md` calls the total backlog). Titles, links and grouping are
-  the current tree's. Scope is the points of stories not `superseded`; done, of `done` ones.
-- **Workflow** (F-119 D3). After the Flow chart, `## Workflow` holds each type's transitions
-  as `bl flow` prints them: the same `flowTables(flow)` (`src/flow-view.js`), over the run's
+  status, epics done or not (done once every feature is done or superseded), and themes. They
+  include the total of stories whose status does not meet `done` (what the top-level `index.md`
+  calls the total backlog). Titles, links and grouping are the current tree's. Scope is the
+  points of stories not `superseded`; done, of `done` ones.
+- **Workflow** (F-119 D3). After the Flow chart, `## Workflow` holds each type's transitions as
+  `bl flow` prints them. It uses the same `flowTables(flow)` (`src/flow-view.js`), over the call's
   one flow.
-- **Tables.** Themes, Epics, Features and Components: scope, done, remaining and percent done
-  over each one's stories (`scopeStories`). Feature rows add stories done / in scope, the
-  feature's status and its review round (`reviewRoundOf`: its log's, else the old
-  `review_round` of its highest-numbered `change*.md`). Rows link to
-  `../<dir>/<entry>/index.md`.
-- **Throughput.** Points and stories per ISO week reaching `done` (a story's first snapshot
-  showing it; on backfilled days that is its `completed` date), for the 26 weeks ending with the
-  last snapshot's, each with the trailing four-week average. With `--since`, first transitions
-  and averages still read the days before it; the weeks, the lead and cycle window start there.
-- **Lead and cycle time.** Over stories first done in the 90 days up to the last snapshot:
-  lead from `added`, cycle from the first snapshot showing `refined` or `in_progress`, each as
-  count, median and 85th percentile (linear interpolation, `percentile`), in days. **Work item
-  age**: each `refined` or `in_progress` story, from that same first day to the last snapshot.
-- **Charts.** `src/report.js` builds them as plain `Chart` models in `data.charts` and imports
-  no adapter: `burnup-backlog`, `flow` (points by status per week, stacked), `throughput`
-  (weekly bars and the trailing average), then `burnup-theme-<slug>` for each theme,
-  `burnup-epic-E<n>` for each epic with open stories and `burnup-feature-F-<n>` for each
-  feature not `done` or `superseded`, each under a `### <id> · <title>` heading after its
-  section's table. A burn-up has scope and remaining lines and a done area from the first week
-  with points; the weeks before the first commit draw scope as a dashed `scope (backfilled)`
-  series. Last comes `cost`: output tokens of the 20 units with the most, as bars stacked by
-  unit type on a category axis.
-- **Cost** (`data.cost`, D3). A unit is what `bl run` runs: a feature, or a story with no
-  feature (or whose `feature:` names none in the tree). Per unit, from its current frontmatter:
-  the four `tokens_*` kinds, the `tokens_headless_*` share of all four, points (a feature's:
-  its listed stories not `superseded`), output tokens per point and `tokens_updated`; sorted by
-  output tokens. The total covers units with tokens; the average per point covers done units
-  with tokens and points (each kind's sum over their points' sum). A unit with no `tokens_*`
-  shows `—` and is in neither; a zero-point unit has no per-point figure.
-- **Token efficiency** (`data.efficiency`, D7), over done units with tokens and points: output
-  tokens per point by unit type (`feature` for a feature, else the story's `type`) as median,
-  90th percentile and count; the median for 0 to 2 review rounds and for 3 or more (`reviewRoundOf`,
-  none counting as 0); `tokens_by_step`
-  (see Tokens per step) summed per step name, `—` for a unit without it; and the outliers, units
-  above their type's 90th percentile. `units`, `cost` and `efficiency` are exported for
-  `bl retro` (S-905).
-- No activity log, no commit, and no lock but the output's own (`report-cmd.js`
-  `reportLockPath`: a kernel lock whose file stays after the report, in the backlog's
-  `.bl/lock/` and named from a hash of the output's absolute path, for the default output and
-  for every `--out`, so no lock file is ever beside the output): a second run while one is
-  writing exits 1 naming the holder. Exit 1 also on a git or IO error, a bad
+- **Tables.** The Themes, Epics, Features and Components tables show scope, done, remaining and
+  percent done over each row's stories (`scopeStories`). A Features row adds stories done / in
+  scope, the feature's status and its review round. The round is `reviewRoundOf`: from the
+  feature's log, else from the old `review_round` of its highest-numbered `change*.md`. Rows link
+  to `../<dir>/<entry>/index.md`.
+- **Throughput.** The points and stories that reach `done` per ISO week, for the 26
+  weeks that end with the last snapshot's week. Each week has the trailing four-week average. A
+  story reaches `done` in its first snapshot that shows it. On backfilled days, that is its
+  `completed` date. With `--since`, the first transitions and the averages still read the days
+  before its date. The weeks, and the lead and cycle window, start at that date.
+- **Lead and cycle time.** These cover the stories first done in the 90 days up to the last
+  snapshot. Lead time counts from `added`. Cycle time counts from the first snapshot that shows
+  `refined` or `in_progress`. Each is a count, a median and an 85th percentile, in days (linear
+  interpolation, `percentile`). **Work item age** is the age of each `refined` or `in_progress`
+  story, from that same first day to the last snapshot.
+- **Charts.** `src/report.js` builds the charts as plain `Chart` models in `data.charts`, and
+  imports no adapter. The charts, in order:
+  - `burnup-backlog`;
+  - `flow`: points by status per week, stacked;
+  - `throughput`: weekly bars and the trailing average;
+  - `burnup-theme-<slug>` for each theme, `burnup-epic-E<n>` for each epic with stories whose
+    status does not meet `done`, and `burnup-feature-F-<n>` for each feature not `done` or
+    `superseded`. Each is under a `### <id> · <title>` heading after its section's table.
+  - last, `cost`: the output tokens of the 20 rows of **Cost** with the most, as bars stacked by
+    the row's type on a category axis.
+
+  A burn-up has scope and remaining lines, and a done area from the first week with points. For
+  the weeks before the first commit, it draws scope as a dashed `scope (backfilled)` series.
+
+- **Cost** (`data.cost`, D3) has a row for each feature, and for each story with no feature (or
+  whose `feature:` names none in the tree). Each row shows, from the current frontmatter of its
+  feature or story: the four `tokens_*` kinds, the `tokens_headless_*` share of all four, points
+  (a feature's: its listed stories not `superseded`), output tokens per point and
+  `tokens_updated`. The rows are sorted by output tokens. The total covers the rows with tokens.
+  The average per point covers the done rows with tokens and points (each kind's sum over their
+  points' sum). A row with no `tokens_*` shows `—` and is in neither; a zero-point row has no
+  per-point figure.
+- **Token efficiency** (`data.efficiency`, D7) covers the done rows of **Cost** with tokens and
+  points. It holds:
+  - output tokens per point by type (`feature` for a feature, else the story's `type`), as
+    median, 90th percentile and count;
+  - the median for 0 to 2 review rounds and for 3 or more (`reviewRoundOf`, none counting as 0);
+  - `tokens_by_step` (see Tokens per step) summed per step name, `—` for a row without it;
+  - the outliers, rows above their type's 90th percentile.
+
+  `units`, `cost` and `efficiency` are exported for `bl retro` (S-905).
+
+- `bl report` writes no activity log and makes no commit. It takes no lock but the output's own
+  (`report-cmd.js` `reportLockPath`): a kernel lock whose file stays after the report, in the
+  backlog's `.bl/lock/`. Its name comes from a hash of the output's absolute path, for the default
+  output and every `--out`. So no lock file is ever beside the output. A second `bl report` while
+  one is writing exits 1 naming the holder. It also exits 1 on a git or IO error, a bad
   `--since`, an empty `--out` or an unknown `--charts` adapter (the message names the registered
   ones).
 
-**Chart adapters** (F-40 D4, `src/chart.js`). An adapter is `{ name, render(chart) }`, where
-`render` returns `{ markdown, files }`: `markdown` takes the chart's place in `index.md`, and
-`files` (paths relative to the output directory, never `..`, absolute, or one of the report's
-own `index.md`, `data.json`, `.gitignore`, `site`) are written there, under their normalized path
-(`outputPath`); two that name one file, or a file and a directory holding it, throw.
-`registerAdapter` adds one by name, `adapter(name)` looks one up and
-`renderCharts(charts, name)` renders them all to
-`{ markdownById, files }`; `renderMarkdown(data, markdownById, flow)` leaves a
-`<!-- chart: <id> -->` line for a chart it was not given. The one adapter, `vega-lite`
-(`src/chart-adapters/vega-lite.js`), writes a ` ```vega-lite ` fence holding a Vega-Lite v5 spec
-(data inline, `width: "container"`, UTC time axis by month, weekly bars from their ISO Monday
-`x` to the next Monday `x2`, a layer per mark kind, the fixed
-Okabe-Ito colours, no background or text colours) and no files; up-doc draws it. To add an
-adapter, write `src/chart-adapters/<name>.js` that calls `registerAdapter` on import, and import
-it from `src/report-cmd.js`; nothing in `src/report.js` changes. Its specs are pinned by
-`test/fixtures/charts/` (rewrite them with `UPDATE_CHART_FIXTURES=1` and review the diff).
+**Chart adapters** (F-40 D4, `src/chart.js`). An adapter is `{ name, render(chart) }`, and
+`render` returns `{ markdown, files }`. `markdown` takes the chart's place in `index.md`.
+`files` are written in the output directory, under their normalized path (`outputPath`). Each
+path is relative to it: never `..`, absolute, or one of the report's own `index.md`,
+`data.json`, `.gitignore`, `site`.
+If two files name one file, or a file and a directory that holds it, `renderCharts` throws.
+
+`registerAdapter` adds an adapter by name, and `adapter(name)` looks one up.
+`renderCharts(charts, name)` renders all the charts to `{ markdownById, files }`.
+`renderMarkdown(data, markdownById, flow)` leaves a `<!-- chart: <id> -->` line for a chart that
+it was not given.
+
+The one adapter, `vega-lite` (`src/chart-adapters/vega-lite.js`), writes no files. It writes a
+` ```vega-lite ` fence that holds a Vega-Lite v5 spec, and up-doc draws it. The spec has:
+
+- the data inline, and `width: "container"`;
+- a UTC time axis by month;
+- weekly bars from their ISO Monday `x` to the next Monday `x2`;
+- a layer per mark kind;
+- the fixed Okabe-Ito colours, and no background or text colours.
+
+To add an adapter, write `src/chart-adapters/<name>.js` that calls `registerAdapter` on import,
+and import it from `src/report-cmd.js`. Nothing in `src/report.js` changes. `test/fixtures/charts/`
+pins the adapter's specs. To rewrite them, set `UPDATE_CHART_FIXTURES=1`, and review the diff.
 
 **Where to read it.** Two places, both regenerated by running `bl report`, never committed:
 
 - a documentation site that copies the backlog's `reports/site/` root (one that runs
   `bl report` as part of its build);
 - any local server of the backlog repo, at `reports/index.md` (and `reports/data.json`) after a
-  local `bl report`. It shows the tables; charts appear only where a renderer draws the chart
+  local `bl report`. It shows the tables. Charts appear only where a renderer draws the chart
   blocks.
 
 ### `bl next`
 
-The next unit, a feature or a loose story, by the backlog's priority with hard dependencies
-first (F-78 D2, `src/next.js`). `bl what-next` picks a story inside a feature or filter; `next`
-is not its alias.
+`bl next` prints the next work unit that is a feature or a loose story, by the backlog's priority
+with hard dependencies first (F-78 D2, `src/next.js`). `bl what-next` picks a story inside a
+feature or filter, and `bl next` is not its alias.
 
 ```bash
 bl next                       # the first open unit nothing holds
@@ -5034,34 +5308,42 @@ bl next --theme accounts      # what's next for accounts
 bl next --epic E62            # the first free feature of an epic
 ```
 
-`bl next` walks `backlog.priority` (see **Priority**: the open ranked units, then the unranked
-ones by `added:`) and prints on stdout the first unit, `F-<n>` or `S-<n>`, that nothing holds.
-A unit is held by what `bl run` would refuse it for, so `bl next` never offers what `bl run`
-refuses: an unmet edge at a status on `run`'s nominal path (`heldBy(config, id, 'run')` of
-`readEdges`: `blockers.json`'s, and the run edge of each `depends_on:` on a loose story or on a
-feature's story outside the feature).
+`bl next` walks `backlog.priority` (see **Priority**: the ranked work units whose status does not
+meet `done`, then the unranked ones by `added:`). It prints on stdout the first work unit,
+`F-<n>` or `S-<n>`, that nothing holds. A work unit is held by what `bl run` would
+refuse it for, so `bl next` never offers what `bl run` refuses. That is an unmet edge at a status
+on `run`'s nominal path (`heldBy(config, id, 'run')` of `readEdges`). The edges are those of
+`blockers.json`, and the run edge of each `depends_on:` on a loose story or on a feature's story
+outside the feature.
 
-- A unit held by an open story or feature gives way to the blocker's unit (the story's feature,
-  or the story itself when loose), ranked or not, followed until one is free; stderr says
+- A work unit can be held by a story or feature whose status does not meet `done`. Then it gives
+  way to the blocker's work unit, ranked or not (the story's feature, or the story when loose).
+  `bl next`
+  follows the blockers until one is free. stderr says
   `<unit> (ranked <n>) is held: <why>. <blocker> comes first; it unblocks <unit>.` A blocker
-  outside the filter is still offered: it is what the matching unit needs.
-- A unit held only by a task (an operator action), a missing story or an update story is passed
-  over, and stderr names the holder (`Passed over …`). With every unit held so, stdout is empty.
+  outside the filter is still offered: the matching work unit needs it.
+- A work unit can be held only by a task (an operator action), a missing story or an update
+  story. Then `bl next` passes it over, and stderr names the holder (`Passed over …`). If every work unit is held so,
+  stdout is empty.
 
-stderr also lists the matching ranked units (entry number in `priority.yaml`, id, title, theme
-and epic or component) and the unranked tail's first five, oldest first. `--theme` and
-`--epic` filter units (`src/filter.js`): a feature by its own theme and epic, a loose story by
-its component's repo's themes and no epic. An unknown or malformed theme or epic exits 1, as do
-`--feature`, `--component` or a positional argument. With no `priority.yaml`, or one that is not
-a list of ids, stderr says so and every unit is unranked; a `priority.yaml` that is not YAML
-exits 1. The order is a preference: hard dependencies override it, and `bl next` never reads
-the roadmap. The walk is `nextPlan(config, filter)`, which `bl top`'s `next` section reads too.
+stderr also lists the matching ranked work units: entry number in `priority.yaml`, id, title,
+theme, and epic or component. Then it lists the first five of the unranked tail, oldest first.
+
+`--theme` and `--epic` filter the work units (`src/filter.js`). A feature matches by its own theme
+and epic. A loose story matches by its component's repo's themes, and has no epic. `bl next`
+exits 1 on an unknown or malformed theme or epic, and on `--feature`, `--component` or a
+positional argument.
+
+If there is no `priority.yaml`, or it is not a list of ids, stderr says so, and every work unit is
+unranked. If `priority.yaml` is not YAML, `bl next` exits 1. The order is a preference: hard
+dependencies override it, and `bl next` never reads the roadmap. The walk is
+`nextPlan(config, filter)`, which `bl top`'s `next` section reads too.
 
 ### `bl rank`
 
-How a person changes `priority.yaml` (F-78 D3, F-113 D1, `src/rank-cmd.js`). The operator or
-an interactive session ranks; an agent bl starts headless cannot. `bl rank --help` says what the
-file means (see **Priority**).
+`bl rank` is how a person changes `priority.yaml` (F-78 D3, F-113 D1, `src/rank-cmd.js`). The
+operator or an interactive session ranks. An agent that bl starts headless cannot. `bl rank --help`
+says what the file means (see **Priority**).
 
 ```bash
 bl rank                               # the order: ranked units, then the unranked tail
@@ -5077,84 +5359,97 @@ snapshot share (F-113 D8): `STAGED_FILE` (`.bl/priority.staged.yaml`), `BASE_FIL
 (`.bl/priority.base.yaml`), `readStaged` and `marks`.
 
 - An edit writes only the staged copy, under the backlog lock. The first edit copies
-  `priority.yaml` to the base copy (the merge base of `--commit`) and starts the staged copy from
+  `priority.yaml` to the base copy (the merge base of `--commit`), and starts the staged copy from
   it. Every session on the backlog checkout shares the copies. An edit never writes or commits
-  `priority.yaml` and pulls nothing, so `bl next` and `bl run` pick by the committed order.
-- `<unit>` must be an open feature or loose story (`checkUnit`): a story inside a feature
-  ("the feature is the unit: rank F-n"), an update story, a task, a closed unit and an unknown
-  id are refused, naming why. `--remove` takes whatever the list names, so a closed or deleted
-  unit can be dropped. `--before`/`--after` name a unit already ranked in the staged order.
-- An edit moves or removes the id (`applyRank`) and writes the whole list with `yaml`'s
-  `stringify`, so ids are written as `canonicalId` spells them and comments are not kept. A move
-  that leaves the order as it is writes nothing. `--why` is no option (F-113 D2).
-- With no arguments, stdout lists the ranked units (position, id, title) and then every other
-  open unit oldest `added:` first. While a staged copy exists it lists the staged order
-  (`orderOf`), each row marked against the committed order by `marks`: `+` newly ranked, `~`
-  moved (a ranked unit outside the longest common subsequence of the two lists, so a move marks
-  only the unit that moved), `-` taken out of the ranked list. Closed units are not listed.
-- `--commit` with a staged copy pulls first (`pullBeforeCommand`, called by `rank-cmd.js` itself
-  after it finds the copy; `commandPullsBacklog` names no `bl rank`). Under the lock it refuses
-  while `priority.yaml`
-  has uncommitted edits, then runs `git merge-file -p -L staged -L base -L main` on the staged
-  copy, the base copy and `priority.yaml`. A clean merge loses its closed units (and a second
-  entry of a unit) and is committed alone (`commitPaths`, which pushes),
-  `chore: commit the staged order of priority.yaml[; F-5 out (done)]`; both copies are then
-  deleted. An order that is already `priority.yaml`'s commits nothing and deletes the copies,
-  unless `origin/main` (as the last fetch left it) does not have it yet (`originLacks`): then
-  it keeps them. A failed commit puts `priority.yaml` back as HEAD has it (its text written
-  back, then `git reset` for the index) and keeps the copies; if the write or the reset fails,
-  the error names it and `git -C <root> checkout HEAD -- priority.yaml`. A commit whose push
-  failed keeps the copies too: the next `--commit` pulls, which pushes the commit, and drops
-  them once `origin/main` has the order. Each lock hold
-  loads the units again (`mergeStaged`), so a unit closed during a lock wait or the y/n question
-  is taken out too. A merged order (or a proposal) that names anything but a feature or loose
-  story (`resolveRanked`: an unknown id, a task, a story inside a feature, an update story, as a
-  hand edit of the staged copy can) is refused before `priority.yaml` is written.
-- On a conflict `--commit` proposes a list (`proposal`): the staged order without the units main
-  took out since the base, with the units main added at the end, closed units out. With stdin
-  not a terminal it changes nothing and exits 1, its last stderr line `NO_TERMINAL`
-  (`conflict: run bl rank --commit in a terminal`). Otherwise it prints the proposal with its
-  markers and asks y/n on stderr with the lock let go; the answer is acted on under the lock only
-  if the three files are as they were. y commits the proposal. n writes git's conflict markers
-  into the staged copy, copies `priority.yaml` to the base copy (the marked copy already holds
-  main's changes) and exits 1. If either write fails, the staged copy is written back as it was,
-  so the two copies describe one merge round. If that write back fails too, the error names
-  both failures and two repairs: `cp` of `priority.yaml` to the base copy, or `bl rank --reset`.
+  `priority.yaml`, and pulls nothing. So `bl next` and `bl run` pick by the committed order.
+- In `bl rank`, a done work unit is one whose status meets `done`. `<unit>` must be a feature or
+  loose story that is not done (`checkUnit`). `bl rank` refuses a story inside a feature,
+  and says "the feature is the unit: rank F-n". It also refuses an update story, a task, a done
+  work unit and an unknown id, and says why. `--remove` takes whatever the list names, so it can drop a done or deleted work
+  unit. `--before` and `--after` name a work unit already ranked in the staged order.
+- An edit moves or removes the id (`applyRank`), and writes the whole list with `yaml`'s
+  `stringify`. So it writes each id as `canonicalId` spells it, and it does not keep comments. A
+  move that leaves the order as it is writes nothing. `--why` is no option (F-113 D2).
+- With no arguments, stdout lists the ranked work units (position, id, title), then every other
+  work unit that is not done, oldest `added:` first. While a staged copy exists, it lists the
+  staged order (`orderOf`). `marks` marks each row against the committed order: `+` newly
+  ranked, `~` moved, `-` taken out of the ranked list. A moved work unit is a ranked one outside
+  the longest common subsequence of the two lists. So a move marks only the work unit that moved.
+  Done work units are not listed.
+- `--commit` with a staged copy pulls first (`pullBeforeCommand`, which `rank-cmd.js` calls
+  itself after it finds the copy; `commandPullsBacklog` names no `bl rank`). Under the lock it
+  refuses while `priority.yaml` has uncommitted edits. Then it runs
+  `git merge-file -p -L staged -L base -L main` on the staged copy, the base copy and
+  `priority.yaml`.
+  - A clean merge loses its done work units (and a second entry of a work unit). `--commit`
+    commits it alone (`commitPaths`, which pushes), as
+    `chore: commit the staged order of priority.yaml[; F-5 out (done)]`, then deletes both copies.
+  - If the order is already `priority.yaml`'s, `--commit` commits nothing and deletes the copies.
+    But if `origin/main` (as the last fetch left it) lacks the order (`originLacks`), it keeps
+    them.
+  - If the commit fails, `--commit` puts `priority.yaml` back as HEAD has it (its text written
+    back, then `git reset` for the index), and keeps the copies. If the write or the reset fails,
+    the error names it and `git -C <root> checkout HEAD -- priority.yaml`.
+  - If the commit's push failed, `--commit` keeps the copies too. The next `--commit` pulls,
+    which pushes the commit, and drops them once `origin/main` has the order.
+
+  Each time `--commit` takes the lock, it loads the work units again (`mergeStaged`). So it also
+  takes out a work unit that became done during a lock wait or the y/n question. Before it writes
+  `priority.yaml`, it refuses a merged order (or a proposal) that names anything but a feature or
+  loose story (`resolveRanked`). Such a name is an unknown id, a task, a story inside a feature
+  or an update story. A hand edit of the staged copy can add one.
+
+- On a conflict, `--commit` proposes a list (`proposal`). The list is the staged order without
+  the work units that main took out since the base. The work units that main added go at its
+  end, and done work units are out. If stdin is not a terminal, it changes nothing and exits 1, its last stderr line
+  `NO_TERMINAL` (`conflict: run bl rank --commit in a terminal`). Otherwise it prints the
+  proposal with its markers, lets go of the lock, and asks y/n on stderr. It acts on the answer
+  under the lock, and only if the three files are as they were. y commits the proposal. n writes
+  git's conflict markers into the staged copy, copies `priority.yaml` to the base copy (the
+  marked copy already holds main's changes) and exits 1. If either write fails, `--commit` writes
+  the staged copy back as it was, so the two copies describe one merge. If that write fails too,
+  the error names both failures and two repairs: `cp` of `priority.yaml` to the base copy, or
+  `bl rank --reset`.
 - A staged copy that is not a YAML list of ids is in conflict (`StagedConflictError`, Decision
-  A3): every `bl rank` command but `--reset` exits 1 with `STAGED_CONFLICT`. `bl next` and
-  `bl run` read only `priority.yaml` and are not blocked.
+  A3). Then every `bl rank` command but `--reset` exits 1 with `STAGED_CONFLICT`. `bl next` and
+  `bl run` read only `priority.yaml`, so the conflict does not block them.
 - `--commit` with no staged copy exits 0, prints nothing and pulls nothing. `--reset` deletes
   both copies.
 
-**`BL_HEADLESS`.** Every agent bl starts headless has `BL_HEADLESS=1` in its environment: each
-adapter's `spawn` builds the child's env with `agentEnv` (`src/agents/provider.js`) and adds it
-when `headless` is set (`runHeadlessSession` passes `headless: true`); an interactive spawn adds
-no marker (it still gets `BL_TAB_TITLE=''`, see "Tab titles"). With `BL_HEADLESS` set, a
-`bl rank` edit, `--commit` and `--reset` exit 1 before they pull or write anything, and
-`commitPaths`, the one commit path every bl command uses, refuses any commit whose paths, taken
-as one Git pathspec set (an exclusion such as `:!priority.yaml` counts), select `priority.yaml`
-(`headlessPriorityRefusal`), so a hand edit cannot be
-committed through `bl sync --commit --path` either. Printing the order is allowed. The marker is
-a guard against an agent changing a person's decision by mistake, not a security boundary.
-The test helper `runBl` drops an inherited `BL_HEADLESS` (`personEnv`), so the suite runs the
-same inside a headless session; a test that wants the marker passes it.
+**`BL_HEADLESS`.** Every agent that bl starts headless has `BL_HEADLESS=1` in its environment.
+Each adapter's `spawn` builds the child's env with `agentEnv` (`src/agents/provider.js`), and adds
+the marker when `headless` is set. `runHeadlessSession` passes `headless: true`. An interactive
+spawn adds no marker, though it still gets `BL_TAB_TITLE=''` (see "Tab titles"). With
+`BL_HEADLESS` set:
 
-**Nothing automated writes `priority.yaml`** (F-78 D3). `bl sync` and `bl merge` never touch it: a
-merged feature leaves the order because it is closed, not by an edit, and the next
-`bl rank --commit` (a person's command) takes its entry out. Its merge date is in
-the backlog's git history (its `bl merge` commit) and `bl history --json`. `bl side` does not
-count it among the files it owns.
+- a `bl rank` edit, `--commit` and `--reset` exit 1 before they pull or write anything;
+- `commitPaths`, the one commit path that every bl command uses, refuses any commit whose paths
+  select `priority.yaml` (`headlessPriorityRefusal`). It takes the paths as one Git pathspec set,
+  so an exclusion such as `:!priority.yaml` counts. So a hand edit cannot be committed through
+  `bl sync --commit --path` either.
 
-**The old file** (F-113 D1a). Before F-113 the order was the `ranked:` frontmatter of the
+Printing the order is allowed. The marker guards against an agent that changes a person's
+decision by mistake. It is not a security boundary. The test helper `runBl` drops an inherited
+`BL_HEADLESS` (`personEnv`), so the suite runs the same inside a headless session. A test that
+wants the marker passes it.
+
+**Nothing automated writes `priority.yaml`** (F-78 D3). `bl sync` and `bl merge` never touch it.
+A merged feature leaves the order because its status meets `done`, not by an edit. The next
+`bl rank --commit`, a person's command, takes its entry out. The feature's merge date is in the
+backlog's git history (its `bl merge` commit) and in `bl history --json`. `bl side` does not count
+`priority.yaml` among the files it owns.
+
+**The old file** (F-113 D1a). Before F-113, the order was the `ranked:` frontmatter of the
 backlog's old priority markdown file. F-113 converted it to `priority.yaml`, and S-1466 deleted
 the old file and the conversion script. No tracked file in `bl` names the old file
-(`test/integration/old-order-file-guard.test.js`). F-78's migration and F-113's conversion are
-in git history.
+(`test/integration/old-order-file-guard.test.js`). F-78's migration and F-113's conversion are in
+git history.
 
 ### `bl edit` / `bl view`
 
-Open a story, component, feature, epic (`E<nn>`), theme (by its slug) or task file in your
-editor (`bl which` prints its path, `-d` its directory; a task's directory is `tasks/`):
+`bl edit` and `bl view` open a story, component, feature, epic (`E<nn>`), theme (by its slug) or
+task file in your editor. `bl which` prints the file's path, and `-d` its directory; a task's
+directory is `tasks/`:
 
 ```bash
 bl edit S34                   # the committed file, in $VISUAL / $EDITOR / vi
@@ -5164,26 +5459,26 @@ bl view E69 > e69.md          # stdout not a terminal: the rendered page, printe
 bl which -d C10               # prints the component's directory
 ```
 
-`bl view` shows the page as read (F-79 D7): `renderPage` places the kind's
-`GENERATED_SECTIONS` in the committed text, the same tables `bl report` writes. A
-task, and a page with nothing to render (a story with no task), is the file byte for
-byte. `bl edit` always opens the committed file.
+`bl view` shows the page as read (F-79 D7). `renderPage` places the kind's `GENERATED_SECTIONS` in
+the committed text: the same tables that `bl report` writes. For a task, and for a page with
+nothing to render (a story with no task), `bl view` shows the file byte for byte. `bl edit` always
+opens the committed file.
 
-While the editor is open, `bl view`'s copy follows the real file (S-1182): bl watches the
-file's directory and, 100 ms after the last change, renders the page again and renames a new
-copy over the old one. vim with `autoread` (or at its "file changed" prompt) reloads it; less
-and more show it when they open the file again. bl ignores SIGINT, SIGQUIT and SIGTERM until
-the editor exits, so a Ctrl-C meant for the editor does not end bl and leave the copy behind.
+While the editor is open, `bl view`'s copy follows the real file (S-1182). bl watches the file's
+directory. 100 ms after the last change, it renders the page again and renames a new copy over
+the old one. vim with `autoread` (or at its "file changed" prompt) reloads the copy. less and more
+show it when they open the file again. bl ignores SIGINT, SIGQUIT and SIGTERM until the editor
+exits. So a Ctrl-C meant for the editor does not end bl and leave the copy behind.
 
-Both exit with the editor's status: 127 when it cannot be launched, 128 + n when
-signal n kills it. When `bl view` cannot make its copy it shows the page instead
-(printed when it fits the terminal, else `$PAGER` → `less` → `more`) and exits
-with the pager's status the same way.
+Both exit with the editor's status: 127 when bl cannot launch it, 128 + n when signal n kills it.
+If `bl view` cannot make its copy, it shows the page instead, and exits with the pager's status the
+same way. It prints the page when the page fits the terminal, else it uses `$PAGER` → `less` →
+`more`.
 
 ### `bl change`
 
-Show a unit's change document (S-1157). It takes a story, a feature or a story batch, and
-it only shows; it never edits:
+`bl change` shows a work unit's change document (S-1157). It takes a story, a feature or a story
+batch. It only shows; it never edits:
 
 ```bash
 bl change S-1156              # read-only copy of the current change document, as bl view opens a page
@@ -5191,16 +5486,18 @@ bl change F-79 > change.md    # stdout not a terminal: the document, printed byt
 bl change S-1156 --open       # the open items of the latest review session
 ```
 
-The document is the unit's current one (`currentChange`): the highest-numbered open
-`change-<n>.md`, else the highest-numbered. A story in a feature or a story batch (its
-`feature:` or `batch:` is set) writes its change to that unit's document, so `bl change S-n`
-shows that unit's document and says so on stderr first:
-`S-n is in F-m: showing F-m's change document`. `bl change` and `bl view` share one viewer
-(`showReadOnly`, `src/view.js`): the same editor order, temp copy and pager fallback, and
-the copy follows the document while the editor is open, as `bl view`'s copy follows its page.
+The document is the work unit's current one (`currentChange`): the highest-numbered open
+`change-<n>.md`, else the highest-numbered one. A story in a feature or a story batch (its
+`feature:` or `batch:` is set) writes its change to that work unit's document. So
+`bl change S-n` shows that work unit's document, and first says so on stderr:
+`S-n is in F-m: showing F-m's change document`.
 
-`--open` prints, with no editor, the open (unchecked) items of the latest `### Session` of
-`## Review Log`, grouped under their category heading, each with its continuation lines:
+`bl change` and `bl view` share one viewer (`showReadOnly`, `src/view.js`). It gives both the same
+editor order, temp copy and pager fallback. The copy follows the document while the editor is
+open, as `bl view`'s copy follows its page.
+
+`--open` prints, with no editor, the unchecked items of the latest `### Session` of
+`## Review Log`. It groups them under their category heading, each with its continuation lines:
 
 ```text
 S-1156 · latest session 2026-10-29 (PR #51): 1 Must/Should, 0 nits open
@@ -5211,16 +5508,16 @@ S-1156 · latest session 2026-10-29 (PR #51): 1 Must/Should, 0 nits open
   repro: run close twice
 ```
 
-The items and counts come from `latestSessionOpenItems` (`src/review-log.js`), the parse
-`bl status` and the merge gate count with. With no session it prints
-`<id> · no review session yet`. `bl status` ends its `review:` line with
-`(bl change <id> --open)` when the latest session has an open item, and the review refusal
-of `bl merge` and `bl done` (`reviewBlockedMessage`) names it after the Must/Should count.
+The items and counts come from `latestSessionOpenItems` (`src/review-log.js`), the parse that
+`bl status` and the merge gate count with. With no session, `--open` prints
+`<id> · no review session yet`. When the latest session has an unchecked item, `bl status` ends
+its `review:` line with `(bl change <id> --open)`. The review refusal of `bl merge` and `bl done`
+(`reviewBlockedMessage`) names that command after the Must/Should count.
 
 ### `bl done`
 
-Marks a story complete (`status:`, `commit:`, `completed:`; the directory
-does not move) and syncs:
+`bl done` marks a story done (`status:`, `commit:`, `completed:`) and syncs. The story's directory
+does not move:
 
 ```bash
 bl done S34                   # uses HEAD commit hash
@@ -5230,40 +5527,43 @@ bl done --superseded S34      # mark as superseded
 
 ### `bl force`
 
-Moves a story, a feature or a story batch to any status of its type, past every transition
-rule, hold and guard (F-119 D2, `src/force.js`). It is the operator's way out of a stuck
-state, and the one way to force a move: `bl approve --force` names it (A2).
+`bl force` moves a story, a feature or a story batch to any status of its type (F-119 D2,
+`src/force.js`). The move goes past every transition rule, hold and guard. It is the operator's way out of a
+stuck state, and the one way to force a move. `bl approve --force` names it (A2).
 
 ```bash
-bl force S-12 done            # close a story no verb can close
+bl force S-12 done            # a story that no verb can move to done
 bl force S-12 in_progress     # reopen a done story
 bl force F-3 refined          # a feature past its refinement session, then bl approve F-3
 ```
 
-1. It refuses under `BL_HEADLESS` or when stdin is not a terminal, before it prompts, so a
-   headless agent cannot force. It refuses a status the unit is at already and a status its
-   type lacks.
-2. It takes the unit's work unit lock (`takeUnitLocks`), so it refuses while a live session
-   holds the unit and names that process. A lock whose process has exited is free.
-3. It prints what the move skips (`skipsOf`): that `flow.json` has no transition from the
-   unit's status to the new one, each hold in `blockers.json` on the new status (`heldAt`),
-   and each failing `when` guard of the verbs that have the transition (`failingGuards`): on
-   the verb's row, and on its branches to the new status when none of them has all its guards
-   hold. The guards read the unit's round and round cap, as the review loop does.
-4. It reads one line. Any other input than the exact line `force <id> to <status>`, an empty
-   line or the end of input changes nothing and exits 1.
-5. On the exact line it takes the backlog lock and reads the unit's status and the skip list
-   again. If either changed while the operator typed (a hold added, a guard that changed, a
-   `flow.json` change, another move of the unit), it writes nothing, prints the new list and
-   exits 1. Otherwise it writes the entry `by: force` (`transition`) and commits the unit file
-   as `chore: force <id> to <status>`.
+1. Under `BL_HEADLESS`, or when stdin is not a terminal, `bl force` refuses before it prompts. So
+   a headless agent cannot force. It also refuses a status that the work unit is at already, and
+   a status that its type lacks.
+2. It takes the work unit lock (`takeUnitLocks`). So while a live session holds the work unit, it
+   refuses and names that process. A lock whose process has exited is free.
+3. It prints what the move skips (`skipsOf`):
+   - that `flow.json` has no transition from the work unit's status to the new one;
+   - each hold in `blockers.json` on the new status (`heldAt`);
+   - each failing `when` guard of the verbs that have the transition (`failingGuards`). These are
+     the guards on the verb's row, and on its branches to the new status when none of the
+     branches has all its guards hold.
+
+   The guards read the work unit's round and round cap, as the review rounds do.
+
+4. It reads one line. If the line is not exactly `force <id> to <status>`, it changes nothing and
+   exits 1. An empty line and the end of input do the same.
+5. On the exact line, it takes the backlog lock, and reads the work unit's status and the skip list
+   again. Either can change while the operator types: a hold added, a guard that changed, a
+   `flow.json` change, or another move of the work unit. If either changed, it writes nothing,
+   prints the new list and exits 1. Otherwise it writes the entry `by: force` (`transition`), and commits the unit file as
+   `chore: force <id> to <status>`.
 
 ### `bl sync`
 
-Brings the backlog up to date with `origin`: it pulls, and pushes what is ahead. With
-`--commit` it commits the paths it is given and pushes. It writes no derived list (F-79 D1):
-`bl report` and `bl view` render the tables when a page is read (see **Rendered pages**
-below).
+`bl sync` brings the backlog up to date with `origin`: it pulls, and pushes what is ahead. With
+`--commit`, it commits the paths it is given and pushes. It writes no derived list (F-79 D1).
+`bl report` and `bl view` render the tables when a page is read (see **Rendered pages** below).
 
 ```bash
 bl sync                       # alias: bl s
@@ -5273,214 +5573,282 @@ bl sync --commit -m "chore: rename C02" --story S-42 --path components/C02-x --p
 bl sync --commit -m "chore: append review session for F-9 (2026-10-15)" --path features/F9-x/index.md
 ```
 
-`--commit` needs at least one `--story` or `--path`: a feature file has no story to name, so
-the loop's prompts commit it with `--path` alone.
+`--commit` needs at least one `--story` or `--path`. A feature file has no story to name, so
+`bl run`'s prompts commit it with `--path` alone.
 
-`-m` repeats the way it does for `git commit`: the values are joined in order with a blank
-line between them, so the first is the subject and each later one is a body paragraph.
-Empty or whitespace-only values are dropped. A value given as the next token may not begin
-with `-` (a lone `-` is fine): `-m --story S-42` fails with `-m needs a value` instead of
-taking `--story` as the message, and the same holds for `--story` and `--path`. Give such a
-value inline, `--message=- note` (likewise `--story=<v>` and `--path=<v>`).
+`-m` repeats as it does for `git commit`. `bl sync` joins the values in order, with a blank line
+between them. So the first is the subject, and each later one is a body paragraph. It drops empty
+or whitespace-only values. A value given as the next token may not begin with `-`, though a lone
+`-` is fine. So `-m --story S-42` fails with `-m needs a value`, and does not take `--story` as
+the message. The same holds for `--story` and `--path`. Give such a value inline:
+`--message=- note` (likewise `--story=<v>` and `--path=<v>`).
 
-`bl sync --commit` (`syncAndCommit`) holds the backlog lockfile (`.bl/lock/backlog.lock`,
-`src/lock.js`) while it formats and commits, so concurrent commits and `bl new` runs take
-turns. A command that finds the lock held by a live process says so once on stderr
-(`Waiting for lock (.bl/lock/backlog.lock) held by pid <n>…`) and polls until the holder releases it or
-60 s pass (F-104 D2). The wait is `awaitLock` (`src/lock-wait.js`, F-105 W1), which awaits a
-timer between tries; on a timeout `bl` names the holder and exits 1, and never tells anyone to
-remove the lock file. The lock is re-entrant within a process. It is a kernel lock (`flock(2)`
-through `src/kernel-lock.js`, F-104 K1): the kernel frees it when the holder closes the
-descriptor or ends, even by SIGKILL, so a killed holder leaves no lock. The file stays (D3), and
-the PID in it is information only (D4): the holder writes it after it takes the lock. A `bl`
-child under its parent's lock (`bl new` under `bl side`) adopts the descriptor its parent passed
-in `BL_LOCK_FD` (D5). The main sync lock wait
-(`<git-common-dir>/bl-main-sync.lock`, `main-sync.js` `withMainSyncLock`, taken by the pull,
-the push and the commit) says so the same way, with the lock's path, and polls for up to 120 s.
-The prepare-lock wait (`session.js` `prepareWorktreeOnce`) says so the same way and has no
-deadline, because the lock is held while bootstrap and `workon` plugins run. Every lock wait is
-awaited: the backlog, spec, main sync and prepare lock waits all go through `awaitLock`, so one
-Ctrl+C during any of them runs the SIGINT listener (`exitOnSignal`, which `bl.js` registers
-when `bl` starts) at once and exits 130. During `bl run` the first Ctrl+C is a stop instead,
-taken at the next check after the wait (F-128 D8). The main sync and prepare locks are kernel locks too,
-taken with `tryLockOnce`: they are not re-entrant, so two callers in one process take turns as
-two processes do. A `bl` that ends while it holds one, even by Ctrl+C or SIGKILL,
-leaves no lock, and the next taker gets it at once. Every bl lock is a kernel lock now:
-the PID-file lock module is gone, no code decides from a PID whether a lock is held, and no code
-deletes a lock file that bl still takes (D3); the one exception is the one-off migration below,
-which deletes retired lock files. The lock files stay and collect: one per spec in the temp dir, and in
-each repo's git common dir one main sync lock and one `bl-prepare-<branch>.lock` per branch. No lock
-wait sleeps synchronously. Every lock file bl keeps in a backlog lives under `.bl/` (S-1495),
-which the backlog's `.gitignore` ignores, so git never sees one and bl never asks git to ignore a
-lock file: the backlog lock, one session lock per unit directory, one work unit lock per work
-unit directory and one report lock per output directory in `.bl/lock/` (`lock.js` `LOCK_DIR`,
-`dirLockPath`), and the run locks in `.bl/run/`. `dirLockPath` names a directory's lock file from
-a hash of its path with links resolved (`canonical`), so a unit directory reached through a link
-has the same lock as its real path.
+`bl sync --commit` (`syncAndCommit`) holds the backlog lock file (`.bl/lock/backlog.lock`,
+`src/lock.js`) while it formats and commits. So commits and `bl new` calls at the same time take
+turns.
 
-The work unit lock (`src/unit-lock.js`, F-122 D2) is one kernel lock per work unit directory
-(`stories/S<n>-…/`, `features/F<n>-…/`), `unit-<dir>-<hash>.lock` (`unitLockPath`). A verb that
-holds a session on a work unit takes it at start with `takeUnitLocks(config, units, info)`: the
-lock of each unit's directory and, for a feature, of each of its stories' directories
-(`unitLockDirs`, read fresh from disk), all or nothing, with one try-lock each through
-`takeDirLock`. It never waits. If another process holds one, it releases what it took and
-refuses with `<id> is locked by a live bl process (pid <n>): <lock path>`. If a read throws, it
-releases what it took and throws again. A lock this process holds is taken again, one depth
-deeper. On success it returns `release` and `scope`. `scope()` reads `unitLockDirs` again, takes
-the lock of each directory there that did not exist at the take, and returns the backlog-relative
-directories the verb holds. So a story created for the feature during the session is in the
-verb's commit scope (F-122 D3), and so is a locked story that the session took out of the feature.
-A created story whose lock another process holds is not, and neither is an existing story linked
-to the feature after the take: the verb does not hold their locks. The work unit lock sits beside
-the spec lock and does not replace it: the spec lock guards one write and waits up to 60 s, and
-the work unit lock is held for a whole session. Lock order: a verb takes its work unit locks
-first, and the backlog lock and the spec lock inside them, one write at a time. A work unit lock
-never waits, so it cannot wait in a cycle with them. Short commands (`bl new`, `bl sync --commit`,
-`bl block`, `bl done`, `bl approve`, `bl task`) neither take nor check it, because a session's
-agent runs them as children, and a check would find the parent's lock. Every `bl refine`
-takes it (`refineAndCommit`, F-122 D4) and holds it in place of a session lock of the backlog root.
-`bl force` takes it too (F-119 R5), though it is a short command: it runs only in the operator's
-terminal, never as a session's child, and it must not move a unit that a live session works on.
-`bl merge F-n` (`cmdMerge`) takes the work unit locks of the feature and its stories after its
-merge gates and before `integrateForMerge`, so a held lock refuses the merge before any repo is
-touched, and holds them to the end of the merge. `bl merge S-n` takes the merged story's work unit
-lock for its integration (`integrateUnit`, below) and again for its triage session (`cleanup.js`),
-before the triage's `dirtySnapshot`. If another process holds it at the triage, bl skips the
-triage with one line that names the holder, and the merge stands. `bl run`, `bl review` and
-`bl implement` hold the work unit locks of their work unit and its stories for the whole run
-(F-122 D4, D9). `runFeature`, `reviewFeature` and `integrateUnit` (`feature-run.js`) take them
-through one helper, `takeRunLocks`: the run lock first, then the work unit locks; a refusal of
-either, or a take that throws, gives back what it took, and their `finally` releases both. The
-run lock refusal is `a bl run (pid <n>) is running <id>`. The commands take the work unit locks
-earlier too, before they write anything, with `takeUnitLocksOrExit` (`unit-lock.js`: print the refusal as
-`Error: <refusal>` and exit 1): `bl run` (`runUnit`) before its prep, `bl review` (`cmdReview`,
-`cmdReviewStory`) before it opens a PR or writes the change document, `bl implement F-n`
-(`cmdWorkon`) before its prep, and `bl implement S-n` (`workonOne`, `workon.js`) before its prep
-and `enterVerb`. The loop's own take then goes one depth deeper. The commit scope of these verbs
-is unchanged: the loop commits by path (`commitUnitPaths`). A unit with no `kind` (a
-`findFeature` record) is a feature to `takeUnitLocks`, as `isStory` reads it.
+- If a command finds the lock held by a live process, it says so once on stderr
+  (`Waiting for lock (.bl/lock/backlog.lock) held by pid <n>…`). Then it polls until the holder
+  releases the lock or 60 s pass (F-104 D2). The wait is `awaitLock` (`src/lock-wait.js`,
+  F-105 W1), which awaits a timer between tries. On a timeout, `bl` names the holder and exits 1.
+  It never tells anyone to remove the lock file.
+- The lock is re-entrant within a process. It is a kernel lock (`flock(2)` through
+  `src/kernel-lock.js`, F-104 K1). The kernel frees it when the holder closes the descriptor or
+  ends, even by SIGKILL, so a killed holder leaves no lock. The file stays (D3), and the PID in it
+  is information only (D4): the holder writes it after it takes the lock. A `bl` child under its
+  parent's lock (`bl new` under `bl side`) adopts the descriptor its parent passed in
+  `BL_LOCK_FD` (D5).
+- The pull, the push and the commit take the main sync lock
+  (`<git-common-dir>/bl-main-sync.lock`, `main-sync.js` `withMainSyncLock`). Its wait says so the
+  same way, with the lock's path, and polls for up to 120 s.
+- The prepare lock wait (`session.js` `prepareWorktreeOnce`) says so the same way. It has no
+  deadline, because the lock is held while bootstrap and `workon` plugins run.
+- Every lock wait is awaited: the backlog, spec, main sync and prepare lock waits all go through
+  `awaitLock`. So one Ctrl+C during any of them runs the SIGINT listener (`exitOnSignal`, which
+  `bl.js` registers when `bl` starts) at once, and `bl` exits 130. During `bl run`, the first
+  Ctrl+C is a stop instead, and `bl run` takes it at the next check after
+  the wait (F-128 D8).
+- The main sync and prepare locks are kernel locks too, taken with `tryLockOnce`. They are not
+  re-entrant, so two callers in one process take turns as two processes do. A `bl` that ends
+  while it holds one, even by Ctrl+C or SIGKILL, leaves no lock, and the next taker gets it at
+  once.
+
+Every bl lock is a kernel lock now. The PID-file lock module is gone, and no code decides from a
+PID whether a lock is held. No code deletes a lock file that bl still takes (D3); the one
+exception is the one-off migration below, which deletes retired lock files. The lock files stay
+and collect. There is one per spec in the temp dir. In each repo's git common dir, there is one
+main sync lock, and one `bl-prepare-<branch>.lock` per branch. No lock wait sleeps synchronously.
+
+Every lock file that bl keeps in a backlog lives under `.bl/` (S-1495). The backlog's `.gitignore`
+ignores `.bl/`, so git never sees a lock file, and bl never asks git to ignore one. In `.bl/lock/`
+(`lock.js` `LOCK_DIR`, `dirLockPath`) are:
+
+- the backlog lock;
+- one session lock and one work unit lock per directory of a work unit's `index.md`;
+- one report lock per output directory.
+
+The run locks are in `.bl/run/`. `dirLockPath` names a directory's lock file from a hash of its
+path, with links resolved (`canonical`). So such a directory, reached through a link, has the same
+lock as its real path.
+
+The work unit lock (`src/unit-lock.js`, F-122 D2) is one kernel lock per directory of a work
+unit's `index.md` (`stories/S<n>-…/`, `features/F<n>-…/`). Its file is `unit-<dir>-<hash>.lock`
+(`unitLockPath`).
+
+- A verb that runs a session on a work unit takes the lock at start, with
+  `takeUnitLocks(config, units, info)`. It takes the lock of the directory of each work unit's
+  `index.md`. For a feature, it also takes the lock of each of its stories' directories
+  (`unitLockDirs`, read fresh from disk). It takes them all or nothing, with one try-lock each
+  through `takeDirLock`. It never waits.
+  - If another process holds one, it releases what it took and refuses with
+    `<id> is locked by a live bl process (pid <n>): <lock path>`.
+  - If a read throws, it releases what it took and throws again.
+  - It takes a lock that this process already holds again, one depth deeper.
+- On success, `takeUnitLocks` returns `release` and `scope`. `scope()` reads
+  `unitLockDirs` again, and takes the lock of each directory there that did not exist at the
+  take. Then it returns the backlog-relative directories that the verb holds. So a story created
+  for the feature during the session is in the verb's commit scope (F-122 D3). So is a locked
+  story that the session took out of the feature. Two kinds of story are not: a created story
+  whose lock another process holds, and an existing story linked to the feature after the take.
+  The verb does not hold their locks.
+- The work unit lock sits beside the spec lock and does not replace it. The
+  spec lock guards one write and waits up to 60 s. The work unit lock is held for a whole
+  session.
+- **Lock order.** A verb takes its work unit locks first. It takes the backlog lock and the spec
+  lock inside them, one write at a time. A work unit lock never waits, so it cannot wait in a
+  cycle with them.
+
+- Short commands (`bl new`, `bl sync --commit`, `bl block`, `bl done`, `bl approve`, `bl task`)
+  neither take nor check it. A session's agent runs them as children, and a check would find the
+  parent's lock.
+- Every `bl refine` takes it (`refineAndCommit`, F-122 D4), and holds it in place of a session
+  lock of the backlog root.
+- `bl force` takes it too (F-119 R5), though it is a short command. It runs only in the
+  operator's terminal, never as a session's child. And it must not move a work unit that a live
+  session works on.
+- `bl merge F-n` (`cmdMerge`) takes the work unit locks of the feature and its stories after its
+  merge gates and before `integrateForMerge`. It holds them to the end of the merge. So a held
+  lock refuses the merge before bl touches any repo.
+- `bl merge S-n` takes the merged story's work unit lock for its integration (`integrateUnit`,
+  below). It takes the lock again for its triage session (`cleanup.js`), before the triage's
+  `dirtySnapshot`. If another process holds the lock at the triage, bl skips the triage with one
+  line that names the holder, and the merge stands.
+- `bl run`, `bl review` and `bl implement` hold the work unit locks of their work unit and its
+  stories for the whole command (F-122 D4, D9). `runFeature`, `reviewFeature` and `integrateUnit`
+  (`feature-run.js`) take them through one helper, `takeRunLocks`. It takes the run lock first,
+  then the work unit locks. If either refuses, or a take throws, it gives back what it took.
+  Their `finally` releases both. The run lock refusal is `a bl run (pid <n>) is running <id>`.
+
+The commands also take the work unit locks earlier, before they write anything, with
+`takeUnitLocksOrExit` (`unit-lock.js`), which prints the refusal as `Error: <refusal>` and
+exits 1:
+
+- `bl run` (`runUnit`), before its prep;
+- `bl review` (`cmdReview`, `cmdReviewStory`), before it opens a PR or writes the change document;
+- `bl implement F-n` (`cmdWorkon`), before its prep;
+- `bl implement S-n` (`workonOne`, `workon.js`), before its prep and `enterVerb`.
+
+The take of `takeRunLocks` then goes one depth deeper. The commit scope of these verbs is
+unchanged: `feature-run.js` commits by path (`commitUnitPaths`). `takeUnitLocks` reads a work unit
+with no `kind` (a `findFeature` record) as a feature, as `isStory` reads it.
+
 `bl init` seeds `.bl/` in `.gitignore`. The one-off `node scripts/migrate-lock-files.js
 [--dry-run] [--backlog <dir>]` (logic in `src/migrate-lock-files.js`) moves a backlog from
-before S-1495. It writes `.bl/` to `.gitignore` before it deletes anything. It deletes each old
-lock file (`.bl-new.lock`, `.reports.lock`, every `.workon.lock` in the backlog root, in a unit
-directory, in a directory inside one, links followed, or in a registered worktree) while it holds
-that file's kernel lock itself (`deleteUnderLock`), so nobody takes the lock between the check
-and the delete; it skips a file whose lock another process holds. Once a second scan finds no old
-lock file, it removes their lines from `.gitignore`. It commits `.gitignore` only when the file
-(and the index, if it differs from HEAD) is what those two edits make of HEAD's version, so a
-rerun commits what a failed run wrote, and a `.gitignore` with any other change stays
-uncommitted and the migration says so. A rerun tries a skipped file again. A
-`bl` from before F-104 holds its locks as PID files, which the migration cannot see, so it runs
-only when no older `bl` runs (task T-76).
-The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer too (F-105 A2); during `bl
-run` the first Ctrl+C is a stop that its next one-second slice takes, and a second one exits at
-once (**An interrupt during `bl run` is a stop**). A function that calls a lock wait is async, and every
-caller awaits it (`test/unit/awaited-calls.test.js`).
+before S-1495. The migration:
 
-Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogFiles`) over
-the Markdown files among its paths that git reports changed. It runs the plugin on one file per
-process, inside that file's spec lock (F-126 D4), so it waits for a token writer that holds the
-file. The cost is about 100 ms per file, so about 3 s for a merge's sync. Then it stages exactly each
-`--story` directory and each `--path` (a backlog-relative path you wrote or moved yourself,
-such as both ends of a `git mv`; repeatable), and commits them with `git commit --only`
-(`backlog-commit.js` `commitPaths`), so another person's dirty story file stays out. A `--path`
-must name one exact file or directory: the root, the whole `stories/`, `components/`,
-`features/`, `themes/` or `epics/`, a glob, a git magic pathspec, an absolute path or one with
-`..` is refused before anything is committed, since it would widen the commit to unrelated
-work.
-Nothing to commit exits 0; `--commit` without `-m` or `--story`, `--path` without
-`--commit`, or a `--path` that is neither on disk nor tracked by git, is a usage error.
+1. writes `.bl/` to `.gitignore` before it deletes anything;
+2. deletes each old lock file while it holds that file's kernel lock itself (`deleteUnderLock`),
+   so nobody takes the lock between the check and the delete. It skips a file whose lock another
+   process holds. The old lock files are `.bl-new.lock`, `.reports.lock`, and every
+   `.workon.lock` in the backlog root, a registered worktree, the directory of a work unit's
+   `index.md`, or a directory inside one (links followed);
+3. once a second scan finds no old lock file, removes their lines from `.gitignore`;
+4. commits `.gitignore` only when the file (and the index, if it differs from HEAD) is what
+   those two edits make of HEAD's version.
+
+So a rerun commits what a failed migration wrote. A `.gitignore` with any other change stays
+uncommitted, and the migration says so. A rerun tries a skipped file again. A `bl` from before
+F-104 holds its locks as PID files, which the migration cannot see. So run the migration only when
+no older `bl` runs (task T-76).
+
+The usage-limit wait of `bl run` (`waitOrEscalate`) awaits a timer too (F-105 A2). During
+`bl run`, the first Ctrl+C is a stop, which the wait's next one-second slice takes. A second
+Ctrl+C exits at once (**An interrupt during `bl run` is a stop**). A function that calls a lock
+wait is async, and every caller awaits it (`test/unit/awaited-calls.test.js`).
+
+Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogFiles`) over the
+Markdown files among its paths that git reports changed. It runs the plugin on one file per
+process, under that file's spec lock (F-126 D4). So it waits for a token writer that holds the
+file. The cost is about 100 ms per file, so about 3 s for a merge's sync.
+
+Then `--commit` stages exactly each `--story` directory and each `--path`, and commits them with
+`git commit --only` (`backlog-commit.js` `commitPaths`). So another person's dirty story file
+stays out. A `--path` is a backlog-relative path that you wrote or moved yourself, such as both
+ends of a `git mv`, and it is repeatable. It must name one exact file or directory. These would
+widen the commit to unrelated work, so `bl sync` refuses them before it commits anything:
+
+- the root;
+- the whole `stories/`, `components/`, `features/`, `themes/` or `epics/`;
+- a glob or a git magic pathspec;
+- an absolute path, or one with `..`.
+
+If there is nothing to commit, `bl sync` exits 0. These are usage errors: `--commit` without
+`-m` or `--story`, `--path` without `--commit`, and a `--path` that is neither on disk nor tracked
+by git.
 
 **Pull before, push after (F-50 D4).** The backlog is shared through its `origin` remote, so
-every clone (the operator's, the update runner's) sees the others' work. `commitPaths` is the
-only backlog add, commit and push in bl: each step commit of `bl run`'s loop goes through it too
-(`feature-run.js` `commitUnitPaths`). Every commit it makes is followed by `git push origin main`
-(`backlog-commit.js` `pushBacklog`). A backlog with no repo of its own (`hasOwnRepo`) runs no git
-there: `commitPaths` returns `notRepo`, and its callers take that as nothing to do.
-A push rejected because `origin` moved on (git's `[rejected] … (fetch first)` or
-`(non-fast-forward)`, `isNonFastForwardRejection`) is rebased onto `origin/main` with the pull's
-own rebase (`pullLocked`, below, which settles generated paths and puts everything back when it
-cannot finish), under the main sync lock the commit already holds, and pushed once more (F-74
-D1). When that rebase settled generated paths, their regeneration is left pending in
-`.bl/run/pull-regenerate.json` for the next command that pulls (`leaveRegenerationPending`,
-which writes `null` there: no snapshot yet, so edits made before that command stay out of the
-regeneration's commit; `markRegenerationPending` takes the snapshot when the regeneration
-starts; the two are the file's only writers); it never regenerates under the lock. The marker is
-written before the rebase and removed when it settled nothing, so a marker that cannot be read or
-written stops the retry before anything moves, and a push never publishes settled paths without
-it. A push that still fails (a
-conflict outside the generated paths, a hook, auth, offline: the last three get no rebase) is
-one warning (`pushWarning`) naming the conflicting paths, if any, and the command to retry, and
-the command exits as it would have. Every backlog commit holds the main sync lock the pull
-holds, with or without an `origin` remote (F-126 D1), so a commit from a process without the
-backlog lock (`openUnitChange`, the loop) never lands mid-rebase or loses its file to a pull's
-autostash. Every bl git call that changes the backlog's index, working tree or refs lives in
-`backlog-commit.js` or `main-sync.js`, and each chokepoint (`commitLocked`, `pushBacklog`,
-`pullLocked`, `resetPaths`, `discardChanges`) throws first when this process does not hold the
-main sync lock (`assertMainSyncLock`, through `kernel-lock.js` `assertHeld`, which makes every
-"this process must hold this lock" check). `bl rank --commit`'s rollback of a failed commit
-unstages `priority.yaml` with `resetPaths` under the lock. The migration restore
-(`migration-txn.js`) runs in a signal listener and cannot wait: it takes the lock with one try
-(`tryLockOnce`), and when another process holds it, it leaves the backlog and prints the manual
-`git reset --hard HEAD && git clean -fd`. Every command that commits the
-backlog (`new`, `side`, `run`, `implement`, `merge`, `done`, `sync --commit`,
-`block add`, `block remove`, `block list --fix`, `task`, `task done`), plus `bl inbox`, first rebases onto `origin/main` with
-`--autostash` (`backlog-commit.js` `pullBacklog`, under the backlog lock and the main sync
-lock; `bl.js` decides which commands through `commandPullsBacklog`). When `origin/main` brings
-nothing new the work tree is not touched. A conflict on a story or feature aborts the rebase,
-which puts back the work tree and the stashed edits, warns, and the command goes on from local
-state; uncommitted edits that conflict with what was pulled put `main` back where it was and
-the edits back from the stash, the same way. A pull that does not go through is checked
-against the state it started from (branch, HEAD, no rebase in progress, nothing unmerged, the
-stash and the uncommitted edits); when they differ (a failed `git rebase --abort`, a stash that
-would not re-apply) the pull is `unsafe` and the command does not run. A conflict confined to
-the one generated file, `allowed-tools.json` (`isGeneratedPath`), keeps the local side, and the
-regeneration that follows every pull that brought anything (`sync.js` `pullBeforeCommand`,
-`ensureAllowedTools`) rebuilds it and commits and pushes it if it changed. A conflict in the
-root or a component `index.md` is a real one: those pages are hand-written (F-79 D1). A
-regeneration that cannot be built or committed stops the command and stays pending in
-`.bl/run/pull-regenerate.json`; the next command that pulls finishes it first. After a pull
-that ended `pulled` or `current` and made no regeneration commit (whose push carries `main`), a
-`main` still ahead of `origin/main` is pushed, with the same retry (`pushIfAhead`, F-74
-Decision A1): a commit whose push failed is carried by the next command of any kind that pulls,
-not only the next one that commits. A backlog with no `origin` remote neither pulls nor pushes.
+every clone (the operator's, the update runner's) sees the others' work.
+
+- `commitPaths` is the only backlog add, commit and push in bl. Each step commit of `bl run` goes
+  through it too (`feature-run.js` `commitUnitPaths`). After every commit it makes, it runs
+  `git push origin main` (`backlog-commit.js` `pushBacklog`). In a backlog with no repo of its own
+  (`hasOwnRepo`), bl runs no git. There, `commitPaths` returns `notRepo`, and its callers take
+  that as nothing to do.
+- If `origin` moved on, git rejects the push (`[rejected] … (fetch first)` or
+  `(non-fast-forward)`, `isNonFastForwardRejection`). Then `pushBacklog` rebases onto
+  `origin/main` with the pull's own rebase (`pullLocked`, below), under the main sync lock the
+  commit already holds. Then it pushes once more (F-74 D1). `pullLocked` settles generated paths, and
+  puts everything back when it cannot finish.
+- If that rebase settled generated paths, bl leaves their regeneration pending in
+  `.bl/run/pull-regenerate.json` for the next command that pulls; it never regenerates under the
+  lock. The file's only writers are `leaveRegenerationPending` and `markRegenerationPending`. The
+  first writes `null` there: no snapshot yet, so edits made before that next command stay out of
+  the regeneration's commit. The second takes the snapshot when the regeneration starts. bl
+  writes the marker before the rebase, and removes it when the rebase settled nothing. So if bl
+  cannot read or write the marker, the retry stops before anything moves, and a push never
+  publishes settled paths without it.
+- A push can still fail: a conflict outside the generated paths, a hook, auth, or offline (the
+  last three get no rebase). Then bl prints one warning (`pushWarning`) that names the
+  conflicting paths, if any, and the command to retry. The command exits as it would have.
+- Every backlog commit holds the main sync lock that the pull holds, with
+  or without an `origin` remote (F-126 D1). So a commit from a process without the backlog lock
+  (`openUnitChange`, `bl run`) never lands mid-rebase, or loses its file to a pull's autostash.
+  Every bl git call that changes the backlog's index, working tree or refs lives in
+  `backlog-commit.js` or `main-sync.js`. Each chokepoint (`commitLocked`, `pushBacklog`,
+  `pullLocked`, `resetPaths`, `discardChanges`) throws first when this process does not hold the
+  main sync lock. That check is `assertMainSyncLock`, through `kernel-lock.js` `assertHeld`,
+  which makes every "this process must hold this lock" check.
+  - `bl rank --commit`'s rollback of a failed commit unstages `priority.yaml` with `resetPaths`,
+    under the lock.
+  - The migration restore (`migration-txn.js`) runs in a signal listener and cannot wait. It
+    takes the lock with one try (`tryLockOnce`). If another process holds the lock, the restore
+    leaves the backlog as it is, and prints the manual `git reset --hard HEAD && git clean -fd`.
+
+**The pull.** Every command that commits the backlog first rebases onto `origin/main` with
+`--autostash`, and so does `bl inbox`. The commands that commit are `new`, `side`, `run`,
+`implement`, `merge`, `done`, `sync --commit`, `block add`, `block remove`, `block list --fix`,
+`task` and `task done`. The pull is `backlog-commit.js`
+`pullBacklog`, under the backlog lock and the main sync lock. `bl.js` decides which commands pull,
+through `commandPullsBacklog`.
+
+- If `origin/main` brings nothing new, the pull does not touch the work tree.
+- A conflict on a story or feature aborts the rebase. The abort puts back the work tree and the
+  stashed edits, bl warns, and the command goes on from local state. If uncommitted edits
+  conflict with what was pulled, bl puts `main` back where it was, and the edits back from the
+  stash, the same way.
+- If a pull does not go through, bl checks the state against the one that the pull started
+  from. The state is the branch, HEAD, no rebase in progress, nothing unmerged, the stash and the
+  uncommitted edits. If they differ (a failed `git rebase --abort`, a stash that would not
+  re-apply), the pull is `unsafe`, and the command does not go on.
+- A conflict confined to the one generated file, `allowed-tools.json` (`isGeneratedPath`), keeps
+  the local side. A regeneration follows every pull that brought anything (`sync.js`
+  `pullBeforeCommand`, `ensureAllowedTools`). It rebuilds the file, and commits and pushes it if
+  it changed.
+- A conflict in the root or a component `index.md` is a real one: those pages are hand-written
+  (F-79 D1).
+- If bl cannot build or commit a regeneration, the command stops, and the regeneration stays
+  pending in `.bl/run/pull-regenerate.json`. The next command that pulls finishes it first.
+- A pull can end `pulled` or `current` and make no regeneration commit (whose push would carry
+  `main`). If `main` is then still ahead of `origin/main`, bl pushes it, with the same retry
+  (`pushIfAhead`, F-74 Decision A1). So the next command of any kind that pulls carries a commit
+  whose push failed, not only the next one that commits.
+- A backlog with no `origin` remote neither pulls nor pushes.
 
 **Rendered pages (F-79 D2, D3).** No committed file holds a derived list. `renderPage(graph,
-unit)` (`src/render.js`) gives a page's committed text with its generated sections placed in
-it, each where the page's layout puts it; `bl report` (its `site/` root) and `bl view` show
-pages through it. `GENERATED_SECTIONS` is the one list of those sections per page kind, every
-link pointing into `stories/`, `components/`, `features/`, `epics/` or `themes/`:
+unit)` (`src/render.js`) gives a page's committed text with its generated sections placed in it,
+each where the page's layout puts it. `bl report` (its `site/` root) and `bl view` show pages
+through it. `GENERATED_SECTIONS` is the one list of those sections per page kind. Every link in
+them points into `stories/`, `components/`, `features/`, `epics/` or `themes/`. In this list,
+"not done" means a status that does not meet `done`:
 
-- the root `index.md`: a "Total backlog" line (open stories, their points, the components),
-  `## Themes` (theme, title, epic count, open features), `## Components` (id, title, repo,
-  home, open and done story counts; a component has no points) and `## Priority`: the open
-  units in `priority.yaml`'s order (F-78 D1), ranked first, the unranked tail marked.
+- the root `index.md`:
+  - a "Total backlog" line: the stories not done, their points, the components;
+  - `## Themes`: theme, title, epic count, features not done;
+  - `## Components`: id, title, repo, home, and the counts of stories not done and done. A
+    component has no points.
+  - `## Priority`: the work units not done, in `priority.yaml`'s order (F-78 D1), ranked first,
+    with the unranked tail marked.
 - each `epics/E<nn>-*/index.md`: `## Features` (id, title, status, stories done/total,
   points done/total) after `## Outcome`, from the graph's derived features.
 - each `themes/<slug>/index.md`: `## Epics` (id, title, status, features done/total), then
   `## Features`, its features with no epic.
-- each `components/C<nn>-*/index.md`: `## Stories` (its open stories in priority order, with
-  their status) and `## Features` (open features touching it).
-- each feature: its `## Stories` table (with a `Component` column), its stories in the
-  graph's order, then `## Tasks` when it has a task.
+- each `components/C<nn>-*/index.md`: `## Stories` (its stories not done, in priority order, with
+  their status) and `## Features` (the features not done that touch it).
+- each feature: its `## Stories` table (with a `Component` column), its stories in the graph's
+  order, then `## Tasks` when it has a task.
 - each story: `## Tasks` when it has a task.
 
 A story whose `component:` has no directory is listed with the bare id, not a link.
 
-A committed page holds none of them. `bl validate` reports one as `generated-section`, and
-`scripts/migrate-generated-sections.js` (run once after F-79) removed them, with the root's
-"Total backlog" line and its older `## Features` and `## Backlog` tables, from every page. Both
-take a section only when its body is one complete GFM table (read with
-`micromark-extension-gfm-table`) with the generated header row, every row at least that wide,
-and nothing else (`isGeneratedBody`), so a story's hand-written `## Tasks` list or table stays,
-and so does a header row with no delimiter row under it. Each header cell must be the column's
-plain text, so a header with a formatted cell (`**ID**`, `` `ID` ``, a link, an escape or an
-entity) stays too. `renderPage` keeps such a hand-written body and puts the generated table after it. The root `index.md` is hand-written too: `bl init` writes
-it once, when it is missing, with the `backlog.json` `title` (`ensureRootIndex`, `src/init.js`).
+A committed page holds none of them. `bl validate` reports one as `generated-section`.
+`scripts/migrate-generated-sections.js` (run once after F-79) removed them from every page, with
+the root's "Total backlog" line and its older `## Features` and `## Backlog` tables.
+
+Both take a section only when its body is one complete GFM table and nothing else
+(`isGeneratedBody`). The table (read with `micromark-extension-gfm-table`) must have the
+generated header row, and every row must be at least that wide. So a story's hand-written
+`## Tasks` list or table stays, and so does a header row with no delimiter row under it. Each
+header cell must be the column's plain text. So a header with a formatted cell (`**ID**`,
+`` `ID` ``, a link, an escape or an entity) stays too. `renderPage` keeps such a hand-written body,
+and puts the generated table after it.
+
+The root `index.md` is hand-written too. `bl init` writes it once, when it is missing, with the
+`backlog.json` `title` (`ensureRootIndex`, `src/init.js`).
 
 ### `bl validate`
 
-Run backlog-wide integrity checks (frontmatter, duplicate IDs, acyclic dep graph) and report every finding.
+`bl validate` runs integrity checks over the whole backlog and reports every finding. It checks
+the frontmatter, duplicate ids, and that the dependency graph has no cycle.
 
 ```bash
 # Interactive — both streams hit the terminal, exit code drives the prompt.
@@ -5520,198 +5888,256 @@ task-unit, task-field, deferred-unsized, deferred-duplicate, operator-tasks-reti
 deferred-heading-retired, bad-tokens-by-step, agent-config, derived-key, dangling-feature,
 dangling-batch, feature-and-batch, feature-no-stories, transition-log, legacy-status
 
-`transition-log` (F-69 D2, `findTransitionFindings` in `src/transition.js`, error) is at a story,
-feature or task file whose `transitions:` is not a list of entries, or has an entry with a field
-outside `at`, `to`, `by`, `via`, `outcome` and `note`, no `by`, an `at` that is not ISO 8601
-UTC or is before the entry above it, or a `to` that is not a status of the type. It is also a
-first entry that is not the type's initial status by `new`, and an entry after it whose pair
-with the entry above it is no edge of the table under its `by` (`by: operator` matches any
-verb, and `by: force` any two different statuses of the type), unless the entry has
-`note: migrated`. A pair that skips a verb's `during` counts as
-that verb's edge (F-119 R2): from a status in the verb's `from` straight to one of its
-branches' `to`, by that verb or by `operator`. Logs written before `refine` had its `during`
-hold such pairs (`draft → refined` by `refine`); the writer (`applyTransition`) refuses them.
-And it is an `added` that is not the first entry's date, or a `completed` (a task's `done`)
-that is not the date of the entry to a terminal status; for a story or a feature, also a missing `added`, or a missing `completed` on
-a log that ends terminal (a task's are `task-field`'s), or a `completed` on a log that ends at
-an open status (`bl force` removes it when it reopens a unit). The migration sets both from the log
-for a unit that has neither. `legacy-status` (warning) is a
-`status:` with no log, which `bl/scripts/migrate-transitions.js` rewrites, or a `status:` beside
-a log, which bl does not read. A closed unit, one whose status (`statusOf`) is in its type's
-`terminal` list in `flow.json`, gets neither warning. The default `flow.json` moves no closed unit (`supersede`'s `from: "*"` leaves out terminal statuses), but a
-custom edge can, for example a story from `done` to `superseded`. That move goes through `applyTransition`, which turns `status:` into a log
-first, so the old shape does no harm. This covers the closed update stories, which the migration leaves in the old shape; an open
-update story keeps the warning: the removed `bl updates` wrote it in the old shape. A unit with a log needs no
-`status:` (`missing-required-key`).
+`transition-log` (F-69 D2, `findTransitionFindings` in `src/transition.js`) is an error at a
+story, feature or task file. bl reports it when the file's `transitions:` breaks one of these
+rules:
 
-`derived-key` (F-77 D3, error) is a key the graph derives stored in a unit file: a story's
-`required_for:` (even empty), a feature's `stories:`, `points:` or `components:`, or an epic's
-`features:` or `status:` (`DERIVED_KEYS` in `backlog-graph.js`, the one table of them). It is
-never also `unknown-fm-key` (here or in `bl sync`'s warnings), a stored `required_for:` is
-never a link (no `dangling-dep` from it), and an epic's stored `status:` is not checked against
-a set. `scripts/migrate-derived-keys.js` removes every one; `feature-story-missing`,
-`feature-story-mismatch` and `feature-story-unlisted`, which compared the stored list with the
-stories, are gone, and so is `asymmetric-dep`, which compared a `depends_on:` with the other
-story's `required_for:`: an edge is stated once, today in `blockers.json` (F-111), and the
-graph's `story.requiredFor` is its inverse.
+- `transitions:` is a list of entries.
+- Each entry has only the fields `at`, `to`, `by`, `via`, `outcome` and `note`, and it has a
+  `by`.
+- Each `at` is ISO 8601 UTC, and it is not before the entry above it.
+- Each `to` is a status of the type.
+- The first entry is the type's initial status, by `new`.
+- Each later entry and the entry above it make a pair that is an edge of the table under the
+  entry's `by`. `by: operator` matches any verb, and `by: force` matches any two different
+  statuses of the type. An entry with `note: migrated` is exempt.
 
-`depends-on-key` (F-111 D5, warning) is a story file that still holds `depends_on:`, empty or
-not: every hold and order lives in `blockers.json`. Until `scripts/migrate-depends-on.js`
-moves the key there, bl reads each entry as the edge it stands for (`dependsOnEdges`, see
-**Holds between units**), so the file works.
+A pair that skips a verb's `during` counts as that verb's edge (F-119 R2). That is a move from a
+status in the verb's `from` straight to one of its branches' `to`, by that verb or by
+`operator`. Logs written before `refine` had its `during` hold such pairs (`draft → refined` by
+`refine`). The writer (`applyTransition`) refuses them.
 
-`agent-config` (F-64 D2, `findAgentConfigFindings`, error at `backlog.json`) is the error
-`loadConfig` would throw for `agent` or `review_agent`, at the top level or under a repo's
-`overrides`, the retired shape (a string, `agent_model`, `fallback_model`) included; `bl
-validate` loads with `lenientAgents` so it reports the error instead of stopping on it.
+`transition-log` also covers the dates:
 
-`bad-status` on a story or a feature is a status `flow.json` does not name for its type, so
-removing a status from the file makes every unit at it a finding, and adding one makes it
-valid. A v1 word that `LEGACY_STATUSES` maps (story `backlog`, feature `running`; task `open` in
-`task-field`) is a warning that names the migration, not an error (`statusWordProblem`, F-69 D6).
-A missing or unreadable `flow.json` is not a finding: `bl validate` stops with the `FlowError`
-naming the file. `flow-json` (F-66 D1, F-69 D1, `findFlowFindings`, at
-`flow.json`) is an error for: a `from`, `during`, `to` or terminal status the type lacks; a
-`when` or `via` name `src/guards.js` or `src/capabilities.js` does not register; a `then` that
-is not a verb of the type, or one whose `from` lacks the branch's `to`; a status that is no
-branch's `to`; a terminal status before an open one, or one that a verb other than `supersede`
-starts from; a verb `DISPATCH` (`src/verbs.js`) has for a type whose table lacks it (`status`
-only reads, `READ_VERBS`). It is a warning for a `bl-flow/v1` file (one, naming
-`bl/scripts/migrate-transitions.js`) and for each type with a `gates` table (F-119 D4). Every
+- An `added` that is not the first entry's date.
+- A `completed` (a task's `done`) that is not the date of the entry to a terminal status.
+- For a story or a feature only: a missing `added`, or a missing `completed` on a log that ends
+  at a terminal status. A task's missing dates are `task-field` findings.
+- A `completed` on a log that ends at a status that is not terminal. `bl force` removes the
+  `completed` when it moves a work unit back from a terminal status.
+
+The migration sets both dates from the log for a work unit that has neither.
+
+`legacy-status` is a warning. It is a `status:` with no log, which
+`bl/scripts/migrate-transitions.js` rewrites, or a `status:` beside a log, which bl does not
+read. A work unit whose status (`statusOf`) is in its type's `terminal` list in `flow.json` gets
+neither warning. The default `flow.json` moves no such work unit: `supersede`'s `from: "*"`
+leaves out the terminal statuses. A custom edge can move one, for example a story from `done` to
+`superseded`. That move goes through `applyTransition`, which first turns `status:` into a log,
+so the old shape does no harm. This covers the update stories at a terminal status, which the
+migration leaves in the old shape. An update story at another status keeps the warning: the
+removed `bl updates` wrote it in the old shape. A work unit with a log needs no `status:`
+(`missing-required-key`).
+
+`derived-key` (F-77 D3) is an error: a unit file stores a key that the graph derives. The keys
+are a story's `required_for:` (even empty), a feature's `stories:`, `points:` or `components:`,
+and an epic's `features:` or `status:`. `DERIVED_KEYS` in `backlog-graph.js` is the one table of
+them. For these keys:
+
+- bl never also reports `unknown-fm-key`, here or in `bl sync`'s warnings.
+- A stored `required_for:` is never a link, so no `dangling-dep` comes from it.
+- bl does not check an epic's stored `status:` against a set.
+
+`scripts/migrate-derived-keys.js` removes every one. Four old findings are gone.
+`feature-story-missing`, `feature-story-mismatch` and `feature-story-unlisted` compared the
+stored list with the stories. `asymmetric-dep` compared a `depends_on:` with the other story's
+`required_for:`. Now an edge is stated once, today in `blockers.json` (F-111), and the graph's
+`story.requiredFor` is its inverse.
+
+`depends-on-key` (F-111 D5) is a warning: a story file still holds `depends_on:`, empty or not.
+Every hold and order lives in `blockers.json`. Until `scripts/migrate-depends-on.js` moves the
+key there, bl reads each entry as the edge it stands for (`dependsOnEdges`, see **Holds between
+units**), so the file works.
+
+`agent-config` (F-64 D2, `findAgentConfigFindings`) is an error at `backlog.json`. It is the
+error that `loadConfig` would throw for `agent` or `review_agent`, at the top level or under a
+repo's `overrides`. The retired shape (a string, `agent_model`, `fallback_model`) is included.
+`bl validate` loads the config with `lenientAgents`, so it reports the error and does not stop
+on it.
+
+`bad-status` on a story or a feature is a status that `flow.json` does not name for its type. So
+if you remove a status from the file, every work unit at it becomes a finding, and if you add
+one, it becomes valid. A v1 word that `LEGACY_STATUSES` maps is a warning that names the
+migration, not an error (`statusWordProblem`, F-69 D6). The v1 words are story `backlog`, feature
+`running`, and task `open` in `task-field`. A missing or unreadable `flow.json` is not a finding:
+`bl validate` stops with the `FlowError`, which names the file.
+
+`flow-json` (F-66 D1, F-69 D1, `findFlowFindings`) is a finding at `flow.json`. It is an error
+for each of these:
+
+- a `from`, `during`, `to` or terminal status that the type lacks;
+- a `when` or `via` name that `src/guards.js` or `src/capabilities.js` does not register;
+- a `then` that is not a verb of the type, or one whose `from` lacks the branch's `to`;
+- a status that is no branch's `to`;
+- a terminal status before a status that is not terminal, or a terminal status that a verb other
+  than `supersede` starts from;
+- a verb that `DISPATCH` (`src/verbs.js`) has for a type whose table lacks it. `status` only
+  reads (`READ_VERBS`).
+
+It is a warning for a `bl-flow/v1` file (one warning, which names
+`bl/scripts/migrate-transitions.js`), and for each type with a `gates` table (F-119 D4). Every
 `flow-json` message ends with `See bl/templates/flow.schema.md.` (`FLOW_DOC`, F-119 R7).
 
-The `blockers-*` findings (F-66 D5, `findBlockersFindings`) are at `blockers.json`; a missing
+The `blockers-*` findings (F-66 D5, `findBlockersFindings`) are at `blockers.json`. A missing
 file has none. All are errors except `blockers-order`:
 
-- `blockers-json`: not JSON, a wrong `schema`, or an edge of the wrong shape; nothing else in the
-  file is checked.
-- `blockers-unit`: a `blocker`, `unit` or `active_when.unit` that is not a unit (a story,
-  feature or task) in the backlog, or a `*` blocker. A merge edge's ends are checked by their
-  own rules (see **Holds between units**), with this code and the next two.
-- `blockers-gate`: a gate the unit's type does not have in `flow.json` (for `*`, no type has it).
+- `blockers-json`: the file is not JSON, has a wrong `schema`, or has an edge of the wrong shape.
+  bl checks nothing else in the file.
+- `blockers-unit`: a `blocker`, `unit` or `active_when.unit` that is not a work unit (a story,
+  feature or task) in the backlog, or a `*` blocker. bl checks a merge edge's ends by their own
+  rules (see **Holds between units**), with this code and the next two.
+- `blockers-gate`: a gate that the work unit's type does not have in `flow.json`. For `*`, no type
+  has it.
 - `blockers-status`: an `until` that is not a status of the blocker's type, or an
-  `active_when.status` that is not one of its unit's type.
+  `active_when.status` that is not a status of its work unit's type.
 - `blockers-duplicate`: two edges with one (`blocker`, `gate`, `unit`).
-- `blockers-unmeetable`: a closed blocker (its status meets `done`) that does not meet `until`.
-- `blockers-cycle`: a deadlock in the hold graph (see **Holds between units**), or a cycle of
-  one feature's merge edges or of its order edges, among `readEdges`'s edges: a cycle of
+- `blockers-unmeetable`: a blocker whose status meets `done` and does not meet `until`.
+- `blockers-cycle`: a deadlock in the hold graph (see **Holds between units**). It is also a
+  cycle among `readEdges`'s edges, of one feature's merge edges or of its order edges. A cycle of
   `depends_on:` keys is one too (F-111 D4; the old `cycle` finding is gone).
-- `blockers-order` (warning): the text is not what bl writes in the file's schema (unsorted, or
-  reformatted by hand); `bl block list --fix` rewrites it.
+- `blockers-order` (warning): the text is not what bl writes in the file's schema. It is unsorted,
+  or someone reformatted it by hand. `bl block list --fix` rewrites it.
 
-`task-unit` and `task-field` (F-65 D1, `findTaskFindings`) are at the task file. `task-unit`
-(error): `unit:` names no feature or story in the backlog. `task-field`: a missing `task_id`,
-`title`, `unit`, `owner`, `status` or `added`, a `task_id` that is not `T-<n>` or not the
-file's number, one id on two files, an `owner` outside `operator`, a `status` outside
-`flow.json`'s task statuses, or a `done` task with no `done:` date (errors); a key bl does not
-know (warning).
+`task-unit` and `task-field` (F-65 D1, `findTaskFindings`) are at the task file:
+
+- `task-unit` (error): `unit:` names no feature or story in the backlog.
+- `task-field` (error):
+  - a missing `task_id`, `title`, `unit`, `owner`, `status` or `added`;
+  - a `task_id` that is not `T-<n>` or not the file's number;
+  - one id on two files;
+  - an `owner` other than `operator`;
+  - a `status` outside `flow.json`'s task statuses;
+  - a `done` task with no `done:` date.
+- `task-field` (warning): a key that bl does not know.
 
 `deferred-unsized`, `deferred-duplicate`, `operator-tasks-retired` and `deferred-heading-retired`
-(F-65 D4, F-82 D9, `findDeferredErrors`, errors at the unit's file with its line) check an open
-unit's `## Deferred`: an item without a numeric `[points: N]`, a `### Operator tasks`
-sub-heading or `operator:` bullet, a second `## Deferred` heading, and a story's retired
-`## To Do` heading. A `done` or `superseded` unit has none (see **`## Deferred`, `## Notes` and tasks**). The S-970 `operator-tasks` rule is gone with
-`src/operator-tasks.js`.
+(F-65 D4, F-82 D9, `findDeferredErrors`) are errors at the work unit's file, with the line. They
+check the `## Deferred` of a work unit whose status does not meet `done`, for:
 
-`found-by` (F-48 D2, `findFoundByFindings`) is an error on a story whose
-`found_by:` is set but names no existing feature (`F-<n>`) or story (`S-<n>`).
-`found_by` is a record: nothing that decides reads it. `bl status S-n` prints it
-on its head line as `found by: <id>`.
+- an item without a numeric `[points: N]`;
+- a `### Operator tasks` sub-heading or an `operator:` bullet;
+- a second `## Deferred` heading;
+- a story's retired `## To Do` heading.
 
-`roadmap-file` and `roadmap-section` check `roadmap.md`'s shape and `theme-brief` a theme's
-`brief:` (see **The roadmap** and **Themes and Epics**). `dictionary-file` (F-82, error at
-`backlog.json`) is a path `backlog.json` `"dictionaries"` lists that is not a file (see
-**Dictionaries**).
+A work unit whose status meets `done` has none of these findings (see **`## Deferred`, `## Notes`
+and tasks**). The S-970 `operator-tasks` rule went with `src/operator-tasks.js`.
 
-`priority-file` and `priority-unit` (F-78 D1, `findPriorityFindings`, from the graph's
-problems), both errors at `priority.yaml`: the first when the file is missing, is not YAML, or
-is not a list of non-empty id strings; the second when an entry names no feature or story, a
-story inside a feature, an update story or a task, or a unit already ranked. A closed unit left
-in the list is no finding: the order skips it, and the next `bl rank --commit` removes it.
-Only a `priority.yaml` that is not YAML stops other commands (a strict `loadBacklog` throws it);
-a missing or malformed one is an empty order, so every open unit is in the dated tail (see
-**Priority**). They replace the two
-findings of the old feature order file (F-53 D1), which bl no longer reads.
+`found-by` (F-48 D2, `findFoundByFindings`) is an error on a story whose `found_by:` is set but
+names no existing feature (`F-<n>`) or story (`S-<n>`). `found_by` is a record: nothing that
+decides reads it. `bl status S-n` prints it on its head line as `found by: <id>`.
 
-`generated-section` (F-79 D3, `findGeneratedSectionFindings`, error at the page) is a committed
-page that holds a section `GENERATED_SECTIONS` names for its kind, with its generated table (the
-same header row) for its body (`isGeneratedBody`); the message names the heading. `bl report` and `bl view` render those when
-the page is read (see **Rendered pages** under `### bl sync`). A hand-written section under the
-same heading, with anything besides that table in it, is no finding: `renderPage` keeps it.
+`roadmap-file` and `roadmap-section` check the shape of `roadmap.md`, and `theme-brief` checks a
+theme's `brief:` (see **The roadmap** and **Themes and Epics**). `dictionary-file` (F-82) is an
+error at `backlog.json`: a path in the `"dictionaries"` list of `backlog.json` that is not a file
+(see **Dictionaries**).
 
-`frontmatter-yaml` and `frontmatter-list` (F-62 D4, `findFrontmatterFindings`) come first,
-from the problems of the tolerant graph `bl validate` loads once (`loadBacklog(config,
-{ tolerant: true })`, F-77 D2) over the root `index.md`, every unit's `index.md` and change
-documents, and every task file under `tasks/` (`frontmatterFiles`, the graph's `files`). A
-block that is not YAML is `frontmatter-yaml` (error) at the parser's line and column, and the
-file is not read any further: the graph leaves its unit out, so no reader sees it, and a
-change document takes its unit's `index.md` with it, so nothing else is reported from a
-half-read file. A list key that holds a non-empty scalar or a mapping, or a member that is
-not a string (not a mapping, for a change document's `repos:`), is `frontmatter-list` (error)
-at the key's line, and that unit is left out the same way. `bl validate` pins its graph on
-the config it hands its checks (`config.backlogGraph`, `graphOf`), so every reader it calls
-projects that one graph. Every other command loads the graph strictly and stops at the first
-such unit file, any unit's, with its `FrontmatterError` or `FrontmatterListError`.
+`priority-file` and `priority-unit` (F-78 D1, `findPriorityFindings`) come from the graph's
+problems. Both are errors at `priority.yaml`:
 
-`duplicate-id`, `dangling-dep`, `dangling-feature`, `dangling-batch` and `feature-and-batch`
-(F-125 D1: a story that names both a feature and a story batch) are the graph's problems too
-(`findDuplicateFindings`, `findDanglingFindings`), in the words `bl validate` always used:
-a story's duplicate once per id at its first file listing every copy and title, a
-component's once per id at its second directory, an epic's or a feature's once per later
-copy. A task's duplicate id stays `findTaskFindings`'s `task-field`.
+- `priority-file`: the file is missing, is not YAML, or is not a list of non-empty id strings.
+- `priority-unit`: an entry names no feature or story, or names a story inside a feature, an
+  update story, a task or a work unit already ranked.
 
-`repo-key` (F-52 D5, `validateFrontmatter`) is an error on a story or a
-feature that still sets `primary_repo` or `secondary_repos`, once per key
-(never also `unknown-fm-key`). bl reads neither: the message names the
-story's component and that component's repo, or says a feature's repos come
-from its stories' components, and says to remove it.
-It replaces `component-repo-mismatch`, `feature-primary-repo-unlisted` and
+A work unit left in the list whose status meets `done` is no finding: the order skips it, and the
+next `bl rank --commit` removes it. Only a `priority.yaml` that is not YAML stops other commands
+(a strict `loadBacklog` throws it). A missing or malformed `priority.yaml` is an empty order. Then
+every work unit whose status does not meet `done` is in the dated tail (see **Priority**). These
+two findings replace the two findings of the old feature order file (F-53 D1), which bl no longer
+reads.
+
+`generated-section` (F-79 D3, `findGeneratedSectionFindings`) is an error at the page. It is a
+committed page that holds a section that `GENERATED_SECTIONS` names for its kind. The section's
+body is its generated table, with the same header row (`isGeneratedBody`). The message names the
+heading. `bl report` and `bl view` render those sections when the page is read (see **Rendered
+pages** under `### bl sync`). A hand-written section under the same heading, with anything
+besides that table in it, is no finding: `renderPage` keeps it.
+
+`frontmatter-yaml` and `frontmatter-list` (F-62 D4, `findFrontmatterFindings`) come first. They
+come from the problems of the tolerant graph that `bl validate` loads once (`loadBacklog(config,
+{ tolerant: true })`, F-77 D2). The graph covers the root `index.md`, every work unit's and
+other entry's `index.md` and change documents, and every task file under `tasks/`
+(`frontmatterFiles`, the graph's `files`).
+
+- `frontmatter-yaml` (error) is a block that is not YAML, at the parser's line and column. bl
+  reads the file no further. The graph leaves its node out, so no reader sees it. A change
+  document takes its work unit's `index.md` with it, so bl reports nothing else from a half-read
+  file.
+- `frontmatter-list` (error) is a list key that holds a non-empty scalar or a mapping. It is
+  also a list member that is not a string (for a change document's `repos:`, not a mapping). It
+  is at the key's line, and the graph leaves that node out the same way.
+
+`bl validate` pins its graph on the config that it hands its checks (`config.backlogGraph`,
+`graphOf`), so every reader that it calls projects that one graph. Every other command loads the
+graph strictly. It stops at the first such unit file, of any kind, with its `FrontmatterError` or
+`FrontmatterListError`.
+
+`duplicate-id`, `dangling-dep`, `dangling-feature`, `dangling-batch` and `feature-and-batch` are
+the graph's problems too (`findDuplicateFindings`, `findDanglingFindings`). `feature-and-batch`
+(F-125 D1) is a story that names both a feature and a story batch. bl reports them in the words
+that `bl validate` always used:
+
+- a story's duplicate: once per id, at its first file, listing every copy and title;
+- a component's duplicate: once per id, at its second directory;
+- an epic's or a feature's duplicate: once per later copy.
+
+A task's duplicate id stays a `task-field` finding of `findTaskFindings`.
+
+`repo-key` (F-52 D5, `validateFrontmatter`) is an error on a story or a feature that still sets
+`primary_repo` or `secondary_repos`, once per key. It is never also `unknown-fm-key`. bl reads
+neither key. For a story, the message names the story's component and that component's repo. For
+a feature, it says that a feature's repos come from its stories' components. Both say to remove
+the key. `repo-key` replaces `component-repo-mismatch`, `feature-primary-repo-unlisted` and
 `feature-secondary-repos`, which compared the copies.
 
-The component rules (F-49 D4, `validate.js` `findComponentFindings`), all
-errors: `component-unknown` is a story with no `component:` or one naming a
-component with no directory under `components/`;
-`home-component` is a registered repo with no `home: true` component or
-several (anchored at `components/` when there is none), or a component
-whose `repo` backlog.json does not register; `component-has-status` is `points:` or
-`status:` on a component; `component-paths` (F-52 D4, F-61 D2) is a `paths:` entry
-that is empty, not a string, absolute or has a `..` or `.` segment (`paths:` itself is
-optional). Two component directories with one id are
-`duplicate-id`; every reader (`bl sync`, `bl validate`, a story's
-placement) takes the first by directory name.
+The component rules (F-49 D4, `findComponentFindings` in `validate.js`) are all errors:
 
-`bad-tokens-by-step` is an error on a story or feature whose `tokens_by_step`
-(see Tokens per step) is not a mapping, has a key that does not match
-`^[a-z][a-z-]*(\.[1-9]\d*)?$`, or has an entry that is not a mapping of the
-four token kinds to non-negative integers (`validate.js`
-`tokensByStepProblems`).
+- `component-unknown`: a story with no `component:`, or one that names a component with no
+  directory under `components/`.
+- `home-component`: a registered repo with no `home: true` component, or with several. When
+  there is none, the finding is at `components/`. It is also a component whose `repo`
+  `backlog.json` does not register.
+- `component-has-status`: `points:` or `status:` on a component.
+- `component-paths` (F-52 D4, F-61 D2): a `paths:` entry that is empty, is not a string, is
+  absolute, or has a `..` or `.` segment. `paths:` itself is optional.
 
-`bad-update-request` is an error on an update story whose request state is
-malformed (`validate.js` `updateRequestProblem`): an `update_request` other
-than `approve` or `drop`, a drop without a non-empty `update_request_reason`,
-or a reason on anything but a drop. The removed `bl updates` wrote these keys, and old
-stories keep them.
+Two component directories with one id are `duplicate-id`. Every reader (`bl sync`,
+`bl validate`, a story's placement) takes the first by directory name.
 
-`plugin-binary` is a warning that fires for every plugin entry whose
-resolved first-token is not on PATH. The finding carries extra
-sub-fields on top of the standard shape: `plugin` (key from
-`backlog.json` plugins map), `stages` (array of stage / op names
-within that plugin sharing the same first-token), and `command` (the
-resolved first-token). Suppress the category on tool-incomplete
-machines with `bl validate --skip plugin-binary`.
+`bad-tokens-by-step` (`tokensByStepProblems` in `validate.js`) is an error on a story or feature
+whose `tokens_by_step` (see Tokens per step) breaks its shape:
 
-`bl validate` always checks the whole backlog; it takes no scope option
-(`--project` is an unknown option, F-51 D5).
+- it is not a mapping;
+- it has a key that does not match `^[a-z][a-z-]*(\.[1-9]\d*)?$`;
+- it has an entry that is not a mapping of the four token kinds to non-negative integers.
+
+`bad-update-request` (`updateRequestProblem` in `validate.js`) is an error on an update story
+whose request state is malformed:
+
+- an `update_request` other than `approve` or `drop`;
+- a drop without a non-empty `update_request_reason`;
+- a reason on anything but a drop.
+
+The removed `bl updates` wrote these keys, and old stories keep them.
+
+`plugin-binary` is a warning for each plugin entry whose resolved first token is not on PATH.
+On top of the standard shape, the finding has three more fields:
+
+- `plugin`: the key in the `plugins` map of `backlog.json`;
+- `stages`: an array of the stage or op names in that plugin that share the first token;
+- `command`: the resolved first token.
+
+On a machine that lacks some tools, skip the category with `bl validate --skip plugin-binary`.
+
+`bl validate` always checks the whole backlog. It takes no scope option: `--project` is an
+unknown option (F-51 D5).
 
 ### `bl fix`
 
-Apply auto-fixable remediations for findings that `bl validate` reports. No
-code is supported today: the one there was, `asymmetric-dep`, went with F-77
-D3 (an edge is stated once, today in `blockers.json` (F-111); the
-inverse is derived), so every run prints the empty report and writes nothing.
-The command and its contract stay (feature F-77 Q1, which recommends removing
-it in a later story); `SUPPORTED_CODES` in `src/fix.js` is empty, and
-`bl fix --code <any>` exits 2.
+`bl fix` applies the automatic fixes for findings that `bl validate` reports. Today it supports
+no code. The one it had, `asymmetric-dep`, went with F-77 D3: an edge is stated once, today in
+`blockers.json` (F-111), and bl derives the inverse. So each call prints the empty report and
+writes nothing. The command and its contract stay (feature F-77 Q1, which recommends removing it
+in a later story). `SUPPORTED_CODES` in `src/fix.js` is empty, and `bl fix --code <any>` exits 2.
 
 ```bash
 bl fix                      # scanning… on stderr; nothing on stdout
@@ -5719,33 +6145,33 @@ bl fix --story S-858        # the same, after checking S-858 exists
 bl fix --json               # {"fixes":[],"summary":{"total":0,"byCode":{}}}
 ```
 
-`bl fix` parses its arguments strictly (`parseFixArgs` in `src/fix.js`, not
-the shared `parseArgs`): an option it does not accept, or a stray positional,
-is an error, not a silent unscoped run.
+`bl fix` parses its arguments strictly (`parseFixArgs` in `src/fix.js`, not the shared
+`parseArgs`). An option that it does not accept, or a stray positional, is an error, not a silent
+call with no scope.
 
 Output:
-stdout — the fix report (or one JSON object with `--json`); empty when
-no fixes were applied, which today is always.
-stderr — progress lines, e.g. `scanning N stories…`. Empty in `--json`
-mode when stdout is not a TTY.
+stdout — the fix report (or one JSON object with `--json`). It is empty when `bl fix` applied no
+fix, which today is always.
+stderr — progress lines, for example `scanning N stories…`. It is empty in `--json` mode when
+stdout is not a TTY.
 
 Exit codes:
 0 Completed cleanly.
 1 The backlog lock was not free within 60 s (`Timed out after 60000 ms waiting for lock`).
-2 Invalid arguments: an option `bl fix` does not accept
+2 Invalid arguments: an option that `bl fix` does not accept
 (`bl fix: unknown option "--bogus"`), a stray positional
 (`bl fix: unexpected argument "S-1"`), or an unknown `--code`, `--theme`
-or `--story` (`bl fix: unknown --story "S-999"`). An unknown option or
-positional is refused before the backlog is read, and an unknown `--theme`
-or `--story` right after the read-only scan.
+or `--story` (`bl fix: unknown --story "S-999"`). `bl fix` refuses an unknown option or
+positional before it reads the backlog, and an unknown `--theme` or `--story` right after the
+read-only scan.
 
-`bl fix` (without `--dry-run`) still holds the backlog lock for its scan, so
-a code added later plans and writes from one view; `--dry-run` reads without
-it.
+Without `--dry-run`, `bl fix` still holds the backlog lock for its scan. So a code added later
+plans and writes from one view. `--dry-run` reads without the lock.
 
 ### `bl merge`
 
-Merges the story branch into main, marks done, syncs, pushes, and removes the worktree:
+`bl merge` merges the story's branch into main, marks the story done, syncs, pushes, and removes
+the worktree:
 
 ```bash
 bl merge S34
@@ -5754,252 +6180,276 @@ bl merge S34 --switch-main  # switch a stale main checkout back to main first
 bl merge S34 --no-review    # merge a story that was never reviewed
 ```
 
-`bl merge S-<n>` and `bl merge F-<n>` apply **one set of gates** from one
-function, `mergeGates(unit, { config, args, repos })` in `src/merge-gates.js`
-(F-36 D1), on a `storyUnit` or `featureUnit` before any repo is touched. It
-returns findings and never exits; `main` (`cleanup.js`) and `cmdMerge`
-(`feature-cmd.js`) print every finding and exit 1. The messages name the id
-only, so a story and a feature refused for the same reason read the same.
-Kind-specific preconditions stay with the caller (a feature must have started,
-`isFeatureBranched`; a story's repo must be its component's, registered). There is
-no CI gate (D2): no repo has hosted CI since S-565, and the repo-local
-pre-push gate runs on `git push origin main`. In order:
+`bl merge S-<n>` and `bl merge F-<n>` apply **one set of gates** from one function,
+`mergeGates(unit, { config, args, repos })` in `src/merge-gates.js` (F-36 D1). It runs on a
+`storyUnit` or a `featureUnit` before `bl merge` touches any repo. It returns findings and never
+exits. `main` (`cleanup.js`) and `cmdMerge` (`feature-cmd.js`) print every finding and exit 1.
+The messages name only the id, so a story and a feature refused for the same reason read the
+same.
 
-- **Blocker gate** (F-66 D3) — one `blocker` finding per unmet, active
-  `blockers.json` edge at a status on `merge`'s nominal path (`done`), on the unit or, for a
-  feature, on one of its stories (`heldBy(config, id, "merge")`, injectable as
-  `held`): `<unit> is held at done by <blocker> (<status>, needs <until>): <id>
+The caller keeps the preconditions of its own kind: a feature must have started
+(`isFeatureBranched`), and a story's repo must be its component's registered repo. There is no CI
+gate (D2): no repo has hosted CI since S-565, and the pre-push gate in each repo runs on
+`git push origin main`. The gates, in order:
+
+- **Blocker gate** (F-66 D3) — one `blocker` finding for each active, unmet `blockers.json` edge
+  at a status on `merge`'s nominal path (`done`). The edge is on the work unit, or,
+  for a feature, on one of its stories (`heldBy(config, id, "merge")`, injectable as `held`):
+  `<unit> is held at done by <blocker> (<status>, needs <until>): <id>
 merges once <blocker> meets "<until>" (bl status <blocker>).` No flag
-  bypasses it; the blocker moving on or `bl block remove` lifts it.
-- **Review gate** — `featureReviewGate` for both kinds: refused while the
-  unit is in `fixing` or `in_review` (its transition log, F-69 D5; a unit with
-  no log is placed by its change document) or the latest review session of
-  its change document has an unchecked **Must** or **Should** box. The
-  refusal names the status, the round and the next verb: `bl implement` for
-  `fixing`, `bl review` for `in_review`. `ready_for_merge` and open nits pass,
-  so a unit `bl run` ended `clean` always passes. No flag bypasses it; to
-  override, the operator runs `bl force <id> ready_for_merge` (see `### bl force`). After the merge,
-  each repo's commit goes to its `merged:` entry and a `## Merge` line, and
-  the change is `merged`; a story merged alone gets no tag and no release
-  manifest.
-- **Never reviewed** (D3, S-755 folded in) — a unit whose change document has
-  no Review Log session (or no change document) is refused:
+  bypasses it. The blocker moving on, or `bl block remove`, lifts it.
+- **Review gate** — `featureReviewGate`, for both kinds. It refuses the work unit in two cases:
+  - its status is `fixing` or `in_review`. The status comes from its transition log (F-69 D5).
+    For a work unit with no log, its change document places it.
+  - the latest review session of its change document has an unchecked **Must** or **Should**
+    box.
+
+  The refusal names the status, the round and the next verb: `bl implement` for `fixing`, and
+  `bl review` for `in_review`. `ready_for_merge` and unchecked nits pass, so a work unit that
+  `bl run` ended `clean` always passes. No flag bypasses the gate. To override it, the operator
+  runs `bl force <id> ready_for_merge` (see `### bl force`). After the merge, each repo's commit
+  goes to its `merged:` entry and to a `## Merge` line, and the change is `merged`. A story merged
+  alone gets no tag and no release manifest.
+
+- **Never reviewed** (D3, S-755 folded in) — the gate refuses a work unit with no change document,
+  or whose change document has no Review Log session:
   ``<id> has never been reviewed — run `bl review <id>` (or `bl run <id>`), or pass --no-review to merge without one.``
-  Each repo's branch is looked up with `change.find`; a PR in state `MERGED`
-  adds `<repo>: PR #<n> (<url>) merged on the forge at <headRefOid> before any review`.
-  A forge without `change.find`, or a failing op, skips the lookup, not the
-  check. `--no-review` merges anyway and appends
-  `- Merged without review (operator, <date>)` to the change document's
-  `## Merge`, plus `- <repo>: PR #<n> merged on the forge at <sha> before any review`
-  for each forge-merged PR. There is no retrospective review (S-789).
-  A story at `ready_for_merge` whose branch has no commits ahead of
-  `origin/main` (local `main` when there is no origin) in every repo is not
-  refused (S-1437): `bl run` finished it without a pull request (see "A branch
-  with no commits" under `bl run` for a story). `mergeGates` returns
-  `noCommits: true`; `bl merge` merges nothing, writes no `commit:`, removes
-  the worktree and the branch, and appends
-  `- <date> · <repo> · no commits on the branch: nothing merged` to `## Merge`.
-  A branch with commits, or a story at another status (for example
-  `in_progress`), is still refused. So a no-commit story that `bl merge`
-  escalated (its status is now `escalated`, not `ready_for_merge`) fails this
-  gate on the rerun; `--no-review` merges it.
-- **Escalation gate** — an open `## Escalation` in the story or feature file.
-- **Stray worktree** — a worktree on the unit's branch in a registered repo
-  the unit does not own (a story's one repo, a feature's stories' repos) is
-  refused, naming the repo: work in another repo is another story.
-- **Main-checkout gate** — runs only when nothing above refused, so
-  `--switch-main` never acts on a merge that stops anyway. Every target
-  repo's main checkout must be on `main` (`preflightMainCheckouts`, which
-  prints its own detail). A checkout on another branch is classified:
-  - **stale** — no tracked changes and the branch is merged, either an
-    ancestor of `origin/main` (after `git fetch --prune origin`, then an
-    explicit `git fetch origin +refs/heads/main:refs/remotes/origin/main` so
-    a narrowed `remote.origin.fetch` cannot leave `origin/main` stale) or the
-    forge's `change.find` lists the branch's PR as `MERGED` with a
-    `headRefOid` that is the branch's `HEAD` (GitHub squash-merges, so ancestry
-    alone can't tell). The command prints
+  - bl looks up each repo's branch with `change.find`. A PR in state `MERGED` adds
+    `<repo>: PR #<n> (<url>) merged on the forge at <headRefOid> before any review`. A forge
+    without `change.find`, or an op that fails, skips the lookup, not the gate.
+  - `--no-review` merges anyway. It appends `- Merged without review (operator, <date>)` to the
+    change document's `## Merge`, and
+    `- <repo>: PR #<n> merged on the forge at <sha> before any review` for each PR that the forge
+    merged. There is no review after the merge (S-789).
+  - The gate does not refuse a story at `ready_for_merge` whose branch has no commits ahead of
+    `origin/main` in any repo (S-1437). When there is no origin, it compares with local `main`.
+    `bl run` finished such a story without a pull request (see "A branch with no commits" under
+    `bl run` for a story). `mergeGates` returns `noCommits: true`. `bl merge` then merges
+    nothing, writes no `commit:`, removes the worktree and the branch, and appends
+    `- <date> · <repo> · no commits on the branch: nothing merged` to `## Merge`.
+  - The gate still refuses a branch with commits, or a story at another status (for example
+    `in_progress`). So a story with no commits that `bl merge` escalated fails this gate on the
+    rerun: its status is now `escalated`, not `ready_for_merge`. `--no-review` merges it.
+- **Escalation gate** — the story or feature file has an `## Escalation` that is not `None.`.
+- **Stray worktree** — the gate refuses a worktree on the work unit's branch in a registered repo
+  that the work unit does not own. The refusal names the repo. A story owns its one repo, and a feature
+  owns its stories' repos. Work in another repo is another story.
+- **Main-checkout gate** — it runs only when no gate above refused, so `--switch-main` never acts
+  on a merge that stops anyway. Every target repo's main checkout must be on `main`
+  (`preflightMainCheckouts`, which prints its own detail). The gate sorts a checkout on another
+  branch into one of these:
+  - **stale** — the checkout has no tracked changes, and its branch is merged in one of two ways:
+    - the branch is an ancestor of `origin/main`. bl checks this after `git fetch --prune origin`
+      and then an explicit `git fetch origin +refs/heads/main:refs/remotes/origin/main`, so that
+      a narrowed `remote.origin.fetch` cannot leave `origin/main` stale.
+    - the forge's `change.find` lists the branch's PR as `MERGED`, with a `headRefOid` that is
+      the branch's `HEAD`. GitHub squash-merges, so ancestry alone cannot tell.
+
+    The command prints
     `git -C <repo> switch main && git -C <repo> pull --ff-only && git -C <repo> branch -D -- <branch>`
-    and exits non-zero; `--switch-main` runs those steps and continues.
-    `--switch-main` acts only when no other target is refused.
-  - **dirty** — tracked changes (untracked files don't count; `git switch`
-    carries them): refused, listing the paths.
-  - **unmerged** — clean but the merge is unconfirmed (no forge op, no
-    merged PR, or `headRefOid` differs): refused, with up to 10 commits
-    ahead of `origin/main` and the reason.
-  - **detached HEAD**, or the checkout on the very branch being merged:
-    refused.
+    and exits non-zero. `--switch-main` runs those steps and continues. `--switch-main` acts
+    only when the gate refuses no other target.
 
-  A side change is a `bl side` story with its own worktree
-  (`prompts/_side-changes.md`), so a stale checkout should be rare.
+  - **dirty** — the checkout has tracked changes. Untracked files do not count, because
+    `git switch` carries them. The gate refuses it and lists the paths.
+  - **unmerged** — the checkout is clean, but bl cannot show that the branch is merged: there is no forge op,
+    no merged PR, or `headRefOid` differs. The gate refuses it, with up to 10 commits ahead of
+    `origin/main` and the reason.
+  - **detached HEAD**, or the checkout is on the very branch that `bl merge` merges: the gate
+    refuses it.
 
-**Integration** (F-36 D4). After the gates and before the first merge into
-`main`, both kinds call `integrateForMerge` (`src/merge-integrate.js`), which
-builds a prep from the unit's existing worktrees (`mergePrep`: the first repo
-in merge order with a worktree on the branch leads, the rest are
-`otherWorktrees`; a repo with no worktree is skipped, and with none at all
-there is nothing to integrate) and runs `integrateUnit` (`src/feature-run.js`,
-beside `reviewFeature`):
+  A side change is a `bl side` story with its own worktree (`prompts/_side-changes.md`), so a
+  stale checkout should be rare.
 
-- It takes the unit's run lock (refused while a `bl run` of the unit holds it)
-  and the work unit locks of the unit and its stories (`takeRunLocks`, F-122
-  D9; `bl merge F-n` already holds them, so its take goes one depth deeper),
-  and refuses when any worktree has uncommitted changes, before any merge.
-- Per repo, in merge order: `git fetch origin` with `MAIN_REFSPEC` under the
-  repo's main sync lock (a failed fetch is a warning and the last fetched
-  `origin/main` is used; local `main` when there is no origin), then
-  `git merge --no-edit <ref>` **into the branch, in the worktree**, never the
-  reverse. Each repo ends `current`, `merged` or `conflicted`; a branch with
-  no commits of its own (a repo prepared up front that no story changed) is
-  left `current`, not fast-forwarded.
+**Integration** (F-36 D4). After the gates and before the first merge into `main`, both kinds
+call `integrateForMerge` (`src/merge-integrate.js`). It builds a prep from the work unit's
+existing worktrees (`mergePrep`):
+
+- The first repo in merge order with a worktree on the branch leads. The rest are
+  `otherWorktrees`.
+- `mergePrep` skips a repo with no worktree. With no worktree at all, there is nothing to
+  integrate.
+
+Then it runs `integrateUnit` (`src/feature-run.js`, beside `reviewFeature`):
+
+- `integrateUnit` takes the work unit's run lock. A `bl run` of the work unit that holds the lock
+  makes it refuse. It also takes the work unit locks of the work unit and its stories
+  (`takeRunLocks`, F-122 D9). `bl merge F-n` already holds them, so its take goes one depth
+  deeper. Before any merge, it refuses when any worktree has uncommitted changes.
+- For each repo, in merge order:
+  1. It runs `git fetch origin` with `MAIN_REFSPEC`, under the repo's main sync lock. A failed
+     fetch is a warning, and it uses the last fetched `origin/main`. When there is no origin, it
+     uses local `main`.
+  2. It runs `git merge --no-edit <ref>` **into the branch, in the worktree**, never the reverse.
+
+  Each repo ends `current`, `merged` or `conflicted`. A branch with no commits of its own (a
+  repo prepared up front that no story changed) stays `current`. `integrateUnit` does not
+  fast-forward it.
+
 - A conflicted repo first goes through the `regenerate` stage (F-36 D5; see
-  `### Lifecycle Stages`): the generated files its active `regenerate`
-  plugins match are taken from the branch side and regenerated. When nothing
-  else conflicts, `bl` commits the merge and the repo is `merged`; otherwise it
-  stays `conflicted` with only the files left to merge by hand, which go to the
-  resolution agent below, and any escalation also lists the regenerated files
-  and any plugin that failed, with its output.
-- When no repo conflicts but some took commits, the test gate (`runTestGate`)
-  runs on the integrated tree of every repo and writes its `## Gate` line.
-  Green pushes every branch with commits its origin lacks (`git push origin
-HEAD`): one merged or committed on by a session, and one an earlier
-  rejected push left behind, so the PR shows what merges; a failed push stops
-  the merge with the merge kept on the branch, and the rerun pushes it. A
-  misconfigured gate escalates.
-- **The resolution agent** (F-36 D6). A repo still conflicted after the
-  `regenerate` stage, or a red gate after clean merges, goes to one
-  `merge-resolve` session for the unit (`resolveIntegration`): `workon` mode
-  on `agent` (the implementer's permissions), in the lead worktree. Its
-  `{{mergeRepos}}` names per repo the worktree, the ref, each conflicted file
-  with both sides' commits since the merge base (`main: <sha> <subject>`,
-  `branch: <sha> <subject>`) and the regenerated files it must not edit;
-  `{{gateFailure}}` carries a red gate's details (command, log, excerpt). It
-  resolves keeping both sides' intent, commits each merge with
-  `git commit --no-edit` (fixes as ordinary commits on top), never touches a
-  main checkout, and writes `## Escalation` when it cannot. After it, each
-  repo must have no `MERGE_HEAD`, an empty `git ls-files -u`, the ref merged,
-  and no conflict marker (`git grep -nE '^(<{7}|>{7})( |$)' <merge> --
-<files>` in each merge since the integration began, over the conflicted
-  files and those a retained resolution merged); a failed session, an
-  outcome with `resolved: false` (`schemas/merge-resolve.json`), an escalation
-  or any failed check runs
-  `git merge --abort` where a merge is still in progress, rolls back and
-  escalates `merge with main: <what failed>, and the resolution agent did not
-resolve it`, with what bl found, the outcome's summary and where its
-  commits are kept (`git reset --keep <sha>` restores them). A merge that
-  failed with no conflicted file (git refused to start it) has nothing to
-  resolve and escalates `merge with main: <repo> conflicts with main` as
-  before.
-- Then the test gate runs with its fix step (`testGateWithFix`, as in
-  `bl run`; its escalations read `merge with main: …` and name `bl merge`),
-  and **one review round over the resolution only** (D7, see `## Review
-Cycle`): per repo `git show --remerge-diff <merge>` and
-  `git diff <merge>..HEAD` (`resolutionScope`), and for a repo current with
-  main that a session committed in, `git diff <start>..HEAD`. The round
-  records `in_review` and its verdict in the unit's log. `ready_for_merge`
-  pushes and the merge goes on. `fixing` escalates `merge with main: the
-review of the resolution left open items` with the open items and keeps the
-  resolution on the branch, the unit in `fixing`: clear
-  `## Escalation`, then `bl run <id> --resume` fixes it through the ordinary
-  loop and `bl merge <id>` integrates again. The round is outside the round
-  cap, and the run state records it (`integrationReview`), so the resume owes
-  it its fix and a closing round below, at or above the cap. Anything else
-  (an aborted round, no verdict, or `ready_for_merge` with an escalation written
-  during the round) rolls back and escalates. A clean merge or a regeneration
-  alone is never re-reviewed.
-- Every escalation names, per repo, the ref, the conflicted files with both
-  sides' commits, and the next step (D8); what an agent wrote in
-  `## Escalation` during the merge is kept below bl's text ("Written during
-  the merge:").
-- Every stop before the push, except the review that leaves items in `fixing`, rolls back the
-  merges it made and every commit a session made in any repo, current ones
-  too (`git reset --keep` to each repo's start), so each branch is left as it
-  was reviewed and the rerun integrates and gates it again. A stop by any
-  thrown error, not only a session that could not run, aborts every merge in
-  progress, rolls back and escalates under the run lock, with the conflict
-  evidence read before the abort (what the resolution recorded, else each repo
-  still mid-merge); when that escalation cannot be written, the log carries
-  it. A roll back that
-  fails is named in the escalation (never "rolled back") and recorded in the
-  run state (`integrationRetained`, each repo's start): the rerun counts what
-  is left as its own merge, gates it before it can land, and rolls back to
-  that start. When a resolution or fix session had run, the record says so
-  (`review`, with the files the resolution was to merge), and the rerun owes
-  that work the resolution checks, the gate with its fix step and a clean
-  review of the resolution (no new session when nothing else
-  conflicts) before it can land; a review that leaves items in `fixing` keeps it on the branch as
-  above and clears the record.
-  `bl merge` then exits 1 having touched no main checkout. The sessions run
-  headless unless the agent has no headless mode, as `bl review` chooses.
+  `### Lifecycle Stages`). bl takes the generated files that its active `regenerate` plugins
+  match from the branch side, and regenerates them. When nothing else conflicts, `bl` commits the
+  merge, and the repo is `merged`. Otherwise the repo stays `conflicted`, with only the files left
+  to merge by hand. Those files go to the resolution agent below. Any escalation also lists the
+  regenerated files, and each plugin that failed with its output.
+- When no repo conflicts but some repos took commits, the test gate (`runTestGate`) runs on the
+  integrated tree of every repo. It writes its `## Gate` line. A misconfigured gate escalates.
+  On green, bl pushes every branch with commits that its origin lacks (`git push origin
+HEAD`), so the PR shows what merges. That is a branch that a session merged or committed on,
+  or one that an earlier rejected push left behind. If a push fails, the merge stops and keeps the
+  merge on the branch, and the rerun pushes it.
+- **The resolution agent** (F-36 D6). A repo still conflicted after the `regenerate` stage, or a
+  red gate after clean merges, goes to one `merge-resolve` session for the work unit
+  (`resolveIntegration`). The session runs in `workon` mode on `agent` (the implementer's
+  permissions), in the lead worktree. Its slots:
+  - `{{mergeRepos}}` names, for each repo, the worktree, the ref, and each conflicted file with
+    both sides' commits since the merge base (`main: <sha> <subject>`,
+    `branch: <sha> <subject>`). It also names the regenerated files, which the session must not
+    edit.
+  - `{{gateFailure}}` carries a red gate's details (command, log, excerpt).
+
+  The session resolves each conflict and keeps both sides' intent. It commits each merge with
+  `git commit --no-edit`, and each fix as an ordinary commit on top. It never touches a main
+  checkout, and it writes `## Escalation` when it cannot resolve. After the session, bl checks
+  that each repo has:
+  - no `MERGE_HEAD`;
+  - an empty `git ls-files -u`;
+  - the ref merged;
+  - no conflict marker: `git grep -nE '^(<{7}|>{7})( |$)' <merge> --
+<files>` in each merge since the integration began. It searches the conflicted files and the
+    files that a retained resolution merged.
+
+  bl stops the merge in four cases: the session fails, its outcome has `resolved: false`
+  (`schemas/merge-resolve.json`), it writes an escalation, or any check fails. Then bl:
+  1. runs `git merge --abort` where a merge is still in progress;
+  2. rolls back;
+  3. escalates `merge with main: <what failed>, and the resolution agent did not
+resolve it`.
+
+  The escalation gives what bl found, the outcome's summary, and where the session's commits are
+  kept (`git reset --keep <sha>` restores them).
+
+  A merge that failed with no conflicted file (git refused to start it) has nothing to resolve.
+  It escalates `merge with main: <repo> conflicts with main`, as before.
+
+- Then the test gate runs with its fix step (`testGateWithFix`, as in `bl run`). Its
+  escalations read `merge with main: …` and name `bl merge`. Then **one review round over the
+  resolution only** runs (D7, see `## Review
+Cycle`). It reads, for each repo, `git show --remerge-diff <merge>` and
+  `git diff <merge>..HEAD` (`resolutionScope`). For a repo current with main that a session
+  committed in, it reads `git diff <start>..HEAD`. The round records `in_review` and its verdict
+  in the work unit's log. The verdict decides what comes next:
+  - `ready_for_merge`: bl pushes, and the merge goes on.
+  - `fixing`: bl escalates `merge with main: the
+review of the resolution left open items` with the unchecked items. It keeps the resolution
+    on the branch and the work unit in `fixing`. To go on, clear `## Escalation`. Then
+    `bl run <id> --resume` fixes the items through the ordinary review rounds, and
+    `bl merge <id>` integrates again. This round is outside the round cap, and the run state
+    records it (`integrationReview`). So the resume owes it its fix and a closing round,
+    whether the work unit is below, at or above the cap.
+  - Anything else rolls back and escalates: an aborted round, no verdict, or `ready_for_merge`
+    with an escalation written during the round.
+
+  bl never reviews a clean merge or a regeneration alone again.
+
+- Every escalation names, for each repo, the ref, the conflicted files with both sides' commits,
+  and the next step (D8). bl keeps what an agent wrote in `## Escalation` during the merge below
+  its own text ("Written during the merge:").
+- Every stop before the push rolls back, except the review that leaves items in `fixing`. It
+  rolls back the merges that it made, and every commit that a session made in any repo, current
+  repos too (`git reset --keep` to each repo's start). So each branch is left as it was reviewed,
+  and the rerun integrates and gates it again.
+- A stop by any thrown error, not only a session that could not run, does three things under the
+  run lock. It aborts every merge in progress, rolls back and escalates. The escalation carries
+  the conflict evidence read before the abort: what the resolution recorded, or else each repo
+  still in the middle of a merge. When bl cannot write that escalation, the log carries it.
+- If a roll back fails, the escalation names it (never "rolled back"). The run state records it
+  too (`integrationRetained`, each repo's start). The rerun counts what is left as its own merge,
+  gates it before it can land, and rolls back to that start.
+- When a resolution or fix session had run, the record says so (`review`, with the files that
+  the resolution was to merge). The rerun then owes that work three things before it can land:
+  the resolution checks, the gate with its fix step, and a clean review of the resolution. When
+  nothing else conflicts, it starts no new session for them. A review that leaves items in
+  `fixing` keeps the work on the branch, as above, and clears the record.
+
+After such a stop, `bl merge` exits 1, and it has touched no main checkout. The sessions run
+headless unless the agent has no headless mode, as `bl review` chooses.
 
 **Every merge commit is made in a throwaway worktree and pushed as it is**
-(F-96 D3, S-1452). `cleanupOneRepo` calls `checkedMerge` for every repo with
-unmerged commits; it never merges in the main checkout:
+(F-96 D3, S-1452). `cleanupOneRepo` calls `checkedMerge` for every repo with unmerged commits.
+It never merges in the main checkout:
 
-1. It adds a throwaway worktree detached at `origin/main` under the worktree
-   root (where a session stack serves an app.roost.cc worktree's own client)
-   and runs `git merge --no-ff` there with the usual message.
-2. Only when the repo's `check` stage resolves (`"plugins-check": ["ci-check"]`
-   on its `backlog.json` `repos` entry), it runs the `check` plugins with `{{commit}}` (the merge commit),
-   `{{repoPath}}` (the main checkout), `{{repoName}}`, `{{branchName}}`,
-   `{{storyId}}`, `{{roostDir}}` and `{{backlogDir}}`. Interpolation is
-   `interpolateCommand`: an unresolved placeholder stops the repo. A failed run
-   runs once more (E70 R10). Each run adds a `## Gate` line to the change
-   document: `- <date> · <repo> · <command> · <verdict> (attempt <n>) · commit <40 hex>`.
-3. On a pass it checks that the main checkout can fast-forward to the commit
-   (`fastForwardBlocker`: local `main` is an ancestor of it, and
-   `git read-tree -n -m -u HEAD <commit>` finds no changed or untracked file
-   in the way). If it cannot, it prints the cause and pushes nothing.
-4. It runs `git push origin <commit>:refs/heads/main` from the worktree, with
-   the push's output (a pre-push hook's test run) streamed, and then
-   `git merge --ff-only <commit>` in the main checkout.
+1. It adds a throwaway worktree, detached at `origin/main`, under the worktree root. (There, a
+   session stack serves an app.roost.cc worktree's own client.) It runs `git merge --no-ff` in
+   that worktree with the usual message.
+2. It runs the `check` plugins only when the repo's `check` stage resolves
+   (`"plugins-check": ["ci-check"]` on its `repos` entry in `backlog.json`). The plugins get
+   `{{commit}}` (the merge commit), `{{repoPath}}` (the main checkout), `{{repoName}}`,
+   `{{branchName}}`, `{{storyId}}`, `{{roostDir}}` and `{{backlogDir}}`. `interpolateCommand`
+   fills them in, and an unresolved placeholder stops the repo. If a check fails, it runs once
+   more (E70 R10). Each attempt adds a `## Gate` line to the change document:
+   `- <date> · <repo> · <command> · <verdict> (attempt <n>) · commit <40 hex>`.
+3. On a pass, it checks that the main checkout can fast-forward to the commit
+   (`fastForwardBlocker`). Local `main` must be an ancestor of the commit, and
+   `git read-tree -n -m -u HEAD <commit>` must find no changed or untracked file in the way. If
+   it cannot fast-forward, it prints the cause and pushes nothing.
+4. It runs `git push origin <commit>:refs/heads/main` from the worktree, and streams the push's
+   output (a pre-push hook's test run). Then it runs `git merge --ff-only <commit>` in the main
+   checkout.
 5. It removes the worktree, whatever happened.
 
-A conflict, a refused push or a `main` that moved leaves the main checkout as
-it was. A conflict, or a push git refuses because `main` moved, prints "main
-moved; rerun `bl merge <id>`" and pushes nothing. A check that fails twice pushes
-nothing and prints the last lines of its output. Every child runs through
-`src/child.js`, the one place that raises a child's interrupt (F-114 D2). A
-check or git command ended by SIGINT or SIGTERM (`INTERRUPT_SIGNALS` in
-`src/signal-exit.js`), or a check that exits 130 or 143, stops the merge at
-once: `src/child.js` prints `bl: <child> was ended by <signal>`, and `bl`
-exits 130 or 143. There is no `## Gate` line, no second run and no push. The
-`exit` listener removes the worktree. Its removal runs in `raiseAfter`
-(F-114 D2a), so an interrupt that ends one of its steps is raised after the
-last one. A step that throws (a git that cannot start) is a warning, and the
-next step runs. A check ended by any other signal (SIGABRT, SIGKILL) is a failed
-run, and a git command ended by one is a failed command. Every `## Gate` line
-(this one, the test gate's `recordGateLine` and a scripted story's) comes from
-`gateLine` in `src/change-doc.js`.
+A conflict, a refused push or a `main` that moved leaves the main checkout as it was. On a
+conflict, or a push that git refuses because `main` moved, bl prints "main moved; rerun
+`bl merge <id>`" and pushes nothing. If a check fails twice, bl pushes nothing and prints the
+last lines of the check's output.
 
-**The main checkout's dependencies are installed after the merge** (S-1452).
-After the push, `cleanupOneRepo` runs the command that `installCommand` (`src/cleanup.js`) gives
-(`npm ci` or `pnpm install --frozen-lockfile`) in the main checkout, because
-`bl` and other repos' sessions run from it. A failed install stops `bl merge`
-with the command to run by hand, and the rerun installs again. Every child of
-`cleanupOneRepo` runs through `src/child.js` with no shell: git through
-`git()`, the install through `runChild`, and the child `bl sync --commit` of a
-merged `bl` repo through `runBl`. `src/child.js` is the one place that raises
-a child's interrupt (F-114 D2): if SIGINT or SIGTERM ends a child, or the
-child `bl sync` exits 130 or 143, `bl` prints `bl: <child> was ended by
-<signal>` and exits 130 or 143. That covers the install, the push of main, the
-worktree and branch removal, the main sync and the backlog commit. A child
-that Node itself killed (`r.error` set, such as `ETIMEDOUT`) is a failed
-command, not an interrupt (`interruptOf`).
+Every child runs through `src/child.js`, the one place that raises a child's interrupt (F-114
+D2). The merge stops at once in two cases:
 
-After the merge the branch's open PR, if any, is closed through
-`change.find` and `change.close`.
+- SIGINT or SIGTERM (`INTERRUPT_SIGNALS` in `src/signal-exit.js`) ends a check or a git command;
+- a check exits 130 or 143.
 
-`bl merge F-<n>` leaves `priority.yaml` as it is (F-78 D3): the merged feature drops out of the
-order because it is closed, and an entry still naming it is skipped until the next
-`bl rank --commit` removes it. In the lock hold that marks the feature done, `recordThemeState` (`theme.js`, F-53 D4)
-appends `- <date>: F-<n> done (<title>).` to the `## State` of the feature's theme, creating the section at the end when
-absent and writing the frontmatter back byte for byte; the commit takes the theme file too. A
-feature whose theme is missing or unreadable only warns.
+Then `src/child.js` prints `bl: <child> was ended by <signal>`, and `bl` exits 130 or 143. There
+is no `## Gate` line, no second attempt and no push. The `exit` listener removes the worktree.
+The removal runs in `raiseAfter` (F-114 D2a), so an interrupt that ends one of its steps is
+raised after the last step. A step that throws (a git that cannot start) is a warning, and the
+next step runs. A check ended by any other signal (SIGABRT, SIGKILL) is a failed check, and a
+git command ended by one is a failed command. Every `## Gate` line comes from `gateLine` in
+`src/change-doc.js`: this one, the test gate's `recordGateLine`, and a scripted story's.
+
+**The main checkout's dependencies are installed after the merge** (S-1452). After the push,
+`cleanupOneRepo` runs the command that `installCommand` (`src/cleanup.js`) gives (`npm ci` or
+`pnpm install --frozen-lockfile`) in the main checkout. It does so because `bl` and other repos'
+sessions run from that checkout. If the install fails, `bl merge` stops and prints the command to
+run by hand, and the rerun installs again.
+
+Every child of `cleanupOneRepo` runs through `src/child.js`, with no shell:
+
+- git through `git()`;
+- the install through `runChild`;
+- the child `bl sync --commit` of a merged `bl` repo through `runBl`.
+
+`src/child.js` is the one place that raises a child's interrupt (F-114 D2). If SIGINT or SIGTERM
+ends a child, or the child `bl sync` exits 130 or 143, `bl` prints `bl: <child> was ended by
+<signal>` and exits 130 or 143. That covers the install, the push of main, the removal of the
+worktree and the branch, the main sync and the backlog commit. A child that Node itself killed
+(`r.error` set, such as `ETIMEDOUT`) is a failed command, not an interrupt (`interruptOf`).
+
+After the merge, bl closes the branch's open PR, if there is one, through `change.find` and
+`change.close`.
+
+`bl merge F-<n>` leaves `priority.yaml` as it is (F-78 D3). The merged feature drops out of the
+order because its status meets `done`. The order skips an entry that still names it, until the
+next `bl rank --commit` removes the entry. While bl holds the lock to mark the feature done,
+`recordThemeState` (`theme.js`, F-53 D4) appends `- <date>: F-<n> done (<title>).` to the
+`## State` of the feature's theme. When that section is absent, it creates it at the end. It
+writes the frontmatter back byte for byte, and the commit takes the theme file too. If the
+feature's theme is missing or unreadable, bl only warns.
 
 ### `bl block`
 
-Files, lifts and lists the holds in `blockers.json` (F-66 D4, `src/block.js`; see **Holds
-between units**).
+`bl block` files, lifts and lists the holds in `blockers.json` (F-66 D4, `src/block.js`; see
+**Holds between units**).
 
 ```bash
 bl block add S-1 --gate done --unit F-3 --until done      # F-3 does not merge until S-1 is done
@@ -6010,93 +6460,117 @@ bl block list F-3        # edges on F-3, on its stories, on *, and by F-3: met, 
 bl block list --fix      # rewrite a hand-edited blockers.json sorted, and commit it
 ```
 
-- **`add`** checks every field (`edgeProblems`: known ids, a gate that is a status of the unit's
-  type, `until` and `--active-status` statuses of their units' types, a blocker not already
-  closed short of `until`), refuses a duplicate and an edge that would close a cycle in the
-  hold graph (`wouldCycle`; an edge not yet active adds no arc, and
-  `bl validate` reports the cycle once it is). It takes the backlog lock, rereads the file,
-  writes it sorted and commits `blockers.json` alone as `chore: block <unit> at <gate> on
-<blocker>`. stdout is `blocked: <unit> at <gate> by <blocker> until <status>`; every refusal
-  is one `bl block add: <reason>` line on stderr and exit 1.
-- **`remove`** drops the edge with that identity and commits `chore: unblock <unit> at <gate> on
-<blocker>`; an unknown edge refuses. Agents may not run it: `MODE_DENY` in
-  `src/allowed-tools.js` denies `bl block remove:*` in every mode (F-66 A7, generator v14),
-  while `bl:*` keeps `add` and `list` allowed. `bl task done:*` is denied beside it (F-65 D3,
-  generator v15).
-- **`list [<id>]`** prints one line per edge on and by the unit (every edge without an id):
-  `<unit> held at <gate> by <blocker> (<status>, needs <until>): <met|unmet|inactive>`, with
-  `, active when <id> is <status> (<its status>)` for an `active_when` edge.
-- `add`, `remove` and `list --fix` pull the backlog first (`commandPullsBacklog`) and commit
-  `blockers.json` alone under the backlog lock; a backlog that is not a git repo is written
-  and not committed. A missing or unreadable `flow.json` stops `add` and `list` with the
-  `FlowError`; an unreadable `blockers.json` stops every subcommand with the `BlockersError`.
+- **`add`** checks every field (`edgeProblems`):
+  - each id is known;
+  - the gate is a status of the work unit's type;
+  - `until` and `--active-status` are statuses of the types of their work units;
+  - the blocker's status does not already meet `done` without meeting `until`.
+
+  `add` refuses a duplicate edge. It also refuses an edge that would close a cycle in the hold
+  graph (`wouldCycle`). An edge that is not active yet adds no arc, and `bl validate` reports the
+  cycle when the edge becomes active. Then `add` takes the backlog lock, reads the file again and
+  writes it sorted. It commits `blockers.json` alone as
+  `chore: block <unit> at <gate> on <blocker>`. stdout is
+  `blocked: <unit> at <gate> by <blocker> until <status>`. Each refusal is one
+  `bl block add: <reason>` line on stderr, and exit 1.
+
+- **`remove`** drops the edge with that identity and commits
+  `chore: unblock <unit> at <gate> on <blocker>`. It refuses an unknown edge. Agents may not run
+  it: `MODE_DENY` in `src/allowed-tools.js` denies `bl block remove:*` in every mode (F-66 A7,
+  generator v14), and `bl:*` keeps `add` and `list` allowed. bl denies `bl task done:*` in the
+  same way (F-65 D3, generator v15).
+- **`list [<id>]`** prints one line per edge on the work unit and per edge by it. Without an id,
+  it prints every edge. The line is
+  `<unit> held at <gate> by <blocker> (<status>, needs <until>): <met|unmet|inactive>`. An
+  `active_when` edge adds `, active when <id> is <status> (<its status>)`.
+- `add`, `remove` and `list --fix` pull the backlog first (`commandPullsBacklog`). They commit
+  `blockers.json` alone, under the backlog lock. If the backlog is not a git repo, they write the
+  file and do not commit it.
+- If `flow.json` is missing or bl cannot read it, `add` and `list` stop with the `FlowError`. If
+  bl cannot read `blockers.json`, every subcommand stops with the `BlockersError`.
 
 ### `bl inbox`
 
-Everything waiting on the operator, in one list (F-42 Design D1,
-`src/inbox.js`). It scans the backlog on every call (no index) and prints
-the groups below, each by unit id, newest first, features before stories. The `change`
-items are grouped by their unit's status (its transition log's, F-69 D5; a unit with no log is
-placed by its change document), in the lifecycle order of `flow.json`, under a heading per
-status: `change · in_progress (2)`, and `change · ready_for_merge, the merge gate (1)` for the
-units `bl merge` takes next:
+`bl inbox` lists everything that waits on the operator, in one list (F-42 Design D1,
+`src/inbox.js`). It reads the backlog on every call (there is no index). It prints the groups
+below. In each group, the order is by work unit id, newest first, with features before stories.
 
-| Kind         | Source                                                                                                                                                                                 | Id                         | Answered by                                                         |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------- |
-| `escalation` | an active (not `done` or `superseded`) feature's or story's `## Escalation` with content                                                                                               | `F-42:esc`                 | `bl status F-42`                                                    |
-| `task`       | an open task (`tasks/`, see **`bl task`**) of any unit, open or closed, with a `holds:` line per edge of it in `blockers.json` that holds now                                          | `T-7`                      | `bl task done T-7 [note]`                                           |
-| `change`     | unmerged work (F-48 D4): an open feature, or an open story with no `feature:`, whose current change document is `status: open` and names a branch with commits ahead of `main` (below) | `S-7:change`               | `bl run S-7`; `bl merge S-7` once it is `ready_for_merge`           |
-| `update`     | an entry in the red list of the update job's latest heartbeat (F-80 D4, B2, below)                                                                                                     | `tools:renovate/glob-11.x` | nothing here: the next update run tests it again; read its gate log |
+The `change` items are grouped by the status of their work unit, in the lifecycle order of
+`flow.json`. The status is the one of its transition log (F-69 D5). bl places a work unit with no
+log by its change document. Each status has a heading, such as `change · in_progress (2)`. The
+heading for the work units that `bl merge` takes next is `change · ready_for_merge, the merge
+gate (1)`.
 
-One more line comes first, `runner: …` (kind `runner`, id `updates:run`),
-when the latest heartbeat is more than 48 h old (twice a daily start of the
-guest, F-103 D5) or records `"result": "failure"`: `no update run since
-<time> (<n> h, more than 48 h)`, `the update run of <time> failed at <step>: <subject>`, or both
-joined by `; ` (F-80 B3).
+| Kind         | Source                                                                                                                                                                                                              | Id                         | Answered by                                                         |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------- |
+| `escalation` | the `## Escalation` with content of a feature or story whose status does not meet `done`                                                                                                                            | `F-42:esc`                 | `bl status F-42`                                                    |
+| `task`       | a task that is not done (`tasks/`, see **`bl task`**), of a work unit at any status, with a `holds:` line for each of its edges in `blockers.json` that holds now                                                   | `T-7`                      | `bl task done T-7 [note]`                                           |
+| `change`     | unmerged work (F-48 D4): a feature, or a story with no `feature:`, whose status does not meet `done`, whose current change document is `status: open`, and that names a branch with commits ahead of `main` (below) | `S-7:change`               | `bl run S-7`; `bl merge S-7` when it is `ready_for_merge`           |
+| `update`     | an entry in the red list of the latest heartbeat of the update job (F-80 D4, B2, below)                                                                                                                             | `tools:renovate/glob-11.x` | nothing here: the next update job tests it again; read its gate log |
 
-The heartbeat (F-80 B3, D6) is one orphan commit on the branch
-`updates.heartbeat.branch` of the repo `updates.heartbeat.repo`, which
-running-man's update job force-pushes after every update run. `readHeartbeat`
-reads it with git alone, in that repo's clone as `backlog.json` `repos`
-registers it: `git fetch --quiet origin
-+refs/heads/<branch>:refs/remotes/origin/<branch>`, then `git log -1
---format=%cI%n%B refs/remotes/origin/<branch>`. It reads that ref, not
-`FETCH_HEAD`, because any other fetch in the clone rewrites `FETCH_HEAD`.
-The first line is the update run's time, the
-next the subject (its summary), and the rest of the message JSON with
-`"schema": "roost-update-heartbeat/v1"`, `result`, `failed_step` and `red`
-(a list of `{ repo, branch, update, head, main, notes, log }`, or `null`
-when the update run failed before the job wrote it). The fetch has no
-`--depth=1`: on a full clone that marks the repository shallow, and the
-heartbeat has no parent, so it moves the same objects without it. No `gh`
-and no forge op is used. Each red entry is one `update` item,
-`<update> · red · notes: <url or none>`, `next: read the gate log <log>;
-the next update run tests it again`, in the heartbeat's order; an entry
-leaves the inbox when a later heartbeat no longer lists it. A `"red": null`
-is a warning that the red updates are not known.
+**The runner line.** One more line comes first, `runner: …` (kind `runner`, id `updates:run`).
+bl prints it when the latest heartbeat is more than 48 h old, or when it records
+`"result": "failure"`. 48 h is twice the time between two daily starts of the guest (F-103 D5).
+The line is `no update run since <time> (<n> h, more than 48 h)`, or
+`the update run of <time> failed at <step>: <subject>`, or both joined by `; ` (F-80 B3).
 
-`updateSettings` (`src/config.js`) reads only `heartbeat.repo` and
-`heartbeat.branch` of the `updates` block, both required with no defaults, and
-returns `{ heartbeat: { repo, branch } }`. `namespace` and `push_attempts` are
-running-man's (`updates/settings.mjs`), and bl ignores every key but
-`heartbeat`. A backlog.json with no `updates` block has no update job, and the inbox reads
-no heartbeat. A missing key, a fetch that fails, or a message that is not a
-heartbeat is one warning on stderr (`update job heartbeat not read: …`), and
-the other kinds are still listed. `loadConfig` never reads the block, so a
-backlog.json from before F-80's cutover still loads.
+**The heartbeat** (F-80 B3, D6) is one orphan commit on the branch `updates.heartbeat.branch` of
+the repo `updates.heartbeat.repo`. Running-man's update job force-pushes it each time the job
+ends. `readHeartbeat` reads it with git alone, in the clone of that repo that `backlog.json`
+`repos` registers:
 
-A `change` item is one per unit, naming every repo with unmerged commits:
-`tools, web: <title> · tools 2 commit(s) on <branch>, web 1 commit(s) on <branch>, not merged`
-(one repo: `tools: <title> · 1 commit(s) on <branch>, not merged`). Each repo a candidate names
-is read once in its main checkout (`git for-each-ref refs/heads`), and `git rev-list --count
-main..<branch>` runs only for a branch that exists. A story with a `feature:` is left out (it
-merges with its feature), and so is a change document with no branch, a branch that is gone or
-level with `main`, and a done, superseded or merged unit. The next verb is `changeNextVerb`
-(`src/review-log.js`), the rule `bl review`'s summary line and `bl top`'s change actions use:
-`merge` when the unit is `ready_for_merge` and passes the merge gate's review rule
-(`featureReviewGate`, read from the latest Review Log session), `review` when it is
-`ready_for_merge` and that rule blocks, else `run`. A repo git cannot read is a
-warning on stderr; the other items are still listed.
+1. `git fetch --quiet origin +refs/heads/<branch>:refs/remotes/origin/<branch>`;
+2. `git log -1 --format=%cI%n%B refs/remotes/origin/<branch>`.
+
+It reads that ref, not `FETCH_HEAD`, because any other fetch in the clone writes `FETCH_HEAD`
+again. The first line of the output is the time of the update job, and the next line is the
+subject (its summary). The rest of the message is JSON:
+
+- `"schema": "roost-update-heartbeat/v1"`;
+- `result` and `failed_step`;
+- `red`: a list of `{ repo, branch, update, head, main, notes, log }`, or `null` when the update
+  job failed before it wrote the list.
+
+The fetch has no `--depth=1`. On a full clone, `--depth=1` marks the repository shallow. The
+heartbeat has no parent, so the fetch moves the same objects without it. bl uses no `gh` and no
+forge op here.
+
+Each red entry is one `update` item, in the order of the heartbeat:
+`<update> · red · notes: <url or none>`, then
+`next: read the gate log <log>; the next update run tests it again`. An entry leaves the inbox
+when a later heartbeat no longer lists it. A `"red": null` is a warning that the red updates are
+not known.
+
+`updateSettings` (`src/config.js`) reads only `heartbeat.repo` and `heartbeat.branch` of the
+`updates` block. Both are required and have no defaults. It returns
+`{ heartbeat: { repo, branch } }`. `namespace` and `push_attempts` are running-man's
+(`updates/settings.mjs`), and bl ignores every key but `heartbeat`. A `backlog.json` with no
+`updates` block has no update job, and the inbox reads no heartbeat. These are each one warning
+on stderr (`update job heartbeat not read: …`): a missing key, a fetch that fails, and a message
+that is not a heartbeat. The inbox still lists the other kinds. `loadConfig` never reads the
+block, so a `backlog.json` from before F-80's cutover still loads.
+
+**A `change` item** is one per work unit. It names every repo with unmerged commits:
+`tools, web: <title> · tools 2 commit(s) on <branch>, web 1 commit(s) on <branch>, not merged`.
+With one repo, it is `tools: <title> · 1 commit(s) on <branch>, not merged`. bl reads each repo
+that a candidate names once, in its main checkout (`git for-each-ref refs/heads`). It runs
+`git rev-list --count main..<branch>` only for a branch that exists. The inbox leaves out these:
+
+- a story with a `feature:`, because it merges with its feature;
+- a change document with no branch;
+- a branch that is gone or level with `main`;
+- a work unit whose status meets `done`, and one whose change document is merged.
+
+The next verb is `changeNextVerb` (`src/review-log.js`). `bl review`'s summary line and
+`bl top`'s change actions use the same rule:
+
+- `merge` when the work unit is `ready_for_merge` and passes the review rule of the merge gate
+  (`featureReviewGate`, read from the latest Review Log session);
+- `review` when it is `ready_for_merge` and that rule blocks it;
+- `run` in every other case.
+
+If git cannot read a repo, bl prints a warning on stderr, and the inbox still lists the other
+items.
 
 ```bash
 bl inbox                          # the groups, each item with its id, unit, first line and next:
@@ -6104,50 +6578,59 @@ bl inbox --json                   # [{ kind, id, unit, line, holds?, status?, ve
 bl inbox done T-7                 # refuses: "T-7 is a task: close it with bl task done T-7 [note]"
 ```
 
-A `task` item is `T-<n>  <unit>  <title>`, then one `holds:` line per edge whose blocker is the
-task and which holds now (active, unmet), in the words of the `## Tasks` table without its
-`once …`: `holds: bl merge F-53`, `holds: bl run, bl implement (every unit)`; a `next` task whose
-unit is still open has none. Then `next: bl task done T-<n> [note]`. The inbox reads tasks from
-their files and the holds from `blockers.json`, never from a unit's body; a `blockers.json` or
-`flow.json` it cannot read is a warning, and the tasks are listed without holds.
+**A `task` item** is `T-<n>  <unit>  <title>`. Then it has one `holds:` line for each edge whose
+blocker is the task and that holds now (active and unmet). The line uses the words of the
+`## Tasks` table without its `once …`: `holds: bl merge F-53`,
+`holds: bl run, bl implement (every unit)`. A `next` task whose work unit's status does not meet
+`done` has no `holds:` line. Then comes `next: bl task done T-<n> [note]`. The inbox reads tasks
+from their files and the holds from `blockers.json`, never from the body of a work unit. If it
+cannot read `blockers.json` or `flow.json`, it prints a warning and lists the tasks without
+holds.
 
-`bl inbox done` closes nothing (F-65 D3): every id exits 1 naming the verb that answers it, a
-`T-<n>` and a retired `F-<n>:op<k>` id `bl task done` (an alias would be a second way to close a
-task), an escalation or change id its own. A red update or the runner line names what clears
-it: a later heartbeat. An id not in the inbox is unknown.
+**`bl inbox done` changes nothing** (F-65 D3). Each id exits 1, and the message names the
+verb that answers it:
 
-The S-970 operator tasks (a `### Operator tasks` sub-list, or legacy `operator:` bullets, in a
-unit's `## Deferred`, or a story's former `## To Do`) are retired: nothing in `bl` reads a
-body for tasks, an open unit that has one fails `bl validate` (`operator-tasks-retired`), and
-a closed unit keeps its items as history. Their reader, `scanOperatorTasks`, went with F-65's migration (S-581).
+- a `T-<n>` and a retired `F-<n>:op<k>` id: `bl task done` (an alias would be a second way to
+  mark a task done);
+- an escalation or change id: its own verb;
+- a red update or the runner line: what clears it, a later heartbeat.
 
-- `bl status` prints `deferred: <n> items` (the section's top-level items, through
-  `scanDeferred`, a closed unit's retired operator items not among them) and, for a unit with
-  tasks, `tasks: <n> open, <m> done`; the `held:` lines show what the tasks hold.
-- The one-off migrations that moved the backlog to this shape
-  (`migrate-taxonomy`, `migrate-value-axis`, `migrate-operator-tasks`,
-  `migrate-feature-secondary-repos`, `migrate-repo-fields`) have run on the live
-  backlog; F-62 removed them, with `migration-write.js`, since each read and wrote the
-  frontmatter format F-62 retired (they are in git history before F-62). F-53's
-  `migrate-roadmap` and F-65's `migrate-tasks` have run too; S-581 removed them, since they
-  moved one backlog's own documents (in git history before S-581).
-  `migration-txn.js` (fetch, refuse unless clean at `origin/main` with no `bl` run active,
-  write, one commit, git rollback) carries F-62's `migrate-frontmatter-yaml` and F-60's
-  `migrate-worktree-layout`.
-- `bl run` and `bl merge` end with `inbox: <n> item(s) need you (bl inbox)`
-  on stderr when the count is non-zero (`printInboxCount`). A failed scan
-  prints nothing and never fails the command. The count includes red updates
-  and the runner line, so it fetches the heartbeat too.
-- `bl merge` imports `src/inbox.js` after its git merge, when the process
-  may still hold the pre-merge `config.js` (F-49 D6). So `inbox.js` reads
-  `updateSettings` through `import * as configModule`, not a named import: a
-  config.js without it is a warning, not a failed merge.
+An id that is not in the inbox is unknown.
+
+**The S-970 operator tasks are retired.** They were a `### Operator tasks` sub-list, or legacy
+`operator:` bullets, in a work unit's `## Deferred`, or in a story's former `## To Do`. Nothing
+in `bl` reads a body for tasks. A work unit that has one fails `bl validate`
+(`operator-tasks-retired`) if its status does not meet `done`. A work unit whose status meets
+`done` keeps its items as history. Their reader, `scanOperatorTasks`, went with F-65's migration
+(S-581).
+
+- `bl status` prints `deferred: <n> items`: the top-level items of the section, through
+  `scanDeferred`. The retired operator items of a work unit whose status meets `done` are not
+  among them. For a work unit with tasks, `bl status` also prints `tasks: <n> open, <m> done`. The
+  `held:` lines show what the tasks hold.
+- The one-off migrations that moved the backlog to this shape have run on the live backlog:
+  `migrate-taxonomy`, `migrate-value-axis`, `migrate-operator-tasks`,
+  `migrate-feature-secondary-repos` and `migrate-repo-fields`. F-62 removed them, with
+  `migration-write.js`, because each one read and wrote the frontmatter format that F-62 retired.
+  They are in git history before F-62.
+- F-53's `migrate-roadmap` and F-65's `migrate-tasks` have run too. S-581 removed them, because
+  they moved the documents of one backlog only. They are in git history before S-581.
+- `migration-txn.js` carries F-62's `migrate-frontmatter-yaml` and F-60's
+  `migrate-worktree-layout`. It fetches, and it refuses unless the backlog is clean at
+  `origin/main` and no `bl run` is in progress. Then it writes, makes one commit, and rolls back
+  with git on a failure.
+- `bl run` and `bl merge` end with `inbox: <n> item(s) need you (bl inbox)` on stderr when the
+  count is not zero (`printInboxCount`). A failed read prints nothing and never fails the
+  command. The count includes red updates and the runner line, so it fetches the heartbeat too.
+- `bl merge` imports `src/inbox.js` after its git merge, when the process may still hold the
+  `config.js` from before the merge (F-49 D6). So `inbox.js` reads `updateSettings` through
+  `import * as configModule`, not a named import. If `config.js` lacks it, bl prints a warning,
+  and the merge does not fail.
 
 ### Testing
 
-bl uses Node's built-in `node --test` runner with bash-driven CLI checks
-where invoking the real binary is the point. There are no test framework
-dependencies — `node:assert/strict` is sufficient.
+bl uses Node's built-in `node --test` runner. Where a test must run the real binary, bl uses CLI
+checks in bash. bl has no test framework dependency: `node:assert/strict` is sufficient.
 
 Layout:
 
@@ -6188,57 +6671,52 @@ npm run test:all    # everything
 
 Adding a test:
 
-- **suite temp directory** — every `npm run test:*` script runs through
-  `test/helpers/without-repo-env.sh`, which gives the suite a `TMPDIR` of
-  its own and removes it when the suite ends (S-1392). A temp file that a
-  test leaves behind does not leak into `/tmp`. The rules below
-  (`mkTempDir`, own `mktemp` paths) still apply, because a script or a file
-  can run alone. The wrapper also sets `BL_CEILING_DIRECTORIES` to that
-  `TMPDIR` (S-1155), so a walk from a cwd never finds a backlog made
-  directly in `TMPDIR`. The wrapper needs GNU `env` (coreutils 8.31 or
-  later) for `--default-signal`: BSD and macOS `env` lack it.
-- **unit** — write `test/unit/<module>.test.js` using `node:test` and
-  `node:assert/strict`. Import the module under test from `../../src/...`.
-  No fs writes outside `os.tmpdir()`. No spawning, with one exception: a
-  test of a spec-lock overlap may start the second lock holder as a `node`
-  child — `startTokenWriter` (`test/helpers/token-writer.js`) or
-  `updateSpecInChild` (`test/helpers/spec-writer.js`), which run
-  `updateSpecFile` from `src/`, or a bare live pid to stand for a holder.
-  `withSpecLock` is re-entrant within a process, so only another pid can
-  hold the lock against the code under test, and the writers whose overlap
-  matters (the loop's escalation and status writes) are driven only by the
-  unit tests' fake runner, which an integration test spawning `bl` cannot
-  reach (F-67). Make every temp dir with
-  `mkTempDir(prefix)` or `mkTempBacklog()` from `test/helpers/tempdir.js`,
-  never a bare `mkdtempSync`, so the dir is removed when the file's tests end.
-  If the test finds the backlog by a walk from a cwd, make it with
-  `mkTempBacklog(fixture, { parent })` in a `mkTempDir` of the test's own.
-- **integration** — write `test/integration/<command>.test.js` that
-  `mkTempBacklog()`s a backlog and `runBl(args, { cwd })`s the binary
-  against it. Assert filesystem effects, frontmatter, and exit codes.
-  `runBl` sets `BL_BACKLOG_DIR` to `cwd`. A test of the walk unsets it and
-  makes the backlog with `mkTempBacklog(fixture, { parent })`.
-- **cli** — write `test/cli/<topic>.sh`. Source `helpers/tempdir.sh`,
-  call `mk_temp_backlog`, then drive `"$BL"` with the assert\_\* helpers.
-  `cli/run-all.sh` picks it up automatically and runs it at the same time
-  as the other scripts, so it uses only its own `mktemp` paths
-  (`unit/bash-temp-paths.test.js` fails on a fixed path under `/tmp`,
-  `/var/tmp`, `/dev/shm`, `$TMPDIR` or `${TMPDIR}`).
-- **file time** — no file in `unit/` or `integration/` takes more than 15 s
-  alone (`node --test <file>`): `node --test` runs the tests of one file in
-  order, so the longest file sets the suite's time. Split a longer file
-  `<name>.test.js` into `<name>-<group>.test.js` files, with their shared
-  fixtures in `test/helpers/<name>-fixture.js` (F-99 D2). No test checks
-  the time, because load changes it (S-1381 Notes): if `npm test` takes more
-  than 35 s on a quiet workstation, time the files alone.
-- **e2e** — write `test/e2e/<scenario>.sh`. `git init` your own tempdirs
-  for the code repos and a bare origin if cleanup paths are exercised;
-  set `BL_BACKLOG_DIR` to the backlog tempdir.
+- **Suite temp directory.** Every `npm run test:*` script runs through
+  `test/helpers/without-repo-env.sh`. The wrapper gives the suite a `TMPDIR` of its own, and
+  removes it when the suite ends (S-1392). So a temp file that a test leaves behind does not leak
+  into `/tmp`.
+  - The rules below (`mkTempDir`, own `mktemp` paths) still apply, because a script or a file can
+    run alone.
+  - The wrapper also sets `BL_CEILING_DIRECTORIES` to that `TMPDIR` (S-1155). So a walk from a cwd
+    never finds a backlog made directly in `TMPDIR`.
+  - The wrapper needs GNU `env` (coreutils 8.31 or later) for `--default-signal`. BSD and macOS
+    `env` lack it.
+- **Unit.** Write `test/unit/<module>.test.js` with `node:test` and `node:assert/strict`. Import
+  the module under test from `../../src/...`. Write no file outside `os.tmpdir()`.
+  - Spawn nothing, with one exception. A test of a spec-lock overlap may start the second lock
+    holder as a `node` child. The child is `startTokenWriter` (`test/helpers/token-writer.js`) or
+    `updateSpecInChild` (`test/helpers/spec-writer.js`), which run `updateSpecFile` from `src/`.
+    It may also use a bare live pid to stand for a holder.
+  - The exception exists for two reasons. First, `withSpecLock` is re-entrant within a process,
+    so only another pid can hold the lock against the code under test. Second, only the fake
+    runner of the unit tests drives the writers whose overlap matters (the escalation and status
+    writes of `bl run`). An integration test that spawns `bl` cannot reach them (F-67).
+  - Make every temp dir with `mkTempDir(prefix)` or `mkTempBacklog()` from
+    `test/helpers/tempdir.js`, never with a bare `mkdtempSync`. Then the dir is removed when the
+    tests of the file end. If the test finds the backlog by a walk from a cwd, make it with
+    `mkTempBacklog(fixture, { parent })` in a `mkTempDir` of the test's own.
+- **Integration.** Write a `test/integration/<command>.test.js` that makes a backlog with
+  `mkTempBacklog()` and runs the binary against it with `runBl(args, { cwd })`. Assert the effects
+  on the file system, the frontmatter, and the exit codes. `runBl` sets `BL_BACKLOG_DIR` to
+  `cwd`. A test of the walk unsets it and makes the backlog with
+  `mkTempBacklog(fixture, { parent })`.
+- **CLI.** Write `test/cli/<topic>.sh`. Source `helpers/tempdir.sh`, call `mk_temp_backlog`, then
+  drive `"$BL"` with the assert\_\* helpers. `cli/run-all.sh` finds the script without a list, and
+  runs it at the same time as the other scripts. So the script uses only its own `mktemp` paths.
+  `unit/bash-temp-paths.test.js` fails on a fixed path under `/tmp`, `/var/tmp`, `/dev/shm`,
+  `$TMPDIR` or `${TMPDIR}`.
+- **File time.** No file in `unit/` or `integration/` takes more than 15 s alone
+  (`node --test <file>`). `node --test` runs the tests of one file in order, so the longest file
+  sets the time of the suite. Split a longer file `<name>.test.js` into `<name>-<group>.test.js`
+  files, and put their shared fixtures in `test/helpers/<name>-fixture.js` (F-99 D2). No test
+  checks the time, because load changes it (S-1381 Notes). If `npm test` takes more than 35 s on
+  a quiet workstation, time the files alone.
+- **E2E.** Write `test/e2e/<scenario>.sh`. `git init` your own tempdirs for the code repos, and a
+  bare origin if the test runs the cleanup paths. Set `BL_BACKLOG_DIR` to the backlog tempdir.
 
-`bl new` exposes private test seams `BL_INTERNAL_TEST_FAIL_ON_STORY` and
-`BL_INTERNAL_TEST_FAIL_ON_MOVE` for unwind-path coverage. They are not
-public CLI surface — change or remove them freely if a test stops needing
-them.
+`bl new` has two private test seams, `BL_INTERNAL_TEST_FAIL_ON_STORY` and
+`BL_INTERNAL_TEST_FAIL_ON_MOVE`, for the coverage of its unwind paths. They are not public CLI
+surface. Change or remove them freely if a test stops needing them.
 
 ## Conventions for Agents
 
