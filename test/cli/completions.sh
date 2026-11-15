@@ -130,7 +130,11 @@ for file in "$COMPLETIONS/_bl" "$COMPLETIONS/backlog.zsh"; do
   if grep -q "'flow:" "$file"; then pass; else fail "$(basename "$file") lists the flow verb"; fi
   if grep -q "'change:" "$file"; then pass; else fail "$(basename "$file") lists the change verb"; fi
   if grep -q -- "'--open\[Print the open items" "$file"; then pass; else fail "$(basename "$file") completes bl change --open"; fi
+  if grep -q "'gc:" "$file"; then pass; else fail "$(basename "$file") lists the gc verb"; fi
+  if grep -q -- "'--dry-run\[List what would be removed" "$file"; then pass; else fail "$(basename "$file") completes bl gc --dry-run"; fi
 done
+assert_eq "bl g<TAB> completes to gc and grep" "grep gc" "$(complete_verb g)"
+assert_eq "bl gc completes its flags" "--dry-run --help" "$(complete_bash gc "-")"
 assert_eq "bl chan<TAB> completes to change" "change" "$(complete_verb chan)"
 assert_eq "bl change completes story, feature and batch ids" "S-1 F-1 B-1" "$(complete_bash change "")"
 assert_eq "bl change completes its flags" "--open --help" "$(complete_bash change "-")"

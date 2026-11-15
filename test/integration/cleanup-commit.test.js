@@ -26,7 +26,8 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, realpathSync, writeFi
 import { execSync } from 'child_process';
 import { delimiter, dirname, join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { main as cleanupMain } from '../../src/cleanup.js';
+import { main as cleanupMain, installCommand } from '../../src/cleanup.js';
+import { tail } from '../../src/command-output.js';
 import { endTabTitle } from '../../src/tab-title.js';
 import { fakeTmux, renamedTitles } from '../helpers/fake-tmux.js';
 import { parseFrontmatter } from '../../src/config.js';
@@ -272,6 +273,30 @@ test('single-repo cleanup writes commit as a bare string', async () => {
   assert.equal(logStatusOf('story', fm), 'done');
   assert.equal(typeof fm.commit, 'string', 'expected a bare string commit');
   assert.match(fm.commit, /^[0-9a-f]{7,}$/);
+});
+
+test('a story bl merge that marks the story done removes its scratch directories and older gate logs (S-1112)', async () => {
+  const { backlog } = buildStoryBacklog({ repoNames: ['bl'] });
+  const run = join(backlog, '.bl', 'run');
+  mkdirSync(join(run, 'S-99.S-99.scratch'), { recursive: true });
+  mkdirSync(join(run, 'S-99.r1.fix.scratch'));
+  for (const name of ['S-99.test-1.log', 'S-99.test-2.log', 'S-99.r1.correctness.md']) {
+    writeFileSync(join(run, name), 'x\n');
+  }
+  process.env.BL_BACKLOG_DIR = backlog;
+  let out;
+  try {
+    out = await captureStderr(() => captureExit(() => cleanupMain(['S-99'])));
+  } finally {
+    delete process.env.BL_BACKLOG_DIR;
+  }
+  assert.equal(out.result.exit, null, out.stderr);
+  for (const gone of ['S-99.S-99.scratch', 'S-99.r1.fix.scratch', 'S-99.test-1.log']) {
+    assert.ok(!existsSync(join(run, gone)), `${gone} is removed`);
+  }
+  for (const kept of ['S-99.test-2.log', 'S-99.r1.correctness.md'])
+    assert.ok(existsSync(join(run, kept)), `${kept} stays`);
+  assert.match(out.stderr, /^Removed 3 run files of S-99 \(\d+(\.\d)? K?B\)\.$/m);
 });
 
 test('bl merge shows check and install as statuses (S-1412)', async () => {
@@ -1114,4 +1139,15 @@ test('concurrent no-branch cleanup keeps the SHA written after its initial story
   const { fm } = parseFrontmatter(readFileSync(storyIndexPath, 'utf8'));
   assert.equal(logStatusOf('story', fm), 'done');
   assert.equal(fm.commit, 'exact111', 'the SHA recorded after the first read must survive the no-branch tip');
+});
+
+test('installCommand follows the lockfile; tail keeps the last lines', () => {
+  const dir = mkTempDir('bl-wt-');
+  assert.equal(installCommand(dir), null);
+  writeFileSync(join(dir, 'package-lock.json'), '{}');
+  assert.equal(installCommand(dir), 'npm ci');
+  writeFileSync(join(dir, 'pnpm-lock.yaml'), '');
+  assert.equal(installCommand(dir), 'pnpm install --frozen-lockfile');
+  assert.equal(tail('a\nb\nc\n\n', 2), 'b\nc');
+  assert.equal(tail('a', 30), 'a');
 });

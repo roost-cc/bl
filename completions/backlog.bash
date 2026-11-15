@@ -124,7 +124,7 @@ _roost_bl() {
 
   # First arg: subcommand
   if [[ ${COMP_CWORD} -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W "init new side attach batch move next-id run implement approve status refine review pr edit view show change which grep list ls tree history report next rank what-next done force flow inbox block task sync s merge log allow agents capacity top watch stop help" -- "$cur") )
+    COMPREPLY=( $(compgen -W "init new side attach batch move next-id run implement approve status refine review pr edit view show change which grep list ls tree history report next rank what-next done force flow inbox block task sync s merge log allow agents capacity top watch stop gc help" -- "$cur") )
     return
   fi
 
@@ -205,6 +205,9 @@ _roost_bl() {
       else
         COMPREPLY=( $(compgen -W "$(_roost_feature_ids) $(_roost_story_ids)" -- "$cur") )
       fi
+      ;;
+    gc)
+      COMPREPLY=( $(compgen -W "--dry-run --help" -- "$cur") )
       ;;
     inbox)
       if [[ ${COMP_CWORD} -eq 2 ]]; then

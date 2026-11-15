@@ -169,8 +169,8 @@ const ALLOWED = new Map([
   ['session.js ensureWorktree git checkout', `checks out a new story worktree: ${CODE_REPO}`],
   ['side.js worktreeUndo git worktree', `removes a side story's worktree: ${CODE_REPO}`],
   ['side.js worktreeUndo git branch', `deletes a side story's branch: ${CODE_REPO}`],
-  ['updates-run.js git git ?', `the updates runner's git, in the guest's update worktrees: ${CODE_REPO}`],
   ['migrate-worktree-layout.js moveWorktree git worktree', `moves a code worktree: ${CODE_REPO}`],
+  ['gc.js sweepWorktrees git worktree', `removes a closed work unit's worktree, then prunes: ${CODE_REPO}`],
   // Git that reads the backlog, through a runner the guard cannot see into.
   ['history.js git git ?', 'reads the backlog history only: log, ls-tree, cat-file'],
   ['inbox.js readHeartbeat git fetch', `fetches the heartbeat branch: ${CODE_REPO}`],
@@ -202,6 +202,7 @@ const ALLOWED = new Map([
   ['view.js placeCopy rmSync', TMP],
   ['blockers-merge.js main writeFileSync', "git's merge driver writes the merge result into the temp file git names"],
   ['cleanup.js removeThrowaway rmSync', "removes bl merge's throwaway worktree under the worktree root"],
+  ['gc.js removeUnitDir renameSync', "moves a closed work unit's directory aside under the worktree root, or back"],
   ['feature-run.js restoreDisk rmSync', 'restores a code worktree path after a review pass'],
   ['feature-run.js restoreDisk symlinkSync', 'restores a code worktree path after a review pass'],
   ['feature-run.js restoreDisk writeFileSync', 'restores a code worktree path after a review pass'],
@@ -237,9 +238,11 @@ const ALLOWED = new Map([
   ['run-lock.js writeStopRequest rmSync', RUN_DIR],
   ['run-lock.js ensureRunDir writeFileSync', `writes .bl/run/.gitignore: ${RUN_DIR}`],
   ['stop.js stopRun rmSync', `removes its own stop request: ${RUN_DIR}`],
+  [
+    'gc.js removePaths rmSync',
+    `removes a closed work unit's run files (${RUN_DIR}) and its directory under the worktree root`,
+  ],
   ['sync.js regenerateAfterPull rmSync', `removes the pull-regenerate record: ${RUN_DIR}`],
-  ['updates-run.js write writeFileSync', `writes an updates gate log: ${RUN_DIR}`],
-  ['updates-vulns.js scanRepo rmSync', `removes a vulnerability scan's report: ${RUN_DIR}`],
   ['verbs.js runChildren openSync', `opens a parallel child's output file: ${RUN_DIR}`],
   [
     'kernel-lock.js tryLock openSync',

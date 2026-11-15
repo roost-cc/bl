@@ -9,7 +9,6 @@ import { mkTempDir } from '../helpers/tempdir.js';
 import * as runLock from '../../src/run-lock.js';
 import * as backlogCommit from '../../src/backlog-commit.js';
 import * as featureRun from '../../src/feature-run.js';
-import * as updates from '../../src/updates.js';
 import { holderOf } from '../../src/kernel-lock.js';
 
 const realRead = fs.readFileSync;
@@ -27,17 +26,12 @@ test('regeneration_marker_uses_RUN_DIR: the marker and every other run path deri
   }
 });
 
-test('updates_lock_path_contract: the loop and bl updates use run-lock.js’s one definition', () => {
+test('run_lock_path_contract: the loop uses run-lock.js’s one definition', () => {
   assert.equal(featureRun.RUN_DIR, runLock.RUN_DIR);
   assert.equal(featureRun.runLockPath, runLock.runLockPath);
   assert.equal(featureRun.ensureRunDir, runLock.ensureRunDir);
   assert.equal(featureRun.acquireRunLock, runLock.acquireRunLock);
   assert.equal(featureRun.releaseRunLock, runLock.releaseRunLock);
-  assert.equal(updates.RUN_LOCK_ID, runLock.RUN_LOCK_ID);
-  assert.equal(
-    runLock.runLockPath({ backlogRoot: '/b' }, runLock.RUN_LOCK_ID),
-    join('/b', '.bl', 'run', 'updates.lock'),
-  );
 });
 
 test('acquireRunLock refuses a run lock this process already holds, naming process.pid', () => {
@@ -114,12 +108,4 @@ test('run_holder_reads_one_holder: the pid and the info line come from one read,
       }
     }
   }
-});
-
-test('updatesLockRefusal names the holder and the updates lock', () => {
-  const config = { backlogRoot: '/b' };
-  assert.equal(
-    runLock.updatesLockRefusal(config, 42),
-    `another bl updates command (pid 42) holds ${join('/b', '.bl', 'run', 'updates.lock')}; try again when it ends`,
-  );
 });

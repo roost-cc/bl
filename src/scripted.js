@@ -5,9 +5,8 @@
  * `plugins-implement: [<plugin>]` on a story names exactly one plugin with an
  * `implement` command. It is a plugin stage, not a story type: the key is read
  * from the story alone, because a story either is scripted or is not, so the
- * plugin cascade does not apply. `bl implement`, the `implement` step of
- * `feature-run.js` and `bl updates run` call this module where they would
- * start a session.
+ * plugin cascade does not apply. `bl implement` and the `implement` step of
+ * `feature-run.js` call this module where they would start a session.
  *
  * Every side effect outside the backlog files goes through an injected
  * `runner.shell`, as in the two state machines this serves.

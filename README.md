@@ -89,8 +89,8 @@ A field that is not set renders as nothing, and the title is trimmed: `: S-210 :
 for a story with no feature, `F-123 :  : refine` for a feature.
 
 Before it does anything else, `bl` sets a start title: the status is the command (`merge`,
-`list` also for `bl ls`), with its subcommand for `task`, `updates`, `inbox` and `block`
-(`updates run`, `inbox done`), or `help` for `bl`, `bl help` and any `--help`. The feature and
+`list` also for `bl ls`), with its subcommand for `task`, `inbox` and `block`
+(`inbox done`), or `help` for `bl`, `bl help` and any `--help`. The feature and
 story fields are the unit ids the arguments name (`bl run s34` shows `: S-34 : run`), and
 several ids of one kind show as `2 features` or `3 stories`. A command that knows more, such as
 `bl run` or `bl refine`, then sets its own status. `bl merge` shows its steps: `integrate`,
@@ -101,12 +101,11 @@ once with `ended`.
 
 When `bl` exits, the last title stays on the tab until the next `bl` in that window or you
 replace it. A command that reaches an end state shows it with the next step, for example
-`F-56 :  : clean → bl merge`, `F-56 :  : escalated → fix, --resume` or
-`updates :  : 1 decision → approve/drop`. The end state stays even when `bl` then exits
-non-zero, for example after an escalation. Any other exit sets the status from the exit code:
-`ended` for 0, `interrupted` for Ctrl-C or SIGTERM, `failed (exit N)` otherwise. Under tmux,
-`bl` leaves the window's automatic rename off; `tmux set -w automatic-rename on` gives tmux's
-own name back.
+`F-56 :  : clean → bl merge` or `F-56 :  : escalated → fix, --resume`. The end state stays even
+when `bl` then exits non-zero, for example after an escalation. Any other exit sets the status
+from the exit code: `ended` for 0, `interrupted` for Ctrl-C or SIGTERM, `failed (exit N)`
+otherwise. Under tmux, `bl` leaves the window's automatic rename off;
+`tmux set -w automatic-rename on` gives tmux's own name back.
 
 A title is plain text: `bl` removes control characters from it, and under tmux it doubles each
 `#`, so tmux shows `#{…}` and `#(…)` as typed. If tmux does not answer, `bl` waits for it for

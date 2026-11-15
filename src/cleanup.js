@@ -45,7 +45,9 @@ import {
   refuseStoryRepo,
   storyRepoOrExit,
   removeUnitDirIfEmpty,
+  worktreeChanges,
 } from './story.js';
+import { removeRunFiles } from './gc.js';
 import { getAllowedTools, loadPrompt } from './session.js';
 import { addGateLine, gateLine, recordMerge } from './change-doc.js';
 import { PUSH_STATUS, shellMerged } from './feature-run.js';
@@ -55,8 +57,7 @@ import { interpolateCommand } from './scripted.js';
 import { storyUnit } from './unit.js';
 import { mergeGates, noReviewLines, reportMergeGates } from './merge-gates.js';
 import { integrateForMerge } from './merge-integrate.js';
-import { installCommand } from './updates-run.js';
-import { extractSection } from './feature.js';
+import { extractSection, featureBranchName } from './feature.js';
 import { DEFERRED_HEADING } from './deferred.js';
 import { resolvePermissionScopes } from './permissions.js';
 import { getProvider } from './agents/index.js';
@@ -70,6 +71,19 @@ import { commitChangedSince, dirtySnapshot } from './backlog-commit.js';
 import { takeUnitLocks } from './unit-lock.js';
 import { loadFlow } from './flow.js';
 import { applyMerged, startOf, statusOf } from './transition.js';
+
+/**
+ * The frozen install a checkout's lockfile asks for, or null. `bl merge`
+ * runs it in the main checkout after the push (S-1452).
+ *
+ * @param {string} dir
+ * @returns {string | null}
+ */
+export function installCommand(dir) {
+  if (existsSync(join(dir, 'pnpm-lock.yaml'))) return 'pnpm install --frozen-lockfile';
+  if (existsSync(join(dir, 'package-lock.json'))) return 'npm ci';
+  return null;
+}
 
 /**
  * A story's `## Deferred` body, for the merge's triage agent: since F-65 D4
@@ -579,7 +593,7 @@ export async function cleanupOneRepo({
   noCommits = false,
   changeDir = null,
 }) {
-  const branchName = storyEntry.toLowerCase();
+  const branchName = featureBranchName(storyEntry);
   // A repo whose branch may have nothing to merge: a secondary no story
   // changed (S-862), or a story whose branch has no commits (S-1437).
   const mayBeEmpty = isSecondary || noCommits;
@@ -997,17 +1011,6 @@ export function commitsAhead(repoPath, branchName) {
 }
 
 /**
- * Uncommitted changes in a worktree (tracked or untracked). Null when git
- * cannot tell.
- *
- * @returns {string[] | null}
- */
-function worktreeChanges(worktreePath) {
-  const r = runGit(worktreePath, ['status', '--porcelain']);
-  return r.status === 0 ? r.stdout.split('\n').filter((l) => l.trim()) : null;
-}
-
-/**
  * The end of every repo's cleanup: its worktree, then its unit directory
  * once no other repo's worktree is in it, then its branches. A failed step
  * is not fatal.
@@ -1388,7 +1391,7 @@ the main checkout as it was.`);
         sessionId: `s${parsed.num}`,
         storyId: parsed.id,
         worktreePath: '',
-        branchName: storyEntry.toLowerCase(),
+        branchName: featureBranchName(storyEntry),
         componentId: componentEntry.replace(/-.*/, ''),
         roostDir: config.roostDir,
         backlogDir: config.backlogRoot,
@@ -1398,6 +1401,7 @@ the main checkout as it was.`);
         console.error('Cleanup plugin failed — continuing anyway.');
       }
     }
+    removeRunFiles(config, [parsed.id]);
   }
 
   info(

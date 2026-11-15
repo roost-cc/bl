@@ -137,8 +137,8 @@ export function readStaged(root) {
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 
 /**
- * Whether a story's frontmatter `fm` is an update story's, one `bl updates`
- * writes: a non-blank `update_repo:`.
+ * Whether a story's frontmatter `fm` is an update story's, as the removed
+ * `bl updates` wrote one: a non-blank `update_repo:`.
  */
 export function isUpdateStory(fm) {
   return str(fm.update_repo) !== '';
