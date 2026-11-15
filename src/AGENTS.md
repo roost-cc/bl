@@ -5790,7 +5790,8 @@ The root `index.md` is hand-written too. `bl init` writes it once, when it is mi
 
 ### `bl validate`
 
-Run backlog-wide integrity checks (frontmatter, duplicate IDs, acyclic dep graph) and report every finding.
+`bl validate` runs integrity checks over the whole backlog and reports every finding. It checks
+the frontmatter, duplicate ids, and that the dependency graph has no cycle.
 
 ```bash
 # Interactive — both streams hit the terminal, exit code drives the prompt.
@@ -5830,198 +5831,256 @@ task-unit, task-field, deferred-unsized, deferred-duplicate, operator-tasks-reti
 deferred-heading-retired, bad-tokens-by-step, agent-config, derived-key, dangling-feature,
 dangling-batch, feature-and-batch, feature-no-stories, transition-log, legacy-status
 
-`transition-log` (F-69 D2, `findTransitionFindings` in `src/transition.js`, error) is at a story,
-feature or task file whose `transitions:` is not a list of entries, or has an entry with a field
-outside `at`, `to`, `by`, `via`, `outcome` and `note`, no `by`, an `at` that is not ISO 8601
-UTC or is before the entry above it, or a `to` that is not a status of the type. It is also a
-first entry that is not the type's initial status by `new`, and an entry after it whose pair
-with the entry above it is no edge of the table under its `by` (`by: operator` matches any
-verb, and `by: force` any two different statuses of the type), unless the entry has
-`note: migrated`. A pair that skips a verb's `during` counts as
-that verb's edge (F-119 R2): from a status in the verb's `from` straight to one of its
-branches' `to`, by that verb or by `operator`. Logs written before `refine` had its `during`
-hold such pairs (`draft → refined` by `refine`); the writer (`applyTransition`) refuses them.
-And it is an `added` that is not the first entry's date, or a `completed` (a task's `done`)
-that is not the date of the entry to a terminal status; for a story or a feature, also a missing `added`, or a missing `completed` on
-a log that ends terminal (a task's are `task-field`'s), or a `completed` on a log that ends at
-an open status (`bl force` removes it when it reopens a unit). The migration sets both from the log
-for a unit that has neither. `legacy-status` (warning) is a
-`status:` with no log, which `bl/scripts/migrate-transitions.js` rewrites, or a `status:` beside
-a log, which bl does not read. A closed unit, one whose status (`statusOf`) is in its type's
-`terminal` list in `flow.json`, gets neither warning. The default `flow.json` moves no closed unit (`supersede`'s `from: "*"` leaves out terminal statuses), but a
-custom edge can, for example a story from `done` to `superseded`. That move goes through `applyTransition`, which turns `status:` into a log
-first, so the old shape does no harm. This covers the closed update stories, which the migration leaves in the old shape; an open
-update story keeps the warning until the updates flow moves onto the transition log. A unit with a log needs no
-`status:` (`missing-required-key`).
+`transition-log` (F-69 D2, `findTransitionFindings` in `src/transition.js`) is an error at a
+story, feature or task file. bl reports it when the file's `transitions:` breaks one of these
+rules:
 
-`derived-key` (F-77 D3, error) is a key the graph derives stored in a unit file: a story's
-`required_for:` (even empty), a feature's `stories:`, `points:` or `components:`, or an epic's
-`features:` or `status:` (`DERIVED_KEYS` in `backlog-graph.js`, the one table of them). It is
-never also `unknown-fm-key` (here or in `bl sync`'s warnings), a stored `required_for:` is
-never a link (no `dangling-dep` from it), and an epic's stored `status:` is not checked against
-a set. `scripts/migrate-derived-keys.js` removes every one; `feature-story-missing`,
-`feature-story-mismatch` and `feature-story-unlisted`, which compared the stored list with the
-stories, are gone, and so is `asymmetric-dep`, which compared a `depends_on:` with the other
-story's `required_for:`: an edge is stated once, today in `blockers.json` (F-111), and the
-graph's `story.requiredFor` is its inverse.
+- `transitions:` is a list of entries.
+- Each entry has only the fields `at`, `to`, `by`, `via`, `outcome` and `note`, and it has a
+  `by`.
+- Each `at` is ISO 8601 UTC, and it is not before the entry above it.
+- Each `to` is a status of the type.
+- The first entry is the type's initial status, by `new`.
+- Each later entry and the entry above it make a pair that is an edge of the table under the
+  entry's `by`. `by: operator` matches any verb, and `by: force` matches any two different
+  statuses of the type. An entry with `note: migrated` is exempt.
 
-`depends-on-key` (F-111 D5, warning) is a story file that still holds `depends_on:`, empty or
-not: every hold and order lives in `blockers.json`. Until `scripts/migrate-depends-on.js`
-moves the key there, bl reads each entry as the edge it stands for (`dependsOnEdges`, see
-**Holds between units**), so the file works.
+A pair that skips a verb's `during` counts as that verb's edge (F-119 R2). That is a move from a
+status in the verb's `from` straight to one of its branches' `to`, by that verb or by
+`operator`. Logs written before `refine` had its `during` hold such pairs (`draft → refined` by
+`refine`). The writer (`applyTransition`) refuses them.
 
-`agent-config` (F-64 D2, `findAgentConfigFindings`, error at `backlog.json`) is the error
-`loadConfig` would throw for `agent` or `review_agent`, at the top level or under a repo's
-`overrides`, the retired shape (a string, `agent_model`, `fallback_model`) included; `bl
-validate` loads with `lenientAgents` so it reports the error instead of stopping on it.
+`transition-log` also covers the dates:
 
-`bad-status` on a story or a feature is a status `flow.json` does not name for its type, so
-removing a status from the file makes every unit at it a finding, and adding one makes it
-valid. A v1 word that `LEGACY_STATUSES` maps (story `backlog`, feature `running`; task `open` in
-`task-field`) is a warning that names the migration, not an error (`statusWordProblem`, F-69 D6).
-A missing or unreadable `flow.json` is not a finding: `bl validate` stops with the `FlowError`
-naming the file. `flow-json` (F-66 D1, F-69 D1, `findFlowFindings`, at
-`flow.json`) is an error for: a `from`, `during`, `to` or terminal status the type lacks; a
-`when` or `via` name `src/guards.js` or `src/capabilities.js` does not register; a `then` that
-is not a verb of the type, or one whose `from` lacks the branch's `to`; a status that is no
-branch's `to`; a terminal status before an open one, or one that a verb other than `supersede`
-starts from; a verb `DISPATCH` (`src/verbs.js`) has for a type whose table lacks it (`status`
-only reads, `READ_VERBS`). It is a warning for a `bl-flow/v1` file (one, naming
-`bl/scripts/migrate-transitions.js`) and for each type with a `gates` table (F-119 D4). Every
+- An `added` that is not the first entry's date.
+- A `completed` (a task's `done`) that is not the date of the entry to a terminal status.
+- For a story or a feature only: a missing `added`, or a missing `completed` on a log that ends
+  at a terminal status. A task's missing dates are `task-field` findings.
+- A `completed` on a log that ends at a status that is not terminal. `bl force` removes the
+  `completed` when it moves a work unit back from a terminal status.
+
+The migration sets both dates from the log for a work unit that has neither.
+
+`legacy-status` is a warning. It is a `status:` with no log, which
+`bl/scripts/migrate-transitions.js` rewrites, or a `status:` beside a log, which bl does not
+read. A work unit whose status (`statusOf`) is in its type's `terminal` list in `flow.json` gets
+neither warning. The default `flow.json` moves no such work unit: `supersede`'s `from: "*"`
+leaves out the terminal statuses. A custom edge can move one, for example a story from `done` to
+`superseded`. That move goes through `applyTransition`, which first turns `status:` into a log,
+so the old shape does no harm. This covers the update stories at a terminal status, which the
+migration leaves in the old shape. An update story at another status keeps the warning until the
+updates flow moves onto the transition log. A work unit with a log needs no `status:`
+(`missing-required-key`).
+
+`derived-key` (F-77 D3) is an error: a unit file stores a key that the graph derives. The keys
+are a story's `required_for:` (even empty), a feature's `stories:`, `points:` or `components:`,
+and an epic's `features:` or `status:`. `DERIVED_KEYS` in `backlog-graph.js` is the one table of
+them. For these keys:
+
+- bl never also reports `unknown-fm-key`, here or in `bl sync`'s warnings.
+- A stored `required_for:` is never a link, so no `dangling-dep` comes from it.
+- bl does not check an epic's stored `status:` against a set.
+
+`scripts/migrate-derived-keys.js` removes every one. Four old findings are gone.
+`feature-story-missing`, `feature-story-mismatch` and `feature-story-unlisted` compared the
+stored list with the stories. `asymmetric-dep` compared a `depends_on:` with the other story's
+`required_for:`. Now an edge is stated once, today in `blockers.json` (F-111), and the graph's
+`story.requiredFor` is its inverse.
+
+`depends-on-key` (F-111 D5) is a warning: a story file still holds `depends_on:`, empty or not.
+Every hold and order lives in `blockers.json`. Until `scripts/migrate-depends-on.js` moves the
+key there, bl reads each entry as the edge it stands for (`dependsOnEdges`, see **Holds between
+units**), so the file works.
+
+`agent-config` (F-64 D2, `findAgentConfigFindings`) is an error at `backlog.json`. It is the
+error that `loadConfig` would throw for `agent` or `review_agent`, at the top level or under a
+repo's `overrides`. The retired shape (a string, `agent_model`, `fallback_model`) is included.
+`bl validate` loads the config with `lenientAgents`, so it reports the error and does not stop
+on it.
+
+`bad-status` on a story or a feature is a status that `flow.json` does not name for its type. So
+if you remove a status from the file, every work unit at it becomes a finding, and if you add
+one, it becomes valid. A v1 word that `LEGACY_STATUSES` maps is a warning that names the
+migration, not an error (`statusWordProblem`, F-69 D6). The v1 words are story `backlog`, feature
+`running`, and task `open` in `task-field`. A missing or unreadable `flow.json` is not a finding:
+`bl validate` stops with the `FlowError`, which names the file.
+
+`flow-json` (F-66 D1, F-69 D1, `findFlowFindings`) is a finding at `flow.json`. It is an error
+for each of these:
+
+- a `from`, `during`, `to` or terminal status that the type lacks;
+- a `when` or `via` name that `src/guards.js` or `src/capabilities.js` does not register;
+- a `then` that is not a verb of the type, or one whose `from` lacks the branch's `to`;
+- a status that is no branch's `to`;
+- a terminal status before a status that is not terminal, or a terminal status that a verb other
+  than `supersede` starts from;
+- a verb that `DISPATCH` (`src/verbs.js`) has for a type whose table lacks it. `status` only
+  reads (`READ_VERBS`).
+
+It is a warning for a `bl-flow/v1` file (one warning, which names
+`bl/scripts/migrate-transitions.js`), and for each type with a `gates` table (F-119 D4). Every
 `flow-json` message ends with `See bl/templates/flow.schema.md.` (`FLOW_DOC`, F-119 R7).
 
-The `blockers-*` findings (F-66 D5, `findBlockersFindings`) are at `blockers.json`; a missing
+The `blockers-*` findings (F-66 D5, `findBlockersFindings`) are at `blockers.json`. A missing
 file has none. All are errors except `blockers-order`:
 
-- `blockers-json`: not JSON, a wrong `schema`, or an edge of the wrong shape; nothing else in the
-  file is checked.
-- `blockers-unit`: a `blocker`, `unit` or `active_when.unit` that is not a unit (a story,
-  feature or task) in the backlog, or a `*` blocker. A merge edge's ends are checked by their
-  own rules (see **Holds between units**), with this code and the next two.
-- `blockers-gate`: a gate the unit's type does not have in `flow.json` (for `*`, no type has it).
+- `blockers-json`: the file is not JSON, has a wrong `schema`, or has an edge of the wrong shape.
+  bl checks nothing else in the file.
+- `blockers-unit`: a `blocker`, `unit` or `active_when.unit` that is not a work unit (a story,
+  feature or task) in the backlog, or a `*` blocker. bl checks a merge edge's ends by their own
+  rules (see **Holds between units**), with this code and the next two.
+- `blockers-gate`: a gate that the work unit's type does not have in `flow.json`. For `*`, no type
+  has it.
 - `blockers-status`: an `until` that is not a status of the blocker's type, or an
-  `active_when.status` that is not one of its unit's type.
+  `active_when.status` that is not a status of its work unit's type.
 - `blockers-duplicate`: two edges with one (`blocker`, `gate`, `unit`).
-- `blockers-unmeetable`: a closed blocker (its status meets `done`) that does not meet `until`.
-- `blockers-cycle`: a deadlock in the hold graph (see **Holds between units**), or a cycle of
-  one feature's merge edges or of its order edges, among `readEdges`'s edges: a cycle of
+- `blockers-unmeetable`: a blocker whose status meets `done` and does not meet `until`.
+- `blockers-cycle`: a deadlock in the hold graph (see **Holds between units**). It is also a
+  cycle among `readEdges`'s edges, of one feature's merge edges or of its order edges. A cycle of
   `depends_on:` keys is one too (F-111 D4; the old `cycle` finding is gone).
-- `blockers-order` (warning): the text is not what bl writes in the file's schema (unsorted, or
-  reformatted by hand); `bl block list --fix` rewrites it.
+- `blockers-order` (warning): the text is not what bl writes in the file's schema. It is unsorted,
+  or someone reformatted it by hand. `bl block list --fix` rewrites it.
 
-`task-unit` and `task-field` (F-65 D1, `findTaskFindings`) are at the task file. `task-unit`
-(error): `unit:` names no feature or story in the backlog. `task-field`: a missing `task_id`,
-`title`, `unit`, `owner`, `status` or `added`, a `task_id` that is not `T-<n>` or not the
-file's number, one id on two files, an `owner` outside `operator`, a `status` outside
-`flow.json`'s task statuses, or a `done` task with no `done:` date (errors); a key bl does not
-know (warning).
+`task-unit` and `task-field` (F-65 D1, `findTaskFindings`) are at the task file:
+
+- `task-unit` (error): `unit:` names no feature or story in the backlog.
+- `task-field` (error):
+  - a missing `task_id`, `title`, `unit`, `owner`, `status` or `added`;
+  - a `task_id` that is not `T-<n>` or not the file's number;
+  - one id on two files;
+  - an `owner` other than `operator`;
+  - a `status` outside `flow.json`'s task statuses;
+  - a `done` task with no `done:` date.
+- `task-field` (warning): a key that bl does not know.
 
 `deferred-unsized`, `deferred-duplicate`, `operator-tasks-retired` and `deferred-heading-retired`
-(F-65 D4, F-82 D9, `findDeferredErrors`, errors at the unit's file with its line) check an open
-unit's `## Deferred`: an item without a numeric `[points: N]`, a `### Operator tasks`
-sub-heading or `operator:` bullet, a second `## Deferred` heading, and a story's retired
-`## To Do` heading. A `done` or `superseded` unit has none (see **`## Deferred`, `## Notes` and tasks**). The S-970 `operator-tasks` rule is gone with
-`src/operator-tasks.js`.
+(F-65 D4, F-82 D9, `findDeferredErrors`) are errors at the work unit's file, with the line. They
+check the `## Deferred` of a work unit whose status does not meet `done`, for:
 
-`found-by` (F-48 D2, `findFoundByFindings`) is an error on a story whose
-`found_by:` is set but names no existing feature (`F-<n>`) or story (`S-<n>`).
-`found_by` is a record: nothing that decides reads it. `bl status S-n` prints it
-on its head line as `found by: <id>`.
+- an item without a numeric `[points: N]`;
+- a `### Operator tasks` sub-heading or an `operator:` bullet;
+- a second `## Deferred` heading;
+- a story's retired `## To Do` heading.
 
-`roadmap-file` and `roadmap-section` check `roadmap.md`'s shape and `theme-brief` a theme's
-`brief:` (see **The roadmap** and **Themes and Epics**). `dictionary-file` (F-82, error at
-`backlog.json`) is a path `backlog.json` `"dictionaries"` lists that is not a file (see
-**Dictionaries**).
+A work unit whose status meets `done` has none of these findings (see **`## Deferred`, `## Notes`
+and tasks**). The S-970 `operator-tasks` rule went with `src/operator-tasks.js`.
 
-`priority-file` and `priority-unit` (F-78 D1, `findPriorityFindings`, from the graph's
-problems), both errors at `priority.yaml`: the first when the file is missing, is not YAML, or
-is not a list of non-empty id strings; the second when an entry names no feature or story, a
-story inside a feature, an update story or a task, or a unit already ranked. A closed unit left
-in the list is no finding: the order skips it, and the next `bl rank --commit` removes it.
-Only a `priority.yaml` that is not YAML stops other commands (a strict `loadBacklog` throws it);
-a missing or malformed one is an empty order, so every open unit is in the dated tail (see
-**Priority**). They replace the two
-findings of the old feature order file (F-53 D1), which bl no longer reads.
+`found-by` (F-48 D2, `findFoundByFindings`) is an error on a story whose `found_by:` is set but
+names no existing feature (`F-<n>`) or story (`S-<n>`). `found_by` is a record: nothing that
+decides reads it. `bl status S-n` prints it on its head line as `found by: <id>`.
 
-`generated-section` (F-79 D3, `findGeneratedSectionFindings`, error at the page) is a committed
-page that holds a section `GENERATED_SECTIONS` names for its kind, with its generated table (the
-same header row) for its body (`isGeneratedBody`); the message names the heading. `bl report` and `bl view` render those when
-the page is read (see **Rendered pages** under `### bl sync`). A hand-written section under the
-same heading, with anything besides that table in it, is no finding: `renderPage` keeps it.
+`roadmap-file` and `roadmap-section` check the shape of `roadmap.md`, and `theme-brief` checks a
+theme's `brief:` (see **The roadmap** and **Themes and Epics**). `dictionary-file` (F-82) is an
+error at `backlog.json`: a path in the `"dictionaries"` list of `backlog.json` that is not a file
+(see **Dictionaries**).
 
-`frontmatter-yaml` and `frontmatter-list` (F-62 D4, `findFrontmatterFindings`) come first,
-from the problems of the tolerant graph `bl validate` loads once (`loadBacklog(config,
-{ tolerant: true })`, F-77 D2) over the root `index.md`, every unit's `index.md` and change
-documents, and every task file under `tasks/` (`frontmatterFiles`, the graph's `files`). A
-block that is not YAML is `frontmatter-yaml` (error) at the parser's line and column, and the
-file is not read any further: the graph leaves its unit out, so no reader sees it, and a
-change document takes its unit's `index.md` with it, so nothing else is reported from a
-half-read file. A list key that holds a non-empty scalar or a mapping, or a member that is
-not a string (not a mapping, for a change document's `repos:`), is `frontmatter-list` (error)
-at the key's line, and that unit is left out the same way. `bl validate` pins its graph on
-the config it hands its checks (`config.backlogGraph`, `graphOf`), so every reader it calls
-projects that one graph. Every other command loads the graph strictly and stops at the first
-such unit file, any unit's, with its `FrontmatterError` or `FrontmatterListError`.
+`priority-file` and `priority-unit` (F-78 D1, `findPriorityFindings`) come from the graph's
+problems. Both are errors at `priority.yaml`:
 
-`duplicate-id`, `dangling-dep`, `dangling-feature`, `dangling-batch` and `feature-and-batch`
-(F-125 D1: a story that names both a feature and a story batch) are the graph's problems too
-(`findDuplicateFindings`, `findDanglingFindings`), in the words `bl validate` always used:
-a story's duplicate once per id at its first file listing every copy and title, a
-component's once per id at its second directory, an epic's or a feature's once per later
-copy. A task's duplicate id stays `findTaskFindings`'s `task-field`.
+- `priority-file`: the file is missing, is not YAML, or is not a list of non-empty id strings.
+- `priority-unit`: an entry names no feature or story, or names a story inside a feature, an
+  update story, a task or a work unit already ranked.
 
-`repo-key` (F-52 D5, `validateFrontmatter`) is an error on a story or a
-feature that still sets `primary_repo` or `secondary_repos`, once per key
-(never also `unknown-fm-key`). bl reads neither: the message names the
-story's component and that component's repo, or says a feature's repos come
-from its stories' components, and says to remove it.
-It replaces `component-repo-mismatch`, `feature-primary-repo-unlisted` and
+A work unit left in the list whose status meets `done` is no finding: the order skips it, and the
+next `bl rank --commit` removes it. Only a `priority.yaml` that is not YAML stops other commands
+(a strict `loadBacklog` throws it). A missing or malformed `priority.yaml` is an empty order. Then
+every work unit whose status does not meet `done` is in the dated tail (see **Priority**). These
+two findings replace the two findings of the old feature order file (F-53 D1), which bl no longer
+reads.
+
+`generated-section` (F-79 D3, `findGeneratedSectionFindings`) is an error at the page. It is a
+committed page that holds a section that `GENERATED_SECTIONS` names for its kind. The section's
+body is its generated table, with the same header row (`isGeneratedBody`). The message names the
+heading. `bl report` and `bl view` render those sections when the page is read (see **Rendered
+pages** under `### bl sync`). A hand-written section under the same heading, with anything
+besides that table in it, is no finding: `renderPage` keeps it.
+
+`frontmatter-yaml` and `frontmatter-list` (F-62 D4, `findFrontmatterFindings`) come first. They
+come from the problems of the tolerant graph that `bl validate` loads once (`loadBacklog(config,
+{ tolerant: true })`, F-77 D2). The graph covers the root `index.md`, every work unit's and
+other entry's `index.md` and change documents, and every task file under `tasks/`
+(`frontmatterFiles`, the graph's `files`).
+
+- `frontmatter-yaml` (error) is a block that is not YAML, at the parser's line and column. bl
+  reads the file no further. The graph leaves its node out, so no reader sees it. A change
+  document takes its work unit's `index.md` with it, so bl reports nothing else from a half-read
+  file.
+- `frontmatter-list` (error) is a list key that holds a non-empty scalar or a mapping. It is
+  also a list member that is not a string (for a change document's `repos:`, not a mapping). It
+  is at the key's line, and the graph leaves that node out the same way.
+
+`bl validate` pins its graph on the config that it hands its checks (`config.backlogGraph`,
+`graphOf`), so every reader that it calls projects that one graph. Every other command loads the
+graph strictly. It stops at the first such unit file, of any kind, with its `FrontmatterError` or
+`FrontmatterListError`.
+
+`duplicate-id`, `dangling-dep`, `dangling-feature`, `dangling-batch` and `feature-and-batch` are
+the graph's problems too (`findDuplicateFindings`, `findDanglingFindings`). `feature-and-batch`
+(F-125 D1) is a story that names both a feature and a story batch. bl reports them in the words
+that `bl validate` always used:
+
+- a story's duplicate: once per id, at its first file, listing every copy and title;
+- a component's duplicate: once per id, at its second directory;
+- an epic's or a feature's duplicate: once per later copy.
+
+A task's duplicate id stays a `task-field` finding of `findTaskFindings`.
+
+`repo-key` (F-52 D5, `validateFrontmatter`) is an error on a story or a feature that still sets
+`primary_repo` or `secondary_repos`, once per key. It is never also `unknown-fm-key`. bl reads
+neither key. For a story, the message names the story's component and that component's repo. For
+a feature, it says that a feature's repos come from its stories' components. Both say to remove
+the key. `repo-key` replaces `component-repo-mismatch`, `feature-primary-repo-unlisted` and
 `feature-secondary-repos`, which compared the copies.
 
-The component rules (F-49 D4, `validate.js` `findComponentFindings`), all
-errors: `component-unknown` is a story with no `component:` or one naming a
-component with no directory under `components/`;
-`home-component` is a registered repo with no `home: true` component or
-several (anchored at `components/` when there is none), or a component
-whose `repo` backlog.json does not register; `component-has-status` is `points:` or
-`status:` on a component; `component-paths` (F-52 D4, F-61 D2) is a `paths:` entry
-that is empty, not a string, absolute or has a `..` or `.` segment (`paths:` itself is
-optional). Two component directories with one id are
-`duplicate-id`; every reader (`bl sync`, `bl validate`, a story's
-placement) takes the first by directory name.
+The component rules (F-49 D4, `findComponentFindings` in `validate.js`) are all errors:
 
-`bad-tokens-by-step` is an error on a story or feature whose `tokens_by_step`
-(see Tokens per step) is not a mapping, has a key that does not match
-`^[a-z][a-z-]*(\.[1-9]\d*)?$`, or has an entry that is not a mapping of the
-four token kinds to non-negative integers (`validate.js`
-`tokensByStepProblems`).
+- `component-unknown`: a story with no `component:`, or one that names a component with no
+  directory under `components/`.
+- `home-component`: a registered repo with no `home: true` component, or with several. When
+  there is none, the finding is at `components/`. It is also a component whose `repo`
+  `backlog.json` does not register.
+- `component-has-status`: `points:` or `status:` on a component.
+- `component-paths` (F-52 D4, F-61 D2): a `paths:` entry that is empty, is not a string, is
+  absolute, or has a `..` or `.` segment. `paths:` itself is optional.
 
-`bad-update-request` is an error on an update story whose request state is
-malformed (`validate.js` `updateRequestProblem`): an `update_request` other
-than `approve` or `drop`, a drop without a non-empty `update_request_reason`,
-or a reason on anything but a drop. `bl updates run` skips such a story and
-`bl updates status` shows it as `decision needed`.
+Two component directories with one id are `duplicate-id`. Every reader (`bl sync`,
+`bl validate`, a story's placement) takes the first by directory name.
 
-`plugin-binary` is a warning that fires for every plugin entry whose
-resolved first-token is not on PATH. The finding carries extra
-sub-fields on top of the standard shape: `plugin` (key from
-`backlog.json` plugins map), `stages` (array of stage / op names
-within that plugin sharing the same first-token), and `command` (the
-resolved first-token). Suppress the category on tool-incomplete
-machines with `bl validate --skip plugin-binary`.
+`bad-tokens-by-step` (`tokensByStepProblems` in `validate.js`) is an error on a story or feature
+whose `tokens_by_step` (see Tokens per step) breaks its shape:
 
-`bl validate` always checks the whole backlog; it takes no scope option
-(`--project` is an unknown option, F-51 D5).
+- it is not a mapping;
+- it has a key that does not match `^[a-z][a-z-]*(\.[1-9]\d*)?$`;
+- it has an entry that is not a mapping of the four token kinds to non-negative integers.
+
+`bad-update-request` (`updateRequestProblem` in `validate.js`) is an error on an update story
+whose request state is malformed:
+
+- an `update_request` other than `approve` or `drop`;
+- a drop without a non-empty `update_request_reason`;
+- a reason on anything but a drop.
+
+`bl updates run` skips such a story, and `bl updates status` shows it as `decision needed`.
+
+`plugin-binary` is a warning for each plugin entry whose resolved first token is not on PATH.
+On top of the standard shape, the finding has three more fields:
+
+- `plugin`: the key in the `plugins` map of `backlog.json`;
+- `stages`: an array of the stage or op names in that plugin that share the first token;
+- `command`: the resolved first token.
+
+On a machine that lacks some tools, skip the category with `bl validate --skip plugin-binary`.
+
+`bl validate` always checks the whole backlog. It takes no scope option: `--project` is an
+unknown option (F-51 D5).
 
 ### `bl fix`
 
-Apply auto-fixable remediations for findings that `bl validate` reports. No
-code is supported today: the one there was, `asymmetric-dep`, went with F-77
-D3 (an edge is stated once, today in `blockers.json` (F-111); the
-inverse is derived), so every run prints the empty report and writes nothing.
-The command and its contract stay (feature F-77 Q1, which recommends removing
-it in a later story); `SUPPORTED_CODES` in `src/fix.js` is empty, and
-`bl fix --code <any>` exits 2.
+`bl fix` applies the automatic fixes for findings that `bl validate` reports. Today it supports
+no code. The one it had, `asymmetric-dep`, went with F-77 D3: an edge is stated once, today in
+`blockers.json` (F-111), and bl derives the inverse. So each call prints the empty report and
+writes nothing. The command and its contract stay (feature F-77 Q1, which recommends removing it
+in a later story). `SUPPORTED_CODES` in `src/fix.js` is empty, and `bl fix --code <any>` exits 2.
 
 ```bash
 bl fix                      # scanning… on stderr; nothing on stdout
@@ -6029,33 +6088,33 @@ bl fix --story S-858        # the same, after checking S-858 exists
 bl fix --json               # {"fixes":[],"summary":{"total":0,"byCode":{}}}
 ```
 
-`bl fix` parses its arguments strictly (`parseFixArgs` in `src/fix.js`, not
-the shared `parseArgs`): an option it does not accept, or a stray positional,
-is an error, not a silent unscoped run.
+`bl fix` parses its arguments strictly (`parseFixArgs` in `src/fix.js`, not the shared
+`parseArgs`). An option that it does not accept, or a stray positional, is an error, not a silent
+call with no scope.
 
 Output:
-stdout — the fix report (or one JSON object with `--json`); empty when
-no fixes were applied, which today is always.
-stderr — progress lines, e.g. `scanning N stories…`. Empty in `--json`
-mode when stdout is not a TTY.
+stdout — the fix report (or one JSON object with `--json`). It is empty when `bl fix` applied no
+fix, which today is always.
+stderr — progress lines, for example `scanning N stories…`. It is empty in `--json` mode when
+stdout is not a TTY.
 
 Exit codes:
 0 Completed cleanly.
 1 The backlog lock was not free within 60 s (`Timed out after 60000 ms waiting for lock`).
-2 Invalid arguments: an option `bl fix` does not accept
+2 Invalid arguments: an option that `bl fix` does not accept
 (`bl fix: unknown option "--bogus"`), a stray positional
 (`bl fix: unexpected argument "S-1"`), or an unknown `--code`, `--theme`
-or `--story` (`bl fix: unknown --story "S-999"`). An unknown option or
-positional is refused before the backlog is read, and an unknown `--theme`
-or `--story` right after the read-only scan.
+or `--story` (`bl fix: unknown --story "S-999"`). `bl fix` refuses an unknown option or
+positional before it reads the backlog, and an unknown `--theme` or `--story` right after the
+read-only scan.
 
-`bl fix` (without `--dry-run`) still holds the backlog lock for its scan, so
-a code added later plans and writes from one view; `--dry-run` reads without
-it.
+Without `--dry-run`, `bl fix` still holds the backlog lock for its scan. So a code added later
+plans and writes from one view. `--dry-run` reads without the lock.
 
 ### `bl merge`
 
-Merges the story branch into main, marks done, syncs, pushes, and removes the worktree:
+`bl merge` merges the story's branch into main, marks the story done, syncs, pushes, and removes
+the worktree:
 
 ```bash
 bl merge S34
@@ -6064,247 +6123,271 @@ bl merge S34 --switch-main  # switch a stale main checkout back to main first
 bl merge S34 --no-review    # merge a story that was never reviewed
 ```
 
-`bl merge S-<n>` and `bl merge F-<n>` apply **one set of gates** from one
-function, `mergeGates(unit, { config, args, repos })` in `src/merge-gates.js`
-(F-36 D1), on a `storyUnit` or `featureUnit` before any repo is touched. It
-returns findings and never exits; `main` (`cleanup.js`) and `cmdMerge`
-(`feature-cmd.js`) print every finding and exit 1. The messages name the id
-only, so a story and a feature refused for the same reason read the same.
-Kind-specific preconditions stay with the caller (a feature must have started,
-`isFeatureBranched`; a story's repo must be its component's, registered). There is
-no CI gate (D2): no repo has hosted CI since S-565, and the repo-local
-pre-push gate runs on `git push origin main`. In order:
+`bl merge S-<n>` and `bl merge F-<n>` apply **one set of gates** from one function,
+`mergeGates(unit, { config, args, repos })` in `src/merge-gates.js` (F-36 D1). It runs on a
+`storyUnit` or a `featureUnit` before `bl merge` touches any repo. It returns findings and never
+exits. `main` (`cleanup.js`) and `cmdMerge` (`feature-cmd.js`) print every finding and exit 1.
+The messages name only the id, so a story and a feature refused for the same reason read the
+same.
 
-- **Blocker gate** (F-66 D3) — one `blocker` finding per unmet, active
-  `blockers.json` edge at a status on `merge`'s nominal path (`done`), on the unit or, for a
-  feature, on one of its stories (`heldBy(config, id, "merge")`, injectable as
-  `held`): `<unit> is held at done by <blocker> (<status>, needs <until>): <id>
+The caller keeps the preconditions of its own kind: a feature must have started
+(`isFeatureBranched`), and a story's repo must be its component's registered repo. There is no CI
+gate (D2): no repo has hosted CI since S-565, and the pre-push gate in each repo runs on
+`git push origin main`. The gates, in order:
+
+- **Blocker gate** (F-66 D3) — one `blocker` finding for each active, unmet `blockers.json` edge
+  at a status on `merge`'s nominal path (`done`). The edge is on the work unit, or,
+  for a feature, on one of its stories (`heldBy(config, id, "merge")`, injectable as `held`):
+  `<unit> is held at done by <blocker> (<status>, needs <until>): <id>
 merges once <blocker> meets "<until>" (bl status <blocker>).` No flag
-  bypasses it; the blocker moving on or `bl block remove` lifts it.
-- **Review gate** — `featureReviewGate` for both kinds: refused while the
-  unit is in `fixing` or `in_review` (its transition log, F-69 D5; a unit with
-  no log is placed by its change document) or the latest review session of
-  its change document has an unchecked **Must** or **Should** box. The
-  refusal names the status, the round and the next verb: `bl implement` for
-  `fixing`, `bl review` for `in_review`. `ready_for_merge` and open nits pass,
-  so a unit `bl run` ended `clean` always passes. No flag bypasses it; to
-  override, the operator runs `bl force <id> ready_for_merge` (see `### bl force`). After the merge,
-  each repo's commit goes to its `merged:` entry and a `## Merge` line, and
-  the change is `merged`; a story merged alone gets no tag and no release
-  manifest.
-- **Never reviewed** (D3, S-755 folded in) — a unit whose change document has
-  no Review Log session (or no change document) is refused:
+  bypasses it. The blocker moving on, or `bl block remove`, lifts it.
+- **Review gate** — `featureReviewGate`, for both kinds. It refuses the work unit in two cases:
+  - its status is `fixing` or `in_review`. The status comes from its transition log (F-69 D5).
+    For a work unit with no log, its change document places it.
+  - the latest review session of its change document has an unchecked **Must** or **Should**
+    box.
+
+  The refusal names the status, the round and the next verb: `bl implement` for `fixing`, and
+  `bl review` for `in_review`. `ready_for_merge` and unchecked nits pass, so a work unit that
+  `bl run` ended `clean` always passes. No flag bypasses the gate. To override it, the operator
+  runs `bl force <id> ready_for_merge` (see `### bl force`). After the merge, each repo's commit
+  goes to its `merged:` entry and to a `## Merge` line, and the change is `merged`. A story merged
+  alone gets no tag and no release manifest.
+
+- **Never reviewed** (D3, S-755 folded in) — the gate refuses a work unit with no change document,
+  or whose change document has no Review Log session:
   ``<id> has never been reviewed — run `bl review <id>` (or `bl run <id>`), or pass --no-review to merge without one.``
-  Each repo's branch is looked up with `change.find`; a PR in state `MERGED`
-  adds `<repo>: PR #<n> (<url>) merged on the forge at <headRefOid> before any review`.
-  A forge without `change.find`, or a failing op, skips the lookup, not the
-  check. `--no-review` merges anyway and appends
-  `- Merged without review (operator, <date>)` to the change document's
-  `## Merge`, plus `- <repo>: PR #<n> merged on the forge at <sha> before any review`
-  for each forge-merged PR. There is no retrospective review (S-789).
-  A story at `ready_for_merge` whose branch has no commits ahead of
-  `origin/main` (local `main` when there is no origin) in every repo is not
-  refused (S-1437): `bl run` finished it without a pull request (see "A branch
-  with no commits" under `bl run` for a story). `mergeGates` returns
-  `noCommits: true`; `bl merge` merges nothing, writes no `commit:`, removes
-  the worktree and the branch, and appends
-  `- <date> · <repo> · no commits on the branch: nothing merged` to `## Merge`.
-  A branch with commits, or a story at another status (for example
-  `in_progress`), is still refused. So a no-commit story that `bl merge`
-  escalated (its status is now `escalated`, not `ready_for_merge`) fails this
-  gate on the rerun; `--no-review` merges it.
-- **Escalation gate** — an open `## Escalation` in the story or feature file.
-- **Stray worktree** — a worktree on the unit's branch in a registered repo
-  the unit does not own (a story's one repo, a feature's stories' repos) is
-  refused, naming the repo: work in another repo is another story.
-- **Main-checkout gate** — runs only when nothing above refused, so
-  `--switch-main` never acts on a merge that stops anyway. Every target
-  repo's main checkout must be on `main` (`preflightMainCheckouts`, which
-  prints its own detail). A checkout on another branch is classified:
-  - **stale** — no tracked changes and the branch is merged, either an
-    ancestor of `origin/main` (after `git fetch --prune origin`, then an
-    explicit `git fetch origin +refs/heads/main:refs/remotes/origin/main` so
-    a narrowed `remote.origin.fetch` cannot leave `origin/main` stale) or the
-    forge's `change.find` lists the branch's PR as `MERGED` with a
-    `headRefOid` that is the branch's `HEAD` (GitHub squash-merges, so ancestry
-    alone can't tell). The command prints
+  - bl looks up each repo's branch with `change.find`. A PR in state `MERGED` adds
+    `<repo>: PR #<n> (<url>) merged on the forge at <headRefOid> before any review`. A forge
+    without `change.find`, or an op that fails, skips the lookup, not the gate.
+  - `--no-review` merges anyway. It appends `- Merged without review (operator, <date>)` to the
+    change document's `## Merge`, and
+    `- <repo>: PR #<n> merged on the forge at <sha> before any review` for each PR that the forge
+    merged. There is no review after the merge (S-789).
+  - The gate does not refuse a story at `ready_for_merge` whose branch has no commits ahead of
+    `origin/main` in any repo (S-1437). When there is no origin, it compares with local `main`.
+    `bl run` finished such a story without a pull request (see "A branch with no commits" under
+    `bl run` for a story). `mergeGates` returns `noCommits: true`. `bl merge` then merges
+    nothing, writes no `commit:`, removes the worktree and the branch, and appends
+    `- <date> · <repo> · no commits on the branch: nothing merged` to `## Merge`.
+  - The gate still refuses a branch with commits, or a story at another status (for example
+    `in_progress`). So a story with no commits that `bl merge` escalated fails this gate on the
+    rerun: its status is now `escalated`, not `ready_for_merge`. `--no-review` merges it.
+- **Escalation gate** — the story or feature file has an `## Escalation` that is not `None.`.
+- **Stray worktree** — the gate refuses a worktree on the work unit's branch in a registered repo
+  that the work unit does not own. The refusal names the repo. A story owns its one repo, and a feature
+  owns its stories' repos. Work in another repo is another story.
+- **Main-checkout gate** — it runs only when no gate above refused, so `--switch-main` never acts
+  on a merge that stops anyway. Every target repo's main checkout must be on `main`
+  (`preflightMainCheckouts`, which prints its own detail). The gate sorts a checkout on another
+  branch into one of these:
+  - **stale** — the checkout has no tracked changes, and its branch is merged in one of two ways:
+    - the branch is an ancestor of `origin/main`. bl checks this after `git fetch --prune origin`
+      and then an explicit `git fetch origin +refs/heads/main:refs/remotes/origin/main`, so that
+      a narrowed `remote.origin.fetch` cannot leave `origin/main` stale.
+    - the forge's `change.find` lists the branch's PR as `MERGED`, with a `headRefOid` that is
+      the branch's `HEAD`. GitHub squash-merges, so ancestry alone cannot tell.
+
+    The command prints
     `git -C <repo> switch main && git -C <repo> pull --ff-only && git -C <repo> branch -D -- <branch>`
-    and exits non-zero; `--switch-main` runs those steps and continues.
-    `--switch-main` acts only when no other target is refused.
-  - **dirty** — tracked changes (untracked files don't count; `git switch`
-    carries them): refused, listing the paths.
-  - **unmerged** — clean but the merge is unconfirmed (no forge op, no
-    merged PR, or `headRefOid` differs): refused, with up to 10 commits
-    ahead of `origin/main` and the reason.
-  - **detached HEAD**, or the checkout on the very branch being merged:
-    refused.
+    and exits non-zero. `--switch-main` runs those steps and continues. `--switch-main` acts
+    only when the gate refuses no other target.
 
-  A side change is a `bl side` story with its own worktree
-  (`prompts/_side-changes.md`), so a stale checkout should be rare.
+  - **dirty** — the checkout has tracked changes. Untracked files do not count, because
+    `git switch` carries them. The gate refuses it and lists the paths.
+  - **unmerged** — the checkout is clean, but bl cannot show that the branch is merged: there is no forge op,
+    no merged PR, or `headRefOid` differs. The gate refuses it, with up to 10 commits ahead of
+    `origin/main` and the reason.
+  - **detached HEAD**, or the checkout is on the very branch that `bl merge` merges: the gate
+    refuses it.
 
-**Integration** (F-36 D4). After the gates and before the first merge into
-`main`, both kinds call `integrateForMerge` (`src/merge-integrate.js`), which
-builds a prep from the unit's existing worktrees (`mergePrep`: the first repo
-in merge order with a worktree on the branch leads, the rest are
-`otherWorktrees`; a repo with no worktree is skipped, and with none at all
-there is nothing to integrate) and runs `integrateUnit` (`src/feature-run.js`,
-beside `reviewFeature`):
+  A side change is a `bl side` story with its own worktree (`prompts/_side-changes.md`), so a
+  stale checkout should be rare.
 
-- It takes the unit's run lock (refused while a `bl run` of the unit holds it)
-  and the work unit locks of the unit and its stories (`takeRunLocks`, F-122
-  D9; `bl merge F-n` already holds them, so its take goes one depth deeper),
-  and refuses when any worktree has uncommitted changes, before any merge.
-- Per repo, in merge order: `git fetch origin` with `MAIN_REFSPEC` under the
-  repo's main sync lock (a failed fetch is a warning and the last fetched
-  `origin/main` is used; local `main` when there is no origin), then
-  `git merge --no-edit <ref>` **into the branch, in the worktree**, never the
-  reverse. Each repo ends `current`, `merged` or `conflicted`; a branch with
-  no commits of its own (a repo prepared up front that no story changed) is
-  left `current`, not fast-forwarded.
+**Integration** (F-36 D4). After the gates and before the first merge into `main`, both kinds
+call `integrateForMerge` (`src/merge-integrate.js`). It builds a prep from the work unit's
+existing worktrees (`mergePrep`):
+
+- The first repo in merge order with a worktree on the branch leads. The rest are
+  `otherWorktrees`.
+- `mergePrep` skips a repo with no worktree. With no worktree at all, there is nothing to
+  integrate.
+
+Then it runs `integrateUnit` (`src/feature-run.js`, beside `reviewFeature`):
+
+- `integrateUnit` takes the work unit's run lock. A `bl run` of the work unit that holds the lock
+  makes it refuse. It also takes the work unit locks of the work unit and its stories
+  (`takeRunLocks`, F-122 D9). `bl merge F-n` already holds them, so its take goes one depth
+  deeper. Before any merge, it refuses when any worktree has uncommitted changes.
+- For each repo, in merge order:
+  1. It runs `git fetch origin` with `MAIN_REFSPEC`, under the repo's main sync lock. A failed
+     fetch is a warning, and it uses the last fetched `origin/main`. When there is no origin, it
+     uses local `main`.
+  2. It runs `git merge --no-edit <ref>` **into the branch, in the worktree**, never the reverse.
+
+  Each repo ends `current`, `merged` or `conflicted`. A branch with no commits of its own (a
+  repo prepared up front that no story changed) stays `current`. `integrateUnit` does not
+  fast-forward it.
+
 - A conflicted repo first goes through the `regenerate` stage (F-36 D5; see
-  `### Lifecycle Stages`): the generated files its active `regenerate`
-  plugins match are taken from the branch side and regenerated. When nothing
-  else conflicts, `bl` commits the merge and the repo is `merged`; otherwise it
-  stays `conflicted` with only the files left to merge by hand, which go to the
-  resolution agent below, and any escalation also lists the regenerated files
-  and any plugin that failed, with its output.
-- When no repo conflicts but some took commits, the test gate (`runTestGate`)
-  runs on the integrated tree of every repo and writes its `## Gate` line.
-  Green pushes every branch with commits its origin lacks (`git push origin
-HEAD`): one merged or committed on by a session, and one an earlier
-  rejected push left behind, so the PR shows what merges; a failed push stops
-  the merge with the merge kept on the branch, and the rerun pushes it. A
-  misconfigured gate escalates.
-- **The resolution agent** (F-36 D6). A repo still conflicted after the
-  `regenerate` stage, or a red gate after clean merges, goes to one
-  `merge-resolve` session for the unit (`resolveIntegration`): `workon` mode
-  on `agent` (the implementer's permissions), in the lead worktree. Its
-  `{{mergeRepos}}` names per repo the worktree, the ref, each conflicted file
-  with both sides' commits since the merge base (`main: <sha> <subject>`,
-  `branch: <sha> <subject>`) and the regenerated files it must not edit;
-  `{{gateFailure}}` carries a red gate's details (command, log, excerpt). It
-  resolves keeping both sides' intent, commits each merge with
-  `git commit --no-edit` (fixes as ordinary commits on top), never touches a
-  main checkout, and writes `## Escalation` when it cannot. After it, each
-  repo must have no `MERGE_HEAD`, an empty `git ls-files -u`, the ref merged,
-  and no conflict marker (`git grep -nE '^(<{7}|>{7})( |$)' <merge> --
-<files>` in each merge since the integration began, over the conflicted
-  files and those a retained resolution merged); a failed session, an
-  outcome with `resolved: false` (`schemas/merge-resolve.json`), an escalation
-  or any failed check runs
-  `git merge --abort` where a merge is still in progress, rolls back and
-  escalates `merge with main: <what failed>, and the resolution agent did not
-resolve it`, with what bl found, the outcome's summary and where its
-  commits are kept (`git reset --keep <sha>` restores them). A merge that
-  failed with no conflicted file (git refused to start it) has nothing to
-  resolve and escalates `merge with main: <repo> conflicts with main` as
-  before.
-- Then the test gate runs with its fix step (`testGateWithFix`, as in
-  `bl run`; its escalations read `merge with main: …` and name `bl merge`),
-  and **one review round over the resolution only** (D7, see `## Review
-Cycle`): per repo `git show --remerge-diff <merge>` and
-  `git diff <merge>..HEAD` (`resolutionScope`), and for a repo current with
-  main that a session committed in, `git diff <start>..HEAD`. The round
-  records `in_review` and its verdict in the unit's log. `ready_for_merge`
-  pushes and the merge goes on. `fixing` escalates `merge with main: the
-review of the resolution left open items` with the open items and keeps the
-  resolution on the branch, the unit in `fixing`: clear
-  `## Escalation`, then `bl run <id> --resume` fixes it through the ordinary
-  loop and `bl merge <id>` integrates again. The round is outside the round
-  cap, and the run state records it (`integrationReview`), so the resume owes
-  it its fix and a closing round below, at or above the cap. Anything else
-  (an aborted round, no verdict, or `ready_for_merge` with an escalation written
-  during the round) rolls back and escalates. A clean merge or a regeneration
-  alone is never re-reviewed.
-- Every escalation names, per repo, the ref, the conflicted files with both
-  sides' commits, and the next step (D8); what an agent wrote in
-  `## Escalation` during the merge is kept below bl's text ("Written during
-  the merge:").
-- Every stop before the push, except the review that leaves items in `fixing`, rolls back the
-  merges it made and every commit a session made in any repo, current ones
-  too (`git reset --keep` to each repo's start), so each branch is left as it
-  was reviewed and the rerun integrates and gates it again. A stop by any
-  thrown error, not only a session that could not run, aborts every merge in
-  progress, rolls back and escalates under the run lock, with the conflict
-  evidence read before the abort (what the resolution recorded, else each repo
-  still mid-merge); when that escalation cannot be written, the log carries
-  it. A roll back that
-  fails is named in the escalation (never "rolled back") and recorded in the
-  run state (`integrationRetained`, each repo's start): the rerun counts what
-  is left as its own merge, gates it before it can land, and rolls back to
-  that start. When a resolution or fix session had run, the record says so
-  (`review`, with the files the resolution was to merge), and the rerun owes
-  that work the resolution checks, the gate with its fix step and a clean
-  review of the resolution (no new session when nothing else
-  conflicts) before it can land; a review that leaves items in `fixing` keeps it on the branch as
-  above and clears the record.
-  `bl merge` then exits 1 having touched no main checkout. The sessions run
-  headless unless the agent has no headless mode, as `bl review` chooses.
+  `### Lifecycle Stages`). bl takes the generated files that its active `regenerate` plugins
+  match from the branch side, and regenerates them. When nothing else conflicts, `bl` commits the
+  merge, and the repo is `merged`. Otherwise the repo stays `conflicted`, with only the files left
+  to merge by hand. Those files go to the resolution agent below. Any escalation also lists the
+  regenerated files, and each plugin that failed with its output.
+- When no repo conflicts but some repos took commits, the test gate (`runTestGate`) runs on the
+  integrated tree of every repo. It writes its `## Gate` line. A misconfigured gate escalates.
+  On green, bl pushes every branch with commits that its origin lacks (`git push origin
+HEAD`), so the PR shows what merges. That is a branch that a session merged or committed on,
+  or one that an earlier rejected push left behind. If a push fails, the merge stops and keeps the
+  merge on the branch, and the rerun pushes it.
+- **The resolution agent** (F-36 D6). A repo still conflicted after the `regenerate` stage, or a
+  red gate after clean merges, goes to one `merge-resolve` session for the work unit
+  (`resolveIntegration`). The session runs in `workon` mode on `agent` (the implementer's
+  permissions), in the lead worktree. Its slots:
+  - `{{mergeRepos}}` names, for each repo, the worktree, the ref, and each conflicted file with
+    both sides' commits since the merge base (`main: <sha> <subject>`,
+    `branch: <sha> <subject>`). It also names the regenerated files, which the session must not
+    edit.
+  - `{{gateFailure}}` carries a red gate's details (command, log, excerpt).
+
+  The session resolves each conflict and keeps both sides' intent. It commits each merge with
+  `git commit --no-edit`, and each fix as an ordinary commit on top. It never touches a main
+  checkout, and it writes `## Escalation` when it cannot resolve. After the session, bl checks
+  that each repo has:
+  - no `MERGE_HEAD`;
+  - an empty `git ls-files -u`;
+  - the ref merged;
+  - no conflict marker: `git grep -nE '^(<{7}|>{7})( |$)' <merge> --
+<files>` in each merge since the integration began. It searches the conflicted files and the
+    files that a retained resolution merged.
+
+  bl stops the merge in four cases: the session fails, its outcome has `resolved: false`
+  (`schemas/merge-resolve.json`), it writes an escalation, or any check fails. Then bl:
+  1. runs `git merge --abort` where a merge is still in progress;
+  2. rolls back;
+  3. escalates `merge with main: <what failed>, and the resolution agent did not
+resolve it`.
+
+  The escalation gives what bl found, the outcome's summary, and where the session's commits are
+  kept (`git reset --keep <sha>` restores them).
+
+  A merge that failed with no conflicted file (git refused to start it) has nothing to resolve.
+  It escalates `merge with main: <repo> conflicts with main`, as before.
+
+- Then the test gate runs with its fix step (`testGateWithFix`, as in `bl run`). Its
+  escalations read `merge with main: …` and name `bl merge`. Then **one review round over the
+  resolution only** runs (D7, see `## Review
+Cycle`). It reads, for each repo, `git show --remerge-diff <merge>` and
+  `git diff <merge>..HEAD` (`resolutionScope`). For a repo current with main that a session
+  committed in, it reads `git diff <start>..HEAD`. The round records `in_review` and its verdict
+  in the work unit's log. The verdict decides what comes next:
+  - `ready_for_merge`: bl pushes, and the merge goes on.
+  - `fixing`: bl escalates `merge with main: the
+review of the resolution left open items` with the unchecked items. It keeps the resolution
+    on the branch and the work unit in `fixing`. To go on, clear `## Escalation`. Then
+    `bl run <id> --resume` fixes the items through the ordinary review rounds, and
+    `bl merge <id>` integrates again. This round is outside the round cap, and the run state
+    records it (`integrationReview`). So the resume owes it its fix and a closing round,
+    whether the work unit is below, at or above the cap.
+  - Anything else rolls back and escalates: an aborted round, no verdict, or `ready_for_merge`
+    with an escalation written during the round.
+
+  bl never reviews a clean merge or a regeneration alone again.
+
+- Every escalation names, for each repo, the ref, the conflicted files with both sides' commits,
+  and the next step (D8). bl keeps what an agent wrote in `## Escalation` during the merge below
+  its own text ("Written during the merge:").
+- Every stop before the push rolls back, except the review that leaves items in `fixing`. It
+  rolls back the merges that it made, and every commit that a session made in any repo, current
+  repos too (`git reset --keep` to each repo's start). So each branch is left as it was reviewed,
+  and the rerun integrates and gates it again.
+- A stop by any thrown error, not only a session that could not run, does three things under the
+  run lock. It aborts every merge in progress, rolls back and escalates. The escalation carries
+  the conflict evidence read before the abort: what the resolution recorded, or else each repo
+  still in the middle of a merge. When bl cannot write that escalation, the log carries it.
+- If a roll back fails, the escalation names it (never "rolled back"). The run state records it
+  too (`integrationRetained`, each repo's start). The rerun counts what is left as its own merge,
+  gates it before it can land, and rolls back to that start.
+- When a resolution or fix session had run, the record says so (`review`, with the files that
+  the resolution was to merge). The rerun then owes that work three things before it can land:
+  the resolution checks, the gate with its fix step, and a clean review of the resolution. When
+  nothing else conflicts, it starts no new session for them. A review that leaves items in
+  `fixing` keeps the work on the branch, as above, and clears the record.
+
+After such a stop, `bl merge` exits 1, and it has touched no main checkout. The sessions run
+headless unless the agent has no headless mode, as `bl review` chooses.
 
 **Every merge commit is made in a throwaway worktree and pushed as it is**
-(F-96 D3, S-1452). `cleanupOneRepo` calls `checkedMerge` for every repo with
-unmerged commits; it never merges in the main checkout:
+(F-96 D3, S-1452). `cleanupOneRepo` calls `checkedMerge` for every repo with unmerged commits.
+It never merges in the main checkout:
 
-1. It adds a throwaway worktree detached at `origin/main` under the worktree
-   root (where a session stack serves an app.roost.cc worktree's own client)
-   and runs `git merge --no-ff` there with the usual message.
-2. Only when the repo's `check` stage resolves (`"plugins-check": ["ci-check"]`
-   on its `backlog.json` `repos` entry), it runs the `check` plugins with `{{commit}}` (the merge commit),
-   `{{repoPath}}` (the main checkout), `{{repoName}}`, `{{branchName}}`,
-   `{{storyId}}`, `{{roostDir}}` and `{{backlogDir}}`. Interpolation is
-   `interpolateCommand`: an unresolved placeholder stops the repo. A failed run
-   runs once more (E70 R10). Each run adds a `## Gate` line to the change
-   document: `- <date> · <repo> · <command> · <verdict> (attempt <n>) · commit <40 hex>`.
-3. On a pass it checks that the main checkout can fast-forward to the commit
-   (`fastForwardBlocker`: local `main` is an ancestor of it, and
-   `git read-tree -n -m -u HEAD <commit>` finds no changed or untracked file
-   in the way). If it cannot, it prints the cause and pushes nothing.
-4. It runs `git push origin <commit>:refs/heads/main` from the worktree, with
-   the push's output (a pre-push hook's test run) streamed, and then
-   `git merge --ff-only <commit>` in the main checkout.
+1. It adds a throwaway worktree, detached at `origin/main`, under the worktree root. (There, a
+   session stack serves an app.roost.cc worktree's own client.) It runs `git merge --no-ff` in
+   that worktree with the usual message.
+2. It runs the `check` plugins only when the repo's `check` stage resolves
+   (`"plugins-check": ["ci-check"]` on its `repos` entry in `backlog.json`). The plugins get
+   `{{commit}}` (the merge commit), `{{repoPath}}` (the main checkout), `{{repoName}}`,
+   `{{branchName}}`, `{{storyId}}`, `{{roostDir}}` and `{{backlogDir}}`. `interpolateCommand`
+   fills them in, and an unresolved placeholder stops the repo. If a check fails, it runs once
+   more (E70 R10). Each attempt adds a `## Gate` line to the change document:
+   `- <date> · <repo> · <command> · <verdict> (attempt <n>) · commit <40 hex>`.
+3. On a pass, it checks that the main checkout can fast-forward to the commit
+   (`fastForwardBlocker`). Local `main` must be an ancestor of the commit, and
+   `git read-tree -n -m -u HEAD <commit>` must find no changed or untracked file in the way. If
+   it cannot fast-forward, it prints the cause and pushes nothing.
+4. It runs `git push origin <commit>:refs/heads/main` from the worktree, and streams the push's
+   output (a pre-push hook's test run). Then it runs `git merge --ff-only <commit>` in the main
+   checkout.
 5. It removes the worktree, whatever happened.
 
-A conflict, a refused push or a `main` that moved leaves the main checkout as
-it was. A conflict, or a push git refuses because `main` moved, prints "main
-moved; rerun `bl merge <id>`" and pushes nothing. A check that fails twice pushes
-nothing and prints the last lines of its output. Every child runs through
-`src/child.js`, the one place that raises a child's interrupt (F-114 D2). A
-check or git command ended by SIGINT or SIGTERM (`INTERRUPT_SIGNALS` in
-`src/signal-exit.js`), or a check that exits 130 or 143, stops the merge at
-once: `src/child.js` prints `bl: <child> was ended by <signal>`, and `bl`
-exits 130 or 143. There is no `## Gate` line, no second run and no push. The
-`exit` listener removes the worktree. Its removal runs in `raiseAfter`
-(F-114 D2a), so an interrupt that ends one of its steps is raised after the
-last one. A step that throws (a git that cannot start) is a warning, and the
-next step runs. A check ended by any other signal (SIGABRT, SIGKILL) is a failed
-run, and a git command ended by one is a failed command. Every `## Gate` line
-(this one, the test gate's `recordGateLine` and a scripted story's) comes from
-`gateLine` in `src/change-doc.js`.
+A conflict, a refused push or a `main` that moved leaves the main checkout as it was. On a
+conflict, or a push that git refuses because `main` moved, bl prints "main moved; rerun
+`bl merge <id>`" and pushes nothing. If a check fails twice, bl pushes nothing and prints the
+last lines of the check's output.
 
-**The main checkout's dependencies are installed after the merge** (S-1452).
-After the push, `cleanupOneRepo` runs the command that `installCommand` gives
-(`npm ci` or `pnpm install --frozen-lockfile`) in the main checkout, because
-`bl` and other repos' sessions run from it. A failed install stops `bl merge`
-with the command to run by hand, and the rerun installs again. Every child of
-`cleanupOneRepo` runs through `src/child.js` with no shell: git through
-`git()`, the install through `runChild`, and the child `bl sync --commit` of a
-merged `bl` repo through `runBl`. `src/child.js` is the one place that raises
-a child's interrupt (F-114 D2): if SIGINT or SIGTERM ends a child, or the
-child `bl sync` exits 130 or 143, `bl` prints `bl: <child> was ended by
-<signal>` and exits 130 or 143. That covers the install, the push of main, the
-worktree and branch removal, the main sync and the backlog commit. A child
-that Node itself killed (`r.error` set, such as `ETIMEDOUT`) is a failed
-command, not an interrupt (`interruptOf`).
+Every child runs through `src/child.js`, the one place that raises a child's interrupt (F-114
+D2). The merge stops at once in two cases:
 
-After the merge the branch's open PR, if any, is closed through
-`change.find` and `change.close`.
+- SIGINT or SIGTERM (`INTERRUPT_SIGNALS` in `src/signal-exit.js`) ends a check or a git command;
+- a check exits 130 or 143.
 
-`bl merge F-<n>` leaves `priority.yaml` as it is (F-78 D3): the merged feature drops out of the
-order because it is closed, and an entry still naming it is skipped until the next
-`bl rank --commit` removes it. In the lock hold that marks the feature done, `recordThemeState` (`theme.js`, F-53 D4)
-appends `- <date>: F-<n> done (<title>).` to the `## State` of the feature's theme, creating the section at the end when
-absent and writing the frontmatter back byte for byte; the commit takes the theme file too. A
-feature whose theme is missing or unreadable only warns.
+Then `src/child.js` prints `bl: <child> was ended by <signal>`, and `bl` exits 130 or 143. There
+is no `## Gate` line, no second attempt and no push. The `exit` listener removes the worktree.
+The removal runs in `raiseAfter` (F-114 D2a), so an interrupt that ends one of its steps is
+raised after the last step. A step that throws (a git that cannot start) is a warning, and the
+next step runs. A check ended by any other signal (SIGABRT, SIGKILL) is a failed check, and a
+git command ended by one is a failed command. Every `## Gate` line comes from `gateLine` in
+`src/change-doc.js`: this one, the test gate's `recordGateLine`, and a scripted story's.
+
+**The main checkout's dependencies are installed after the merge** (S-1452). After the push,
+`cleanupOneRepo` runs the command that `installCommand` gives (`npm ci` or
+`pnpm install --frozen-lockfile`) in the main checkout. It does so because `bl` and other repos'
+sessions run from that checkout. If the install fails, `bl merge` stops and prints the command to
+run by hand, and the rerun installs again.
+
+Every child of `cleanupOneRepo` runs through `src/child.js`, with no shell:
+
+- git through `git()`;
+- the install through `runChild`;
+- the child `bl sync --commit` of a merged `bl` repo through `runBl`.
+
+`src/child.js` is the one place that raises a child's interrupt (F-114 D2). If SIGINT or SIGTERM
+ends a child, or the child `bl sync` exits 130 or 143, `bl` prints `bl: <child> was ended by
+<signal>` and exits 130 or 143. That covers the install, the push of main, the removal of the
+worktree and the branch, the main sync and the backlog commit. A child that Node itself killed
+(`r.error` set, such as `ETIMEDOUT`) is a failed command, not an interrupt (`interruptOf`).
+
+After the merge, bl closes the branch's open PR, if there is one, through `change.find` and
+`change.close`.
+
+`bl merge F-<n>` leaves `priority.yaml` as it is (F-78 D3). The merged feature drops out of the
+order because its status meets `done`. The order skips an entry that still names it, until the
+next `bl rank --commit` removes the entry. While bl holds the lock to mark the feature done,
+`recordThemeState` (`theme.js`, F-53 D4) appends `- <date>: F-<n> done (<title>).` to the
+`## State` of the feature's theme. When that section is absent, it creates it at the end. It
+writes the frontmatter back byte for byte, and the commit takes the theme file too. If the
+feature's theme is missing or unreadable, bl only warns.
 
 ### `bl updates`
 
