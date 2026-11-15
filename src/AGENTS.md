@@ -3802,9 +3802,8 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
   A failure before the commit puts the files back.
 
 - **`--gate`** is a shorthand for the task's edge (F-65 D2). It is the edge that `bl block add`
-  would file, and bl checks it the same way: `writeEdge` in `src/block.js`, which
-  `bl block add` shares (`edgeProblems`, a duplicate, `wouldCycle`, the merge driver readied
-  first). The holds are F-66's checks (`mergeGates`, `dispatch`); `bl task` adds none.
+  would file, and bl checks it the same way. Both use `writeEdge` in `src/block.js`
+  (`edgeProblems`, a duplicate, `wouldCycle`, the merge driver readied first). The holds are F-66's checks (`mergeGates`, `dispatch`); `bl task` adds none.
 
   - `merge`: `{ blocker: T-<n>, gate: done, unit: <unit>, until: done }`. `bl merge <unit>`
     refuses until `bl task done`. Use it for a step between `bl run` and `bl merge` (F-53's
@@ -4027,7 +4026,8 @@ self-review, each review round, the fix and its self-review. `refreshRepos` does
    implement loop reaches each new story after its prerequisites, and skips it when its criteria
    are checked.
 5. For each repo of `featureRepoOrder` that `bl run` has not prepared, it takes that repo's
-   worktree on the branch (`git worktree list` in its main checkout, where `bl side` put it). It
+   worktree on the branch. It finds the worktree with `git worktree list` in the repo's main
+   checkout, where `bl side` put it. It
    appends the worktree to `prep.otherWorktrees`, adds the repo's `repos:` entry to the change
    document and refreshes `{{otherWorktrees}}`.
 6. It records one `step: "repos"` history entry that names the repos and the stories.
@@ -4045,14 +4045,15 @@ The lead repo and its worktree never change. These cases escalate:
 
 - A new repo with no worktree on the branch escalates before the gate, and names the story and
   the repo. `--resume` prepares it.
-- A story list that the refresh cannot resolve escalates: it does not parse, a story is missing,
-  or a new story fails the checks that `prepareFeatureWorktree` makes at the start.
+- A story list that the refresh cannot resolve escalates. The cases are a list that does not
+  parse, a missing story, and a new story that fails the checks of `prepareFeatureWorktree` at
+  the start.
 - A change document that cannot name a new repo escalates.
 
 After a session that is not an implementation, `rescope` implements any story that the session
 added. The self-review gates again when any repo moved or the scope grew. A round that ends
 `ready_for_merge` after it added scope is gated and reviewed again; in the closing round, it
-escalates. A resumed `ready_for_merge` run finishes without a round only when two things hold:
+escalates. A resumed `ready_for_merge` run can finish without a round. It does so only when
 nothing was implemented, and the last round's `reviewedScope` covers every current story and
 repo. `bl run S-n` has one repo and skips the refresh.
 
@@ -4074,8 +4075,8 @@ branch, `bl merge S34` refuses before anything merges, and names the repo. `bl m
 
 - If such a worktree has uncommitted changes (tracked or untracked, the session lock aside), the
   merge refuses before it touches anything.
-- If its branch has no commits ahead of `origin/main` (local `main` when there is no origin),
-  the merge does not merge or push it, and does not record it in `commit:`. The merge reports "no
+- Its branch may have no commits ahead of `origin/main` (local `main` when there is no origin).
+  Then the merge does not merge or push it, and does not record it in `commit:`. The merge reports "no
   changes in <repo>" and removes the worktree and the branch.
 
 `bl merge S34` passes `noCommits` for a story that `mergeGates` let through with a branch with no
@@ -4111,9 +4112,9 @@ outcome:
   `nothing left to fix (<c> open nit(s) left).` while the session has unchecked nits. If the
   session still has an unchecked Must fix or Should fix box, the line is
   `ready_for_merge, but the latest Review Log session has <k> open Must fix/Should fix item(s)`.
-- No verdict (a round has started and has no verdict yet, or there is no round yet):
-  `Review round <n> done: no verdict recorded (<position>).` (`never reviewed` when there is no
-  round), with no `Next:` line.
+- No verdict: a round has started and has no verdict yet, or there is no round yet. The line is
+  `Review round <n> done: no verdict recorded (<position>).`, with no `Next:` line. With no
+  round, `<position>` is `never reviewed`.
 - Escalated: `Review round <n>: escalated.`
 - A round that did not finish (an error and no escalation, for example a verifier that failed):
   `The review round did not finish.`, then the error line. There is no `done` line and no
@@ -4268,7 +4269,7 @@ format.
   - `childEnv` in `verbs.js`, for the child processes that `bl review` starts in parallel for
     several targets (`runChildren`). So the parent's window keeps the parent's title.
   - `agentEnv`, for every agent session (S-1388). The tab belongs to the `bl` that started the
-    session, so no `bl` that the agent runs, and no test that it starts, renames the window.
+    session. So no `bl` that the agent runs renames the window, and no test that it starts does.
   - Every `bl` started for data, so that it does not end the parent's title `ended` while the
     parent works. These are the child `bl sync` of `runBacklogSync` and the child `bl new` of
     `bl side`. They are also the `bl top` view (and so every `bl` it runs in its window), and
@@ -4280,7 +4281,7 @@ format.
   `test/helpers/without-repo-env.sh` unsets `TMUX`, `TMUX_PANE`, `BL_TMUX_WINDOW_ID` and
   `BL_TAB_TITLE` for every `npm run test:*` script (`test/unit/tmux-free-env.test.js` guards
   it). The same wrapper unsets `BL_BACKLOG_DIR`. It also refuses a temporary directory
-  (`os.tmpdir()`) inside a git repository, where git in a test's temp dir would act on that
+  (`os.tmpdir()`) inside a git repository. There, git in a test's temp dir would act on that
   repository (S-1394; `test/unit/repo-free-env.test.js` guards both). It also sets
   `BL_CEILING_DIRECTORIES` to that temporary directory, so the walk of `findBacklogRoot` never
   looks above it (S-1155; the same test guards it).
@@ -5011,49 +5012,64 @@ stopped run as `run: stopped at <step> (<local time>)`.
 ### `bl gc`
 
 `bl gc [--dry-run]` (`src/gc.js`, S-1112) removes what done and superseded work units (stories,
-features and story batches) leave behind. `bl merge` and `bl done` remove a work unit's run files
-when they mark it done; `bl gc` removes them for every closed work unit, and removes the work
-units' directories under the worktree root, which `bl merge` removes only when they are empty.
+features and story batches) leave behind. In `bl gc`, a done work unit is one whose status
+meets `done`. `bl merge` and `bl done` remove a work unit's run files when they mark it
+done. `bl gc` removes them for every done work unit. It also removes the directories of those
+work units under the worktree root. `bl merge` removes such a directory only when it is empty.
 
-1. **Run files.** The leading segment of each `.bl/run` entry's name, up to its first `.`, is its
-   work unit id. For a closed work unit, `bl gc` removes each `<id>.*.scratch` directory and each
-   `<id>.test-<n>.log` but the one with the highest `n`. The run state (`<id>.json`), the lock,
-   the review findings and the event logs stay. An entry whose leading segment is not exactly the
-   id of a story, feature or story batch (`F-89-spec.json`, `updates.S-927.gate-1.log`,
-   `commit-failed`) is kept with the reason `names no work unit`.
-2. **Worktree directories.** A directory under the worktree root is a work unit's when its name is
-   the work unit's directory name, lowercased (its branch). For a closed work unit, `bl gc` reads
-   `git status` of each registered worktree in the directory, detached ones included (a
-   registered worktree whose path is gone is skipped, and the prune below drops it). If git
-   cannot read it, or it has uncommitted changes, the worktree is kept with the reason. Otherwise
-   `git worktree remove` (no `--force`) removes it; if git refuses, the worktree is kept with the
-   first line of git's error. `bl gc` lists the registered worktrees of every repo for each
-   directory. If a repo gives no complete list (its path is not there, `git worktree list` fails,
-   or a record has no path), the directory is kept with the reason
-   `git cannot list the worktrees`. When no worktree is kept, `bl gc` moves the directory aside to
-   `<dir>.bl-gc-<pid>` and lists the worktrees again. A worktree registered in the directory since
-   the first listing, at a new path or at one git removed, moved with it: the directory goes back,
-   and the worktree is kept with the reason `registered while bl gc ran`. Otherwise the moved
-   directory goes with everything left in it (sandbox mount stubs, caches, a checkout git no
-   longer lists), reported as one path. If that removal fails, what is left goes back to the
-   directory's own name. A worktree registered after the move is made in a new directory, which
-   `bl gc` never reaches. When a worktree is kept, the directory stays. Then `git worktree prune`
-   runs once in each repo of `backlog.json`. A directory whose name is no work unit's branch (an
-   operator's own branch, `docs`, a `bl-merge-*` throwaway worktree) is kept with the reason
-   `names no work unit`.
+1. **Run files.** The work unit id of each `.bl/run` entry is the leading segment of its name, up
+   to its first `.`. For a done work unit, `bl gc` removes each `<id>.*.scratch` directory. It
+   also removes each `<id>.test-<n>.log`, except the one with the highest `n`. The run state
+   (`<id>.json`), the lock, the review findings and the event logs stay. `bl gc` keeps an entry
+   with the reason `names no work unit` when its leading segment is not exactly the id of a story,
+   feature or story batch. Examples are `F-89-spec.json`, `updates.S-927.gate-1.log` and
+   `commit-failed`.
+2. **Worktree directories.** A directory under the worktree root belongs to a work unit when its
+   name is the work unit's directory name, lowercased (its branch). The steps for a done work
+   unit are these:
+   1. `bl gc` reads `git status` of each registered worktree in the directory, detached ones
+      too. It skips a registered worktree whose path is gone, and the prune below drops it.
+   2. If git cannot read a worktree, or the worktree has uncommitted changes, `bl gc` keeps it,
+      with the reason. Otherwise `git worktree remove` (no `--force`) removes it. If git refuses,
+      `bl gc` keeps the worktree, with the first line of git's error.
+   3. `bl gc` lists the registered worktrees of every repo for each directory. A repo may give no
+      complete list: its path is not there, `git worktree list` fails, or a record has no path.
+      Then `bl gc` keeps the directory, with the reason `git cannot list the worktrees`.
+   4. When it keeps no worktree, `bl gc` moves the directory aside to `<dir>.bl-gc-<pid>`, and
+      lists the worktrees again.
+   5. A worktree may have been registered in the directory since the first listing, at a new path
+      or at one that git removed. That worktree moved with the directory. Then the directory goes
+      back, and `bl gc` keeps the worktree with the reason `registered while bl gc ran`.
+   6. Otherwise `bl gc` removes the moved directory with everything left in it: sandbox mount
+      stubs, caches, or a checkout that git no longer lists. The output reports it as one path. If
+      that removal fails, what is left goes back to the directory's own name. A worktree
+      registered after the move is made in a new directory, which `bl gc` never reaches.
 
-An open work unit's run files and directory are not touched and not listed. `bl gc` takes no lock.
+   When `bl gc` keeps a worktree, the directory stays. Then `git worktree prune` runs once in
+   each repo of `backlog.json`. `bl gc` keeps a directory whose name is no work unit's branch,
+   with the reason `names no work unit`. Examples are an operator's own branch, `docs`, and a
+   `bl-merge-*` throwaway worktree.
 
-Output: one stdout line per path, run files first: `removed <path>`, or `kept <path> (<reason>)`.
-With `--dry-run`, `bl gc` removes nothing, runs no git command that changes anything, and writes
-`would remove <path>` in place of `removed`. Then one stderr line:
-`bl gc: removed <n> paths, <size>; kept <k>.` (`would remove` with `--dry-run`). A path that
-cannot be removed is a `kept` line with the error, and so is a failed git command: a worktree whose
-status git cannot read, a `git worktree remove` that git refuses, a `git worktree list` that
-fails, and a failed or skipped `git worktree prune` (a `kept <repo path>` line; a repo path that
-is not there skips it). If one sweep stops on an error, the other sweep's lines are still
-printed. In each of these cases `bl gc` exits 1; otherwise it exits 0. A path kept for its uncommitted changes, or because it names no work unit,
-is not a failure.
+`bl gc` does not touch or list the run files and directory of a work unit whose status does not
+meet `done`. `bl gc` takes no lock.
+
+**Output.** stdout has one line per path, run files first: `removed <path>`, or
+`kept <path> (<reason>)`. With `--dry-run`, `bl gc` removes nothing and runs no git command that
+changes anything. It writes `would remove <path>` in place of `removed`. Then it writes one
+stderr line: `bl gc: removed <n> paths, <size>; kept <k>.` (`would remove` with `--dry-run`).
+
+These cases are each a `kept` line with the error:
+
+- a path that `bl gc` cannot remove;
+- a worktree whose status git cannot read;
+- a `git worktree remove` that git refuses;
+- a `git worktree list` that fails;
+- a failed or skipped `git worktree prune`, as a `kept <repo path>` line. A repo path that is not
+  there skips it.
+
+If one of the two parts stops on an error, `bl gc` still prints the lines of the other part. In each of
+these cases, `bl gc` exits 1. Otherwise it exits 0. A path kept for its uncommitted changes, or
+because it names no work unit, is not a failure.
 
 ### `bl list`
 
@@ -5299,13 +5315,14 @@ on `run`'s nominal path (`heldBy(config, id, 'run')` of `readEdges`). The edges 
 `blockers.json`, and the run edge of each `depends_on:` on a loose story or on a feature's story
 outside the feature.
 
-- A work unit held by a story or feature whose status does not meet `done` gives way to the
-  blocker's work unit (the story's feature, or the story when loose), ranked or not. `bl next`
+- A work unit can be held by a story or feature whose status does not meet `done`. Then it gives
+  way to the blocker's work unit, ranked or not (the story's feature, or the story when loose).
+  `bl next`
   follows the blockers until one is free. stderr says
   `<unit> (ranked <n>) is held: <why>. <blocker> comes first; it unblocks <unit>.` A blocker
   outside the filter is still offered: the matching work unit needs it.
-- A work unit held only by a task (an operator action), a missing story or an update story is
-  passed over, and stderr names the holder (`Passed over …`). If every work unit is held so,
+- A work unit can be held only by a task (an operator action), a missing story or an update
+  story. Then `bl next` passes it over, and stderr names the holder (`Passed over …`). If every work unit is held so,
   stdout is empty.
 
 stderr also lists the matching ranked work units: entry number in `priority.yaml`, id, title,
@@ -5345,18 +5362,18 @@ snapshot share (F-113 D8): `STAGED_FILE` (`.bl/priority.staged.yaml`), `BASE_FIL
   it. Every session on the backlog checkout shares the copies. An edit never writes or commits
   `priority.yaml`, and pulls nothing. So `bl next` and `bl run` pick by the committed order.
 - In `bl rank`, a done work unit is one whose status meets `done`. `<unit>` must be a feature or
-  loose story that is not done (`checkUnit`). `bl rank` refuses, naming why, a story inside a
-  feature ("the feature is the unit: rank F-n"), an update story, a task, a done work unit and an
-  unknown id. `--remove` takes whatever the list names, so it can drop a done or deleted work
+  loose story that is not done (`checkUnit`). `bl rank` refuses a story inside a feature,
+  and says "the feature is the unit: rank F-n". It also refuses an update story, a task, a done
+  work unit and an unknown id, and says why. `--remove` takes whatever the list names, so it can drop a done or deleted work
   unit. `--before` and `--after` name a work unit already ranked in the staged order.
 - An edit moves or removes the id (`applyRank`), and writes the whole list with `yaml`'s
   `stringify`. So it writes each id as `canonicalId` spells it, and it does not keep comments. A
   move that leaves the order as it is writes nothing. `--why` is no option (F-113 D2).
 - With no arguments, stdout lists the ranked work units (position, id, title), then every other
   work unit that is not done, oldest `added:` first. While a staged copy exists, it lists the
-  staged order (`orderOf`), and `marks` marks each row against the committed order: `+` newly
+  staged order (`orderOf`). `marks` marks each row against the committed order: `+` newly
   ranked, `~` moved, `-` taken out of the ranked list. A moved work unit is a ranked one outside
-  the longest common subsequence of the two lists, so a move marks only the work unit that moved.
+  the longest common subsequence of the two lists. So a move marks only the work unit that moved.
   Done work units are not listed.
 - `--commit` with a staged copy pulls first (`pullBeforeCommand`, which `rank-cmd.js` calls
   itself after it finds the copy; `commandPullsBacklog` names no `bl rank`). Under the lock it
@@ -5378,12 +5395,12 @@ snapshot share (F-113 D8): `STAGED_FILE` (`.bl/priority.staged.yaml`), `BASE_FIL
   Each time `--commit` takes the lock, it loads the work units again (`mergeStaged`). So it also
   takes out a work unit that became done during a lock wait or the y/n question. Before it writes
   `priority.yaml`, it refuses a merged order (or a proposal) that names anything but a feature or
-  loose story (`resolveRanked`): an unknown id, a task, a story inside a feature or an update
-  story, as a hand edit of the staged copy can.
+  loose story (`resolveRanked`). Such a name is an unknown id, a task, a story inside a feature
+  or an update story. A hand edit of the staged copy can add one.
 
-- On a conflict, `--commit` proposes a list (`proposal`): the staged order without the work units
-  that main took out since the base, with the work units that main added at the end, done work
-  units out. If stdin is not a terminal, it changes nothing and exits 1, its last stderr line
+- On a conflict, `--commit` proposes a list (`proposal`). The list is the staged order without
+  the work units that main took out since the base. The work units that main added go at its
+  end, and done work units are out. If stdin is not a terminal, it changes nothing and exits 1, its last stderr line
   `NO_TERMINAL` (`conflict: run bl rank --commit in a terminal`). Otherwise it prints the
   proposal with its markers, lets go of the lock, and asks y/n on stderr. It acts on the answer
   under the lock, and only if the three files are as they were. y commits the proposal. n writes
@@ -5453,8 +5470,9 @@ show it when they open the file again. bl ignores SIGINT, SIGQUIT and SIGTERM un
 exits. So a Ctrl-C meant for the editor does not end bl and leave the copy behind.
 
 Both exit with the editor's status: 127 when bl cannot launch it, 128 + n when signal n kills it.
-If `bl view` cannot make its copy, it shows the page instead (printed when it fits the terminal,
-else `$PAGER` → `less` → `more`), and exits with the pager's status the same way.
+If `bl view` cannot make its copy, it shows the page instead, and exits with the pager's status the
+same way. It prints the page when the page fits the terminal, else it uses `$PAGER` → `less` →
+`more`.
 
 ### `bl change`
 
@@ -5508,8 +5526,8 @@ bl done --superseded S34      # mark as superseded
 
 ### `bl force`
 
-`bl force` moves a story, a feature or a story batch to any status of its type, past every
-transition rule, hold and guard (F-119 D2, `src/force.js`). It is the operator's way out of a
+`bl force` moves a story, a feature or a story batch to any status of its type (F-119 D2,
+`src/force.js`). The move goes past every transition rule, hold and guard. It is the operator's way out of a
 stuck state, and the one way to force a move. `bl approve --force` names it (A2).
 
 ```bash
@@ -5535,9 +5553,9 @@ bl force F-3 refined          # a feature past its refinement session, then bl a
 4. It reads one line. If the line is not exactly `force <id> to <status>`, it changes nothing and
    exits 1. An empty line and the end of input do the same.
 5. On the exact line, it takes the backlog lock, and reads the work unit's status and the skip list
-   again. If either changed while the operator typed (a hold added, a guard that changed, a
-   `flow.json` change, another move of the work unit), it writes nothing, prints the new list and
-   exits 1. Otherwise it writes the entry `by: force` (`transition`), and commits the unit file as
+   again. Either can change while the operator types: a hold added, a guard that changed, a
+   `flow.json` change, or another move of the work unit. If either changed, it writes nothing,
+   prints the new list and exits 1. Otherwise it writes the entry `by: force` (`transition`), and commits the unit file as
    `chore: force <id> to <status>`.
 
 ### `bl sync`
@@ -5723,8 +5741,8 @@ every clone (the operator's, the update runner's) sees the others' work.
 - `commitPaths` is the only backlog add, commit and push in bl. Each step commit of `bl run` goes
   through it too (`feature-run.js` `commitUnitPaths`). After every commit it makes, it runs
   `git push origin main` (`backlog-commit.js` `pushBacklog`). In a backlog with no repo of its own
-  (`hasOwnRepo`), bl runs no git: `commitPaths` returns `notRepo`, and its callers take that as
-  nothing to do.
+  (`hasOwnRepo`), bl runs no git. There, `commitPaths` returns `notRepo`, and its callers take
+  that as nothing to do.
 - If `origin` moved on, git rejects the push (`[rejected] … (fetch first)` or
   `(non-fast-forward)`, `isNonFastForwardRejection`). Then `pushBacklog` rebases onto
   `origin/main` with the pull's own rebase (`pullLocked`, below), under the main sync lock the
@@ -6429,8 +6447,8 @@ feature's theme is missing or unreadable, bl only warns.
 
 ### `bl block`
 
-Files, lifts and lists the holds in `blockers.json` (F-66 D4, `src/block.js`; see **Holds
-between units**).
+`bl block` files, lifts and lists the holds in `blockers.json` (F-66 D4, `src/block.js`; see
+**Holds between units**).
 
 ```bash
 bl block add S-1 --gate done --unit F-3 --until done      # F-3 does not merge until S-1 is done
@@ -6441,93 +6459,117 @@ bl block list F-3        # edges on F-3, on its stories, on *, and by F-3: met, 
 bl block list --fix      # rewrite a hand-edited blockers.json sorted, and commit it
 ```
 
-- **`add`** checks every field (`edgeProblems`: known ids, a gate that is a status of the unit's
-  type, `until` and `--active-status` statuses of their units' types, a blocker not already
-  closed short of `until`), refuses a duplicate and an edge that would close a cycle in the
-  hold graph (`wouldCycle`; an edge not yet active adds no arc, and
-  `bl validate` reports the cycle once it is). It takes the backlog lock, rereads the file,
-  writes it sorted and commits `blockers.json` alone as `chore: block <unit> at <gate> on
-<blocker>`. stdout is `blocked: <unit> at <gate> by <blocker> until <status>`; every refusal
-  is one `bl block add: <reason>` line on stderr and exit 1.
-- **`remove`** drops the edge with that identity and commits `chore: unblock <unit> at <gate> on
-<blocker>`; an unknown edge refuses. Agents may not run it: `MODE_DENY` in
-  `src/allowed-tools.js` denies `bl block remove:*` in every mode (F-66 A7, generator v14),
-  while `bl:*` keeps `add` and `list` allowed. `bl task done:*` is denied beside it (F-65 D3,
-  generator v15).
-- **`list [<id>]`** prints one line per edge on and by the unit (every edge without an id):
-  `<unit> held at <gate> by <blocker> (<status>, needs <until>): <met|unmet|inactive>`, with
-  `, active when <id> is <status> (<its status>)` for an `active_when` edge.
-- `add`, `remove` and `list --fix` pull the backlog first (`commandPullsBacklog`) and commit
-  `blockers.json` alone under the backlog lock; a backlog that is not a git repo is written
-  and not committed. A missing or unreadable `flow.json` stops `add` and `list` with the
-  `FlowError`; an unreadable `blockers.json` stops every subcommand with the `BlockersError`.
+- **`add`** checks every field (`edgeProblems`):
+  - each id is known;
+  - the gate is a status of the work unit's type;
+  - `until` and `--active-status` are statuses of the types of their work units;
+  - the blocker's status does not already meet `done` without meeting `until`.
+
+  `add` refuses a duplicate edge. It also refuses an edge that would close a cycle in the hold
+  graph (`wouldCycle`). An edge that is not active yet adds no arc, and `bl validate` reports the
+  cycle when the edge becomes active. Then `add` takes the backlog lock, reads the file again and
+  writes it sorted. It commits `blockers.json` alone as
+  `chore: block <unit> at <gate> on <blocker>`. stdout is
+  `blocked: <unit> at <gate> by <blocker> until <status>`. Each refusal is one
+  `bl block add: <reason>` line on stderr, and exit 1.
+
+- **`remove`** drops the edge with that identity and commits
+  `chore: unblock <unit> at <gate> on <blocker>`. It refuses an unknown edge. Agents may not run
+  it: `MODE_DENY` in `src/allowed-tools.js` denies `bl block remove:*` in every mode (F-66 A7,
+  generator v14), and `bl:*` keeps `add` and `list` allowed. bl denies `bl task done:*` in the
+  same way (F-65 D3, generator v15).
+- **`list [<id>]`** prints one line per edge on the work unit and per edge by it. Without an id,
+  it prints every edge. The line is
+  `<unit> held at <gate> by <blocker> (<status>, needs <until>): <met|unmet|inactive>`. An
+  `active_when` edge adds `, active when <id> is <status> (<its status>)`.
+- `add`, `remove` and `list --fix` pull the backlog first (`commandPullsBacklog`). They commit
+  `blockers.json` alone, under the backlog lock. If the backlog is not a git repo, they write the
+  file and do not commit it.
+- If `flow.json` is missing or bl cannot read it, `add` and `list` stop with the `FlowError`. If
+  bl cannot read `blockers.json`, every subcommand stops with the `BlockersError`.
 
 ### `bl inbox`
 
-Everything waiting on the operator, in one list (F-42 Design D1,
-`src/inbox.js`). It scans the backlog on every call (no index) and prints
-the groups below, each by unit id, newest first, features before stories. The `change`
-items are grouped by their unit's status (its transition log's, F-69 D5; a unit with no log is
-placed by its change document), in the lifecycle order of `flow.json`, under a heading per
-status: `change · in_progress (2)`, and `change · ready_for_merge, the merge gate (1)` for the
-units `bl merge` takes next:
+`bl inbox` lists everything that waits on the operator, in one list (F-42 Design D1,
+`src/inbox.js`). It reads the backlog on every call (there is no index). It prints the groups
+below. In each group, the order is by work unit id, newest first, with features before stories.
 
-| Kind         | Source                                                                                                                                                                                 | Id                         | Answered by                                                         |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------- |
-| `escalation` | an active (not `done` or `superseded`) feature's or story's `## Escalation` with content                                                                                               | `F-42:esc`                 | `bl status F-42`                                                    |
-| `task`       | an open task (`tasks/`, see **`bl task`**) of any unit, open or closed, with a `holds:` line per edge of it in `blockers.json` that holds now                                          | `T-7`                      | `bl task done T-7 [note]`                                           |
-| `change`     | unmerged work (F-48 D4): an open feature, or an open story with no `feature:`, whose current change document is `status: open` and names a branch with commits ahead of `main` (below) | `S-7:change`               | `bl run S-7`; `bl merge S-7` once it is `ready_for_merge`           |
-| `update`     | an entry in the red list of the update job's latest heartbeat (F-80 D4, B2, below)                                                                                                     | `tools:renovate/glob-11.x` | nothing here: the next update run tests it again; read its gate log |
+The `change` items are grouped by the status of their work unit, in the lifecycle order of
+`flow.json`. The status is the one of its transition log (F-69 D5). bl places a work unit with no
+log by its change document. Each status has a heading, such as `change · in_progress (2)`. The
+heading for the work units that `bl merge` takes next is `change · ready_for_merge, the merge
+gate (1)`.
 
-One more line comes first, `runner: …` (kind `runner`, id `updates:run`),
-when the latest heartbeat is more than 48 h old (twice a daily start of the
-guest, F-103 D5) or records `"result": "failure"`: `no update run since
-<time> (<n> h, more than 48 h)`, `the update run of <time> failed at <step>: <subject>`, or both
-joined by `; ` (F-80 B3).
+| Kind         | Source                                                                                                                                                                                                              | Id                         | Answered by                                                         |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ------------------------------------------------------------------- |
+| `escalation` | the `## Escalation` with content of a feature or story whose status does not meet `done`                                                                                                                            | `F-42:esc`                 | `bl status F-42`                                                    |
+| `task`       | a task that is not done (`tasks/`, see **`bl task`**), of a work unit at any status, with a `holds:` line for each of its edges in `blockers.json` that holds now                                                   | `T-7`                      | `bl task done T-7 [note]`                                           |
+| `change`     | unmerged work (F-48 D4): a feature, or a story with no `feature:`, whose status does not meet `done`, whose current change document is `status: open`, and that names a branch with commits ahead of `main` (below) | `S-7:change`               | `bl run S-7`; `bl merge S-7` when it is `ready_for_merge`           |
+| `update`     | an entry in the red list of the latest heartbeat of the update job (F-80 D4, B2, below)                                                                                                                             | `tools:renovate/glob-11.x` | nothing here: the next update job tests it again; read its gate log |
 
-The heartbeat (F-80 B3, D6) is one orphan commit on the branch
-`updates.heartbeat.branch` of the repo `updates.heartbeat.repo`, which
-running-man's update job force-pushes after every update run. `readHeartbeat`
-reads it with git alone, in that repo's clone as `backlog.json` `repos`
-registers it: `git fetch --quiet origin
-+refs/heads/<branch>:refs/remotes/origin/<branch>`, then `git log -1
---format=%cI%n%B refs/remotes/origin/<branch>`. It reads that ref, not
-`FETCH_HEAD`, because any other fetch in the clone rewrites `FETCH_HEAD`.
-The first line is the update run's time, the
-next the subject (its summary), and the rest of the message JSON with
-`"schema": "roost-update-heartbeat/v1"`, `result`, `failed_step` and `red`
-(a list of `{ repo, branch, update, head, main, notes, log }`, or `null`
-when the update run failed before the job wrote it). The fetch has no
-`--depth=1`: on a full clone that marks the repository shallow, and the
-heartbeat has no parent, so it moves the same objects without it. No `gh`
-and no forge op is used. Each red entry is one `update` item,
-`<update> · red · notes: <url or none>`, `next: read the gate log <log>;
-the next update run tests it again`, in the heartbeat's order; an entry
-leaves the inbox when a later heartbeat no longer lists it. A `"red": null`
-is a warning that the red updates are not known.
+**The runner line.** One more line comes first, `runner: …` (kind `runner`, id `updates:run`).
+bl prints it when the latest heartbeat is more than 48 h old, or when it records
+`"result": "failure"`. 48 h is twice the time between two daily starts of the guest (F-103 D5).
+The line is `no update run since <time> (<n> h, more than 48 h)`, or
+`the update run of <time> failed at <step>: <subject>`, or both joined by `; ` (F-80 B3).
 
-`updateSettings` (`src/config.js`) reads only `heartbeat.repo` and
-`heartbeat.branch` of the `updates` block, both required with no defaults, and
-returns `{ heartbeat: { repo, branch } }`. `namespace` and `push_attempts` are
-running-man's (`updates/settings.mjs`), and bl ignores every key but
-`heartbeat`. A backlog.json with no `updates` block has no update job, and the inbox reads
-no heartbeat. A missing key, a fetch that fails, or a message that is not a
-heartbeat is one warning on stderr (`update job heartbeat not read: …`), and
-the other kinds are still listed. `loadConfig` never reads the block, so a
-backlog.json from before F-80's cutover still loads.
+**The heartbeat** (F-80 B3, D6) is one orphan commit on the branch `updates.heartbeat.branch` of
+the repo `updates.heartbeat.repo`. Running-man's update job force-pushes it each time the job
+ends. `readHeartbeat` reads it with git alone, in the clone of that repo that `backlog.json`
+`repos` registers:
 
-A `change` item is one per unit, naming every repo with unmerged commits:
-`tools, web: <title> · tools 2 commit(s) on <branch>, web 1 commit(s) on <branch>, not merged`
-(one repo: `tools: <title> · 1 commit(s) on <branch>, not merged`). Each repo a candidate names
-is read once in its main checkout (`git for-each-ref refs/heads`), and `git rev-list --count
-main..<branch>` runs only for a branch that exists. A story with a `feature:` is left out (it
-merges with its feature), and so is a change document with no branch, a branch that is gone or
-level with `main`, and a done, superseded or merged unit. The next verb is `changeNextVerb`
-(`src/review-log.js`), the rule `bl review`'s summary line and `bl top`'s change actions use:
-`merge` when the unit is `ready_for_merge` and passes the merge gate's review rule
-(`featureReviewGate`, read from the latest Review Log session), `review` when it is
-`ready_for_merge` and that rule blocks, else `run`. A repo git cannot read is a
-warning on stderr; the other items are still listed.
+1. `git fetch --quiet origin +refs/heads/<branch>:refs/remotes/origin/<branch>`;
+2. `git log -1 --format=%cI%n%B refs/remotes/origin/<branch>`.
+
+It reads that ref, not `FETCH_HEAD`, because any other fetch in the clone writes `FETCH_HEAD`
+again. The first line of the output is the time of the update job, and the next line is the
+subject (its summary). The rest of the message is JSON:
+
+- `"schema": "roost-update-heartbeat/v1"`;
+- `result` and `failed_step`;
+- `red`: a list of `{ repo, branch, update, head, main, notes, log }`, or `null` when the update
+  job failed before it wrote the list.
+
+The fetch has no `--depth=1`. On a full clone, `--depth=1` marks the repository shallow. The
+heartbeat has no parent, so the fetch moves the same objects without it. bl uses no `gh` and no
+forge op here.
+
+Each red entry is one `update` item, in the order of the heartbeat:
+`<update> · red · notes: <url or none>`, then
+`next: read the gate log <log>; the next update run tests it again`. An entry leaves the inbox
+when a later heartbeat no longer lists it. A `"red": null` is a warning that the red updates are
+not known.
+
+`updateSettings` (`src/config.js`) reads only `heartbeat.repo` and `heartbeat.branch` of the
+`updates` block. Both are required and have no defaults. It returns
+`{ heartbeat: { repo, branch } }`. `namespace` and `push_attempts` are running-man's
+(`updates/settings.mjs`), and bl ignores every key but `heartbeat`. A `backlog.json` with no
+`updates` block has no update job, and the inbox reads no heartbeat. These are each one warning
+on stderr (`update job heartbeat not read: …`): a missing key, a fetch that fails, and a message
+that is not a heartbeat. The inbox still lists the other kinds. `loadConfig` never reads the
+block, so a `backlog.json` from before F-80's cutover still loads.
+
+**A `change` item** is one per work unit. It names every repo with unmerged commits:
+`tools, web: <title> · tools 2 commit(s) on <branch>, web 1 commit(s) on <branch>, not merged`.
+With one repo, it is `tools: <title> · 1 commit(s) on <branch>, not merged`. bl reads each repo
+that a candidate names once, in its main checkout (`git for-each-ref refs/heads`). It runs
+`git rev-list --count main..<branch>` only for a branch that exists. The inbox leaves out these:
+
+- a story with a `feature:`, because it merges with its feature;
+- a change document with no branch;
+- a branch that is gone or level with `main`;
+- a work unit whose status meets `done`, and one whose change document is merged.
+
+The next verb is `changeNextVerb` (`src/review-log.js`). `bl review`'s summary line and
+`bl top`'s change actions use the same rule:
+
+- `merge` when the work unit is `ready_for_merge` and passes the review rule of the merge gate
+  (`featureReviewGate`, read from the latest Review Log session);
+- `review` when it is `ready_for_merge` and that rule blocks it;
+- `run` in every other case.
+
+If git cannot read a repo, bl prints a warning on stderr, and the inbox still lists the other
+items.
 
 ```bash
 bl inbox                          # the groups, each item with its id, unit, first line and next:
@@ -6535,50 +6577,59 @@ bl inbox --json                   # [{ kind, id, unit, line, holds?, status?, ve
 bl inbox done T-7                 # refuses: "T-7 is a task: close it with bl task done T-7 [note]"
 ```
 
-A `task` item is `T-<n>  <unit>  <title>`, then one `holds:` line per edge whose blocker is the
-task and which holds now (active, unmet), in the words of the `## Tasks` table without its
-`once …`: `holds: bl merge F-53`, `holds: bl run, bl implement (every unit)`; a `next` task whose
-unit is still open has none. Then `next: bl task done T-<n> [note]`. The inbox reads tasks from
-their files and the holds from `blockers.json`, never from a unit's body; a `blockers.json` or
-`flow.json` it cannot read is a warning, and the tasks are listed without holds.
+**A `task` item** is `T-<n>  <unit>  <title>`. Then it has one `holds:` line for each edge whose
+blocker is the task and that holds now (active and unmet). The line uses the words of the
+`## Tasks` table without its `once …`: `holds: bl merge F-53`,
+`holds: bl run, bl implement (every unit)`. A `next` task whose work unit's status does not meet
+`done` has no `holds:` line. Then comes `next: bl task done T-<n> [note]`. The inbox reads tasks
+from their files and the holds from `blockers.json`, never from the body of a work unit. If it
+cannot read `blockers.json` or `flow.json`, it prints a warning and lists the tasks without
+holds.
 
-`bl inbox done` closes nothing (F-65 D3): every id exits 1 naming the verb that answers it, a
-`T-<n>` and a retired `F-<n>:op<k>` id `bl task done` (an alias would be a second way to close a
-task), an escalation or change id its own. A red update or the runner line names what clears
-it: a later heartbeat. An id not in the inbox is unknown.
+**`bl inbox done` changes nothing** (F-65 D3). Each id exits 1, and the message names the
+verb that answers it:
 
-The S-970 operator tasks (a `### Operator tasks` sub-list, or legacy `operator:` bullets, in a
-unit's `## Deferred`, or a story's former `## To Do`) are retired: nothing in `bl` reads a
-body for tasks, an open unit that has one fails `bl validate` (`operator-tasks-retired`), and
-a closed unit keeps its items as history. Their reader, `scanOperatorTasks`, went with F-65's migration (S-581).
+- a `T-<n>` and a retired `F-<n>:op<k>` id: `bl task done` (an alias would be a second way to
+  mark a task done);
+- an escalation or change id: its own verb;
+- a red update or the runner line: what clears it, a later heartbeat.
 
-- `bl status` prints `deferred: <n> items` (the section's top-level items, through
-  `scanDeferred`, a closed unit's retired operator items not among them) and, for a unit with
-  tasks, `tasks: <n> open, <m> done`; the `held:` lines show what the tasks hold.
-- The one-off migrations that moved the backlog to this shape
-  (`migrate-taxonomy`, `migrate-value-axis`, `migrate-operator-tasks`,
-  `migrate-feature-secondary-repos`, `migrate-repo-fields`) have run on the live
-  backlog; F-62 removed them, with `migration-write.js`, since each read and wrote the
-  frontmatter format F-62 retired (they are in git history before F-62). F-53's
-  `migrate-roadmap` and F-65's `migrate-tasks` have run too; S-581 removed them, since they
-  moved one backlog's own documents (in git history before S-581).
-  `migration-txn.js` (fetch, refuse unless clean at `origin/main` with no `bl` run active,
-  write, one commit, git rollback) carries F-62's `migrate-frontmatter-yaml` and F-60's
-  `migrate-worktree-layout`.
-- `bl run` and `bl merge` end with `inbox: <n> item(s) need you (bl inbox)`
-  on stderr when the count is non-zero (`printInboxCount`). A failed scan
-  prints nothing and never fails the command. The count includes red updates
-  and the runner line, so it fetches the heartbeat too.
-- `bl merge` imports `src/inbox.js` after its git merge, when the process
-  may still hold the pre-merge `config.js` (F-49 D6). So `inbox.js` reads
-  `updateSettings` through `import * as configModule`, not a named import: a
-  config.js without it is a warning, not a failed merge.
+An id that is not in the inbox is unknown.
+
+**The S-970 operator tasks are retired.** They were a `### Operator tasks` sub-list, or legacy
+`operator:` bullets, in a work unit's `## Deferred`, or in a story's former `## To Do`. Nothing
+in `bl` reads a body for tasks. A work unit that has one fails `bl validate`
+(`operator-tasks-retired`) if its status does not meet `done`. A work unit whose status meets
+`done` keeps its items as history. Their reader, `scanOperatorTasks`, went with F-65's migration
+(S-581).
+
+- `bl status` prints `deferred: <n> items`: the top-level items of the section, through
+  `scanDeferred`. The retired operator items of a work unit whose status meets `done` are not
+  among them. For a work unit with tasks, `bl status` also prints `tasks: <n> open, <m> done`. The
+  `held:` lines show what the tasks hold.
+- The one-off migrations that moved the backlog to this shape have run on the live backlog:
+  `migrate-taxonomy`, `migrate-value-axis`, `migrate-operator-tasks`,
+  `migrate-feature-secondary-repos` and `migrate-repo-fields`. F-62 removed them, with
+  `migration-write.js`, because each one read and wrote the frontmatter format that F-62 retired.
+  They are in git history before F-62.
+- F-53's `migrate-roadmap` and F-65's `migrate-tasks` have run too. S-581 removed them, because
+  they moved the documents of one backlog only. They are in git history before S-581.
+- `migration-txn.js` carries F-62's `migrate-frontmatter-yaml` and F-60's
+  `migrate-worktree-layout`. It fetches, and it refuses unless the backlog is clean at
+  `origin/main` and no `bl run` is in progress. Then it writes, makes one commit, and rolls back
+  with git on a failure.
+- `bl run` and `bl merge` end with `inbox: <n> item(s) need you (bl inbox)` on stderr when the
+  count is not zero (`printInboxCount`). A failed read prints nothing and never fails the
+  command. The count includes red updates and the runner line, so it fetches the heartbeat too.
+- `bl merge` imports `src/inbox.js` after its git merge, when the process may still hold the
+  `config.js` from before the merge (F-49 D6). So `inbox.js` reads `updateSettings` through
+  `import * as configModule`, not a named import. If `config.js` lacks it, bl prints a warning,
+  and the merge does not fail.
 
 ### Testing
 
-bl uses Node's built-in `node --test` runner with bash-driven CLI checks
-where invoking the real binary is the point. There are no test framework
-dependencies — `node:assert/strict` is sufficient.
+bl uses Node's built-in `node --test` runner. Where a test must run the real binary, bl uses CLI
+checks in bash. bl has no test framework dependency: `node:assert/strict` is sufficient.
 
 Layout:
 
@@ -6619,57 +6670,52 @@ npm run test:all    # everything
 
 Adding a test:
 
-- **suite temp directory** — every `npm run test:*` script runs through
-  `test/helpers/without-repo-env.sh`, which gives the suite a `TMPDIR` of
-  its own and removes it when the suite ends (S-1392). A temp file that a
-  test leaves behind does not leak into `/tmp`. The rules below
-  (`mkTempDir`, own `mktemp` paths) still apply, because a script or a file
-  can run alone. The wrapper also sets `BL_CEILING_DIRECTORIES` to that
-  `TMPDIR` (S-1155), so a walk from a cwd never finds a backlog made
-  directly in `TMPDIR`. The wrapper needs GNU `env` (coreutils 8.31 or
-  later) for `--default-signal`: BSD and macOS `env` lack it.
-- **unit** — write `test/unit/<module>.test.js` using `node:test` and
-  `node:assert/strict`. Import the module under test from `../../src/...`.
-  No fs writes outside `os.tmpdir()`. No spawning, with one exception: a
-  test of a spec-lock overlap may start the second lock holder as a `node`
-  child — `startTokenWriter` (`test/helpers/token-writer.js`) or
-  `updateSpecInChild` (`test/helpers/spec-writer.js`), which run
-  `updateSpecFile` from `src/`, or a bare live pid to stand for a holder.
-  `withSpecLock` is re-entrant within a process, so only another pid can
-  hold the lock against the code under test, and the writers whose overlap
-  matters (the loop's escalation and status writes) are driven only by the
-  unit tests' fake runner, which an integration test spawning `bl` cannot
-  reach (F-67). Make every temp dir with
-  `mkTempDir(prefix)` or `mkTempBacklog()` from `test/helpers/tempdir.js`,
-  never a bare `mkdtempSync`, so the dir is removed when the file's tests end.
-  If the test finds the backlog by a walk from a cwd, make it with
-  `mkTempBacklog(fixture, { parent })` in a `mkTempDir` of the test's own.
-- **integration** — write `test/integration/<command>.test.js` that
-  `mkTempBacklog()`s a backlog and `runBl(args, { cwd })`s the binary
-  against it. Assert filesystem effects, frontmatter, and exit codes.
-  `runBl` sets `BL_BACKLOG_DIR` to `cwd`. A test of the walk unsets it and
-  makes the backlog with `mkTempBacklog(fixture, { parent })`.
-- **cli** — write `test/cli/<topic>.sh`. Source `helpers/tempdir.sh`,
-  call `mk_temp_backlog`, then drive `"$BL"` with the assert\_\* helpers.
-  `cli/run-all.sh` picks it up automatically and runs it at the same time
-  as the other scripts, so it uses only its own `mktemp` paths
-  (`unit/bash-temp-paths.test.js` fails on a fixed path under `/tmp`,
-  `/var/tmp`, `/dev/shm`, `$TMPDIR` or `${TMPDIR}`).
-- **file time** — no file in `unit/` or `integration/` takes more than 15 s
-  alone (`node --test <file>`): `node --test` runs the tests of one file in
-  order, so the longest file sets the suite's time. Split a longer file
-  `<name>.test.js` into `<name>-<group>.test.js` files, with their shared
-  fixtures in `test/helpers/<name>-fixture.js` (F-99 D2). No test checks
-  the time, because load changes it (S-1381 Notes): if `npm test` takes more
-  than 35 s on a quiet workstation, time the files alone.
-- **e2e** — write `test/e2e/<scenario>.sh`. `git init` your own tempdirs
-  for the code repos and a bare origin if cleanup paths are exercised;
-  set `BL_BACKLOG_DIR` to the backlog tempdir.
+- **Suite temp directory.** Every `npm run test:*` script runs through
+  `test/helpers/without-repo-env.sh`. The wrapper gives the suite a `TMPDIR` of its own, and
+  removes it when the suite ends (S-1392). So a temp file that a test leaves behind does not leak
+  into `/tmp`.
+  - The rules below (`mkTempDir`, own `mktemp` paths) still apply, because a script or a file can
+    run alone.
+  - The wrapper also sets `BL_CEILING_DIRECTORIES` to that `TMPDIR` (S-1155). So a walk from a cwd
+    never finds a backlog made directly in `TMPDIR`.
+  - The wrapper needs GNU `env` (coreutils 8.31 or later) for `--default-signal`. BSD and macOS
+    `env` lack it.
+- **Unit.** Write `test/unit/<module>.test.js` with `node:test` and `node:assert/strict`. Import
+  the module under test from `../../src/...`. Write no file outside `os.tmpdir()`.
+  - Spawn nothing, with one exception. A test of a spec-lock overlap may start the second lock
+    holder as a `node` child. The child is `startTokenWriter` (`test/helpers/token-writer.js`) or
+    `updateSpecInChild` (`test/helpers/spec-writer.js`), which run `updateSpecFile` from `src/`.
+    It may also use a bare live pid to stand for a holder.
+  - The exception exists for two reasons. First, `withSpecLock` is re-entrant within a process,
+    so only another pid can hold the lock against the code under test. Second, only the fake
+    runner of the unit tests drives the writers whose overlap matters (the escalation and status
+    writes of `bl run`). An integration test that spawns `bl` cannot reach them (F-67).
+  - Make every temp dir with `mkTempDir(prefix)` or `mkTempBacklog()` from
+    `test/helpers/tempdir.js`, never with a bare `mkdtempSync`. Then the dir is removed when the
+    tests of the file end. If the test finds the backlog by a walk from a cwd, make it with
+    `mkTempBacklog(fixture, { parent })` in a `mkTempDir` of the test's own.
+- **Integration.** Write a `test/integration/<command>.test.js` that makes a backlog with
+  `mkTempBacklog()` and runs the binary against it with `runBl(args, { cwd })`. Assert the effects
+  on the file system, the frontmatter, and the exit codes. `runBl` sets `BL_BACKLOG_DIR` to
+  `cwd`. A test of the walk unsets it and makes the backlog with
+  `mkTempBacklog(fixture, { parent })`.
+- **CLI.** Write `test/cli/<topic>.sh`. Source `helpers/tempdir.sh`, call `mk_temp_backlog`, then
+  drive `"$BL"` with the assert\_\* helpers. `cli/run-all.sh` finds the script without a list, and
+  runs it at the same time as the other scripts. So the script uses only its own `mktemp` paths.
+  `unit/bash-temp-paths.test.js` fails on a fixed path under `/tmp`, `/var/tmp`, `/dev/shm`,
+  `$TMPDIR` or `${TMPDIR}`.
+- **File time.** No file in `unit/` or `integration/` takes more than 15 s alone
+  (`node --test <file>`). `node --test` runs the tests of one file in order, so the longest file
+  sets the time of the suite. Split a longer file `<name>.test.js` into `<name>-<group>.test.js`
+  files, and put their shared fixtures in `test/helpers/<name>-fixture.js` (F-99 D2). No test
+  checks the time, because load changes it (S-1381 Notes). If `npm test` takes more than 35 s on
+  a quiet workstation, time the files alone.
+- **E2E.** Write `test/e2e/<scenario>.sh`. `git init` your own tempdirs for the code repos, and a
+  bare origin if the test runs the cleanup paths. Set `BL_BACKLOG_DIR` to the backlog tempdir.
 
-`bl new` exposes private test seams `BL_INTERNAL_TEST_FAIL_ON_STORY` and
-`BL_INTERNAL_TEST_FAIL_ON_MOVE` for unwind-path coverage. They are not
-public CLI surface — change or remove them freely if a test stops needing
-them.
+`bl new` has two private test seams, `BL_INTERNAL_TEST_FAIL_ON_STORY` and
+`BL_INTERNAL_TEST_FAIL_ON_MOVE`, for the coverage of its unwind paths. They are not public CLI
+surface. Change or remove them freely if a test stops needing them.
 
 ## Conventions for Agents
 
