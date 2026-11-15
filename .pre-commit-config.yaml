@@ -41,6 +41,7 @@ repos:
       - id: file-hygiene
         name: file hygiene (shared-config)
         entry: .rrepo-shared/bin/run-file-hygiene
+        args: [--max-kb=700]
         language: script
         types: [file]
         exclude: ^\.rrepo-shared/
