@@ -28,6 +28,7 @@ import {
   resolvePlugins,
   repoOf,
   warn,
+  unitBranchName,
 } from './config.js';
 import { statusWords } from './flow.js';
 import { CHECKBOX_RE } from './review-log.js';
@@ -84,14 +85,6 @@ export function normalizeFeatureId(raw) {
 
 export function featuresRoot(config) {
   return join(config.backlogRoot, FEATURES_DIR);
-}
-
-/**
- * The git branch a work unit (a feature, a story or a story batch) is
- * implemented on: its directory name, lowercased.
- */
-export function featureBranchName(featureEntry) {
-  return featureEntry.toLowerCase();
 }
 
 /**
@@ -284,7 +277,7 @@ export function resolveFeatureStories(feature, config, allStories = null) {
  */
 export function reposForFeature(feature, config, stories = null) {
   const names = featureRepoOrder(stories ?? resolveFeatureStories(feature, config).stories);
-  const branch = featureBranchName(feature.featureEntry);
+  const branch = unitBranchName(feature.featureEntry);
   const out = [];
   for (const name of names) {
     const repoPath = config.reposByName[name];

@@ -26,6 +26,7 @@ import {
   info,
   normalizeId,
   normalizeComponentId,
+  unitBranchName,
 } from './config.js';
 import { findStoryDir, findComponentDir, readAllStories, refuseStoryRepo, storyRepoOrExit } from './story.js';
 import {
@@ -158,7 +159,7 @@ export async function prepareStoryRepo(parsed, found, config, repoName, { role =
     console.error(`Known repos: ${Object.keys(config.reposByName).join(', ')}`);
     process.exit(1);
   }
-  const branchName = storyEntry.toLowerCase();
+  const branchName = unitBranchName(storyEntry);
   const storyRelPath = indexPath.slice(config.backlogRoot.length + 1);
   const worktreePath = worktreePathFor(config, repoName, branchName);
 

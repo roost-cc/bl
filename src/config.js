@@ -850,6 +850,14 @@ export function worktreeRoot(config) {
   return resolve(config.backlogRoot, value);
 }
 
+/**
+ * The git branch a work unit (a story, a feature or a story batch) is
+ * implemented on: its directory name, lowercased.
+ */
+export function unitBranchName(entry) {
+  return entry.toLowerCase();
+}
+
 /** A unit's directory, `<root>/<branch>`: every repo's worktree of the unit is under it. */
 export function unitDirFor(config, branch) {
   return join(worktreeRoot(config), branch);

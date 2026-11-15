@@ -39,6 +39,7 @@ import {
   worktreePathFor,
   unitDirFor,
   unitDirOf,
+  unitBranchName,
 } from './config.js';
 import { readAllStories, findExistingWorktree, isSessionRunning, findUnitPRs, refuseStoryRepo } from './story.js';
 import { effortLabel, sessionEffort } from './effort.js';
@@ -51,7 +52,6 @@ import {
   readAllFeatures,
   nextFeatureId,
   featuresRoot,
-  featureBranchName,
   featureSessionVars,
   resolveFeatureStories,
   reposForFeature,
@@ -1066,7 +1066,7 @@ export async function prepareFeatureRepo(config, feature, repoName, { strict = f
     process.exit(1);
   }
   const cfg = configForRepo(config, repoName);
-  const branchName = featureBranchName(feature.featureEntry);
+  const branchName = unitBranchName(feature.featureEntry);
   const worktreePath = worktreePathFor(cfg, repoName, branchName);
   return prepareWorktreeOnce(repoPath, branchName, async () => {
     const { effectiveWorktreePath, isNewWorktree } = await ensureWorktree(
@@ -1169,7 +1169,7 @@ export async function prepareFeatureWorktree(config, feature, verb = 'run') {
   const targetRepoName = names[0];
 
   const cfg = configForRepo(config, targetRepoName);
-  const branchName = featureBranchName(feature.featureEntry);
+  const branchName = unitBranchName(feature.featureEntry);
   const worktreePath = worktreePathFor(cfg, targetRepoName, branchName);
   const unitDir = unitDirFor(cfg, branchName);
   const parsed = parsedFor(feature);
@@ -1476,7 +1476,7 @@ export async function cmdReviewStory(args, baseConfig, story, opts = {}) {
   reviewAgentOrExit(config);
   // As `cmdReview`: held to the end of the round, taken before any write.
   takeUnitLocksOrExit(config, [unit], `review ${unit.id}`);
-  const branchName = unit.branch || featureBranchName(unit.featureEntry);
+  const branchName = unit.branch || unitBranchName(unit.featureEntry);
   const ordered = [storyAsOrdered(unit)];
   const found = findUnitPRs(config, { ...unit, branch: branchName });
   openMissingPRs(config, unit, found, branchName, ordered);
@@ -1800,7 +1800,7 @@ export async function cmdMerge(args, config, feature) {
   // repo (`deployable: true` in `repos`, which every entry must set).
   const deployable = deployableRepos(config);
 
-  const branchName = feature.branch || featureBranchName(feature.featureEntry);
+  const branchName = feature.branch || unitBranchName(feature.featureEntry);
   // The feature's repos in the one order (F-52 D3): `bl` first, the lead
   // repo, then each other repo by its first story.
   const names = featureRepoOrder(stories);

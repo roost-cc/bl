@@ -8,10 +8,10 @@
  * callers, `main` in cleanup.js and `cmdMerge` in feature-cmd.js.
  */
 
-import { configForRepo, findChange } from './config.js';
+import { configForRepo, findChange, unitBranchName } from './config.js';
 import { listWorktrees } from './story.js';
 import { featureReviewGate, reviewBlockedMessage } from './review-log.js';
-import { extractSection, sectionHasContent, featureBranchName } from './feature.js';
+import { extractSection, sectionHasContent } from './feature.js';
 import { commitsAhead, preflightMainCheckouts } from './cleanup.js';
 import { heldBy } from './blockers.js';
 import { reviewSkipped } from './scripted.js';
@@ -24,8 +24,8 @@ import { REVIEW } from './flow.js';
  * its directory.
  */
 export function unitBranch(unit) {
-  if (unit.kind === 'story') return unit.storyEntry.toLowerCase();
-  return unit.branch || featureBranchName(unit.featureEntry);
+  if (unit.kind === 'story') return unitBranchName(unit.storyEntry);
+  return unit.branch || unitBranchName(unit.featureEntry);
 }
 
 /**

@@ -26,6 +26,7 @@ import {
   unitDirFor,
   findChange,
   COMPONENTS_DIR,
+  unitBranchName,
 } from './config.js';
 import { storyEffort } from './effort.js';
 
@@ -397,8 +398,8 @@ export function reposForStory(storyId, config) {
     {
       repoName: name,
       repoPath,
-      worktreePath: worktreePathFor(config, name, found.storyEntry.toLowerCase()),
-      unitDir: unitDirFor(config, found.storyEntry.toLowerCase()),
+      worktreePath: worktreePathFor(config, name, unitBranchName(found.storyEntry)),
+      unitDir: unitDirFor(config, unitBranchName(found.storyEntry)),
       unitRepo: found.unitRepo,
       componentEntry: found.componentEntry,
       storyEntry: found.storyEntry,
@@ -433,7 +434,7 @@ export function reposForStory(storyId, config) {
  * }}
  */
 export function findUnitPRs(config, unit, { repo = null, runOp } = {}) {
-  const branch = unit.branch || String(unit.featureEntry ?? '').toLowerCase();
+  const branch = unit.branch || unitBranchName(unit.featureEntry);
   const recorded = new Map((unit.change?.repos ?? []).map((r) => [r.repo, r]));
   let names = repo ? [repo] : [...recorded.keys(), unit.primaryRepo, ...(Array.isArray(unit.repos) ? unit.repos : [])];
   names = names.filter((n, i) => n && names.indexOf(n) === i);
