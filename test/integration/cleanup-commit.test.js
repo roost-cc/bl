@@ -275,6 +275,30 @@ test('single-repo cleanup writes commit as a bare string', async () => {
   assert.match(fm.commit, /^[0-9a-f]{7,}$/);
 });
 
+test('a story bl merge that marks the story done removes its scratch directories and older gate logs (S-1112)', async () => {
+  const { backlog } = buildStoryBacklog({ repoNames: ['bl'] });
+  const run = join(backlog, '.bl', 'run');
+  mkdirSync(join(run, 'S-99.S-99.scratch'), { recursive: true });
+  mkdirSync(join(run, 'S-99.r1.fix.scratch'));
+  for (const name of ['S-99.test-1.log', 'S-99.test-2.log', 'S-99.r1.correctness.md']) {
+    writeFileSync(join(run, name), 'x\n');
+  }
+  process.env.BL_BACKLOG_DIR = backlog;
+  let out;
+  try {
+    out = await captureStderr(() => captureExit(() => cleanupMain(['S-99'])));
+  } finally {
+    delete process.env.BL_BACKLOG_DIR;
+  }
+  assert.equal(out.result.exit, null, out.stderr);
+  for (const gone of ['S-99.S-99.scratch', 'S-99.r1.fix.scratch', 'S-99.test-1.log']) {
+    assert.ok(!existsSync(join(run, gone)), `${gone} is removed`);
+  }
+  for (const kept of ['S-99.test-2.log', 'S-99.r1.correctness.md'])
+    assert.ok(existsSync(join(run, kept)), `${kept} stays`);
+  assert.match(out.stderr, /^Removed 3 run files of S-99 \(\d+(\.\d)? K?B\)\.$/m);
+});
+
 test('bl merge shows check and install as statuses (S-1412)', async () => {
   // A `check` plugin and a lockfile, so every long step of the repo runs.
   const { backlog } = buildStoryBacklog({

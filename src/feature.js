@@ -86,7 +86,10 @@ export function featuresRoot(config) {
   return join(config.backlogRoot, FEATURES_DIR);
 }
 
-/** The git branch a feature is implemented on: its directory name, lowercased. */
+/**
+ * The git branch a work unit (a feature, a story or a story batch) is
+ * implemented on: its directory name, lowercased.
+ */
 export function featureBranchName(featureEntry) {
   return featureEntry.toLowerCase();
 }

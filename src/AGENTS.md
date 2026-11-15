@@ -87,6 +87,7 @@ Per-command stdout contracts:
 | `bl watch`           | one line per header or event, then the end line           |
 | `bl watch --json`    | one JSON object per line, the last `{kind: "end"}`        |
 | `bl stop`            | nothing (`stopped <id> at <step>; …` → stderr)            |
+| `bl gc`              | one line per path: `removed`, `would remove` or `kept`    |
 | `bl help`            | help text                                                 |
 | `bl <cmd> --help`    | help text                                                 |
 
@@ -2791,6 +2792,10 @@ there, never in the worktree. No prompt tells the agent to delete files. If fix-
 a stray file out, it ends the session with the outcome `unrelated`. Its reason for the operator is
 "stray files in the worktree: <paths>".
 
+When `bl merge` or `bl done` marks a work unit done, it removes the work unit's scratch directories
+and all its gate logs but the newest (`removeRunFiles` in `src/gc.js`); `bl gc` removes those of
+every done or superseded work unit.
+
 ### Worktree hygiene in the loop
 
 Review passes are read-only by contract. Each pass gets a `{{scratchDir}}` under `.bl/run/` for
@@ -4783,6 +4788,53 @@ lock. So a request never stops a later run, `bl review` or `bl merge`, and a req
 new holder stays. `bl stop` is a short command (F-122 D2): it neither takes nor checks work unit
 locks, since the run it stops holds them. `bl status <id>` shows a stopped run as
 `run: stopped at <step> (<local time>)`.
+
+### `bl gc`
+
+`bl gc [--dry-run]` (`src/gc.js`, S-1112) removes what done and superseded work units (stories,
+features and story batches) leave behind. `bl merge` and `bl done` remove a work unit's run files
+when they mark it done; `bl gc` removes them for every closed work unit, and removes the work
+units' directories under the worktree root, which `bl merge` removes only when they are empty.
+
+1. **Run files.** The leading segment of each `.bl/run` entry's name, up to its first `.`, is its
+   work unit id. For a closed work unit, `bl gc` removes each `<id>.*.scratch` directory and each
+   `<id>.test-<n>.log` but the one with the highest `n`. The run state (`<id>.json`), the lock,
+   the review findings and the event logs stay. An entry whose leading segment is not exactly the
+   id of a story, feature or story batch (`F-89-spec.json`, `updates.S-927.gate-1.log`,
+   `commit-failed`) is kept with the reason `names no work unit`.
+2. **Worktree directories.** A directory under the worktree root is a work unit's when its name is
+   the work unit's directory name, lowercased (its branch). For a closed work unit, `bl gc` reads
+   `git status` of each registered worktree in the directory, detached ones included (a
+   registered worktree whose path is gone is skipped, and the prune below drops it). If git
+   cannot read it, or it has uncommitted changes, the worktree is kept with the reason. Otherwise
+   `git worktree remove` (no `--force`) removes it; if git refuses, the worktree is kept with the
+   first line of git's error. `bl gc` lists the registered worktrees of every repo for each
+   directory. If a repo gives no complete list (its path is not there, `git worktree list` fails,
+   or a record has no path), the directory is kept with the reason
+   `git cannot list the worktrees`. When no worktree is kept, `bl gc` moves the directory aside to
+   `<dir>.bl-gc-<pid>` and lists the worktrees again. A worktree registered in the directory since
+   the first listing, at a new path or at one git removed, moved with it: the directory goes back,
+   and the worktree is kept with the reason `registered while bl gc ran`. Otherwise the moved
+   directory goes with everything left in it (sandbox mount stubs, caches, a checkout git no
+   longer lists), reported as one path. If that removal fails, what is left goes back to the
+   directory's own name. A worktree registered after the move is made in a new directory, which
+   `bl gc` never reaches. When a worktree is kept, the directory stays. Then `git worktree prune`
+   runs once in each repo of `backlog.json`. A directory whose name is no work unit's branch (an
+   operator's own branch, `docs`, a `bl-merge-*` throwaway worktree) is kept with the reason
+   `names no work unit`.
+
+An open work unit's run files and directory are not touched and not listed. `bl gc` takes no lock.
+
+Output: one stdout line per path, run files first: `removed <path>`, or `kept <path> (<reason>)`.
+With `--dry-run`, `bl gc` removes nothing, runs no git command that changes anything, and writes
+`would remove <path>` in place of `removed`. Then one stderr line:
+`bl gc: removed <n> paths, <size>; kept <k>.` (`would remove` with `--dry-run`). A path that
+cannot be removed is a `kept` line with the error, and so is a failed git command: a worktree whose
+status git cannot read, a `git worktree remove` that git refuses, a `git worktree list` that
+fails, and a failed or skipped `git worktree prune` (a `kept <repo path>` line; a repo path that
+is not there skips it). If one sweep stops on an error, the other sweep's lines are still
+printed. In each of these cases `bl gc` exits 1; otherwise it exits 0. A path kept for its uncommitted changes, or because it names no work unit,
+is not a failure.
 
 ### `bl list`
 

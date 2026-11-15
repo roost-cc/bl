@@ -87,6 +87,7 @@ import { integrateForMerge } from './merge-integrate.js';
 import { prepareStoryRun, otherWorktreesLine, implementNextSteps } from './workon.js';
 import { reviewSkipped } from './scripted.js';
 import { chooseSyncRunner, cleanupOneRepo, commitFmShape, runBacklogSync, unionLandedCommits } from './cleanup.js';
+import { removeRunFiles } from './gc.js';
 import { openItemsCommand, reviewOutcome, summarizeLatestReviewSession } from './review-log.js';
 import { updateTabTitle } from './tab-title.js';
 import {
@@ -1475,7 +1476,7 @@ export async function cmdReviewStory(args, baseConfig, story, opts = {}) {
   reviewAgentOrExit(config);
   // As `cmdReview`: held to the end of the round, taken before any write.
   takeUnitLocksOrExit(config, [unit], `review ${unit.id}`);
-  const branchName = unit.branch || unit.featureEntry.toLowerCase();
+  const branchName = unit.branch || featureBranchName(unit.featureEntry);
   const ordered = [storyAsOrdered(unit)];
   const found = findUnitPRs(config, { ...unit, branch: branchName });
   openMissingPRs(config, unit, found, branchName, ordered);
@@ -2051,6 +2052,7 @@ export async function cmdMerge(args, config, feature) {
     primary.repoPath,
   );
   lock.release();
+  removeRunFiles(config, [feature.id, ...stories.map((s) => s.id)]);
 
   const deferred = extractSection(feature.body, 'Deferred');
   if (sectionHasContent(deferred)) {

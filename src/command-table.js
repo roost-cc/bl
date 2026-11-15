@@ -90,6 +90,7 @@ export const COMMANDS = {
   top: moduleMain('./top.js'),
   watch: moduleMain('./watch.js'),
   stop: moduleMain('./stop.js'),
+  gc: moduleMain('./gc.js'),
   agent: moduleMain('./agent-run.js'),
 };
 
