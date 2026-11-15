@@ -4407,11 +4407,19 @@ message names the URL.
 
 ### `bl top`
 
-`bl top` is a live view of bl (F-87, F-88): the runs, what waits on the operator, what `bl next`
-picks, token use and agent capacity, the stories done per day, the newest run events, and the
-selected run's step timeline and live agent feed. It has two halves. The JSON half,
-`--json` and `--stream` (`src/top.js`), reads the backlog. The view, a terminal UI in Go
-(`top/`), draws the stream's snapshots and never reads a backlog file.
+`bl top` is a live view of bl (F-87, F-88). It shows:
+
+- the runs;
+- what waits on the operator;
+- what `bl next` picks;
+- token use and agent capacity;
+- the stories done per day;
+- the newest run events;
+- the selected run's step timeline and live agent feed.
+
+`bl top` has two halves. The JSON half, `--json` and `--stream` (`src/top.js`), reads the
+backlog. The view, a terminal UI in Go (`top/`), draws the stream's snapshots and never reads a
+backlog file.
 
 ```bash
 bl top                             # the view, refreshed every 2000 ms
@@ -4426,110 +4434,148 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
 
 #### The view
 
-- **Build.** `top/` is a Go module of its own (`top/go.mod`): its `go` line and its Charm v2
+- **Build.** `top/` is a Go module of its own (`top/go.mod`). Its `go` line and its Charm v2
   versions (Bubble Tea, Lipgloss, Bubbles) are logr's. With no `--json` or `--stream`,
-  `src/top.js` runs `go build -o top/bin/bl-top` in `top/` when `top/bin/bl-top` is missing or
-  older than a file under `top/` outside `top/bin/`. The build's output goes to stderr. If the
-  build is needed and `go` is not on `PATH`, `bl top` exits 1 and names the Go version of
-  `top/go.mod`. Then it runs `top/bin/bl-top` with the terminal's stdio, passes `--interval`
-  and `--version` on, and exits with its code. `top/bin/` is in `.gitignore`. `bin/bl` does
-  not change, so no other command checks the build.
+  `src/top.js` runs `go build -o top/bin/bl-top` in `top/` when `top/bin/bl-top` is missing, or
+  older than a file under `top/` outside `top/bin/`. The build writes its output to stderr. If
+  the build is needed and `go` is not on `PATH`, `bl top` exits 1 and names the Go version of
+  `top/go.mod`. Next, `src/top.js` runs `top/bin/bl-top` with the terminal's stdio, passes
+  `--interval` and `--version` on, and exits with its code. `top/bin/` is in `.gitignore`.
+  `bin/bl` does not change, so no other command checks the build.
 - **Stream.** The view starts `bl top --stream --interval <ms>` once, through
-  `--bl-argv '<JSON array>'` (`[node, src/bl.js]`, from `src/top.js`), and redraws on each line
+  `--bl-argv '<JSON array>'` (`[node, src/bl.js]`, from `src/top.js`). It redraws on each line
   (`top/internal/stream`). Bubble Tea redraws only the cells that change, so the screen does not
-  flicker. The stream runs in a process group of its own. A line that is not a `bl-top-json/v1`
-  snapshot kills that group and ends the stream. When the stream ends, the view exits 1 with
-  `bl top: the snapshot stream ended: <its last stderr line>`.
-- **Boxes and layout** (D4, F-127 Decision 1, `top/internal/ui/layout.go`). Each box has a
-  name, which is its identity (`boxName`): runs, attention, next, tokens (sections `tokens` and
-  `capacity`), activity (sections `activity` and `history`) and detail (section `runs`, and
-  `bl watch`). Code, help groups, comments and docs name a box by its name ("the next box"),
-  never by its number. Each box's drawer is in the `boxes` table, keyed by name. A layout is a
-  tree of box names. At 171×50 or larger the view draws the two columns of Mockup A
-  (`fullLayout`); from 80×24 up to that it stacks the boxes (`stackedLayout`): runs, attention,
-  detail, tokens beside activity, then next, each with Mockup B's height; below 80×24 it prints
-  `bl top needs at least 80x24`. Each node of a layout takes its weight's share of its parent; a
-  hidden box's share goes to the boxes left in its split.
+  flicker. The stream runs in a process group of its own. If a line is not a `bl-top-json/v1`
+  snapshot, the view kills that group, and the stream ends. When the stream ends, the view exits
+  1 with `bl top: the snapshot stream ended: <its last stderr line>`.
+- **Boxes and layout** (D4, F-127 Decision 1, `top/internal/ui/layout.go`). Each box has a name,
+  which is its identity (`boxName`). The boxes are:
+  - runs;
+  - attention;
+  - next;
+  - tokens (sections `tokens` and `capacity`);
+  - activity (sections `activity` and `history`);
+  - detail (section `runs`, and `bl watch`).
+
+  Code, help groups, comments and docs name a box by its name ("the next box"), never by its
+  number. The `boxes` table holds each box's drawer, keyed by name. A layout is a tree of box
+  names. The view picks the layout by the terminal's size:
+  - At 171×50 or larger, it draws the two columns of Mockup A (`fullLayout`).
+  - From 80×24 up to that size, it stacks the boxes (`stackedLayout`), each with Mockup B's
+    height: runs, attention, detail, tokens beside activity, then next.
+  - Below 80×24, it prints `bl top needs at least 80x24`.
+
+  Each node of a layout takes its weight's share of its parent. A hidden box's share goes to the
+  boxes left in its split.
+
 - **Box numbers and the Tab order** (F-127 Decisions 1 and 3, `order`). A box's number is its
-  position in the layout that is drawn: each box's top-left cell at the screen's size, as if no
-  box were hidden, sorted by row and then by column. Nothing stores a number. So the full layout
-  numbers ¹ runs, ² attention, ³ detail, ⁴ tokens, ⁵ next, ⁶ activity, and the stacked one
-  ¹ runs, ² attention, ³ detail, ⁴ tokens, ⁵ activity, ⁶ next: next and activity swap numbers
-  when the terminal crosses 171×50. `tab` and `⇧tab` follow the same order and skip hidden
-  boxes. Another layout tree changes the numbers and the Tab order with no other change.
-- **Look** (D5, `top/internal/ui/box.go`, `styles.go`). btop's rounded box, with the
-  superscript number and the name in the top border and the options at its right; the key bar
+  position in the layout that is drawn. The view sorts the boxes by their top-left cells at the
+  screen's size, by row and then by column, as if no box were hidden. Nothing stores a number.
+  So the full layout numbers ¹ runs, ² attention, ³ detail, ⁴ tokens, ⁵ next, ⁶ activity. The
+  stacked one numbers ¹ runs, ² attention, ³ detail, ⁴ tokens, ⁵ activity, ⁶ next. So next and
+  activity swap numbers when the terminal crosses 171×50. `tab` and `⇧tab` follow the same order
+  and skip hidden boxes. Another layout tree changes the numbers and the Tab order with no other
+  change.
+- **Look** (D5, `top/internal/ui/box.go`, `styles.go`). Each box is btop's rounded box. Its top
+  border holds the superscript number and the name, and the options at its right. The key bar
   is the screen's bottom border. Colors are Catppuccin Mocha with logr's names: border surface2,
-  number and name mauve, key letters peach, the screen's background base. The box with the
+  number and name mauve, key letters peach, and the screen's background base. The box with the
   focus has a mauve border. The runs box's options are the time of the last snapshot and the
-  interval (`- 2000ms +`). A section whose last read failed (`error`) keeps its last good data, and its
-  box's top border shows a red `! <error>`.
+  interval (`- 2000ms +`). A section whose last read failed (`error`) keeps its last good data,
+  and its box's top border shows a red `! <error>`.
 - **Graphs and meters** (`top/internal/ui/braille.go`, `meter.go`). A graph is a braille area
-  graph: two samples per cell, four dot rows per cell, the highest sample at full height. A
-  series longer than the graph keeps the highest value of each share, so a peak stays. Each
-  graph line takes btop's gradient by its height: green at the bottom, yellow in the middle, red
-  at the top. A quota meter has a `■` for each share left and a `·` for each share used. Its
-  `■` are green above 50 % left, yellow from 20 to 50 %, and red below 20 %.
-- **The runs box** (`runs.go`). A row per `runs` row: id, state (`● run`, `◌ stale`, `■ stop`,
-  `✗ esc`, `✗ fail`, `? unk` for no status (a missing or mistyped one), and `✓ done` for every
-  other status, such as `clean`), step, story, round
-  (`1/2`), elapsed (to the snapshot while it runs or is stale, else to its last update), output
-  tokens, agent, model and effort (from an inner width of 103, so not in Mockup B), and the pull
-  request as `<repo>#<n>`. A done row is dim. The summary line counts the runs that are running,
-  stopped and stale, and the stories and points of the newest `history` day, labelled
-  `done today (UTC)`: `history` days are UTC dates, as `bl report` counts them.
-- **The attention box** (`attention.go`). A row per inbox item: its kind tag (`RUN` teal, `ESC`
-  red, `TASK` yellow, `CHG` blue, `UPD` peach), id, unit and line. The last line is
-  `next: <the selected item's next>`. In the stacked layout two or more update items fold into
-  one row, `UPD   <n> red updates`; `↵` on it opens the group (the items follow it) or closes it.
-- **The next box** (`next.go`, F-113 D4, D5). Every ranked unit, a divider line, then every
-  unranked unit: rank (none for an unranked unit), id, status, points (`-` for none), held by
-  (`heldBy`) and title. The divider names the unranked units' order, `not ranked · oldest first`
-  (the snapshot's order, by `added:`) or `not ranked · newest first` after `d`. Without the
-  focus the box shows the committed order (`ranked`, `unranked`). With the focus and a staged
-  copy (`staged` set), it shows the staged order with a marker column before the rank: `+` (green)
-  newly ranked, `~` (peach) moved, `-` (red) taken out of the ranked list. While `staged` is set,
-  the box's name is `next · staged edits`. The line under the list is the pick, the ranked unit it
-  unblocks when that is another.
+  graph: two samples per cell and four dot rows per cell, with the highest sample at full
+  height. If a series is longer than the graph, the graph keeps the highest value of each share,
+  so a peak stays. Each graph line takes btop's gradient by its height: green at the bottom,
+  yellow in the middle, red at the top. A quota meter has a `■` for each share left and a `·`
+  for each share used. Its `■` are green above 50 % left, yellow from 20 to 50 %, and red below
+  20 %.
+- **The runs box** (`runs.go`). The box has a row per `runs` row, with these columns:
+  - id;
+  - state: `● run`, `◌ stale`, `■ stop`, `✗ esc`, `✗ fail`, `? unk` for no status (a missing or
+    mistyped one), and `✓ done` for every other status, such as `clean`;
+  - step, story and round (`1/2`);
+  - elapsed: to the snapshot while the run runs or is stale, else to its last update;
+  - output tokens;
+  - agent, model and effort, from an inner width of 103 (so not in Mockup B);
+  - the pull request, as `<repo>#<n>`.
+
+  A done row is dim. The summary line counts the runs that are running, stopped and stale. It
+  also counts the stories and points of the newest `history` day, labelled `done today (UTC)`:
+  `history` days are UTC dates, as `bl report` counts them.
+
+- **The attention box** (`attention.go`). The box has a row per inbox item. Each row shows its kind
+  tag (`RUN` teal, `ESC` red, `TASK` yellow, `CHG` blue, `UPD` peach), id, work unit and line. The last line
+  is `next: <the selected item's next>`. In the stacked layout, two or more update items fold
+  into one row, `UPD   <n> red updates`. `↵` on that row opens the group (the items follow it) or
+  closes it.
+- **The next box** (`next.go`, F-113 D4, D5). The box lists every ranked work unit, a divider
+  line, then every unranked work unit. Each row shows the rank (none for an unranked work unit),
+  id, status, points (`-` for none), held by (`heldBy`) and title. The divider names the order of
+  the unranked work units: `not ranked · oldest first` (the snapshot's order, by `added:`), or
+  `not ranked · newest first` after `d`. Without the focus, the box shows the committed order
+  (`ranked`, `unranked`). With the focus and a staged copy (`staged` set), it shows the staged
+  order, with a marker column before the rank:
+  - `+` (green): newly ranked;
+  - `~` (peach): moved;
+  - `-` (red): taken out of the ranked list.
+
+  While `staged` is set, the box's name is `next · staged edits`. The line under the list is the
+  pick. When the pick unblocks another ranked work unit, the line also names that work unit.
+
 - **Conflict line** (`layout.go`, F-113 Decision A3). While the `next` section's `conflict` is
-  set, the screen's first line is `! <conflict>` in red across the full width, also when the next
-  box is hidden, and the boxes take the lines under it.
+  set, the screen's first line is `! <conflict>` in red across the full width. The line shows also
+  when the next box is hidden. The boxes take the lines under it.
 - **Selection** (`selection.go`). The runs, the attention and the next box each have a selected
-  row, kept by its id (`sel`, by box name): after a new snapshot the same row stays selected
-  while its id is there, else the row at its place. `↑` and `↓` move the selection of the box
-  with the focus, and the box scrolls to keep it on screen. The next box's divider is no row:
-  `↑` and `↓` pass over it. The selected row has the surface0 background. A cell that does not fit is cut with `…`.
-- **The tokens box** (`tokens.go`). The graph of output tokens per minute over 2 h, labelled
-  `ended sessions` (D3b), with its peak and an axis of the local half hours and `now`. Then
-  one meter per quota window of `bl capacity`, with the percent left and the reset (local
-  `15:04` within a day, else `Nov 12`). A window that two configurations report (Codex's
-  account quota) shows once. A configuration with no window shows `<agent>  <state>: <message>`,
-  for example `unknown: gemini cannot report capacity`, once per distinct line. Then today's
-  totals of the four kinds, and the local time capacity was last read.
-- **The activity box** (`activity.go`). The graph of points done per UTC day over the `history`
-  days (`points done / UTC day`), with the total of the last 7 days and a date axis. Then the
-  `activity` events, newest first, as many as fit: local time, work unit, step with its story or
-  round, `✓` or `✗` and the duration, then the agent, model and effort, or the note for a failed
-  session or an event with no agent.
-- **The detail box** (`detail.go`, F-88 S-1334). `↵` on a run row in the runs box, or on a row
-  of the attention or the next box whose unit (an item's `unit`, a unit's id in the next box)
-  has a `runs` row, makes the detail box show that run; its id is in the box's top border. With
-  no run shown, the detail box says `select a run (↑↓ in runs, then ↵)`.
-  From an inner height of 12 (Mockup A): the run's id and title; its branch, lead worktree,
-  pull request and local start time; the `timeline` as columns, `✓` done with its duration
-  (and `(n att.)` for two or more test entries), `●` current with its elapsed time, `·` not
-  started, over a bar; the denied tools (the count, and the step and tool of the first), the
-  run's test attempts, and the tokens of the current stage's ended sessions (else the last done
-  stage's). Below 12 (Mockup B): one line with the id, story and step, elapsed time and agent,
-  and the timeline on one line. Then the live feed, and the keys on the last line.
-- **The feed** (`top/internal/watch`). Showing a run starts `bl watch <id> --json` (through
-  `--bl-argv`) in a process group of its own; the view stops it (SIGTERM to the group) when
-  another run is shown or the view quits, and drops the messages of a watch it replaced. When
-  the watch of the run shown has ended, and a later snapshot shows that run not running and then
-  running again (a `--resume`), the view starts a new watch of it; the feed keeps its lines
-  (`resumeWatch`). After a watch that exited 0, the first snapshot read after the end that shows
-  the run running does the same: that watch ends only when no bl holds the run. Each line is a
-  feed line, cut to the box:
+  row, kept by its id (`sel`, by box name). After a new snapshot, the same row stays selected
+  while its id is there; else the row at its place is selected. `↑` and `↓` move the selection
+  of the box with the focus, and the box scrolls to keep the selection on screen. The next box's
+  divider is not a row: `↑` and `↓` pass over it. The selected row has the surface0 background.
+  A cell that does not fit is cut with `…`.
+- **The tokens box** (`tokens.go`). First, the box shows the graph of output tokens per minute
+  over 2 h, labelled `ended sessions` (D3b). The graph has its peak and an axis of the local half
+  hours and `now`. Then the box shows one meter per quota window of `bl capacity`, with the
+  percent left and the reset (local `15:04` within a day, else `Nov 12`). A window that two
+  configurations report (Codex's account quota) shows once. A configuration with no window shows
+  `<agent>  <state>: <message>`, for example `unknown: gemini cannot report capacity`, once per
+  distinct line. Last come today's totals of the four kinds, and the local time of the last
+  capacity read.
+- **The activity box** (`activity.go`). First, the box shows the graph of points done per UTC
+  day over the `history` days (`points done / UTC day`). The graph has the total of the last 7
+  days and a date axis. Then it shows the `activity` events, newest first, as many as fit. Each event shows
+  the local time, the work unit, the step with its story or round, `✓` or `✗` and the duration.
+  Then it shows the agent, model and effort, or the note for a failed session or an event with
+  no agent.
+- **The detail box** (`detail.go`, F-88 S-1334). `↵` makes the detail box show a run, on one of
+  these rows:
+  - a run row in the runs box;
+  - a row of the attention or the next box whose work unit has a `runs` row. That work unit is
+    an item's `unit`, or a work unit's id in the next box.
+
+  The run's id is in the box's top border. With no run shown, the detail box says
+  `select a run (↑↓ in runs, then ↵)`. From an inner height of 12 (Mockup A), the box shows:
+  - the run's id and title;
+  - its branch, lead worktree, pull request and local start time;
+  - the `timeline` as columns, over a bar: `✓` done with its duration (and `(n att.)` for two or
+    more test entries), `●` current with its elapsed time, and `·` not started;
+  - the denied tools (the count, and the step and tool of the first) and the run's test
+    attempts;
+  - the tokens of the current stage's ended sessions (else the last done stage's).
+
+  Below 12 (Mockup B), the box shows one line with the id, story and step, elapsed time and
+  agent, and the timeline on one line. Then come the live feed, and the keys on the last line.
+
+- **The feed** (`top/internal/watch`). When the view shows a run, it starts
+  `bl watch <id> --json` (through `--bl-argv`) in a process group of its own. The view stops that
+  watch (SIGTERM to the group) when it shows another run or quits. It drops the messages of a
+  watch that it replaced. In two cases, the view starts a new watch of the run shown, and the
+  feed keeps its lines (`resumeWatch`):
+  - The watch of the run shown has ended, and a later snapshot shows that run not running and
+    then running again (a `--resume`).
+  - A watch exited 0, and a snapshot read after its end shows the run running. The first such
+    snapshot starts the new watch: a watch that exits 0 ends only when no bl holds the run.
+
+  Each line of the watch is a feed line, cut to the box:
 
   | `bl watch --json` line | Feed line                                                       |
   | ---------------------- | --------------------------------------------------------------- |
@@ -4538,208 +4584,244 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
   | `tool`                 | `<local time>  tool  <tool>  <summary>`, on one line            |
   | `end`                  | `── run ended: <status> ──`                                     |
 
-  A stderr line of `bl watch`, and why it failed when it exits other than 0, show dim. The
-  feed keeps its newest 1000 lines. With follow on (the default) it shows its newest lines; with
-  follow off, `↑` and `↓` in the detail box scroll it, and a new line leaves the lines on screen
-  where they are.
+  A stderr line of `bl watch` shows dim. So does the reason when `bl watch` exits other than 0.
+  The feed keeps its newest 1000 lines. With follow on (the default), it shows its newest lines.
+  With follow off, `↑` and `↓` in the detail box scroll it, and a new line leaves the lines on
+  screen where they are.
 
 - Below an inner height of 12 lines, the tokens and the activity box leave out their axis and
   blank lines (Mockup B).
-- **Three kinds of keys** (F-127; `key`, `localKey`, `helpGroups` in `top/internal/ui/model.go`).
-  Global keys work in every box. Box keys belong to the box with the focus: in the next box `y`,
-  `p`, `P`, `x`, `esc`, `C`, `R`, `d`; in the detail box `f`, `w`. Row action keys are the keys of
-  the selected row's `actions` in the snapshot: any of them picks that action (`actKey`), and a
-  key that none of them has does nothing. The view checks the global keys first, then the
-  focused box's box keys, then the row's actions, so a box key wins over a row action key with
-  the same letter (`p` in the next box puts).
+- **Three kinds of keys** (F-127; `key`, `localKey`, `helpGroups` in `top/internal/ui/model.go`):
+  - Global keys work in every box.
+  - Box keys belong to the box with the focus: `y`, `p`, `P`, `x`, `esc`, `C`, `R` and `d` in
+    the next box, and `f` and `w` in the detail box.
+  - Row action keys are the keys of the selected row's `actions` in the snapshot. Each of them
+    picks the action with that key (`actKey`). A key that none of them has does nothing.
+
+  The view checks the global keys first, then the box keys of the box with the focus, then the
+  row's actions. So a box key wins over a row action key with the same letter (`p` in the next
+  box puts).
+
 - **Key bar** (F-127 Decision 5, `Model.barKeys`, `keyBar` in `top/internal/ui/box.go`). The
-  bottom border shows, in this order: the focused box's box keys with their word from
-  `helpGroups`; the selected row's action keys with their `short` label, each key once and none
-  that is a box key or a global key; then `tab box`, `↑↓ select`, `↵ detail`, `a act`,
-  `h help`, `q quit` (the global keys that have a word in `helpGroups`). The tokens and the
-  activity box have no rows, so they show the global keys alone. The note line (below) comes
-  first: its notes share the bar, a note longer than its share is cut with `…`, and the keys take
-  the room the notes leave. The command that runs and the note of the last key or failed action
-  clear when the job ends or at the next key, so they may take the whole bar. A sender warning
-  stays until its sender succeeds, so with neither of those the sender warnings share only the
-  room that every key without its label leaves, and `h` and `q` always show. When the labels do
-  not fit, the bar shows the keys alone; when those do not fit either, it leaves out the keys at
-  its end.
-- **Keys** (D6, F-127 Decision 3, `top/internal/ui/model.go`): key `n` (`1`–`6`) hides or shows
-  the box at position `n` of the drawn layout; every box of the layout counts, hidden or not, so
-  a second press shows the box again. The view keeps the hidden boxes by name (`hidden`), so a
-  resize keeps the same boxes hidden under their new numbers. `tab` and `⇧tab` move the focus
-  to the next or previous shown box in the drawn order; `↑` and `↓` select a row, and in the
-  detail box with follow off scroll the feed; `↵` shows the selected row's run in the detail box,
-  or on the grouped update row opens or closes it; in the detail box, `f` turns follow on or
-  off and `w` opens `bl watch <id>` of the detail box's run in a new tmux window, in bl top's
-  directory, named `<id> watch` (D7's `tmux new-window`, then `exec ${SHELL:-sh}`, so the
-  window stays open after `bl watch` exits), as an action of the queue (below), and outside
-  tmux (`$TMUX` unset) says `w needs tmux` in red in the bottom border until the next key; `a`
-  opens the action menu of the selected row, and a row action key picks its action with that
-  key (below); `d` in the next box shows the unranked units newest or oldest first
-  (`bl top` starts oldest first, and the choice lasts until it exits); in the next box, the
-  ranking keys (below); `c` writes `capacity` to the stream's stdin, so the next snapshot
-  reads capacity; `+` and `-` change the interval by 500 ms within
-  500 to 10000 and, 400 ms after the last press, start the stream again with it; `h` opens the
-  help, and any key closes it; `q` or `ctrl+c` quits. The help lists the global keys, then
-  each box's box keys with its current number and name beside the first of them (`helpGroups`,
-  by box name), then the line `the selected row's actions; a lists them`. Its top border says
+  bottom border shows, in this order:
+  1. the box keys of the box with the focus, with their word from `helpGroups`;
+  2. the selected row's action keys with their `short` label, each key once, and none that is a
+     box key or a global key;
+  3. `tab box`, `↑↓ select`, `↵ detail`, `a act`, `h help`, `q quit`: the global keys that have a
+     word in `helpGroups`.
+
+  The tokens and the activity box have no rows, so they show the global keys alone. The note
+  line (below) gets its room first. Its notes share the bar, and a note longer than its share is
+  cut with `…`. The keys take the room that the notes leave. Two notes clear when the job ends or
+  at the next key: the command that runs, and the note of the last key or failed action. So
+  these two notes may take the whole bar. A sender warning stays until its sender succeeds. So when neither
+  of those two notes shows, the sender warnings share only the room that every key without its
+  label leaves. Then `h` and `q` always show. When the labels do not fit, the bar shows the keys
+  alone. When the keys alone do not fit either, the bar leaves out the keys at its end.
+
+- **Keys** (D6, F-127 Decision 3, `top/internal/ui/model.go`):
+  - `1`–`6`: key `n` hides or shows the box at position `n` of the drawn layout. Every box of the
+    layout counts, hidden or not, so a second press shows the box again. The view keeps the
+    hidden boxes by name (`hidden`), so a resize keeps the same boxes hidden under their new
+    numbers.
+  - `tab` and `⇧tab` move the focus to the next or previous shown box in the drawn order.
+  - `↑` and `↓` select a row. In the detail box with follow off, they scroll the feed.
+  - `↵` shows the selected row's run in the detail box. On the grouped update row, it opens or
+    closes the group.
+  - `f` in the detail box turns follow on or off.
+  - `w` in the detail box opens `bl watch <id>` of the detail box's run in a new tmux window, as
+    an action of the queue (below). The window is in bl top's directory and is named
+    `<id> watch`. The command is D7's `tmux new-window`, then `exec ${SHELL:-sh}`, so the window
+    stays open after `bl watch` exits. Outside tmux (`$TMUX` unset), `w` says `w needs tmux` in
+    red in the bottom border until the next key.
+  - `a` opens the action menu of the selected row. A row action key picks its action with that
+    key (below).
+  - `d` in the next box shows the unranked work units newest or oldest first. `bl top` starts
+    oldest first, and the choice lasts until it exits.
+  - In the next box, the ranking keys work (below).
+  - `c` writes `capacity` to the stream's stdin, so the next snapshot reads capacity.
+  - `+` and `-` change the interval by 500 ms, within 500 to 10000. 400 ms after the last press,
+    the view starts the stream again with the new interval.
+  - `h` opens the help, and any key closes it.
+  - `q` or `ctrl+c` quits.
+
+  The help lists the global keys first. Then it lists the box keys of each box, with the box's
+  current number and name beside the first of them (`helpGroups`, by box name). Last comes the
+  line `the selected row's actions; a lists them`. The help's top border says
   `any key closes this help`. Blank lines part the groups when the help fits the screen with
-  them; without them it fits from 80×24.
-- **Ranking keys** (F-113 D6, D7; `rankKey`, `top/internal/ui/dialog.go`). They act only while
-  the next box has the focus, so `p` keeps F-88's meaning in the other boxes. `y` yanks the
-  selected unit, ranked or not, and the next box marks it with a peach `↕` after its rank until a
-  put or `esc`. `p`, `P` and `x` pick the selected row's action of that key; `C` and `R` pick
-  the box's (`next.actions`), which belong to no row. Each runs at once, as every action does
-  (below). A key with no such action does nothing: an unranked row has no `p`, `P` or `x`, and
-  with no staged copy there is no `C` or `R`. While
-  `next.conflict` is set, every ranking key but `R` refuses with its text in the bottom border.
-  Each pick renders the action's argv (`actions.Render`, below) with `Selected` (the selected
-  row's id) and `Yanked` (only while a unit is yanked): a put with nothing yanked refuses with
-  `yank a work unit first (y)`, and the menu shows that line in place of its command. A put
-  takes the yanked id at the key press, and the yank ends then. `bl rank --commit` runs with no
-  stdin, so a merge conflict ends it with `conflict: run bl rank --commit in a terminal`, which
-  the note line shows.
+  them. Without them, the help fits from 80×24.
+
+- **Ranking keys** (F-113 D6, D7; `rankKey`, `top/internal/ui/dialog.go`). The ranking keys act
+  only while the next box has the focus, so `p` keeps F-88's meaning in the other boxes:
+  - `y` yanks the selected work unit, ranked or not. The next box marks it with a peach `↕`
+    after its rank until a put or `esc`.
+  - `p`, `P` and `x` pick the selected row's action of that key.
+  - `C` and `R` pick the box's actions (`next.actions`), which belong to no row.
+
+  Each action runs at once, as every action does (below). A key with no such action does
+  nothing. An unranked row has no `p`, `P` or `x`, and with no staged copy there is no `C` or
+  `R`. While `next.conflict` is set, every ranking key but `R` refuses with its text in the
+  bottom border. Each pick renders the action's argv (`actions.Render`, below) with `Selected`
+  (the selected row's id) and `Yanked` (only while a work unit is yanked). If nothing is yanked,
+  a put refuses with `yank a work unit first (y)`, and the menu shows that line in place of its
+  command. A put takes the yanked id at the key press, and the yank ends then. `bl rank --commit`
+  runs with no stdin. So a merge conflict ends it with
+  `conflict: run bl rank --commit in a terminal`, which the note line shows.
+
 - **Actions** (D7, F-88 S-1336, F-127 Decisions 2 and 4; `top/internal/ui/dialog.go`,
   `top/internal/ui/queue.go`, `top/internal/actions`). The selected row of the box with the
-  focus (in the detail box, the run it shows) has the `actions` of its snapshot row (below).
-  `a` opens the action menu (Mockup C): `↑` `↓` and `↵`, or an action's key, pick one, and
-  `esc` cancels. A row action key picks the action with that key directly; a key that the
-  row's actions do not have does nothing. No action asks y/n: a pick runs at once (`pick`). An
-  action with `input` first opens its text box: `note` is optional, `reason` refuses an empty one; `enter`
-  runs it, and `esc` cancels it. The menu and the text box are the only action dialogs.
-  - **The queue.** bl top has at most one action child process (`Model.jobs`, a `job` each). An
-    action picked while another runs waits, and the queue runs in the order of the key presses
-    (`enqueue`, `jobDone`). The note line, at the right of the bottom border, shows the command
-    that runs (`command`), in the text color. On success the line clears and the next action
-    starts. On a failure the actions that waited are dropped, and the line shows
-    `exit <code>[, dropped <n> queued action(s)]: <command>: <last stderr line>` in red until
-    the next key. The exit code and the count come first, so a cut never hides them. A long
-    child holds the queue: `bl merge` for minutes,
-    `bl stop` for up to 30 s. `q` quits while a child runs, and the child goes on. The next
-    snapshot shows the change.
-  - an action with `window` opens a new tmux window of that name, in bl top's directory (the
-    backlog root: `src/top.js` runs the view there), running the command and then
-    `exec ${SHELL:-sh}` (`actions.TmuxArgs`; `w` is such an action too). Its child is
-    `tmux new-window` (`actions.Window`), which ends at once, so the command in the window holds
-    no queue. Outside tmux the action says `<key> needs tmux` and does nothing. A tmux that
-    fails reports like any other failed action.
-  - any other action runs as a child with no stdin and stdout: a bl command through
-    `--bl-argv`, a `url` through `xdg-open` (`open` on macOS).
-  - an action with `stops` marks its run with the pid of its `bl stop` child (D8,
-    `Differ.Quiet`), when the child starts. The view starts the child before it reads the next
-    snapshot (`actions.Start`), so the mark is there first. A stop that the queue drops never
-    starts and marks nothing. The run's `stopped` end does not notify when that pid is one of
-    the run's `stoppedBy`, the pids of the `bl stop`s whose requests stopped
-    it (`markStopped`). So a stop of this view that timed out and stops the run later stays quiet,
-    and another shell's stop notifies, also while this view's stop runs or after it failed. The
-    marks go when the run ends with any status.
+  focus has the `actions` of its snapshot row (below). In the detail box, that row is the run
+  that the box shows. `a` opens the action menu (Mockup C). In the menu, `↑` `↓` and `↵`, or an
+  action's key, pick an action, and `esc` cancels. A row action key picks the action with that
+  key directly. A key that the row's actions do not have does nothing. No action asks y/n: a
+  pick runs at once (`pick`). An action with `input` first opens its text box: `note` is
+  optional, and `reason` refuses an empty one. `enter` runs the action, and `esc` cancels it. The
+  menu and the text box are the only action dialogs.
+  - **The queue.** bl top has at most one action child process (`Model.jobs`, a `job` each). If
+    an action is picked while another runs, it waits. The queue runs the actions in the order of
+    the key presses (`enqueue`, `jobDone`). The note line, at the right of the bottom border,
+    shows the command that runs (`command`), in the text color. On success, the line clears and
+    the next action starts. On a failure, the view drops the actions that waited. The line then
+    shows `exit <code>[, dropped <n> queued action(s)]: <command>: <last stderr line>` in red
+    until the next key. The exit code and the count come first, so a cut never hides them. A
+    long child holds the queue: `bl merge` for minutes, `bl stop` for up to 30 s. `q` quits while
+    a child runs, and the child goes on. The next snapshot shows the change.
+  - An action with `window` opens a new tmux window of that name, in bl top's directory. That
+    directory is the backlog root: `src/top.js` runs the view there. The window runs the command
+    and then `exec ${SHELL:-sh}` (`actions.TmuxArgs`; `w` is such an action too). The action's
+    child is `tmux new-window` (`actions.Window`), which ends at once, so the command in the
+    window holds no queue. Outside tmux, the action says `<key> needs tmux` and does nothing. A
+    tmux that fails reports like any other failed action.
+  - Any other action runs as a child with no stdin and stdout: a bl command through
+    `--bl-argv`, or a `url` through `xdg-open` (`open` on macOS).
+  - An action with `stops` marks its run with the pid of its `bl stop` child when the child
+    starts (D8, `Differ.Quiet`). The view starts the child before it reads the next snapshot
+    (`actions.Start`), so the mark is there first. A stop that the queue drops never starts and
+    marks nothing. The run's `stopped` end does not notify when that pid is one of the run's
+    `stoppedBy`. `stoppedBy` holds the pids of the `bl stop`s whose requests stopped the run
+    (`markStopped`). So if a
+    stop of this view timed out and stops the run later, the end stays quiet. A stop from
+    another shell notifies, also while this view's stop runs or after it failed. The marks go
+    when the run ends with any status.
 - **Notifications** (D8, `top/internal/notify`). The view compares each snapshot with the one
-  before. A new `escalation` or `task` item (by item id) and a run that gets an end status
-  (every status but `running`, `stale` and none: `clean`, `no-change`, `reviewed`, `escalated`,
-  `failed`, `stopped`; `stream.Ended`; by run id and status), except a `stopped` end by a
-  `bl stop` that this view started, each make a note
-  `<id> <kind>` with a line: the item's line, or `ended at <step> (<story>)` (`ended` for a run
-  with no step). The first read of a
-  section only sets its baseline, so an item notifies once, and again only after it left the
-  inbox and came back. For the notes of a snapshot the view rings the terminal bell (`\a`) once,
-  unless `--no-bell`, and hands each note to each sender. A sender is a command argv to which
-  it appends `<id> <kind>` and `<line>`; it runs in the background, in a process group of its
-  own, and is killed after 10 s. The command's own exit is the result: after it exits, the
-  sender waits at most 1 s for a child that holds its stderr, so an exit 0 is never `timeout`.
-  The stream's end waits the same 1 s for its stderr. The desktop sender is
-  `notify-send -a "bl top" --`, when `notify-send` is on `PATH` and there is no `--no-desktop`.
-  A sender that exits other than 0 or times out puts
-  `<name> failed: <its last stderr line, or timeout>` in red at the right of the bottom border,
-  until its command next exits 0. A sender may take only some kinds of note (`Sender.Kinds`).
-  `src/top.js` refuses `--no-bell`, `--no-desktop` and `--no-push` with `--json` or `--stream`.
+  before. Each of these makes a note `<id> <kind>` with a line:
+  - a new `escalation` or `task` item (by item id), with the item's line;
+  - a run that gets an end status (by run id and status), with `ended at <step> (<story>)`, or
+    `ended` for a run with no step.
+
+  The end statuses are every status but `running`, `stale` and none: `clean`, `no-change`,
+  `reviewed`, `escalated`, `failed`, `stopped` (`stream.Ended`). A `stopped` end by a `bl stop`
+  that this view started makes no note. The first read of a section only sets its baseline. So
+  an item notifies once, and again only after it left the inbox and came back. For the notes of
+  a snapshot, the view rings the terminal bell (`\a`) once, unless `--no-bell`. It hands each
+  note to each sender.
+
+  A sender is a command argv, to which the view appends `<id> <kind>` and `<line>`. The sender
+  runs in the background, in a process group of its own, and is killed after 10 s. The
+  command's own exit is the result. After the command exits, the sender waits at most 1 s for a
+  child that holds its stderr, so an exit 0 is never `timeout`. The stream's end waits the same
+  1 s for its stderr. The desktop sender is `notify-send -a "bl top" --`, when `notify-send` is
+  on `PATH` and there is no `--no-desktop`. If a sender exits other than 0 or times out, the view
+  puts `<name> failed: <its last stderr line, or timeout>` in red at the right of the bottom
+  border. The warning stays until the sender's command next exits 0. A sender may take only
+  some kinds of note (`Sender.Kinds`). `src/top.js` refuses `--no-bell`, `--no-desktop` and
+  `--no-push` with `--json` or `--stream`.
+
 - **Phone push** (D8a, `notify.Push`). The push sender, named `push`, is the command of
-  backlog.json's `top` block (below), and it gets only `escalation` and `task` notes, never a
-  run that ends (Decision A6). `src/top.js` reads the block before the build (not for
-  `--version`, which reads no backlog) and passes the argv to the view as
-  `--push-argv '<JSON array>'`, an internal flag that the view decodes with `encoding/json`, so
-  the view still reads no backlog file. `--no-push` (passed on to the view) drops the sender. A
-  push that fails warns as `push failed: …` in the bottom border. bl holds no secret and names
-  no push service: the command does that. The view cannot put `--` before the two arguments it
-  appends, because it does not know the command's options. So a line that starts with `-` can
-  reach the command as an option: when the command needs it, the operator puts `--` at the end
-  of `top.push`.
+  backlog.json's `top` block (below). It gets only `escalation` and `task` notes, never a run
+  that ends (Decision A6). `src/top.js` reads the block before the build, but not for
+  `--version`, which reads no backlog. It passes the argv to the view as
+  `--push-argv '<JSON array>'`. That is an internal flag that the view decodes with
+  `encoding/json`, so the view still reads no backlog file. `--no-push` (passed on to the view)
+  drops the sender. A push that fails warns as `push failed: …` in the bottom border. bl holds
+  no secret and names no push service: the command does that. The view cannot put `--` before
+  the two arguments that it appends, because it does not know the command's options. So a line
+  that starts with `-` can reach the command as an option. If the command needs it, the operator
+  puts `--` at the end of `top.push`.
 - **backlog.json `top`.** `"top": { "push": ["<command>", "<arg>", …] }`. `topSettings`
-  (`src/config.js`) reads it as `updateSettings` reads `updates`: only when used, never by
-  `loadConfig`, and only for the view (`--json` and `--stream` do not read it). No `top` block
-  means no phone push. With one, `push` is required, with no default: a non-empty array of
-  non-empty strings. Otherwise `bl top` exits 1 with an error that names `backlog.json "top"`
-  and the key.
+  (`src/config.js`) reads it as `updateSettings` reads `updates`: only when used, and never by
+  `loadConfig`. It reads it only for the view: `--json` and `--stream` do not read it. With no `top`
+  block, there is no phone push. With a `top` block, `push` is required and has no default: it
+  must be a non-empty array of non-empty strings. Otherwise `bl top` exits 1 with an error that
+  names `backlog.json "top"` and the key.
 - **Tests.** `npm test` runs `go test ./...` in `top/` (script `test:top`). The golden files
-  `top/internal/ui/testdata/*.golden` hold the two action dialogs, the menu and the text box
-  (`actions.golden`), the
-  empty frame at 171×63, 100×40 and 79×23, the
-  frame at 100×40 with a fake `notify-send` that exited 1 and with a fake push command that
-  exited 1, one set of boxes, and the screen at 171×63 and 100×40 drawn from the recorded snapshot
-  `testdata/snapshot.json` (Mockup A's data) in a fixed zone (UTC−5), without colors, with a row
-  selected in the runs, the attention and the next box, and the same screen with S-1330 shown in
-  the detail box and the recorded
-  `bl watch --json` lines of the S-1272 fixtures (`top/internal/watch/testdata/watch.jsonl`) as
-  its feed (`detail-*.golden`);
-  `go test ./internal/ui -update` writes them again. `top/internal/watch`'s tests run a fake
-  `bl` that prints those lines. The action tests put a fake `bl`, `tmux`, `xdg-open` and `open`
-  on `PATH`, each of which writes its arguments to a file and adds them as a line to a log, so
-  a test reads the order of the queue's runs.
-  `test/cli/top.sh` removes `top/bin/` and checks the build, with and without Go on `PATH`. It
-  then checks a bad `top` block, and swaps in a fake view for a moment to check `--push-argv`
-  and `--no-push`.
+  `top/internal/ui/testdata/*.golden` hold:
+  - the two action dialogs, the menu and the text box (`actions.golden`);
+  - the empty frame at 171×63, 100×40 and 79×23;
+  - the frame at 100×40 with a fake `notify-send` that exited 1, and with a fake push command
+    that exited 1;
+  - one set of boxes;
+  - the screen at 171×63 and 100×40, drawn from the recorded snapshot `testdata/snapshot.json`
+    (Mockup A's data). The screen is drawn in a fixed zone (UTC−5), without colors, with a row
+    selected in the runs, the attention and the next box;
+  - the same screen with S-1330 shown in the detail box, and the recorded `bl watch --json` lines
+    of the S-1272 fixtures (`top/internal/watch/testdata/watch.jsonl`) as its feed
+    (`detail-*.golden`).
+
+  `go test ./internal/ui -update` writes them again. The tests of `top/internal/watch` run a
+  fake `bl` that prints those lines. The action tests put a fake `bl`, `tmux`, `xdg-open` and
+  `open` on `PATH`. Each fake writes its arguments to a file and adds them as a line to a log.
+  So a test reads from the log the order in which the queue ran its actions. `test/cli/top.sh` removes `top/bin/`
+  and checks the build, with and without Go on `PATH`. Then it checks a bad `top` block. Last, it
+  swaps in a fake view for a moment to check `--push-argv` and `--no-push`.
 
 #### The snapshot
 
 The snapshot is one object, schema `bl-top-json/v1`:
-`{ schema, at, runs, attention, next, capacity, history, activity, tokens }`. `at` and every time in it are ISO
-times with a zone. Each section is an object with `read_at`, the ISO time of its last good
-read. A section whose read throws keeps its last good value and carries `error`, the message;
-the next good read drops `error`. Each section comes from bl's own reader, in the same process
-(`src/top-snapshot.js`), so nothing else parses a backlog file:
+`{ schema, at, runs, attention, next, capacity, history, activity, tokens }`. `at` and every
+time in it are ISO times with a zone. Each section is an object with `read_at`, the ISO time of
+its last good read. If the read of a section throws, the section keeps its last good value and
+carries `error`, the message. The next good read drops `error`. Each section comes from bl's own
+reader, in the same process (`src/top-snapshot.js`), so nothing else parses a backlog file:
 
-| Section     | Holds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Read (`--stream`)                                        |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
-| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's holder, or null), `agent`, `model`, `effort` of its newest session entry, `title` (its unit's), `testAttempts`, `stoppedBy` (the `bl stop` pids that stopped it; `[]` unless `stopped`), `timeline` and `denied` (below)                                                                                                                                                                                                                                                                                                                                                                                          | every snapshot                                           |
-| `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | when the backlog changes, and at least every 30 s        |
-| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (every committed ranked unit: `position`, `id`, `title`, `status`, `points`, `holds`, `heldBy`: the ids of the holders, `actions`), `unranked` (every other open unit, oldest `added:` first, the same fields with `position: null`): `nextPlan()`, the walk `bl next` prints; `staged`: null with no staged copy (`.bl/priority.staged.yaml`), else `{ ranked, unranked }` in the staged order (`readStaged`, `orderOf`), each row with `position` in the staged list and `mark` (`+`, `~`, `-` or `""`, `marks()`); `conflict`: null, or F-113 Decision A3's message while the staged copy is in conflict (then `staged` is null); `actions`: `C` and `R` while a staged copy exists, in conflict or not, else `[]` | as `attention`                                           |
-| `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | every 5 min, and at the snapshot after a `capacity` line |
-| `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | every 5 min                                              |
-| `activity`  | `events`: the newest 50 history entries of all run states, newest first, each `{ at, unit, step, story, round, ok, durationMs, agent, model, effort, note }`; `durationMs` is `at` minus `startedAt` (null without one), and `note` is cut to 80 characters                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | every snapshot                                           |
-| `tokens`    | `from`, `minutes`, `today`: the output tokens of each of the last 120 minutes from `from`, oldest first, the last the snapshot's minute, from each history entry's `usage` spread evenly from its `startedAt` to its `at`; `today` sums the four kinds of each entry whose `at` is on today's local date                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | every snapshot                                           |
+| Section     | Holds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Read (`--stream`)                                        |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `runs`      | `rows`: each run state (`.bl/run/<id>.json`) that is `running` or `stopped`, or was updated in the last 24 h, newest first, with its fields, `pid` (the run lock's holder, or null), `agent`, `model`, `effort` of its newest session entry, `title` (its work unit's), `testAttempts`, `stoppedBy` (the `bl stop` pids that stopped it; `[]` unless `stopped`), `timeline` and `denied` (below)                                                                                                                                                                                                                                                                                                                                                                                                                            | every snapshot                                           |
+| `attention` | `items` and `warnings`: `collectInbox()`, in `KINDS` order (runner, escalation, task, change, update)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | when the backlog changes, and at least every 30 s        |
+| `next`      | `pick` (`{ id, title, status, from, path }` or null), `ranked` (every committed ranked work unit: `position`, `id`, `title`, `status`, `points`, `holds`, `heldBy`: the ids of the holders, `actions`), `unranked` (every other work unit whose status does not meet `done`, oldest `added:` first, the same fields with `position: null`): `nextPlan()`, the walk `bl next` prints; `staged`: null with no staged copy (`.bl/priority.staged.yaml`), else `{ ranked, unranked }` in the staged order (`readStaged`, `orderOf`), each row with `position` in the staged list and `mark` (`+`, `~`, `-` or `""`, `marks()`); `conflict`: null, or F-113 Decision A3's message while the staged copy is in conflict (then `staged` is null); `actions`: `C` and `R` while a staged copy exists, in conflict or not, else `[]` | as `attention`                                           |
+| `capacity`  | `configurations`: the rows `bl capacity --json` prints                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | every 5 min, and at the snapshot after a `capacity` line |
+| `history`   | `days`: the last 30 days (UTC dates, as `bl history`), oldest first, each `{ date, stories, points }` for the stories that first reached `done` that day (`firstSeen()`, as `bl report`'s throughput)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | every 5 min                                              |
+| `activity`  | `events`: the newest 50 history entries of all run states, newest first, each `{ at, unit, step, story, round, ok, durationMs, agent, model, effort, note }`; `durationMs` is `at` minus `startedAt` (null without one), and `note` is cut to 80 characters                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | every snapshot                                           |
+| `tokens`    | `from`, `minutes`, `today`: the output tokens of each of the last 120 minutes from `from`, oldest first, the last the snapshot's minute, from each history entry's `usage` spread evenly from its `startedAt` to its `at`; `today` sums the four kinds of each entry whose `at` is on today's local date                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | every snapshot                                           |
 
-- `activity` and `tokens` read the run states' history entries (F-87 D3b, D3c). A session that
-  is still running counts only when it ends: its run state holds no usage until then. The
+- `activity` and `tokens` read the history entries of the run states (F-87 D3b, D3c). A session
+  that is still running counts only when it ends: its run state holds no usage until then. The
   `runs`, `activity` and `tokens` readers share one parse cache (`runStatesReader`).
-- A `runs` row carries no `history` (F-88 S-1334); the detail box reads what it needs from it:
-  - `timeline` (`runTimeline`): the stages of `planSteps()` (`src/feature-run.js`): setup,
-    one implement stage for all stories, `fix-tests` (with the test gate), self-review, then
-    `review` and `fix` (with its self-review) of each round, and `closing`. Each is
+- A `runs` row carries no `history` (F-88 S-1334). The detail box reads what it needs from these
+  fields of the row:
+  - `timeline` (`runTimeline`): the stages of `planSteps()` (`src/feature-run.js`). They are
+    setup, one implement stage for all stories, `fix-tests` (with the test gate), self-review,
+    then `review` and `fix` (with its self-review) of each round, and `closing`. Each stage is
     `{ step, round, state, durationMs, tests, usage }`. The history entries go to stages in
-    order: a review pass to the round after the last `review:round` entry, a fix to that
-    entry's round. A stage never goes back, so an entry of an earlier stage (the test gate after
-    a fix, the setup of `--resume`) goes to the latest stage so far; an entry outside the
-    timeline (`pr`, hygiene) is left out. A stage with an entry is `done`; the stage of the
-    run's `step` is `current` while the row is `running`; any other is `pending`. A stage lasts
-    from the end of the stage before it (the run's start for the first) to its last entry, or
-    to the snapshot while current. `tests` counts its `test` entries; `usage` sums its entries'
-    usage, or is null.
-  - `denied` (`deniedOf`): `{ count, step, tool }`, the denied tools of the history entries'
+    order: a review pass to the round after the last `review:round` entry, and a fix to that
+    entry's round. A stage never goes back. So an entry of an earlier stage (the test gate after
+    a fix, the setup of `--resume`) goes to the latest stage so far. An entry outside the
+    timeline (`pr`, hygiene) is left out. A stage with an entry is `done`. The stage of the
+    run's `step` is `current` while the row is `running`. Any other stage is `pending`. A stage
+    starts at the end of the stage before it, or at the run's start for the first stage. It ends
+    at its last entry, or at the snapshot while it is current. `tests` counts its `test` entries. `usage` sums the
+    usage of its entries, or is null.
+  - `denied` (`deniedOf`): `{ count, step, tool }`: the denied tools of the history entries'
     `denials`, and the step and tool of the first.
   - `title` comes from `loadBacklog()`, which reuses its graph while the backlog's files are
-    unchanged; null for a unit the backlog does not hold, or when it cannot be loaded.
-- `actions` (F-87 D7, F-88 S-1336): each `runs` row, each `attention` item and each unit of
-  `next` carries a list of `{ key, label, short, argv, input, window, url, stops }`, which
-  `src/top-snapshot.js` builds (`runActions`, `itemActions`), so the view holds no backlog
-  logic. `label` is what the `a` menu shows; `short` is the action's word on the key bar
-  (F-127 Decision 5, for example `resume`, `page` or `PR`). `argv` is a bl command
-  (`["bl", …]`) or null for `url` (a page the view opens); `input` is null, `"note"` (optional text) or `"reason"` (needed text), added as the last
-  word; `window` names the tmux window the command opens in, or is null for a child that
-  reports on the note line; `stops` is the run the action stops.
-  Each `argv` element is a Go `text/template` (F-113 D7, Decision A4): the view renders it with
-  `missingkey=error` against `Selected` (the selected row's id) and `Yanked` (the yanked unit's
-  id, only while one is yanked). An element without `{{ }}` renders as itself.
+    unchanged. It is null for a work unit that the backlog does not hold, or when the backlog
+    cannot be loaded.
+- `actions` (F-87 D7, F-88 S-1336): each `runs` row, each `attention` item and each work unit
+  of `next` carries a list of `{ key, label, short, argv, input, window, url, stops }`.
+  `src/top-snapshot.js` builds the list (`runActions`, `itemActions`), so the view holds no
+  backlog logic. The fields are:
+  - `label`: what the `a` menu shows.
+  - `short`: the action's word on the key bar (F-127 Decision 5), for example `resume`, `page`
+    or `PR`.
+  - `argv`: a bl command (`["bl", …]`), or null for `url` (a page that the view opens).
+  - `input`: null, `"note"` (optional text) or `"reason"` (needed text), added as the last word.
+  - `window`: the tmux window that the command opens in, or null for a child that reports on the
+    note line.
+  - `stops`: the run that the action stops.
+
+  Each `argv` element is a Go `text/template` (F-113 D7, Decision A4). The view renders it with
+  `missingkey=error` against `Selected` (the selected row's id) and `Yanked` (the yanked work
+  unit's id, only while one is yanked). An element without `{{ }}` renders as itself.
 
   | Row                                     | Actions (key: command)                                                                                                                                                 |
   | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -4754,67 +4836,71 @@ the next good read drops `error`. Each section comes from bl's own reader, in th
   | `next.actions`                          | `C`: `bl rank --commit`; `R`: `bl rank --reset`, while a staged copy exists                                                                                            |
   | runner, update; every row               | last, `g`: `bl agent` in window `agent`                                                                                                                                |
 
-- Each run state is read on its own. A file that cannot be read (not JSON, not a run state, or
-  gone since the listing; a read can race `saveRunState`, which truncates the file first) keeps
-  its last good parse, or is left out when it has none, and `runs`, `activity` and `tokens`
-  still read the others: each carries `error: "skipped: <why>"` and `skipped: [<id>, …]` with
-  its new `read_at`. The view's notifications keep the last status of a skipped run, and a run
-  skipped before the view saw it only sets its baseline when it is read. The `error` stays for
-  as long as the file cannot be read. `--stream` writes it to stderr once when it first
-  appears, as one line per section: three lines for one bad file. A history entry that is not
-  an object is left out, and so is an `activity` entry with no time.
-- The view decodes each field as one Go type, and a field of another type would end its
-  stream. So each run-state field that `runs`, `activity` and `tokens` copy is null when it does
-  not have its type (a hand-edited `round: "2"`), a token count that is not a whole
-  non-negative number counts 0, and an
-  `activity` `at` is a full ISO time in the years 0000 to 9999 (Go reads four-digit years only):
-  an entry with another `at` is left out, and a `startedAt` outside them gives no duration.
-- A `runs` row whose run state says `running` while nobody holds its run lock
-  (`.bl/run/<id>.lock`, checked with a try-lock) has `status: "stale"`: its bl was killed. The
-  stream parses a run state again only when the file's mtime changes.
-- "The backlog changes" means git `HEAD` moves, or a unit file, change document or
-  `priority.yaml` or the staged copy changes: `backlogStamp()` (`src/top-stream.js`) compares
-  `HEAD`, `backlogSignature()`, the stat signature `loadBacklog()` compares
-  (`src/backlog-graph.js`), and the staged copy's `statKey()`.
+- The snapshot reads each run state on its own. A file may not be readable: not JSON, not a run
+  state, or gone since the listing. A read can race `saveRunState`, which truncates the file
+  first. Such a file keeps its last good parse, or is left out when it has none. `runs`,
+  `activity` and `tokens` still read the other files. Each of them carries
+  `error: "skipped: <why>"` and `skipped: [<id>, …]` with its new `read_at`. The view's
+  notifications keep the last status of a skipped run. A run that was skipped before the view
+  saw it only sets its baseline when it is read. The `error` stays for as long as the file
+  cannot be read. `--stream` writes it to stderr once, when it first appears, as one line per
+  section: three lines for one bad file. A history entry that is not an object is left out, and
+  so is an `activity` entry with no time.
+- The view decodes each field as one Go type, and a field of another type would end its stream.
+  So:
+  - Each run-state field that `runs`, `activity` and `tokens` copy is null when it does not have
+    its type (a hand-edited `round: "2"`).
+  - A token count that is not a whole non-negative number counts 0.
+  - An `activity` `at` is a full ISO time in the years 0000 to 9999 (Go reads four-digit years
+    only). An entry with another `at` is left out, and a `startedAt` outside those years gives
+    no duration.
+- A `runs` row has `status: "stale"` when its run state says `running` while nobody holds its
+  run lock: its bl was killed. bl checks the run lock (`.bl/run/<id>.lock`) with a try-lock. The stream parses
+  a run state again only when the file's mtime changes.
+- "The backlog changes" means that git `HEAD` moves, or that a unit file, a change document,
+  `priority.yaml` or the staged copy changes. `backlogStamp()` (`src/top-stream.js`) compares
+  three things: `HEAD`, `backlogSignature()` (the stat signature that `loadBacklog()` compares,
+  in `src/backlog-graph.js`) and the staged copy's `statKey()`.
 - The first `--stream` snapshot reads every section. `attention` and `next` have a schedule
-  each. When the read of `attention`, `next`, `capacity` or `history` throws, the section is
-  read again after 10 s, then after twice as long at each further failure, never later than its
-  period, and a backlog change does not read it sooner (`RETRY_FIRST_MS`). A good read goes
-  back to the usual schedule. A `stamp()` that throws counts as a change once, not at every
-  snapshot. A line `capacity` on stdin makes the next snapshot read capacity. When stdin
+  each. If the read of `attention`, `next`, `capacity` or `history` throws, the stream reads the
+  section again after 10 s. At each further failure, it waits twice as long, never longer than
+  the section's period, and a backlog change does not read it sooner (`RETRY_FIRST_MS`). A good
+  read goes back to the usual schedule. A `stamp()` that throws counts as a change once, not at
+  every snapshot. A line `capacity` on stdin makes the next snapshot read capacity. When stdin
   closes, the stream exits 0.
-- stdout carries only the JSON. A section that could not be read
-  (`bl top: <section> not read: <message>`) and each inbox warning (`warning: …`) go to stderr,
-  in `--stream` once when they first appear.
+- stdout carries only the JSON. Two kinds of line go to stderr: a section that could not be read
+  (`bl top: <section> not read: <message>`), and each inbox warning (`warning: …`). In
+  `--stream`, each goes to stderr once, when it first appears.
 
 ### `bl watch`
 
-`bl watch <F-id|B-id|S-id> [--from-start] [--json]` (`src/watch.js`, S-1272) follows the live agent
-session of a headless `bl run`, `bl review` or `bl merge` integration: one line per agent
-message or tool call. When the run moves to its next step's session (implement, self-review,
-review, fix), it prints a new header and follows that session. `bl top`'s detail box (S-1334)
-reads its `--json` stream.
+`bl watch <F-id|B-id|S-id> [--from-start] [--json]` (`src/watch.js`, S-1272) follows the live
+agent session of a headless `bl run`, `bl review` or `bl merge` integration. It prints one line
+per agent message or tool call. When the run moves to its next step's session (implement,
+self-review, review, fix), `bl watch` prints a new header and follows that session. `bl top`'s
+detail box (S-1334) reads its `--json` stream.
 
 1. Before each spawn, `runSession` (`recordSession` in `src/feature-run.js`) asks the step's
-   adapter for a follow handle (`followHandle()`, see **The adapter interface**), writes the
+   adapter for a follow handle (`followHandle()`, see **The adapter interface**). It writes the
    run state's `session` (`{ step, story, agent, model, id, path, startedAt }`) and saves the
-   run state. It passes the handle to the spawn (`runner.session({ follow })`, then
-   `runHeadlessSession({ follow })`, then `provider.spawn({ follow })`). An interactive session
-   and an adapter that cannot follow one have `id` and `path` null.
-2. `bl watch` reads `.bl/run/<id>.json` every 2 s. When its `session` names another file
-   than the one it follows, it prints the header and asks that agent's adapter for the events
-   (`followSession()`). A session with the same file is the same session: the outcome retry
-   resumes a Claude session in its own transcript. A read that races `saveRunState` is tried
-   again at the next poll.
-3. When no bl holds the run lock any more (a `bl run`, a standalone `bl review` or a
-   `bl merge` integration, whatever the saved `status` says while it works), it reads the
-   session's last events, prints the end line with the run state's `status` (`stale` for one
-   that says `running`, as in `bl top`) and exits 0. With no run state for the id, it says so on
-   stderr and exits 1.
+   run state. It passes the handle to the spawn: `runner.session({ follow })`, then
+   `runHeadlessSession({ follow })`, then `provider.spawn({ follow })`. An interactive session,
+   and a session of an adapter that cannot follow one, have `id` and `path` null.
+2. `bl watch` reads `.bl/run/<id>.json` every 2 s. When its `session` names another file than
+   the one that `bl watch` follows, `bl watch` prints the header and asks that agent's adapter
+   for the events (`followSession()`). A session with the same file is the same session: the
+   outcome retry resumes a Claude session in its own transcript. If a read races
+   `saveRunState`, `bl watch` tries it again at the next poll.
+3. When no bl holds the run lock any more, `bl watch` reads the session's last events. The
+   holder can be a `bl run`, a standalone `bl review` or a `bl merge` integration, whatever the
+   saved `status` says while it works. Then `bl watch` prints the end line with the run state's
+   `status` and exits 0. The status is `stale` for a run state that says `running`, as in
+   `bl top`. With no run state for the id, `bl watch` says so on stderr and exits 1.
 
-The first session starts with its last 30 events (`--from-start`: all of them); every later
-session is new, so `watch` prints it from its start. `watch` takes no lock and writes nothing
-to the backlog. It never reads an agent's files itself: the adapter knows where they are.
+`bl watch` prints the first session from its last 30 events (`--from-start`: all of them).
+Every later session is new, so `bl watch` prints it from its start. `bl watch` takes no lock and
+writes nothing to the backlog. It never reads an agent's files itself: the adapter knows where
+they are.
 
 | Line (text)                                          | `--json`                                             |
 | ---------------------------------------------------- | ---------------------------------------------------- |
@@ -4824,98 +4910,111 @@ to the backlog. It never reads an agent's files itself: the adapter knows where 
 | `── <id> · <status> ──`                              | `{kind: "end", status}`, the last line               |
 
 A text line is on one line and cut to the terminal width (80 when stdout is not a terminal).
-The header's session is the session id, or the events file's name when the adapter knows no
-id before the spawn (Codex); `--json`'s `session` is the id or null. `at` is an ISO time:
-the transcript record's time for Claude, the time `watch` read the event for Codex. No
-thinking and no tool output is printed. A session with no live feed (interactive, or Gemini,
-which has no headless mode) gets its header and one stderr line that says so.
+The header's session is the session id. When the adapter knows no id before the spawn (Codex),
+it is the events file's name. `--json`'s `session` is the id or null. `at` is an ISO time: the
+transcript record's time for Claude, and the time `bl watch` read the event for Codex.
+`bl watch` prints no thinking and no tool output. A session with no live feed (interactive, or
+Gemini, which has no headless mode) gets its header and one stderr line that says so.
 
 ### An interrupt during `bl run` is a stop
 
-While `bl run`'s loop holds the run, the first SIGINT or SIGTERM stops the run cleanly, as
-`bl stop` does (F-128 D8, Decisions A1 and A2). `bl run <id> --resume` continues it from the
-step it stopped in.
+While `bl run` holds the run, the first SIGINT or SIGTERM stops the run cleanly, as `bl stop`
+does (F-128 D8, Decisions A1 and A2). `bl run <id> --resume` continues it from the step it
+stopped in.
 
 1. `runFeature` (`src/feature-run.js`) makes an `AbortController` and calls
-   `takeInterrupts(handler)` (`src/signal-exit.js`) before `takeRunLocks`. It releases it after
-   it releases the locks. So a SIGTERM that `bl stop` sends to the run lock's holder always
-   finds the handler.
-2. While the handler is set, `exitOnSignal`'s listener calls it for the first interrupt and does
-   not exit. The handler aborts the controller with the signal's name as its reason.
-   `takeInterrupts` registers `exitOnSignal`'s listeners itself, so a process that never ran
-   `bl.js` (a test) gets them too.
-3. The controller's signal is `ctx.stopSignal`. Each long child of the loop gets it: the session
-   in `runSession` (`runner.session({ signal })`) and each test-gate command
-   (`runner.testGate(cmd, cwd, { signal })`). When it fires, the child gets SIGTERM, then SIGKILL
-   if it still runs 10 s later (F-128 A6), and its wait returns when the child exits.
-4. `checkStop` stops the run when it finds a stop request for this process or when
+   `takeInterrupts(handler)` (`src/signal-exit.js`) before `takeRunLocks`. It removes the
+   handler after it releases the locks. So a SIGTERM that `bl stop` sends to the holder of the
+   run lock always finds the handler.
+2. While the handler is set, the listener of `exitOnSignal` calls it for the first interrupt
+   and does not exit. The handler aborts the controller, with the signal's name as its reason.
+   `takeInterrupts` registers the listeners of `exitOnSignal` itself, so a process that never
+   ran `bl.js` (a test) gets them too.
+3. The controller's signal is `ctx.stopSignal`. `bl run` gives it to each of its long children:
+   the session in `runSession` (`runner.session({ signal })`) and each test-gate command
+   (`runner.testGate(cmd, cwd, { signal })`). When the signal fires, the child gets SIGTERM,
+   then SIGKILL if it still runs 10 s later (F-128 A6). Its wait returns when the child exits.
+4. `checkStop` stops the run when it finds a stop request for this process, or when
    `ctx.stopSignal` has fired. It runs where it ran before: at each step start, after each long
    child, and in each one-second slice of a usage-limit wait. With a request, the note is
-   `stopped by bl stop at <step>` and `stoppedBy` lists the requests' pids. Without one, the
-   note is `stopped by SIGINT at <step>` or `stopped by SIGTERM at <step>`, and `stoppedBy` is
-   `[]`. The run records `stopped`, releases its locks, and `bl run` exits 130 (`runExitCode`).
+   `stopped by bl stop at <step>`, and `stoppedBy` lists the pids of the requests. Without one,
+   the note is `stopped by SIGINT at <step>` or `stopped by SIGTERM at <step>`, and `stoppedBy`
+   is `[]`. The run records `stopped` and releases its locks, and `bl run` exits 130
+   (`runExitCode`).
 5. A second interrupt exits at once with 130 or 143, as `exitOnSignal` does without a handler.
    The `exit` listener of `src/child.js` sends SIGTERM to the long child.
 
-`bl review` and `bl merge` (`reviewFeature`, `integrateUnit`) take no interrupts: an interrupt
+`bl review` and `bl merge` (`reviewFeature`, `integrateUnit`) take no interrupts. An interrupt
 exits 130 or 143, and the `exit` listener of `src/child.js` sends SIGTERM to their long child.
-An interactive session (`bl run -i`) keeps a synchronous wait (F-128 A3). A SIGINT that `bl` gets during it runs
-the handler when the session ends, and the run stops at its next check. If the same SIGINT ended
-the agent, `src/child.js` raises it at once instead (F-114 D2). Known limits: an
-interrupt that ends a short synchronous child during `bl run` (a git child that got the same
-Ctrl-C) still raises at once (F-114 D2), and `bl` exits 130 with the run state `running`. A first
-interrupt during a lock wait is taken at the next check after the wait.
+An interactive session (`bl run -i`) keeps a synchronous wait (F-128 A3). If `bl` gets a SIGINT
+during that wait, the handler runs when the session ends, and the run stops at its next check.
+If the same SIGINT ended the agent, `src/child.js` raises it at once instead (F-114 D2). Known
+limits:
+
+- An interrupt that ends a short synchronous child during `bl run` still raises at once (F-114
+  D2). An example is a git child that got the same Ctrl-C. Then `bl` exits 130 with the run state
+  `running`.
+- A first interrupt during a lock wait is taken at the next check after the wait.
 
 ### `bl stop`
 
-`bl stop <F-id|B-id|S-id>` (`src/stop.js`, S-1335, F-87 D7a) stops a running `bl run` cleanly, so
-that `bl run <id> --resume` continues it from the step it stopped in. `bl top`'s stop action
-runs it. `bl stop` writes a stop request and sends SIGTERM to the run's bl (F-128 D9), with or
-without user systemd:
+`bl stop <F-id|B-id|S-id>` (`src/stop.js`, S-1335, F-87 D7a) stops a running `bl run` cleanly,
+so that `bl run <id> --resume` continues it from the step it stopped in. `bl top`'s stop action
+runs `bl stop`. `bl stop` writes a stop request and sends SIGTERM to the run's bl (F-128 D9),
+with or without user systemd:
 
-1. It reads the run state. With none, or one that is not `running`, it exits 1 with
-   `no running run for <id>`, whoever holds the run lock: a live holder is then a `bl review`
-   or a `bl merge`, which take the run lock too. Then it reads the holder of the run lock
-   (`runHolder()` in `src/run-lock.js`). With no holder (the run's bl died), it takes the run
-   lock, reads the run state again, marks it stopped itself (`markStopped`) and releases the
-   lock (`markDead`). So a `bl run` that took the run after the check is never marked. It
-   prints `stopped <id> at <step> (no live bl held the run); resume: …` and exits 0. A holder
-   that is not a `bl run` (the run lock's info line, `bl review <id>` or `bl merge <id>`,
-   which `takeRunLocks` writes) holds a state that a dead bl left `running`: `bl stop` exits 1
-   and writes no request. `bl top` offers no stop action for it either. A holder whose lock
-   file names no pid yet gets exit 1 and `try again`.
-2. It writes its stop request, a new file of its own in `.bl/run/<id>.stop/`
-   (`writeStopRequest()` in `src/run-lock.js`): one JSON object, `{ pid, at, holder }`: its
-   own pid, the time and the pid of the run it stops. So two `bl stop`s never write or delete
-   each other's request, and a write that fails deletes only its own file and exits 1. The
-   loop honours only a request whose `holder` is its own pid.
-3. It sends SIGTERM to the holder (`stopRun`'s `kill` option, `process.kill` by default). The
-   run takes it as a stop (**An interrupt during `bl run` is a stop**, above): it sends
-   SIGTERM to the current agent session or test-gate command, then SIGKILL if it still runs
-   10 s later (F-128 A6). If the holder is already gone
-   (`ESRCH`), `bl stop` goes on to the wait. Any other failure prints
+1. `bl stop` reads the run state. If there is none, or it is not `running`, `bl stop` exits 1
+   with `no running run for <id>`, whoever holds the run lock. A live holder is then a
+   `bl review` or a `bl merge`, which take the run lock too. Next, `bl stop` reads the holder of
+   the run lock (`runHolder()` in `src/run-lock.js`):
+   - With no holder (the run's bl died), `bl stop` takes the run lock and reads the run state
+     again. It marks the run state stopped itself (`markStopped`) and releases the lock
+     (`markDead`). So a
+     `bl run` that took the run after the check is never marked. `bl stop` prints
+     `stopped <id> at <step> (no live bl held the run); resume: …` and exits 0.
+   - A holder that is not a `bl run` holds a state that a dead bl left `running`. The run lock's
+     info line, which `takeRunLocks` writes, then says `bl review <id>` or `bl merge <id>`.
+     `bl stop` exits 1 and writes no request. `bl top` offers no stop action for it either.
+   - If the holder's lock file names no pid yet, `bl stop` exits 1 with `try again`.
+2. `bl stop` writes its stop request, a new file of its own in `.bl/run/<id>.stop/`
+   (`writeStopRequest()` in `src/run-lock.js`). The file holds one JSON object,
+   `{ pid, at, holder }`: the pid of `bl stop`, the time and the pid of the run that it stops.
+   So two `bl stop`s never write or delete each other's request. If the write fails, `bl stop`
+   deletes only its own file and exits 1. `bl run` honours only a request whose `holder` is its own
+   pid.
+3. `bl stop` sends SIGTERM to the holder (the `kill` option of `stopRun`, `process.kill` by
+   default). The run takes it as a stop (**An interrupt during `bl run` is a stop**, above). The
+   run sends SIGTERM to the current agent session or test-gate command, then SIGKILL if it
+   still runs 10 s later (F-128 A6). If the holder is already gone (`ESRCH`), `bl stop` goes on
+   to the wait. For any other failure, `bl stop` prints
    `bl stop: could not signal pid <n>: <message>`, and the run stops at its next check.
-4. The loop's `checkStop()` (`src/feature-run.js`) finds the request for its own pid, so the
-   note is `stopped by bl stop at <step>`, not the signal's. The stopped session is not an
-   attempt and does not escalate, and its tokens are lost, as for a killed bl (**Tokens per
-   step**). The loop records a `{ step: "stopped" }` history entry, writes `status: stopped`,
-   `stoppedAt` and `stoppedBy` (the pids of the `bl stop`s whose requests it read;
-   `markStopped`), deletes the requests for its own pid and throws a `StopRequestError`. Its
-   step cleanups run, `runFeature` releases the run lock and the work unit locks, and `bl run`
-   exits 130.
-5. `bl stop` waits up to 30 s for that holder to let the run lock go, then prints
-   `stopped <id> at <step>; resume: bl run <id> --resume` on stderr and exits 0. If the lock is
-   still held, it exits 1 with `stop requested: <id> (pid <n>) stops at its next check`
-   and the request stays. A run that ended on its own before it read the request gets a line
-   that says so, and `bl stop` deletes its own request file.
+4. The `checkStop()` of `bl run` (`src/feature-run.js`) finds the request for its own pid, so
+   the note is `stopped by bl stop at <step>`, not the signal's. The stopped session is not an
+   attempt and does not escalate. Its tokens are lost, as for a killed bl (**Tokens per
+   step**). `bl run` then:
+   1. records a `{ step: "stopped" }` history entry;
+   2. writes `status: stopped`, `stoppedAt` and `stoppedBy` (the pids of the `bl stop`s whose
+      requests it read; `markStopped`);
+   3. deletes the requests for its own pid;
+   4. throws a `StopRequestError`.
 
-The work unit's `status:` does not change: `--resume` continues any run state (`driveFeature`
-sets it back to `running` and drops `stoppedAt` and `stoppedBy`). `takeRunLocks` deletes each leftover stop
-request once it holds the locks: one for another pid, or one written before it took the run
-lock. So a request never stops a later run, `bl review` or `bl merge`, and a request for the
-new holder stays. `bl stop` is a short command (F-122 D2): it neither takes nor checks work unit
-locks, since the run it stops holds them. `bl status <id>` shows a stopped run as
-`run: stopped at <step> (<local time>)`.
+   Its step cleanups run, `runFeature` releases the run lock and the work unit locks, and
+   `bl run` exits 130.
+
+5. `bl stop` waits up to 30 s for that holder to let the run lock go. Then it prints
+   `stopped <id> at <step>; resume: bl run <id> --resume` on stderr and exits 0. If the lock is
+   still held after the wait, `bl stop` exits 1 with
+   `stop requested: <id> (pid <n>) stops at its next check`, and the request stays. If the run
+   ended on its own before it read the request, `bl stop` prints a line that says so and
+   deletes its own request file.
+
+The work unit's `status:` does not change: `--resume` continues any run state. `driveFeature`
+sets the run state back to `running` and drops `stoppedAt` and `stoppedBy`. When `takeRunLocks`
+holds the locks, it deletes each leftover stop request: one for another pid, or one written
+before it took the run lock. So a request never stops a later run, `bl review` or `bl merge`,
+and a request for the new holder stays. `bl stop` is a short command (F-122 D2): it neither takes
+nor checks work unit locks, since the run that it stops holds them. `bl status <id>` shows a
+stopped run as `run: stopped at <step> (<local time>)`.
 
 ### `bl list`
 
