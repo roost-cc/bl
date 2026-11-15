@@ -5231,26 +5231,27 @@ bl report --charts vega-lite # pick the chart adapter (vega-lite is the default 
   - `burnup-theme-<slug>` for each theme, `burnup-epic-E<n>` for each epic with stories whose
     status does not meet `done`, and `burnup-feature-F-<n>` for each feature not `done` or
     `superseded`. Each is under a `### <id> · <title>` heading after its section's table.
-  - last, `cost`: the output tokens of the 20 work units with the most, as bars stacked by work
-    unit type on a category axis.
+  - last, `cost`: the output tokens of the 20 rows of **Cost** with the most, as bars stacked by
+    the row's type on a category axis.
 
   A burn-up has scope and remaining lines, and a done area from the first week with points. For
   the weeks before the first commit, it draws scope as a dashed `scope (backfilled)` series.
 
-- **Cost** (`data.cost`, D3). Here a work unit is what `bl run` runs: a feature, or a story with
-  no feature (or whose `feature:` names none in the tree). Per work unit, from its current
-  frontmatter: the four `tokens_*` kinds, the `tokens_headless_*` share of all four, points (a
-  feature's: its listed stories not `superseded`), output tokens per point and `tokens_updated`.
-  They are sorted by output tokens. The total covers work units with tokens. The average per point
-  covers done work units with tokens and points (each kind's sum over their points' sum). A work
-  unit with no `tokens_*` shows `—` and is in neither; a zero-point one has no per-point figure.
-- **Token efficiency** (`data.efficiency`, D7) covers the done work units with tokens and points.
-  It holds:
-  - output tokens per point by work unit type (`feature` for a feature, else the story's `type`),
-    as median, 90th percentile and count;
+- **Cost** (`data.cost`, D3) has a row for each feature, and for each story with no feature (or
+  whose `feature:` names none in the tree). Each row shows, from that unit file's current
+  frontmatter: the four
+  `tokens_*` kinds, the `tokens_headless_*` share of all four, points (a feature's: its listed
+  stories not `superseded`), output tokens per point and `tokens_updated`. The rows are sorted by
+  output tokens. The total covers the rows with tokens. The average per point covers the done
+  rows with tokens and points (each kind's sum over their points' sum). A row with no `tokens_*`
+  shows `—` and is in neither; a zero-point row has no per-point figure.
+- **Token efficiency** (`data.efficiency`, D7) covers the done rows of **Cost** with tokens and
+  points. It holds:
+  - output tokens per point by type (`feature` for a feature, else the story's `type`), as
+    median, 90th percentile and count;
   - the median for 0 to 2 review rounds and for 3 or more (`reviewRoundOf`, none counting as 0);
-  - `tokens_by_step` (see Tokens per step) summed per step name, `—` for a work unit without it;
-  - the outliers, work units above their type's 90th percentile.
+  - `tokens_by_step` (see Tokens per step) summed per step name, `—` for a row without it;
+  - the outliers, rows above their type's 90th percentile.
 
   `units`, `cost` and `efficiency` are exported for `bl retro` (S-905).
 
@@ -5297,7 +5298,7 @@ pins the adapter's specs. To rewrite them, set `UPDATE_CHART_FIXTURES=1`, and re
 
 ### `bl next`
 
-`bl next` prints the next work unit, a feature or a loose story, by the backlog's priority with
+`bl next` prints the next work unit that is a feature or a loose story, by the backlog's priority with
 hard dependencies first (F-78 D2, `src/next.js`). `bl what-next` picks a story inside a feature or
 filter, and `bl next` is not its alias.
 
