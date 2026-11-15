@@ -422,9 +422,12 @@ export function reposForStory(storyId, config) {
  * repo with none recorded is reported in `searched` with the forge's reason
  * (`no-forge`, `no-op`, `failed`, …).
  *
+ * The caller gives `unit.branch` or `unit.featureEntry` (the unit's directory
+ * name, from which the branch is derived); at least one is required.
+ *
  * @param {object} config — loaded backlog config (see `loadConfig`)
- * @param {{ branch?: string, featureEntry?: string, primaryRepo?: string,
- *   repos?: string[], change?: { repos: object[] } | null }} unit
+ * @param {({ branch: string, featureEntry?: string } | { branch?: string, featureEntry: string })
+ *   & { primaryRepo?: string, repos?: string[], change?: { repos: object[] } | null }} unit
  * @param {{ repo?: string | null, runOp?: Function }} [opts]
  * @returns {{
  *   prs: Array<{ repoName: string, repoPath: string, prNumber: number,
