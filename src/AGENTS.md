@@ -4660,8 +4660,8 @@ bl top --stream --interval 1000    # the interval in ms, 500 to 10000
 
   Each action runs at once, as every action does (below). A key with no such action does
   nothing. An unranked row has no `p`, `P` or `x`, and with no staged copy there is no `C` or
-  `R`. While `next.conflict` is set, every ranking key but `R` refuses with its text in the
-  bottom border. Each pick renders the action's argv (`actions.Render`, below) with `Selected`
+  `R`. While `next.conflict` is set, every ranking key but `R` refuses with the conflict's text in
+  the bottom border. Each pick renders the action's argv (`actions.Render`, below) with `Selected`
   (the selected row's id) and `Yanked` (only while a work unit is yanked). If nothing is yanked,
   a put refuses with `yank a work unit first (y)`, and the menu shows that line in place of its
   command. A put takes the yanked id at the key press, and the yank ends then. `bl rank --commit`
