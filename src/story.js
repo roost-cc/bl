@@ -422,8 +422,9 @@ export function reposForStory(storyId, config) {
  * repo with none recorded is reported in `searched` with the forge's reason
  * (`no-forge`, `no-op`, `failed`, …).
  *
- * The caller gives `unit.branch` or `unit.featureEntry` (the unit's directory
- * name, from which the branch is derived); at least one is required.
+ * The caller gives a nonempty `unit.branch` or a nonempty `unit.featureEntry`
+ * (the unit's directory name, from which the branch is derived); at least one
+ * is required. An empty string is not a branch source.
  *
  * @param {object} config — loaded backlog config (see `loadConfig`)
  * @param {({ branch: string, featureEntry?: string } | { branch?: string, featureEntry: string })
