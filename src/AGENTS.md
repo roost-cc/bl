@@ -5018,7 +5018,8 @@ stopped run as `run: stopped at <step> (<local time>)`.
 
 ### `bl list`
 
-List backlog stories. Active worktrees show their worktree status with a trailing `*`.
+`bl list` lists the backlog's stories. A story with a worktree shows its worktree status with a
+trailing `*`.
 
 ```bash
 bl list                       # alias: bl ls
@@ -5033,27 +5034,36 @@ bl tree --epic E62            # trees containing the epic's pending stories
 bl what-next --theme backlog  # next startable story in the theme
 ```
 
-A Theme column leads once the backlog has a theme. `bl tree` and `bl what-next` take the same
-filters; a component argument (`bl tree C32`) is the `--component` filter, and a story id with
-a filter is refused.
+Once the backlog has a theme, a Theme column comes first. `bl tree` and `bl what-next` take the
+same filters. For them, a component argument (`bl tree C32`) is the `--component` filter, and they
+refuse a story id with a filter.
 
-`bl status` with no arguments prints the same table for the open stories, in a different order:
-strictly by status, furthest along first as `flow.json` has it (`Flow.openStatusesOf('story')`:
-`escalated`, `ready_for_merge`, `fixing`, `in_review`, `in_progress`, `refined`, then `draft` in the
-shipped flow), the backlog's priority
-(`byRank`, see **Priority**) then numeric id within each. A story is open when its status does not meet `done`; a status `flow.json` does not
-name meets nothing, so it stays listed, last. A `flow.json` bl cannot read stops the command with
-its `FlowError`, even with no stories. `bl list` and `bl grep` read `flow.json` the same way, and
-stop the same way, but sort differently: worktree stories first, then `Flow.listRankOf('story', …)`
-(`in_progress` up to `escalated`; then `draft`, `refined` and any status `flow.json` does not name,
-equally; then `done`, then `superseded`). Here a story with a worktree keeps its status group and shows the `*`.
-Any flag with no id is a usage error, not a filter.
+`bl status` with no arguments prints the same table for each story whose status does not meet
+`done`, in another order. It sorts by three keys, strictly by status first:
+
+1. the status, furthest along first, as `flow.json` orders them (`Flow.openStatusesOf('story')`:
+   `escalated`, `ready_for_merge`, `fixing`, `in_review`, `in_progress`, `refined`, then `draft`
+   in the shipped flow);
+2. the backlog's priority (`byRank`, see **Priority**);
+3. the numeric id.
+
+A status that `flow.json` does not name meets nothing, so its story stays listed, last. Here a
+story with a worktree keeps its status group and shows the `*`. If bl cannot read `flow.json`,
+the command stops with its `FlowError`, even with no stories. `bl status` with a flag and no id is
+a usage error, not a filter.
+
+`bl list` and `bl grep` read `flow.json` the same way, and stop the same way, but they sort
+differently:
+
+1. the stories with a worktree first;
+2. then by `Flow.listRankOf('story', …)`: `in_progress` up to `escalated`; then `draft`, `refined`
+   and any status that `flow.json` does not name, as equals; then `done`; then `superseded`.
 
 ### `bl history`
 
-The backlog's state over time (F-40 D1, D2; `src/history.js`, the command in
-`src/history-cmd.js`): one snapshot per calendar day with a commit, the series `bl report`
-builds on.
+`bl history` shows the backlog's state over time (F-40 D1, D2; `src/history.js`, the command in
+`src/history-cmd.js`). It makes one snapshot per calendar day with a commit. `bl report` builds on
+this series.
 
 ```bash
 bl history                    # ISO weeks × points per status, and the scope
@@ -5062,43 +5072,47 @@ bl history --since 2026-09-01 # only days from that date
 bl history --scope F-40       # a theme (slug), an epic (E<n>), a feature or a component (C<n>)
 ```
 
-- **Days.** The last commit of each committer date (a UTC day, whatever time zone the commit
-  was stamped in, so the last day holds HEAD) reachable from HEAD. A day is read from git
-  objects only: one `git ls-tree -r`, then one `git cat-file --batch` for the `index.md` blobs
-  not already parsed in the run. A blob is a story when its frontmatter has `story_id`, a
-  feature when it has `feature_id`; the path is ignored, so the pre-F-49
+- **Days.** A day is the last commit of each committer date that HEAD can reach. The date is a
+  UTC day, whatever time zone the commit was stamped in, so the last day holds HEAD. bl reads a
+  day from git objects only: one `git ls-tree -r`, then one `git cat-file --batch` for the
+  `index.md` blobs not already parsed in this call. A blob is a story when its frontmatter
+  has `story_id`, and a feature when it has `feature_id`. bl ignores the path, so the pre-F-49
   `projects/<p>/E<nn>-…/[.completed/]S<n>-…/` layout reads like `stories/`. A day records each
-  story's `status`, `points` and `feature` and each feature's `status` and `stories:` (which a
-  commit from before F-77 D3 stored), nothing else.
-- **Parsing.** `parseFrontmatter`; a block it rejects goes through `legacyRepaired` and `yaml`
-  (failsafe), for the pre-F-62 blobs only (Decision A1, argued at the call in `parseBlob`). A
-  blob that still fails is skipped; `unreadable` counts the distinct ones over the days shown,
-  and a count above zero warns on stderr.
-- **Grouping** is the current tree's (`groups`): each story's `feature`, `component`, `added`
-  and `completed`, each feature's `epic` and `theme`.
-- **Backfill.** Each calendar day from the earliest `added` to the day before the first commit
-  is projected from the current stories: in scope from `added`, `done` (or `superseded`) from
+  story's `status`, `points` and `feature`, and each feature's `status` and `stories:`, nothing
+  else. A commit from before F-77 D3 stored a feature's `stories:`.
+- **Parsing.** bl parses a blob with `parseFrontmatter`. A block that it rejects
+  goes through `legacyRepaired` and `yaml` (failsafe), for the pre-F-62 blobs only (Decision A1,
+  argued at the call in `parseBlob`). bl skips a blob that still fails. `unreadable` counts the
+  distinct skipped blobs over the days shown, and a count above zero warns on stderr.
+- **Grouping** comes from the current tree (`groups`): each story's `feature`, `component`,
+  `added` and `completed`, and each feature's `epic` and `theme`.
+- **Backfill.** bl projects each calendar day from the earliest `added` to the day before the
+  first commit from the current stories: in scope from `added`, `done` (or `superseded`) from
   `completed`, current points, any other status `draft`, no features. Such a day has
-  `backfilled: true` and `commit: null`; the table marks it `(backfilled)`.
-- **Scope.** A feature's stories are the union of the stories whose `feature:` named it that
-  day and the `stories:` it listed that day (a commit before F-77 D3; a backfilled day has
-  neither); an epic's, its current
-  features'; a theme's, its current features' (its epics' and those with no epic); a
-  component's, the current stories in it. A scope holds only stories in the current tree; a
-  story with no feature is in no theme. An unknown scope exits 1 naming it.
-- **Cache.** `.bl/report-cache.json` maps each commit to its parsed day under a `version`
-  (`CACHE_VERSION`); a run reads only the commits it lacks and writes it back through
-  `atomicWriteFile`. Another version discards the file; a day of another shape
-  (`validCachedDay`) is read from git again; deleting it is safe.
-- **Since.** `--since` drops the days before it from `days` (and `--json`); `buildHistory` keeps
-  them as `earlier`, which only `bl report`'s first transitions read.
-- No lock and no activity log: it only reads git objects and the working tree. Exit 1 on a
-  git error.
+  `backfilled: true` and `commit: null`, and the table marks it `(backfilled)`.
+- **Scope.** A scope's stories:
+  - a feature's: the union of the stories whose `feature:` named it that day and the `stories:`
+    it listed that day (a commit before F-77 D3). A backfilled day has neither.
+  - an epic's: those of its current features.
+  - a theme's: those of its current features (its epics' and those with no epic).
+  - a component's: the current stories in it.
+
+  A scope holds only stories in the current tree, and a story with no feature is in no theme. An
+  unknown scope exits 1, and the error names it.
+
+- **Cache.** `.bl/report-cache.json` maps each commit to its parsed day, under a `version`
+  (`CACHE_VERSION`). Each call reads only the commits that the cache lacks, and writes the cache
+  back through `atomicWriteFile`. bl discards a cache of another version. It reads a cached day of
+  another shape (`validCachedDay`) from git again. Deleting the file is safe.
+- **Since.** `--since` drops the days before its date from `days` (and from `--json`).
+  `buildHistory` keeps them as `earlier`, and only `bl report`'s first transitions read them.
+- `bl history` takes no lock and writes no activity log: it only reads git objects and the
+  working tree. It exits 1 on a git error.
 
 ### `bl report`
 
-The backlog progress report (F-40 D1, D3, D5; the numbers in `src/report.js`, the command in
-`src/report-cmd.js`), built on `bl history`'s snapshots.
+`bl report` writes the backlog progress report (F-40 D1, D3, D5; the numbers in `src/report.js`,
+the command in `src/report-cmd.js`). It builds on `bl history`'s snapshots.
 
 ```bash
 bl report                    # write <backlog>/reports/ and print the path of index.md
@@ -5108,105 +5122,129 @@ bl report --out <dir>        # write there instead (links assume <backlog>/repor
 bl report --charts vega-lite # pick the chart adapter (vega-lite is the default and only one)
 ```
 
-- **Output.** `reports/index.md`, `reports/data.json` (every figure and series, version
-  `REPORT_VERSION`) and `reports/.gitignore` holding `*`, so the output ignores itself and the
-  backlog's `git status` stays clean. A run writes the whole report in `.reports.new`
-  beside it, then swaps it for the last run's by two renames, so a failed run leaves the last
-  report whole (if moving it back fails too, it stays in `.reports.old`, and the next run
-  restores it before staging); a directory that holds files but no such `.gitignore` is refused (exit 1),
-  never replaced. The page goes through the backlog's `.md` format plugin.
-- **Documentation root** (F-79 D4, `src/report-site.js` `writeSite`). The same staged run
-  also writes `reports/site/`, the backlog's complete root, which a documentation site copies
-  as it is. It holds `PUBLISHED` (`stories/`, `themes/`, `epics/`, `components/`, `features/`,
-  `tasks/`, `docs/`, `roadmap.md`, `priority.yaml`) copied with their timestamps; the root
-  `index.md` and every page of a `GENERATED_SECTIONS` kind rendered by `renderPage` and
-  formatted, each with its committed file's timestamp (a page with nothing generated stays a
-  copy); and the report's own files under `site/reports/`, so the report's `../` links resolve
-  inside the root. Nothing under `.bl/` is copied. Every symlink is resolved; one that points to
-  nothing, or outside the backlog (outside the stage for a report file), fails the run naming
-  it, and a directory link back at one being copied is a loop and is left out. With
-  `--out <dir>` the root is `<dir>/site`.
+- **Output.** `bl report` writes `reports/index.md`, `reports/data.json` (every figure and
+  series, version `REPORT_VERSION`) and `reports/.gitignore` holding `*`. So the output ignores
+  itself, and the backlog's `git status` stays clean. A call writes the whole report in
+  `.reports.new` beside it, then swaps it for the last one by two renames. So a failed call leaves
+  the last report whole. If moving that back fails too, it stays in `.reports.old`, and the next
+  call restores it before staging. A directory that holds files but no such `.gitignore` is
+  refused (exit 1), never replaced. The page goes through the backlog's `.md` format plugin.
+- **Documentation root** (F-79 D4, `src/report-site.js` `writeSite`). The same staged write also
+  writes `reports/site/`, the backlog's complete root, which a documentation site copies as it
+  is. It holds:
+  - `PUBLISHED` (`stories/`, `themes/`, `epics/`, `components/`, `features/`, `tasks/`, `docs/`,
+    `roadmap.md`, `priority.yaml`), copied with their timestamps;
+  - the root `index.md` and every page of a `GENERATED_SECTIONS` kind, rendered by `renderPage`
+    and formatted, each with its committed file's timestamp. A page with nothing generated stays
+    a copy.
+  - the report's own files under `site/reports/`, so the report's `../` links resolve inside the
+    root.
+
+  Nothing under `.bl/` is copied. Every symlink is resolved. If a link points to nothing, or
+  outside the backlog (outside the stage for a report file), the call fails, naming it. A
+  directory link back at one being copied is a loop, and is left out. With `--out <dir>`, the
+  root is `<dir>/site`.
+
 - **Counts** are the last snapshot's (HEAD's day): stories and points by status, features by
-  status, epics open or done (done once every feature is done or superseded), themes, the open
-  total (what the top-level `index.md` calls the total backlog). Titles, links and grouping are
-  the current tree's. Scope is the points of stories not `superseded`; done, of `done` ones.
-- **Workflow** (F-119 D3). After the Flow chart, `## Workflow` holds each type's transitions
-  as `bl flow` prints them: the same `flowTables(flow)` (`src/flow-view.js`), over the run's
+  status, epics done or not (done once every feature is done or superseded), and themes. They
+  include the total of stories whose status does not meet `done` (what the top-level `index.md`
+  calls the total backlog). Titles, links and grouping are the current tree's. Scope is the
+  points of stories not `superseded`; done, of `done` ones.
+- **Workflow** (F-119 D3). After the Flow chart, `## Workflow` holds each type's transitions as
+  `bl flow` prints them. It uses the same `flowTables(flow)` (`src/flow-view.js`), over the call's
   one flow.
-- **Tables.** Themes, Epics, Features and Components: scope, done, remaining and percent done
-  over each one's stories (`scopeStories`). Feature rows add stories done / in scope, the
-  feature's status and its review round (`reviewRoundOf`: its log's, else the old
-  `review_round` of its highest-numbered `change*.md`). Rows link to
-  `../<dir>/<entry>/index.md`.
-- **Throughput.** Points and stories per ISO week reaching `done` (a story's first snapshot
-  showing it; on backfilled days that is its `completed` date), for the 26 weeks ending with the
-  last snapshot's, each with the trailing four-week average. With `--since`, first transitions
-  and averages still read the days before it; the weeks, the lead and cycle window start there.
-- **Lead and cycle time.** Over stories first done in the 90 days up to the last snapshot:
-  lead from `added`, cycle from the first snapshot showing `refined` or `in_progress`, each as
-  count, median and 85th percentile (linear interpolation, `percentile`), in days. **Work item
-  age**: each `refined` or `in_progress` story, from that same first day to the last snapshot.
-- **Charts.** `src/report.js` builds them as plain `Chart` models in `data.charts` and imports
-  no adapter: `burnup-backlog`, `flow` (points by status per week, stacked), `throughput`
-  (weekly bars and the trailing average), then `burnup-theme-<slug>` for each theme,
-  `burnup-epic-E<n>` for each epic with open stories and `burnup-feature-F-<n>` for each
-  feature not `done` or `superseded`, each under a `### <id> · <title>` heading after its
-  section's table. A burn-up has scope and remaining lines and a done area from the first week
-  with points; the weeks before the first commit draw scope as a dashed `scope (backfilled)`
-  series. Last comes `cost`: output tokens of the 20 units with the most, as bars stacked by
-  unit type on a category axis.
-- **Cost** (`data.cost`, D3). A unit is what `bl run` runs: a feature, or a story with no
-  feature (or whose `feature:` names none in the tree). Per unit, from its current frontmatter:
-  the four `tokens_*` kinds, the `tokens_headless_*` share of all four, points (a feature's:
-  its listed stories not `superseded`), output tokens per point and `tokens_updated`; sorted by
-  output tokens. The total covers units with tokens; the average per point covers done units
-  with tokens and points (each kind's sum over their points' sum). A unit with no `tokens_*`
-  shows `—` and is in neither; a zero-point unit has no per-point figure.
-- **Token efficiency** (`data.efficiency`, D7), over done units with tokens and points: output
-  tokens per point by unit type (`feature` for a feature, else the story's `type`) as median,
-  90th percentile and count; the median for 0 to 2 review rounds and for 3 or more (`reviewRoundOf`,
-  none counting as 0); `tokens_by_step`
-  (see Tokens per step) summed per step name, `—` for a unit without it; and the outliers, units
-  above their type's 90th percentile. `units`, `cost` and `efficiency` are exported for
-  `bl retro` (S-905).
-- No activity log, no commit, and no lock but the output's own (`report-cmd.js`
-  `reportLockPath`: a kernel lock whose file stays after the report, in the backlog's
-  `.bl/lock/` and named from a hash of the output's absolute path, for the default output and
-  for every `--out`, so no lock file is ever beside the output): a second run while one is
-  writing exits 1 naming the holder. Exit 1 also on a git or IO error, a bad
+- **Tables.** The Themes, Epics, Features and Components tables show scope, done, remaining and
+  percent done over each row's stories (`scopeStories`). A Features row adds stories done / in
+  scope, the feature's status and its review round. The round is `reviewRoundOf`: from the
+  feature's log, else from the old `review_round` of its highest-numbered `change*.md`. Rows link
+  to `../<dir>/<entry>/index.md`.
+- **Throughput.** The points and stories that reach `done` per ISO week, for the 26
+  weeks that end with the last snapshot's week. Each week has the trailing four-week average. A
+  story reaches `done` in its first snapshot that shows it. On backfilled days, that is its
+  `completed` date. With `--since`, the first transitions and the averages still read the days
+  before its date. The weeks, and the lead and cycle window, start at that date.
+- **Lead and cycle time.** These cover the stories first done in the 90 days up to the last
+  snapshot. Lead time counts from `added`. Cycle time counts from the first snapshot that shows
+  `refined` or `in_progress`. Each is a count, a median and an 85th percentile, in days (linear
+  interpolation, `percentile`). **Work item age** is the age of each `refined` or `in_progress`
+  story, from that same first day to the last snapshot.
+- **Charts.** `src/report.js` builds the charts as plain `Chart` models in `data.charts`, and
+  imports no adapter. The charts, in order:
+  - `burnup-backlog`;
+  - `flow`: points by status per week, stacked;
+  - `throughput`: weekly bars and the trailing average;
+  - `burnup-theme-<slug>` for each theme, `burnup-epic-E<n>` for each epic with stories whose
+    status does not meet `done`, and `burnup-feature-F-<n>` for each feature not `done` or
+    `superseded`. Each is under a `### <id> · <title>` heading after its section's table.
+  - last, `cost`: the output tokens of the 20 work units with the most, as bars stacked by work
+    unit type on a category axis.
+
+  A burn-up has scope and remaining lines, and a done area from the first week with points. For
+  the weeks before the first commit, it draws scope as a dashed `scope (backfilled)` series.
+
+- **Cost** (`data.cost`, D3). Here a work unit is what `bl run` runs: a feature, or a story with
+  no feature (or whose `feature:` names none in the tree). Per work unit, from its current
+  frontmatter: the four `tokens_*` kinds, the `tokens_headless_*` share of all four, points (a
+  feature's: its listed stories not `superseded`), output tokens per point and `tokens_updated`.
+  They are sorted by output tokens. The total covers work units with tokens. The average per point
+  covers done work units with tokens and points (each kind's sum over their points' sum). A work
+  unit with no `tokens_*` shows `—` and is in neither; a zero-point one has no per-point figure.
+- **Token efficiency** (`data.efficiency`, D7) covers the done work units with tokens and points.
+  It holds:
+  - output tokens per point by work unit type (`feature` for a feature, else the story's `type`),
+    as median, 90th percentile and count;
+  - the median for 0 to 2 review rounds and for 3 or more (`reviewRoundOf`, none counting as 0);
+  - `tokens_by_step` (see Tokens per step) summed per step name, `—` for a work unit without it;
+  - the outliers, work units above their type's 90th percentile.
+
+  `units`, `cost` and `efficiency` are exported for `bl retro` (S-905).
+
+- `bl report` writes no activity log and makes no commit. It takes no lock but the output's own
+  (`report-cmd.js` `reportLockPath`): a kernel lock whose file stays after the report, in the
+  backlog's `.bl/lock/`. Its name comes from a hash of the output's absolute path, for the default
+  output and every `--out`. So no lock file is ever beside the output. A second `bl report` while
+  one is writing exits 1 naming the holder. It also exits 1 on a git or IO error, a bad
   `--since`, an empty `--out` or an unknown `--charts` adapter (the message names the registered
   ones).
 
-**Chart adapters** (F-40 D4, `src/chart.js`). An adapter is `{ name, render(chart) }`, where
-`render` returns `{ markdown, files }`: `markdown` takes the chart's place in `index.md`, and
-`files` (paths relative to the output directory, never `..`, absolute, or one of the report's
-own `index.md`, `data.json`, `.gitignore`, `site`) are written there, under their normalized path
-(`outputPath`); two that name one file, or a file and a directory holding it, throw.
-`registerAdapter` adds one by name, `adapter(name)` looks one up and
-`renderCharts(charts, name)` renders them all to
-`{ markdownById, files }`; `renderMarkdown(data, markdownById, flow)` leaves a
-`<!-- chart: <id> -->` line for a chart it was not given. The one adapter, `vega-lite`
-(`src/chart-adapters/vega-lite.js`), writes a ` ```vega-lite ` fence holding a Vega-Lite v5 spec
-(data inline, `width: "container"`, UTC time axis by month, weekly bars from their ISO Monday
-`x` to the next Monday `x2`, a layer per mark kind, the fixed
-Okabe-Ito colours, no background or text colours) and no files; up-doc draws it. To add an
-adapter, write `src/chart-adapters/<name>.js` that calls `registerAdapter` on import, and import
-it from `src/report-cmd.js`; nothing in `src/report.js` changes. Its specs are pinned by
-`test/fixtures/charts/` (rewrite them with `UPDATE_CHART_FIXTURES=1` and review the diff).
+**Chart adapters** (F-40 D4, `src/chart.js`). An adapter is `{ name, render(chart) }`, and
+`render` returns `{ markdown, files }`. `markdown` takes the chart's place in `index.md`.
+`files` are written in the output directory, under their normalized path (`outputPath`). Each
+path is relative to it: never `..`, absolute, or one of the report's own `index.md`,
+`data.json`, `.gitignore`, `site`.
+If two files name one file, or a file and a directory that holds it, `renderCharts` throws.
+
+`registerAdapter` adds an adapter by name, and `adapter(name)` looks one up.
+`renderCharts(charts, name)` renders all the charts to `{ markdownById, files }`.
+`renderMarkdown(data, markdownById, flow)` leaves a `<!-- chart: <id> -->` line for a chart that
+it was not given.
+
+The one adapter, `vega-lite` (`src/chart-adapters/vega-lite.js`), writes no files. It writes a
+` ```vega-lite ` fence that holds a Vega-Lite v5 spec, and up-doc draws it. The spec has:
+
+- the data inline, and `width: "container"`;
+- a UTC time axis by month;
+- weekly bars from their ISO Monday `x` to the next Monday `x2`;
+- a layer per mark kind;
+- the fixed Okabe-Ito colours, and no background or text colours.
+
+To add an adapter, write `src/chart-adapters/<name>.js` that calls `registerAdapter` on import,
+and import it from `src/report-cmd.js`. Nothing in `src/report.js` changes. `test/fixtures/charts/`
+pins the adapter's specs. To rewrite them, set `UPDATE_CHART_FIXTURES=1`, and review the diff.
 
 **Where to read it.** Two places, both regenerated by running `bl report`, never committed:
 
 - a documentation site that copies the backlog's `reports/site/` root (one that runs
   `bl report` as part of its build);
 - any local server of the backlog repo, at `reports/index.md` (and `reports/data.json`) after a
-  local `bl report`. It shows the tables; charts appear only where a renderer draws the chart
+  local `bl report`. It shows the tables. Charts appear only where a renderer draws the chart
   blocks.
 
 ### `bl next`
 
-The next unit, a feature or a loose story, by the backlog's priority with hard dependencies
-first (F-78 D2, `src/next.js`). `bl what-next` picks a story inside a feature or filter; `next`
-is not its alias.
+`bl next` prints the next work unit, a feature or a loose story, by the backlog's priority with
+hard dependencies first (F-78 D2, `src/next.js`). `bl what-next` picks a story inside a feature or
+filter, and `bl next` is not its alias.
 
 ```bash
 bl next                       # the first open unit nothing holds
@@ -5214,34 +5252,41 @@ bl next --theme accounts      # what's next for accounts
 bl next --epic E62            # the first free feature of an epic
 ```
 
-`bl next` walks `backlog.priority` (see **Priority**: the open ranked units, then the unranked
-ones by `added:`) and prints on stdout the first unit, `F-<n>` or `S-<n>`, that nothing holds.
-A unit is held by what `bl run` would refuse it for, so `bl next` never offers what `bl run`
-refuses: an unmet edge at a status on `run`'s nominal path (`heldBy(config, id, 'run')` of
-`readEdges`: `blockers.json`'s, and the run edge of each `depends_on:` on a loose story or on a
-feature's story outside the feature).
+`bl next` walks `backlog.priority` (see **Priority**: the ranked work units whose status does not
+meet `done`, then the unranked ones by `added:`). It prints on stdout the first work unit,
+`F-<n>` or `S-<n>`, that nothing holds. A work unit is held by what `bl run` would
+refuse it for, so `bl next` never offers what `bl run` refuses. That is an unmet edge at a status
+on `run`'s nominal path (`heldBy(config, id, 'run')` of `readEdges`). The edges are those of
+`blockers.json`, and the run edge of each `depends_on:` on a loose story or on a feature's story
+outside the feature.
 
-- A unit held by an open story or feature gives way to the blocker's unit (the story's feature,
-  or the story itself when loose), ranked or not, followed until one is free; stderr says
+- A work unit held by a story or feature whose status does not meet `done` gives way to the
+  blocker's work unit (the story's feature, or the story when loose), ranked or not. `bl next`
+  follows the blockers until one is free. stderr says
   `<unit> (ranked <n>) is held: <why>. <blocker> comes first; it unblocks <unit>.` A blocker
-  outside the filter is still offered: it is what the matching unit needs.
-- A unit held only by a task (an operator action), a missing story or an update story is passed
-  over, and stderr names the holder (`Passed over …`). With every unit held so, stdout is empty.
+  outside the filter is still offered: the matching work unit needs it.
+- A work unit held only by a task (an operator action), a missing story or an update story is
+  passed over, and stderr names the holder (`Passed over …`). If every work unit is held so,
+  stdout is empty.
 
-stderr also lists the matching ranked units (entry number in `priority.yaml`, id, title, theme
-and epic or component) and the unranked tail's first five, oldest first. `--theme` and
-`--epic` filter units (`src/filter.js`): a feature by its own theme and epic, a loose story by
-its component's repo's themes and no epic. An unknown or malformed theme or epic exits 1, as do
-`--feature`, `--component` or a positional argument. With no `priority.yaml`, or one that is not
-a list of ids, stderr says so and every unit is unranked; a `priority.yaml` that is not YAML
-exits 1. The order is a preference: hard dependencies override it, and `bl next` never reads
-the roadmap. The walk is `nextPlan(config, filter)`, which `bl top`'s `next` section reads too.
+stderr also lists the matching ranked work units: entry number in `priority.yaml`, id, title,
+theme, and epic or component. Then it lists the first five of the unranked tail, oldest first.
+
+`--theme` and `--epic` filter the work units (`src/filter.js`). A feature matches by its own theme
+and epic. A loose story matches by its component's repo's themes, and has no epic. `bl next`
+exits 1 on an unknown or malformed theme or epic, and on `--feature`, `--component` or a
+positional argument.
+
+If there is no `priority.yaml`, or it is not a list of ids, stderr says so, and every work unit is
+unranked. If `priority.yaml` is not YAML, `bl next` exits 1. The order is a preference: hard
+dependencies override it, and `bl next` never reads the roadmap. The walk is
+`nextPlan(config, filter)`, which `bl top`'s `next` section reads too.
 
 ### `bl rank`
 
-How a person changes `priority.yaml` (F-78 D3, F-113 D1, `src/rank-cmd.js`). The operator or
-an interactive session ranks; an agent bl starts headless cannot. `bl rank --help` says what the
-file means (see **Priority**).
+`bl rank` is how a person changes `priority.yaml` (F-78 D3, F-113 D1, `src/rank-cmd.js`). The
+operator or an interactive session ranks. An agent that bl starts headless cannot. `bl rank --help`
+says what the file means (see **Priority**).
 
 ```bash
 bl rank                               # the order: ranked units, then the unranked tail
@@ -5257,84 +5302,97 @@ snapshot share (F-113 D8): `STAGED_FILE` (`.bl/priority.staged.yaml`), `BASE_FIL
 (`.bl/priority.base.yaml`), `readStaged` and `marks`.
 
 - An edit writes only the staged copy, under the backlog lock. The first edit copies
-  `priority.yaml` to the base copy (the merge base of `--commit`) and starts the staged copy from
+  `priority.yaml` to the base copy (the merge base of `--commit`), and starts the staged copy from
   it. Every session on the backlog checkout shares the copies. An edit never writes or commits
-  `priority.yaml` and pulls nothing, so `bl next` and `bl run` pick by the committed order.
-- `<unit>` must be an open feature or loose story (`checkUnit`): a story inside a feature
-  ("the feature is the unit: rank F-n"), an update story, a task, a closed unit and an unknown
-  id are refused, naming why. `--remove` takes whatever the list names, so a closed or deleted
-  unit can be dropped. `--before`/`--after` name a unit already ranked in the staged order.
-- An edit moves or removes the id (`applyRank`) and writes the whole list with `yaml`'s
-  `stringify`, so ids are written as `canonicalId` spells them and comments are not kept. A move
-  that leaves the order as it is writes nothing. `--why` is no option (F-113 D2).
-- With no arguments, stdout lists the ranked units (position, id, title) and then every other
-  open unit oldest `added:` first. While a staged copy exists it lists the staged order
-  (`orderOf`), each row marked against the committed order by `marks`: `+` newly ranked, `~`
-  moved (a ranked unit outside the longest common subsequence of the two lists, so a move marks
-  only the unit that moved), `-` taken out of the ranked list. Closed units are not listed.
-- `--commit` with a staged copy pulls first (`pullBeforeCommand`, called by `rank-cmd.js` itself
-  after it finds the copy; `commandPullsBacklog` names no `bl rank`). Under the lock it refuses
-  while `priority.yaml`
-  has uncommitted edits, then runs `git merge-file -p -L staged -L base -L main` on the staged
-  copy, the base copy and `priority.yaml`. A clean merge loses its closed units (and a second
-  entry of a unit) and is committed alone (`commitPaths`, which pushes),
-  `chore: commit the staged order of priority.yaml[; F-5 out (done)]`; both copies are then
-  deleted. An order that is already `priority.yaml`'s commits nothing and deletes the copies,
-  unless `origin/main` (as the last fetch left it) does not have it yet (`originLacks`): then
-  it keeps them. A failed commit puts `priority.yaml` back as HEAD has it (its text written
-  back, then `git reset` for the index) and keeps the copies; if the write or the reset fails,
-  the error names it and `git -C <root> checkout HEAD -- priority.yaml`. A commit whose push
-  failed keeps the copies too: the next `--commit` pulls, which pushes the commit, and drops
-  them once `origin/main` has the order. Each lock hold
-  loads the units again (`mergeStaged`), so a unit closed during a lock wait or the y/n question
-  is taken out too. A merged order (or a proposal) that names anything but a feature or loose
-  story (`resolveRanked`: an unknown id, a task, a story inside a feature, an update story, as a
-  hand edit of the staged copy can) is refused before `priority.yaml` is written.
-- On a conflict `--commit` proposes a list (`proposal`): the staged order without the units main
-  took out since the base, with the units main added at the end, closed units out. With stdin
-  not a terminal it changes nothing and exits 1, its last stderr line `NO_TERMINAL`
-  (`conflict: run bl rank --commit in a terminal`). Otherwise it prints the proposal with its
-  markers and asks y/n on stderr with the lock let go; the answer is acted on under the lock only
-  if the three files are as they were. y commits the proposal. n writes git's conflict markers
-  into the staged copy, copies `priority.yaml` to the base copy (the marked copy already holds
-  main's changes) and exits 1. If either write fails, the staged copy is written back as it was,
-  so the two copies describe one merge round. If that write back fails too, the error names
-  both failures and two repairs: `cp` of `priority.yaml` to the base copy, or `bl rank --reset`.
+  `priority.yaml`, and pulls nothing. So `bl next` and `bl run` pick by the committed order.
+- In `bl rank`, a done work unit is one whose status meets `done`. `<unit>` must be a feature or
+  loose story that is not done (`checkUnit`). `bl rank` refuses, naming why, a story inside a
+  feature ("the feature is the unit: rank F-n"), an update story, a task, a done work unit and an
+  unknown id. `--remove` takes whatever the list names, so it can drop a done or deleted work
+  unit. `--before` and `--after` name a work unit already ranked in the staged order.
+- An edit moves or removes the id (`applyRank`), and writes the whole list with `yaml`'s
+  `stringify`. So it writes each id as `canonicalId` spells it, and it does not keep comments. A
+  move that leaves the order as it is writes nothing. `--why` is no option (F-113 D2).
+- With no arguments, stdout lists the ranked work units (position, id, title), then every other
+  work unit that is not done, oldest `added:` first. While a staged copy exists, it lists the
+  staged order (`orderOf`), and `marks` marks each row against the committed order: `+` newly
+  ranked, `~` moved, `-` taken out of the ranked list. A moved work unit is a ranked one outside
+  the longest common subsequence of the two lists, so a move marks only the work unit that moved.
+  Done work units are not listed.
+- `--commit` with a staged copy pulls first (`pullBeforeCommand`, which `rank-cmd.js` calls
+  itself after it finds the copy; `commandPullsBacklog` names no `bl rank`). Under the lock it
+  refuses while `priority.yaml` has uncommitted edits. Then it runs
+  `git merge-file -p -L staged -L base -L main` on the staged copy, the base copy and
+  `priority.yaml`.
+  - A clean merge loses its done work units (and a second entry of a work unit). `--commit`
+    commits it alone (`commitPaths`, which pushes), as
+    `chore: commit the staged order of priority.yaml[; F-5 out (done)]`, then deletes both copies.
+  - If the order is already `priority.yaml`'s, `--commit` commits nothing and deletes the copies.
+    But if `origin/main` (as the last fetch left it) lacks the order (`originLacks`), it keeps
+    them.
+  - If the commit fails, `--commit` puts `priority.yaml` back as HEAD has it (its text written
+    back, then `git reset` for the index), and keeps the copies. If the write or the reset fails,
+    the error names it and `git -C <root> checkout HEAD -- priority.yaml`.
+  - If the commit's push failed, `--commit` keeps the copies too. The next `--commit` pulls,
+    which pushes the commit, and drops them once `origin/main` has the order.
+
+  Each time `--commit` takes the lock, it loads the work units again (`mergeStaged`). So it also
+  takes out a work unit that became done during a lock wait or the y/n question. Before it writes
+  `priority.yaml`, it refuses a merged order (or a proposal) that names anything but a feature or
+  loose story (`resolveRanked`): an unknown id, a task, a story inside a feature or an update
+  story, as a hand edit of the staged copy can.
+
+- On a conflict, `--commit` proposes a list (`proposal`): the staged order without the work units
+  that main took out since the base, with the work units that main added at the end, done work
+  units out. If stdin is not a terminal, it changes nothing and exits 1, its last stderr line
+  `NO_TERMINAL` (`conflict: run bl rank --commit in a terminal`). Otherwise it prints the
+  proposal with its markers, lets go of the lock, and asks y/n on stderr. It acts on the answer
+  under the lock, and only if the three files are as they were. y commits the proposal. n writes
+  git's conflict markers into the staged copy, copies `priority.yaml` to the base copy (the
+  marked copy already holds main's changes) and exits 1. If either write fails, `--commit` writes
+  the staged copy back as it was, so the two copies describe one merge. If that write fails too,
+  the error names both failures and two repairs: `cp` of `priority.yaml` to the base copy, or
+  `bl rank --reset`.
 - A staged copy that is not a YAML list of ids is in conflict (`StagedConflictError`, Decision
-  A3): every `bl rank` command but `--reset` exits 1 with `STAGED_CONFLICT`. `bl next` and
-  `bl run` read only `priority.yaml` and are not blocked.
+  A3). Then every `bl rank` command but `--reset` exits 1 with `STAGED_CONFLICT`. `bl next` and
+  `bl run` read only `priority.yaml`, so the conflict does not block them.
 - `--commit` with no staged copy exits 0, prints nothing and pulls nothing. `--reset` deletes
   both copies.
 
-**`BL_HEADLESS`.** Every agent bl starts headless has `BL_HEADLESS=1` in its environment: each
-adapter's `spawn` builds the child's env with `agentEnv` (`src/agents/provider.js`) and adds it
-when `headless` is set (`runHeadlessSession` passes `headless: true`); an interactive spawn adds
-no marker (it still gets `BL_TAB_TITLE=''`, see "Tab titles"). With `BL_HEADLESS` set, a
-`bl rank` edit, `--commit` and `--reset` exit 1 before they pull or write anything, and
-`commitPaths`, the one commit path every bl command uses, refuses any commit whose paths, taken
-as one Git pathspec set (an exclusion such as `:!priority.yaml` counts), select `priority.yaml`
-(`headlessPriorityRefusal`), so a hand edit cannot be
-committed through `bl sync --commit --path` either. Printing the order is allowed. The marker is
-a guard against an agent changing a person's decision by mistake, not a security boundary.
-The test helper `runBl` drops an inherited `BL_HEADLESS` (`personEnv`), so the suite runs the
-same inside a headless session; a test that wants the marker passes it.
+**`BL_HEADLESS`.** Every agent that bl starts headless has `BL_HEADLESS=1` in its environment.
+Each adapter's `spawn` builds the child's env with `agentEnv` (`src/agents/provider.js`), and adds
+the marker when `headless` is set. `runHeadlessSession` passes `headless: true`. An interactive
+spawn adds no marker, though it still gets `BL_TAB_TITLE=''` (see "Tab titles"). With
+`BL_HEADLESS` set:
 
-**Nothing automated writes `priority.yaml`** (F-78 D3). `bl sync` and `bl merge` never touch it: a
-merged feature leaves the order because it is closed, not by an edit, and the next
-`bl rank --commit` (a person's command) takes its entry out. Its merge date is in
-the backlog's git history (its `bl merge` commit) and `bl history --json`. `bl side` does not
-count it among the files it owns.
+- a `bl rank` edit, `--commit` and `--reset` exit 1 before they pull or write anything;
+- `commitPaths`, the one commit path that every bl command uses, refuses any commit whose paths
+  select `priority.yaml` (`headlessPriorityRefusal`). It takes the paths as one Git pathspec set,
+  so an exclusion such as `:!priority.yaml` counts. So a hand edit cannot be committed through
+  `bl sync --commit --path` either.
 
-**The old file** (F-113 D1a). Before F-113 the order was the `ranked:` frontmatter of the
+Printing the order is allowed. The marker guards against an agent that changes a person's
+decision by mistake. It is not a security boundary. The test helper `runBl` drops an inherited
+`BL_HEADLESS` (`personEnv`), so the suite runs the same inside a headless session. A test that
+wants the marker passes it.
+
+**Nothing automated writes `priority.yaml`** (F-78 D3). `bl sync` and `bl merge` never touch it.
+A merged feature leaves the order because its status meets `done`, not by an edit. The next
+`bl rank --commit`, a person's command, takes its entry out. The feature's merge date is in the
+backlog's git history (its `bl merge` commit) and in `bl history --json`. `bl side` does not count
+`priority.yaml` among the files it owns.
+
+**The old file** (F-113 D1a). Before F-113, the order was the `ranked:` frontmatter of the
 backlog's old priority markdown file. F-113 converted it to `priority.yaml`, and S-1466 deleted
 the old file and the conversion script. No tracked file in `bl` names the old file
-(`test/integration/old-order-file-guard.test.js`). F-78's migration and F-113's conversion are
-in git history.
+(`test/integration/old-order-file-guard.test.js`). F-78's migration and F-113's conversion are in
+git history.
 
 ### `bl edit` / `bl view`
 
-Open a story, component, feature, epic (`E<nn>`), theme (by its slug) or task file in your
-editor (`bl which` prints its path, `-d` its directory; a task's directory is `tasks/`):
+`bl edit` and `bl view` open a story, component, feature, epic (`E<nn>`), theme (by its slug) or
+task file in your editor. `bl which` prints the file's path, and `-d` its directory; a task's
+directory is `tasks/`:
 
 ```bash
 bl edit S34                   # the committed file, in $VISUAL / $EDITOR / vi
@@ -5344,26 +5402,25 @@ bl view E69 > e69.md          # stdout not a terminal: the rendered page, printe
 bl which -d C10               # prints the component's directory
 ```
 
-`bl view` shows the page as read (F-79 D7): `renderPage` places the kind's
-`GENERATED_SECTIONS` in the committed text, the same tables `bl report` writes. A
-task, and a page with nothing to render (a story with no task), is the file byte for
-byte. `bl edit` always opens the committed file.
+`bl view` shows the page as read (F-79 D7). `renderPage` places the kind's `GENERATED_SECTIONS` in
+the committed text: the same tables that `bl report` writes. For a task, and for a page with
+nothing to render (a story with no task), `bl view` shows the file byte for byte. `bl edit` always
+opens the committed file.
 
-While the editor is open, `bl view`'s copy follows the real file (S-1182): bl watches the
-file's directory and, 100 ms after the last change, renders the page again and renames a new
-copy over the old one. vim with `autoread` (or at its "file changed" prompt) reloads it; less
-and more show it when they open the file again. bl ignores SIGINT, SIGQUIT and SIGTERM until
-the editor exits, so a Ctrl-C meant for the editor does not end bl and leave the copy behind.
+While the editor is open, `bl view`'s copy follows the real file (S-1182). bl watches the file's
+directory. 100 ms after the last change, it renders the page again and renames a new copy over
+the old one. vim with `autoread` (or at its "file changed" prompt) reloads the copy. less and more
+show it when they open the file again. bl ignores SIGINT, SIGQUIT and SIGTERM until the editor
+exits. So a Ctrl-C meant for the editor does not end bl and leave the copy behind.
 
-Both exit with the editor's status: 127 when it cannot be launched, 128 + n when
-signal n kills it. When `bl view` cannot make its copy it shows the page instead
-(printed when it fits the terminal, else `$PAGER` → `less` → `more`) and exits
-with the pager's status the same way.
+Both exit with the editor's status: 127 when bl cannot launch it, 128 + n when signal n kills it.
+If `bl view` cannot make its copy, it shows the page instead (printed when it fits the terminal,
+else `$PAGER` → `less` → `more`), and exits with the pager's status the same way.
 
 ### `bl change`
 
-Show a unit's change document (S-1157). It takes a story, a feature or a story batch, and
-it only shows; it never edits:
+`bl change` shows a work unit's change document (S-1157). It takes a story, a feature or a story
+batch. It only shows; it never edits:
 
 ```bash
 bl change S-1156              # read-only copy of the current change document, as bl view opens a page
@@ -5371,16 +5428,18 @@ bl change F-79 > change.md    # stdout not a terminal: the document, printed byt
 bl change S-1156 --open       # the open items of the latest review session
 ```
 
-The document is the unit's current one (`currentChange`): the highest-numbered open
-`change-<n>.md`, else the highest-numbered. A story in a feature or a story batch (its
-`feature:` or `batch:` is set) writes its change to that unit's document, so `bl change S-n`
-shows that unit's document and says so on stderr first:
-`S-n is in F-m: showing F-m's change document`. `bl change` and `bl view` share one viewer
-(`showReadOnly`, `src/view.js`): the same editor order, temp copy and pager fallback, and
-the copy follows the document while the editor is open, as `bl view`'s copy follows its page.
+The document is the work unit's current one (`currentChange`): the highest-numbered open
+`change-<n>.md`, else the highest-numbered one. A story in a feature or a story batch (its
+`feature:` or `batch:` is set) writes its change to that work unit's document. So
+`bl change S-n` shows that work unit's document, and first says so on stderr:
+`S-n is in F-m: showing F-m's change document`.
 
-`--open` prints, with no editor, the open (unchecked) items of the latest `### Session` of
-`## Review Log`, grouped under their category heading, each with its continuation lines:
+`bl change` and `bl view` share one viewer (`showReadOnly`, `src/view.js`). It gives both the same
+editor order, temp copy and pager fallback. The copy follows the document while the editor is
+open, as `bl view`'s copy follows its page.
+
+`--open` prints, with no editor, the unchecked items of the latest `### Session` of
+`## Review Log`. It groups them under their category heading, each with its continuation lines:
 
 ```text
 S-1156 · latest session 2026-10-29 (PR #51): 1 Must/Should, 0 nits open
@@ -5391,16 +5450,16 @@ S-1156 · latest session 2026-10-29 (PR #51): 1 Must/Should, 0 nits open
   repro: run close twice
 ```
 
-The items and counts come from `latestSessionOpenItems` (`src/review-log.js`), the parse
-`bl status` and the merge gate count with. With no session it prints
-`<id> · no review session yet`. `bl status` ends its `review:` line with
-`(bl change <id> --open)` when the latest session has an open item, and the review refusal
-of `bl merge` and `bl done` (`reviewBlockedMessage`) names it after the Must/Should count.
+The items and counts come from `latestSessionOpenItems` (`src/review-log.js`), the parse that
+`bl status` and the merge gate count with. With no session, `--open` prints
+`<id> · no review session yet`. When the latest session has an unchecked item, `bl status` ends
+its `review:` line with `(bl change <id> --open)`. The review refusal of `bl merge` and `bl done`
+(`reviewBlockedMessage`) names that command after the Must/Should count.
 
 ### `bl done`
 
-Marks a story complete (`status:`, `commit:`, `completed:`; the directory
-does not move) and syncs:
+`bl done` marks a story done (`status:`, `commit:`, `completed:`) and syncs. The story's directory
+does not move:
 
 ```bash
 bl done S34                   # uses HEAD commit hash
@@ -5410,40 +5469,43 @@ bl done --superseded S34      # mark as superseded
 
 ### `bl force`
 
-Moves a story, a feature or a story batch to any status of its type, past every transition
-rule, hold and guard (F-119 D2, `src/force.js`). It is the operator's way out of a stuck
-state, and the one way to force a move: `bl approve --force` names it (A2).
+`bl force` moves a story, a feature or a story batch to any status of its type, past every
+transition rule, hold and guard (F-119 D2, `src/force.js`). It is the operator's way out of a
+stuck state, and the one way to force a move. `bl approve --force` names it (A2).
 
 ```bash
-bl force S-12 done            # close a story no verb can close
+bl force S-12 done            # a story that no verb can move to done
 bl force S-12 in_progress     # reopen a done story
 bl force F-3 refined          # a feature past its refinement session, then bl approve F-3
 ```
 
-1. It refuses under `BL_HEADLESS` or when stdin is not a terminal, before it prompts, so a
-   headless agent cannot force. It refuses a status the unit is at already and a status its
-   type lacks.
-2. It takes the unit's work unit lock (`takeUnitLocks`), so it refuses while a live session
-   holds the unit and names that process. A lock whose process has exited is free.
-3. It prints what the move skips (`skipsOf`): that `flow.json` has no transition from the
-   unit's status to the new one, each hold in `blockers.json` on the new status (`heldAt`),
-   and each failing `when` guard of the verbs that have the transition (`failingGuards`): on
-   the verb's row, and on its branches to the new status when none of them has all its guards
-   hold. The guards read the unit's round and round cap, as the review loop does.
-4. It reads one line. Any other input than the exact line `force <id> to <status>`, an empty
-   line or the end of input changes nothing and exits 1.
-5. On the exact line it takes the backlog lock and reads the unit's status and the skip list
+1. Under `BL_HEADLESS`, or when stdin is not a terminal, `bl force` refuses before it prompts. So
+   a headless agent cannot force. It also refuses a status that the work unit is at already, and
+   a status that its type lacks.
+2. It takes the work unit lock (`takeUnitLocks`). So while a live session holds the work unit, it
+   refuses and names that process. A lock whose process has exited is free.
+3. It prints what the move skips (`skipsOf`):
+   - that `flow.json` has no transition from the work unit's status to the new one;
+   - each hold in `blockers.json` on the new status (`heldAt`);
+   - each failing `when` guard of the verbs that have the transition (`failingGuards`). These are
+     the guards on the verb's row, and on its branches to the new status when none of the
+     branches has all its guards hold.
+
+   The guards read the work unit's round and round cap, as the review rounds do.
+
+4. It reads one line. If the line is not exactly `force <id> to <status>`, it changes nothing and
+   exits 1. An empty line and the end of input do the same.
+5. On the exact line, it takes the backlog lock, and reads the work unit's status and the skip list
    again. If either changed while the operator typed (a hold added, a guard that changed, a
-   `flow.json` change, another move of the unit), it writes nothing, prints the new list and
-   exits 1. Otherwise it writes the entry `by: force` (`transition`) and commits the unit file
-   as `chore: force <id> to <status>`.
+   `flow.json` change, another move of the work unit), it writes nothing, prints the new list and
+   exits 1. Otherwise it writes the entry `by: force` (`transition`), and commits the unit file as
+   `chore: force <id> to <status>`.
 
 ### `bl sync`
 
-Brings the backlog up to date with `origin`: it pulls, and pushes what is ahead. With
-`--commit` it commits the paths it is given and pushes. It writes no derived list (F-79 D1):
-`bl report` and `bl view` render the tables when a page is read (see **Rendered pages**
-below).
+`bl sync` brings the backlog up to date with `origin`: it pulls, and pushes what is ahead. With
+`--commit`, it commits the paths it is given and pushes. It writes no derived list (F-79 D1).
+`bl report` and `bl view` render the tables when a page is read (see **Rendered pages** below).
 
 ```bash
 bl sync                       # alias: bl s
@@ -5453,211 +5515,278 @@ bl sync --commit -m "chore: rename C02" --story S-42 --path components/C02-x --p
 bl sync --commit -m "chore: append review session for F-9 (2026-10-15)" --path features/F9-x/index.md
 ```
 
-`--commit` needs at least one `--story` or `--path`: a feature file has no story to name, so
-the loop's prompts commit it with `--path` alone.
+`--commit` needs at least one `--story` or `--path`. A feature file has no story to name, so
+`bl run`'s prompts commit it with `--path` alone.
 
-`-m` repeats the way it does for `git commit`: the values are joined in order with a blank
-line between them, so the first is the subject and each later one is a body paragraph.
-Empty or whitespace-only values are dropped. A value given as the next token may not begin
-with `-` (a lone `-` is fine): `-m --story S-42` fails with `-m needs a value` instead of
-taking `--story` as the message, and the same holds for `--story` and `--path`. Give such a
-value inline, `--message=- note` (likewise `--story=<v>` and `--path=<v>`).
+`-m` repeats as it does for `git commit`. `bl sync` joins the values in order, with a blank line
+between them. So the first is the subject, and each later one is a body paragraph. It drops empty
+or whitespace-only values. A value given as the next token may not begin with `-`, though a lone
+`-` is fine. So `-m --story S-42` fails with `-m needs a value`, and does not take `--story` as
+the message. The same holds for `--story` and `--path`. Give such a value inline:
+`--message=- note` (likewise `--story=<v>` and `--path=<v>`).
 
-`bl sync --commit` (`syncAndCommit`) holds the backlog lockfile (`.bl/lock/backlog.lock`,
-`src/lock.js`) while it formats and commits, so concurrent commits and `bl new` runs take
-turns. A command that finds the lock held by a live process says so once on stderr
-(`Waiting for lock (.bl/lock/backlog.lock) held by pid <n>…`) and polls until the holder releases it or
-60 s pass (F-104 D2). The wait is `awaitLock` (`src/lock-wait.js`, F-105 W1), which awaits a
-timer between tries; on a timeout `bl` names the holder and exits 1, and never tells anyone to
-remove the lock file. The lock is re-entrant within a process. It is a kernel lock (`flock(2)`
-through `src/kernel-lock.js`, F-104 K1): the kernel frees it when the holder closes the
-descriptor or ends, even by SIGKILL, so a killed holder leaves no lock. The file stays (D3), and
-the PID in it is information only (D4): the holder writes it after it takes the lock. A `bl`
-child under its parent's lock (`bl new` under `bl side`) adopts the descriptor its parent passed
-in `BL_LOCK_FD` (D5). The main sync lock wait
-(`<git-common-dir>/bl-main-sync.lock`, `main-sync.js` `withMainSyncLock`, taken by the pull,
-the push and the commit) says so the same way, with the lock's path, and polls for up to 120 s.
-The prepare-lock wait (`session.js` `prepareWorktreeOnce`) says so the same way and has no
-deadline, because the lock is held while bootstrap and `workon` plugins run. Every lock wait is
-awaited: the backlog, spec, main sync and prepare lock waits all go through `awaitLock`, so one
-Ctrl+C during any of them runs the SIGINT listener (`exitOnSignal`, which `bl.js` registers
-when `bl` starts) at once and exits 130. During `bl run` the first Ctrl+C is a stop instead,
-taken at the next check after the wait (F-128 D8). The main sync and prepare locks are kernel locks too,
-taken with `tryLockOnce`: they are not re-entrant, so two callers in one process take turns as
-two processes do. A `bl` that ends while it holds one, even by Ctrl+C or SIGKILL,
-leaves no lock, and the next taker gets it at once. Every bl lock is a kernel lock now:
-the PID-file lock module is gone, no code decides from a PID whether a lock is held, and no code
-deletes a lock file that bl still takes (D3); the one exception is the one-off migration below,
-which deletes retired lock files. The lock files stay and collect: one per spec in the temp dir, and in
-each repo's git common dir one main sync lock and one `bl-prepare-<branch>.lock` per branch. No lock
-wait sleeps synchronously. Every lock file bl keeps in a backlog lives under `.bl/` (S-1495),
-which the backlog's `.gitignore` ignores, so git never sees one and bl never asks git to ignore a
-lock file: the backlog lock, one session lock per unit directory, one work unit lock per work
-unit directory and one report lock per output directory in `.bl/lock/` (`lock.js` `LOCK_DIR`,
-`dirLockPath`), and the run locks in `.bl/run/`. `dirLockPath` names a directory's lock file from
-a hash of its path with links resolved (`canonical`), so a unit directory reached through a link
-has the same lock as its real path.
+`bl sync --commit` (`syncAndCommit`) holds the backlog lock file (`.bl/lock/backlog.lock`,
+`src/lock.js`) while it formats and commits. So commits and `bl new` calls at the same time take
+turns.
 
-The work unit lock (`src/unit-lock.js`, F-122 D2) is one kernel lock per work unit directory
-(`stories/S<n>-…/`, `features/F<n>-…/`), `unit-<dir>-<hash>.lock` (`unitLockPath`). A verb that
-holds a session on a work unit takes it at start with `takeUnitLocks(config, units, info)`: the
-lock of each unit's directory and, for a feature, of each of its stories' directories
-(`unitLockDirs`, read fresh from disk), all or nothing, with one try-lock each through
-`takeDirLock`. It never waits. If another process holds one, it releases what it took and
-refuses with `<id> is locked by a live bl process (pid <n>): <lock path>`. If a read throws, it
-releases what it took and throws again. A lock this process holds is taken again, one depth
-deeper. On success it returns `release` and `scope`. `scope()` reads `unitLockDirs` again, takes
-the lock of each directory there that did not exist at the take, and returns the backlog-relative
-directories the verb holds. So a story created for the feature during the session is in the
-verb's commit scope (F-122 D3), and so is a locked story that the session took out of the feature.
-A created story whose lock another process holds is not, and neither is an existing story linked
-to the feature after the take: the verb does not hold their locks. The work unit lock sits beside
-the spec lock and does not replace it: the spec lock guards one write and waits up to 60 s, and
-the work unit lock is held for a whole session. Lock order: a verb takes its work unit locks
-first, and the backlog lock and the spec lock inside them, one write at a time. A work unit lock
-never waits, so it cannot wait in a cycle with them. Short commands (`bl new`, `bl sync --commit`,
-`bl block`, `bl done`, `bl approve`, `bl task`) neither take nor check it, because a session's
-agent runs them as children, and a check would find the parent's lock. Every `bl refine`
-takes it (`refineAndCommit`, F-122 D4) and holds it in place of a session lock of the backlog root.
-`bl force` takes it too (F-119 R5), though it is a short command: it runs only in the operator's
-terminal, never as a session's child, and it must not move a unit that a live session works on.
-`bl merge F-n` (`cmdMerge`) takes the work unit locks of the feature and its stories after its
-merge gates and before `integrateForMerge`, so a held lock refuses the merge before any repo is
-touched, and holds them to the end of the merge. `bl merge S-n` takes the merged story's work unit
-lock for its integration (`integrateUnit`, below) and again for its triage session (`cleanup.js`),
-before the triage's `dirtySnapshot`. If another process holds it at the triage, bl skips the
-triage with one line that names the holder, and the merge stands. `bl run`, `bl review` and
-`bl implement` hold the work unit locks of their work unit and its stories for the whole run
-(F-122 D4, D9). `runFeature`, `reviewFeature` and `integrateUnit` (`feature-run.js`) take them
-through one helper, `takeRunLocks`: the run lock first, then the work unit locks; a refusal of
-either, or a take that throws, gives back what it took, and their `finally` releases both. The
-run lock refusal is `a bl run (pid <n>) is running <id>`. The commands take the work unit locks
-earlier too, before they write anything, with `takeUnitLocksOrExit` (`unit-lock.js`: print the refusal as
-`Error: <refusal>` and exit 1): `bl run` (`runUnit`) before its prep, `bl review` (`cmdReview`,
-`cmdReviewStory`) before it opens a PR or writes the change document, `bl implement F-n`
-(`cmdWorkon`) before its prep, and `bl implement S-n` (`workonOne`, `workon.js`) before its prep
-and `enterVerb`. The loop's own take then goes one depth deeper. The commit scope of these verbs
-is unchanged: the loop commits by path (`commitUnitPaths`). A unit with no `kind` (a
-`findFeature` record) is a feature to `takeUnitLocks`, as `isStory` reads it.
+- If a command finds the lock held by a live process, it says so once on stderr
+  (`Waiting for lock (.bl/lock/backlog.lock) held by pid <n>…`). Then it polls until the holder
+  releases the lock or 60 s pass (F-104 D2). The wait is `awaitLock` (`src/lock-wait.js`,
+  F-105 W1), which awaits a timer between tries. On a timeout, `bl` names the holder and exits 1.
+  It never tells anyone to remove the lock file.
+- The lock is re-entrant within a process. It is a kernel lock (`flock(2)` through
+  `src/kernel-lock.js`, F-104 K1). The kernel frees it when the holder closes the descriptor or
+  ends, even by SIGKILL, so a killed holder leaves no lock. The file stays (D3), and the PID in it
+  is information only (D4): the holder writes it after it takes the lock. A `bl` child under its
+  parent's lock (`bl new` under `bl side`) adopts the descriptor its parent passed in
+  `BL_LOCK_FD` (D5).
+- The pull, the push and the commit take the main sync lock
+  (`<git-common-dir>/bl-main-sync.lock`, `main-sync.js` `withMainSyncLock`). Its wait says so the
+  same way, with the lock's path, and polls for up to 120 s.
+- The prepare lock wait (`session.js` `prepareWorktreeOnce`) says so the same way. It has no
+  deadline, because the lock is held while bootstrap and `workon` plugins run.
+- Every lock wait is awaited: the backlog, spec, main sync and prepare lock waits all go through
+  `awaitLock`. So one Ctrl+C during any of them runs the SIGINT listener (`exitOnSignal`, which
+  `bl.js` registers when `bl` starts) at once, and `bl` exits 130. During `bl run`, the first
+  Ctrl+C is a stop instead, and `bl run` takes it at the next check after
+  the wait (F-128 D8).
+- The main sync and prepare locks are kernel locks too, taken with `tryLockOnce`. They are not
+  re-entrant, so two callers in one process take turns as two processes do. A `bl` that ends
+  while it holds one, even by Ctrl+C or SIGKILL, leaves no lock, and the next taker gets it at
+  once.
+
+Every bl lock is a kernel lock now. The PID-file lock module is gone, and no code decides from a
+PID whether a lock is held. No code deletes a lock file that bl still takes (D3); the one
+exception is the one-off migration below, which deletes retired lock files. The lock files stay
+and collect. There is one per spec in the temp dir. In each repo's git common dir, there is one
+main sync lock, and one `bl-prepare-<branch>.lock` per branch. No lock wait sleeps synchronously.
+
+Every lock file that bl keeps in a backlog lives under `.bl/` (S-1495). The backlog's `.gitignore`
+ignores `.bl/`, so git never sees a lock file, and bl never asks git to ignore one. In `.bl/lock/`
+(`lock.js` `LOCK_DIR`, `dirLockPath`) are:
+
+- the backlog lock;
+- one session lock and one work unit lock per directory of a work unit's `index.md`;
+- one report lock per output directory.
+
+The run locks are in `.bl/run/`. `dirLockPath` names a directory's lock file from a hash of its
+path, with links resolved (`canonical`). So such a directory, reached through a link, has the same
+lock as its real path.
+
+The work unit lock (`src/unit-lock.js`, F-122 D2) is one kernel lock per directory of a work
+unit's `index.md` (`stories/S<n>-…/`, `features/F<n>-…/`). Its file is `unit-<dir>-<hash>.lock`
+(`unitLockPath`).
+
+- A verb that runs a session on a work unit takes the lock at start, with
+  `takeUnitLocks(config, units, info)`. It takes the lock of the directory of each work unit's
+  `index.md`. For a feature, it also takes the lock of each of its stories' directories
+  (`unitLockDirs`, read fresh from disk). It takes them all or nothing, with one try-lock each
+  through `takeDirLock`. It never waits.
+  - If another process holds one, it releases what it took and refuses with
+    `<id> is locked by a live bl process (pid <n>): <lock path>`.
+  - If a read throws, it releases what it took and throws again.
+  - It takes a lock that this process already holds again, one depth deeper.
+- On success, `takeUnitLocks` returns `release` and `scope`. `scope()` reads
+  `unitLockDirs` again, and takes the lock of each directory there that did not exist at the
+  take. Then it returns the backlog-relative directories that the verb holds. So a story created
+  for the feature during the session is in the verb's commit scope (F-122 D3). So is a locked
+  story that the session took out of the feature. Two kinds of story are not: a created story
+  whose lock another process holds, and an existing story linked to the feature after the take.
+  The verb does not hold their locks.
+- The work unit lock sits beside the spec lock and does not replace it. The
+  spec lock guards one write and waits up to 60 s. The work unit lock is held for a whole
+  session.
+- **Lock order.** A verb takes its work unit locks first. It takes the backlog lock and the spec
+  lock inside them, one write at a time. A work unit lock never waits, so it cannot wait in a
+  cycle with them.
+
+- Short commands (`bl new`, `bl sync --commit`, `bl block`, `bl done`, `bl approve`, `bl task`)
+  neither take nor check it. A session's agent runs them as children, and a check would find the
+  parent's lock.
+- Every `bl refine` takes it (`refineAndCommit`, F-122 D4), and holds it in place of a session
+  lock of the backlog root.
+- `bl force` takes it too (F-119 R5), though it is a short command. It runs only in the
+  operator's terminal, never as a session's child. And it must not move a work unit that a live
+  session works on.
+- `bl merge F-n` (`cmdMerge`) takes the work unit locks of the feature and its stories after its
+  merge gates and before `integrateForMerge`. It holds them to the end of the merge. So a held
+  lock refuses the merge before bl touches any repo.
+- `bl merge S-n` takes the merged story's work unit lock for its integration (`integrateUnit`,
+  below). It takes the lock again for its triage session (`cleanup.js`), before the triage's
+  `dirtySnapshot`. If another process holds the lock at the triage, bl skips the triage with one
+  line that names the holder, and the merge stands.
+- `bl run`, `bl review` and `bl implement` hold the work unit locks of their work unit and its
+  stories for the whole command (F-122 D4, D9). `runFeature`, `reviewFeature` and `integrateUnit`
+  (`feature-run.js`) take them through one helper, `takeRunLocks`. It takes the run lock first,
+  then the work unit locks. If either refuses, or a take throws, it gives back what it took.
+  Their `finally` releases both. The run lock refusal is `a bl run (pid <n>) is running <id>`.
+
+The commands also take the work unit locks earlier, before they write anything, with
+`takeUnitLocksOrExit` (`unit-lock.js`), which prints the refusal as `Error: <refusal>` and
+exits 1:
+
+- `bl run` (`runUnit`), before its prep;
+- `bl review` (`cmdReview`, `cmdReviewStory`), before it opens a PR or writes the change document;
+- `bl implement F-n` (`cmdWorkon`), before its prep;
+- `bl implement S-n` (`workonOne`, `workon.js`), before its prep and `enterVerb`.
+
+The take of `takeRunLocks` then goes one depth deeper. The commit scope of these verbs is
+unchanged: `feature-run.js` commits by path (`commitUnitPaths`). `takeUnitLocks` reads a work unit
+with no `kind` (a `findFeature` record) as a feature, as `isStory` reads it.
+
 `bl init` seeds `.bl/` in `.gitignore`. The one-off `node scripts/migrate-lock-files.js
 [--dry-run] [--backlog <dir>]` (logic in `src/migrate-lock-files.js`) moves a backlog from
-before S-1495. It writes `.bl/` to `.gitignore` before it deletes anything. It deletes each old
-lock file (`.bl-new.lock`, `.reports.lock`, every `.workon.lock` in the backlog root, in a unit
-directory, in a directory inside one, links followed, or in a registered worktree) while it holds
-that file's kernel lock itself (`deleteUnderLock`), so nobody takes the lock between the check
-and the delete; it skips a file whose lock another process holds. Once a second scan finds no old
-lock file, it removes their lines from `.gitignore`. It commits `.gitignore` only when the file
-(and the index, if it differs from HEAD) is what those two edits make of HEAD's version, so a
-rerun commits what a failed run wrote, and a `.gitignore` with any other change stays
-uncommitted and the migration says so. A rerun tries a skipped file again. A
-`bl` from before F-104 holds its locks as PID files, which the migration cannot see, so it runs
-only when no older `bl` runs (task T-76).
-The run loop's usage-limit wait (`waitOrEscalate`) awaits a timer too (F-105 A2); during `bl
-run` the first Ctrl+C is a stop that its next one-second slice takes, and a second one exits at
-once (**An interrupt during `bl run` is a stop**). A function that calls a lock wait is async, and every
-caller awaits it (`test/unit/awaited-calls.test.js`).
+before S-1495. The migration:
 
-Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogFiles`) over
-the Markdown files among its paths that git reports changed. It runs the plugin on one file per
-process, inside that file's spec lock (F-126 D4), so it waits for a token writer that holds the
-file. The cost is about 100 ms per file, so about 3 s for a merge's sync. Then it stages exactly each
-`--story` directory and each `--path` (a backlog-relative path you wrote or moved yourself,
-such as both ends of a `git mv`; repeatable), and commits them with `git commit --only`
-(`backlog-commit.js` `commitPaths`), so another person's dirty story file stays out. A `--path`
-must name one exact file or directory: the root, the whole `stories/`, `components/`,
-`features/`, `themes/` or `epics/`, a glob, a git magic pathspec, an absolute path or one with
-`..` is refused before anything is committed, since it would widen the commit to unrelated
-work.
-Nothing to commit exits 0; `--commit` without `-m` or `--story`, `--path` without
-`--commit`, or a `--path` that is neither on disk nor tracked by git, is a usage error.
+1. writes `.bl/` to `.gitignore` before it deletes anything;
+2. deletes each old lock file while it holds that file's kernel lock itself (`deleteUnderLock`),
+   so nobody takes the lock between the check and the delete. It skips a file whose lock another
+   process holds. The old lock files are `.bl-new.lock`, `.reports.lock`, and every
+   `.workon.lock` in the backlog root, a registered worktree, the directory of a work unit's
+   `index.md`, or a directory inside one (links followed);
+3. once a second scan finds no old lock file, removes their lines from `.gitignore`;
+4. commits `.gitignore` only when the file (and the index, if it differs from HEAD) is what
+   those two edits make of HEAD's version.
+
+So a rerun commits what a failed migration wrote. A `.gitignore` with any other change stays
+uncommitted, and the migration says so. A rerun tries a skipped file again. A `bl` from before
+F-104 holds its locks as PID files, which the migration cannot see. So run the migration only when
+no older `bl` runs (task T-76).
+
+The usage-limit wait of `bl run` (`waitOrEscalate`) awaits a timer too (F-105 A2). During
+`bl run`, the first Ctrl+C is a stop, which the wait's next one-second slice takes. A second
+Ctrl+C exits at once (**An interrupt during `bl run` is a stop**). A function that calls a lock
+wait is async, and every caller awaits it (`test/unit/awaited-calls.test.js`).
+
+Under the lock, `--commit` runs the backlog's `.md` format plugin (`formatBacklogFiles`) over the
+Markdown files among its paths that git reports changed. It runs the plugin on one file per
+process, under that file's spec lock (F-126 D4). So it waits for a token writer that holds the
+file. The cost is about 100 ms per file, so about 3 s for a merge's sync.
+
+Then `--commit` stages exactly each `--story` directory and each `--path`, and commits them with
+`git commit --only` (`backlog-commit.js` `commitPaths`). So another person's dirty story file
+stays out. A `--path` is a backlog-relative path that you wrote or moved yourself, such as both
+ends of a `git mv`, and it is repeatable. It must name one exact file or directory. These would
+widen the commit to unrelated work, so `bl sync` refuses them before it commits anything:
+
+- the root;
+- the whole `stories/`, `components/`, `features/`, `themes/` or `epics/`;
+- a glob or a git magic pathspec;
+- an absolute path, or one with `..`.
+
+If there is nothing to commit, `bl sync` exits 0. These are usage errors: `--commit` without
+`-m` or `--story`, `--path` without `--commit`, and a `--path` that is neither on disk nor tracked
+by git.
 
 **Pull before, push after (F-50 D4).** The backlog is shared through its `origin` remote, so
-every clone (the operator's, the update runner's) sees the others' work. `commitPaths` is the
-only backlog add, commit and push in bl: each step commit of `bl run`'s loop goes through it too
-(`feature-run.js` `commitUnitPaths`). Every commit it makes is followed by `git push origin main`
-(`backlog-commit.js` `pushBacklog`). A backlog with no repo of its own (`hasOwnRepo`) runs no git
-there: `commitPaths` returns `notRepo`, and its callers take that as nothing to do.
-A push rejected because `origin` moved on (git's `[rejected] … (fetch first)` or
-`(non-fast-forward)`, `isNonFastForwardRejection`) is rebased onto `origin/main` with the pull's
-own rebase (`pullLocked`, below, which settles generated paths and puts everything back when it
-cannot finish), under the main sync lock the commit already holds, and pushed once more (F-74
-D1). When that rebase settled generated paths, their regeneration is left pending in
-`.bl/run/pull-regenerate.json` for the next command that pulls (`leaveRegenerationPending`,
-which writes `null` there: no snapshot yet, so edits made before that command stay out of the
-regeneration's commit; `markRegenerationPending` takes the snapshot when the regeneration
-starts; the two are the file's only writers); it never regenerates under the lock. The marker is
-written before the rebase and removed when it settled nothing, so a marker that cannot be read or
-written stops the retry before anything moves, and a push never publishes settled paths without
-it. A push that still fails (a
-conflict outside the generated paths, a hook, auth, offline: the last three get no rebase) is
-one warning (`pushWarning`) naming the conflicting paths, if any, and the command to retry, and
-the command exits as it would have. Every backlog commit holds the main sync lock the pull
-holds, with or without an `origin` remote (F-126 D1), so a commit from a process without the
-backlog lock (`openUnitChange`, the loop) never lands mid-rebase or loses its file to a pull's
-autostash. Every bl git call that changes the backlog's index, working tree or refs lives in
-`backlog-commit.js` or `main-sync.js`, and each chokepoint (`commitLocked`, `pushBacklog`,
-`pullLocked`, `resetPaths`, `discardChanges`) throws first when this process does not hold the
-main sync lock (`assertMainSyncLock`, through `kernel-lock.js` `assertHeld`, which makes every
-"this process must hold this lock" check). `bl rank --commit`'s rollback of a failed commit
-unstages `priority.yaml` with `resetPaths` under the lock. The migration restore
-(`migration-txn.js`) runs in a signal listener and cannot wait: it takes the lock with one try
-(`tryLockOnce`), and when another process holds it, it leaves the backlog and prints the manual
-`git reset --hard HEAD && git clean -fd`. Every command that commits the
-backlog (`new`, `side`, `run`, `implement`, `merge`, `done`, `updates`, `sync --commit`,
-`block add`, `block remove`, `block list --fix`, `task`, `task done`), plus `bl inbox` and `bl updates status`, first rebases onto `origin/main` with
-`--autostash` (`backlog-commit.js` `pullBacklog`, under the backlog lock and the main sync
-lock; `bl.js` decides which commands through `commandPullsBacklog`). When `origin/main` brings
-nothing new the work tree is not touched. A conflict on a story or feature aborts the rebase,
-which puts back the work tree and the stashed edits, warns, and the command goes on from local
-state; uncommitted edits that conflict with what was pulled put `main` back where it was and
-the edits back from the stash, the same way. A pull that does not go through is checked
-against the state it started from (branch, HEAD, no rebase in progress, nothing unmerged, the
-stash and the uncommitted edits); when they differ (a failed `git rebase --abort`, a stash that
-would not re-apply) the pull is `unsafe` and the command does not run. A conflict confined to
-the one generated file, `allowed-tools.json` (`isGeneratedPath`), keeps the local side, and the
-regeneration that follows every pull that brought anything (`sync.js` `pullBeforeCommand`,
-`ensureAllowedTools`) rebuilds it and commits and pushes it if it changed. A conflict in the
-root or a component `index.md` is a real one: those pages are hand-written (F-79 D1). A
-regeneration that cannot be built or committed stops the command and stays pending in
-`.bl/run/pull-regenerate.json`; the next command that pulls finishes it first. After a pull
-that ended `pulled` or `current` and made no regeneration commit (whose push carries `main`), a
-`main` still ahead of `origin/main` is pushed, with the same retry (`pushIfAhead`, F-74
-Decision A1): a commit whose push failed is carried by the next command of any kind that pulls,
-not only the next one that commits, and `bl updates status` is the running-man guest's way to
-push an unpushed backlog. A backlog with no `origin` remote neither pulls nor pushes.
+every clone (the operator's, the update runner's) sees the others' work.
+
+- `commitPaths` is the only backlog add, commit and push in bl. Each step commit of `bl run` goes
+  through it too (`feature-run.js` `commitUnitPaths`). After every commit it makes, it runs
+  `git push origin main` (`backlog-commit.js` `pushBacklog`). In a backlog with no repo of its own
+  (`hasOwnRepo`), bl runs no git: `commitPaths` returns `notRepo`, and its callers take that as
+  nothing to do.
+- If `origin` moved on, git rejects the push (`[rejected] … (fetch first)` or
+  `(non-fast-forward)`, `isNonFastForwardRejection`). Then `pushBacklog` rebases onto
+  `origin/main` with the pull's own rebase (`pullLocked`, below), under the main sync lock the
+  commit already holds. Then it pushes once more (F-74 D1). `pullLocked` settles generated paths, and
+  puts everything back when it cannot finish.
+- If that rebase settled generated paths, bl leaves their regeneration pending in
+  `.bl/run/pull-regenerate.json` for the next command that pulls; it never regenerates under the
+  lock. The file's only writers are `leaveRegenerationPending` and `markRegenerationPending`. The
+  first writes `null` there: no snapshot yet, so edits made before that next command stay out of
+  the regeneration's commit. The second takes the snapshot when the regeneration starts. bl
+  writes the marker before the rebase, and removes it when the rebase settled nothing. So if bl
+  cannot read or write the marker, the retry stops before anything moves, and a push never
+  publishes settled paths without it.
+- A push can still fail: a conflict outside the generated paths, a hook, auth, or offline (the
+  last three get no rebase). Then bl prints one warning (`pushWarning`) that names the
+  conflicting paths, if any, and the command to retry. The command exits as it would have.
+- Every backlog commit holds the main sync lock that the pull holds, with
+  or without an `origin` remote (F-126 D1). So a commit from a process without the backlog lock
+  (`openUnitChange`, `bl run`) never lands mid-rebase, or loses its file to a pull's autostash.
+  Every bl git call that changes the backlog's index, working tree or refs lives in
+  `backlog-commit.js` or `main-sync.js`. Each chokepoint (`commitLocked`, `pushBacklog`,
+  `pullLocked`, `resetPaths`, `discardChanges`) throws first when this process does not hold the
+  main sync lock. That check is `assertMainSyncLock`, through `kernel-lock.js` `assertHeld`,
+  which makes every "this process must hold this lock" check.
+  - `bl rank --commit`'s rollback of a failed commit unstages `priority.yaml` with `resetPaths`,
+    under the lock.
+  - The migration restore (`migration-txn.js`) runs in a signal listener and cannot wait. It
+    takes the lock with one try (`tryLockOnce`). If another process holds the lock, the restore
+    leaves the backlog as it is, and prints the manual `git reset --hard HEAD && git clean -fd`.
+
+**The pull.** Every command that commits the backlog first rebases onto `origin/main` with
+`--autostash`, and so do `bl inbox` and `bl updates status`. The commands that commit are `new`,
+`side`, `run`, `implement`, `merge`, `done`, `updates`, `sync --commit`, `block add`,
+`block remove`, `block list --fix`, `task` and `task done`. The pull is `backlog-commit.js`
+`pullBacklog`, under the backlog lock and the main sync lock. `bl.js` decides which commands pull,
+through `commandPullsBacklog`.
+
+- If `origin/main` brings nothing new, the pull does not touch the work tree.
+- A conflict on a story or feature aborts the rebase. The abort puts back the work tree and the
+  stashed edits, bl warns, and the command goes on from local state. If uncommitted edits
+  conflict with what was pulled, bl puts `main` back where it was, and the edits back from the
+  stash, the same way.
+- If a pull does not go through, bl checks the state against the one that the pull started
+  from. The state is the branch, HEAD, no rebase in progress, nothing unmerged, the stash and the
+  uncommitted edits. If they differ (a failed `git rebase --abort`, a stash that would not
+  re-apply), the pull is `unsafe`, and the command does not go on.
+- A conflict confined to the one generated file, `allowed-tools.json` (`isGeneratedPath`), keeps
+  the local side. A regeneration follows every pull that brought anything (`sync.js`
+  `pullBeforeCommand`, `ensureAllowedTools`). It rebuilds the file, and commits and pushes it if
+  it changed.
+- A conflict in the root or a component `index.md` is a real one: those pages are hand-written
+  (F-79 D1).
+- If bl cannot build or commit a regeneration, the command stops, and the regeneration stays
+  pending in `.bl/run/pull-regenerate.json`. The next command that pulls finishes it first.
+- A pull can end `pulled` or `current` and make no regeneration commit (whose push would carry
+  `main`). If `main` is then still ahead of `origin/main`, bl pushes it, with the same retry
+  (`pushIfAhead`, F-74 Decision A1). So the next command of any kind that pulls carries a commit
+  whose push failed, not only the next one that commits. `bl updates status` is the running-man
+  guest's way to push an unpushed backlog.
+- A backlog with no `origin` remote neither pulls nor pushes.
 
 **Rendered pages (F-79 D2, D3).** No committed file holds a derived list. `renderPage(graph,
-unit)` (`src/render.js`) gives a page's committed text with its generated sections placed in
-it, each where the page's layout puts it; `bl report` (its `site/` root) and `bl view` show
-pages through it. `GENERATED_SECTIONS` is the one list of those sections per page kind, every
-link pointing into `stories/`, `components/`, `features/`, `epics/` or `themes/`:
+unit)` (`src/render.js`) gives a page's committed text with its generated sections placed in it,
+each where the page's layout puts it. `bl report` (its `site/` root) and `bl view` show pages
+through it. `GENERATED_SECTIONS` is the one list of those sections per page kind. Every link in
+them points into `stories/`, `components/`, `features/`, `epics/` or `themes/`. In this list,
+"not done" means a status that does not meet `done`:
 
-- the root `index.md`: a "Total backlog" line (open stories, their points, the components),
-  `## Themes` (theme, title, epic count, open features), `## Components` (id, title, repo,
-  home, open and done story counts; a component has no points) and `## Priority`: the open
-  units in `priority.yaml`'s order (F-78 D1), ranked first, the unranked tail marked.
+- the root `index.md`:
+  - a "Total backlog" line: the stories not done, their points, the components;
+  - `## Themes`: theme, title, epic count, features not done;
+  - `## Components`: id, title, repo, home, and the counts of stories not done and done. A
+    component has no points.
+  - `## Priority`: the work units not done, in `priority.yaml`'s order (F-78 D1), ranked first,
+    with the unranked tail marked.
 - each `epics/E<nn>-*/index.md`: `## Features` (id, title, status, stories done/total,
   points done/total) after `## Outcome`, from the graph's derived features.
 - each `themes/<slug>/index.md`: `## Epics` (id, title, status, features done/total), then
   `## Features`, its features with no epic.
-- each `components/C<nn>-*/index.md`: `## Stories` (its open stories in priority order, with
-  their status) and `## Features` (open features touching it).
-- each feature: its `## Stories` table (with a `Component` column), its stories in the
-  graph's order, then `## Tasks` when it has a task.
+- each `components/C<nn>-*/index.md`: `## Stories` (its stories not done, in priority order, with
+  their status) and `## Features` (the features not done that touch it).
+- each feature: its `## Stories` table (with a `Component` column), its stories in the graph's
+  order, then `## Tasks` when it has a task.
 - each story: `## Tasks` when it has a task.
 
 A story whose `component:` has no directory is listed with the bare id, not a link.
 
-A committed page holds none of them. `bl validate` reports one as `generated-section`, and
-`scripts/migrate-generated-sections.js` (run once after F-79) removed them, with the root's
-"Total backlog" line and its older `## Features` and `## Backlog` tables, from every page. Both
-take a section only when its body is one complete GFM table (read with
-`micromark-extension-gfm-table`) with the generated header row, every row at least that wide,
-and nothing else (`isGeneratedBody`), so a story's hand-written `## Tasks` list or table stays,
-and so does a header row with no delimiter row under it. Each header cell must be the column's
-plain text, so a header with a formatted cell (`**ID**`, `` `ID` ``, a link, an escape or an
-entity) stays too. `renderPage` keeps such a hand-written body and puts the generated table after it. The root `index.md` is hand-written too: `bl init` writes
-it once, when it is missing, with the `backlog.json` `title` (`ensureRootIndex`, `src/init.js`).
+A committed page holds none of them. `bl validate` reports one as `generated-section`.
+`scripts/migrate-generated-sections.js` (run once after F-79) removed them from every page, with
+the root's "Total backlog" line and its older `## Features` and `## Backlog` tables.
+
+Both take a section only when its body is one complete GFM table and nothing else
+(`isGeneratedBody`). The table (read with `micromark-extension-gfm-table`) must have the
+generated header row, and every row must be at least that wide. So a story's hand-written
+`## Tasks` list or table stays, and so does a header row with no delimiter row under it. Each
+header cell must be the column's plain text. So a header with a formatted cell (`**ID**`,
+`` `ID` ``, a link, an escape or an entity) stays too. `renderPage` keeps such a hand-written body,
+and puts the generated table after it.
+
+The root `index.md` is hand-written too. `bl init` writes it once, when it is missing, with the
+`backlog.json` `title` (`ensureRootIndex`, `src/init.js`).
 
 ### `bl validate`
 
