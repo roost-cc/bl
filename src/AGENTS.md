@@ -3405,7 +3405,7 @@ kind of unit file:
 Each one gets the correct next ID, today's `added` date and a scaffolded `index.md`. Always use
 `bl new` to create a story, component, theme or epic file. Do not create one by hand.
 
-Parallel `bl new` calls are safe: a lockfile serializes ID assignment.
+Parallel `bl new` calls are safe: they take turns at ID assignment through the backlog lock.
 
 ```bash
 bl new C00 --title "My Story" --points 3
@@ -3857,7 +3857,7 @@ bl task done T-7 "ran it, 13 tasks filed"                                     # 
 ### `bl next-id`
 
 `bl next-id` prints the next available story, component, epic or task ID or IDs to stdout. It
-is a pure query: it reserves nothing and takes no lockfile. Concurrent callers may get the same
+is a pure query: it reserves nothing and takes no lock file. Concurrent callers may get the same
 answer. The reservation points are `bl new` and `bl task`, which hold the backlog lock while
 they assign the ID.
 
@@ -4102,7 +4102,7 @@ every repo's PR on the repo's `repos:` entry in the change document. If there is
 (`reviewOf`, F-69 D5): `<n>` is the number of rounds with a verdict. The first line is the
 outcome:
 
-- Open items (`fixing`):
+- Unchecked items (`fixing`):
   `Review round <n> done: <k> open item(s) (<a> Must fix, <b> Should fix, <c> nit(s)).` The
   counts come from the latest Review Log session. The line leaves out zero counts, and counts
   boxes under any other heading as `<o> other`. If a round is in `fixing` but its session has no
@@ -4127,12 +4127,12 @@ The second line is `Next: <command>`:
   fix box, the merge gate (`featureReviewGate`) blocks the merge. Then the command is
   `bl review <id>`: a review checks the boxes again, and the `implement` row of the table does
   not start from `ready_for_merge`. `bl status` prints no next command.
-- Open items below the round cap: `bl run <id> --resume`.
-- Open items in the round that reached the cap: the outcome line adds
+- Unchecked items below the round cap: `bl run <id> --resume`.
+- Unchecked items in the round that reached the cap: the outcome line adds
   ` The round cap (<cap>) is reached: the next run fixes these items and runs one closing round on them.`
   and the command is `bl run <id> --resume`. If the session has no unchecked box, the outcome
   line adds only ` The round cap (<cap>) is reached.`.
-- Open items past what the cap allows: the outcome line adds
+- Unchecked items past what the cap allows: the outcome line adds
   ` The round cap (<cap>) is reached.`, and the command is
   `bl run <id> --resume --max-rounds <n+1>`.
 - Escalated: `read ## Escalation in <the unit's index.md>`.
