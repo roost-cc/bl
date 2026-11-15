@@ -5238,13 +5238,13 @@ bl report --charts vega-lite # pick the chart adapter (vega-lite is the default 
   the weeks before the first commit, it draws scope as a dashed `scope (backfilled)` series.
 
 - **Cost** (`data.cost`, D3) has a row for each feature, and for each story with no feature (or
-  whose `feature:` names none in the tree). Each row shows, from that unit file's current
-  frontmatter: the four
-  `tokens_*` kinds, the `tokens_headless_*` share of all four, points (a feature's: its listed
-  stories not `superseded`), output tokens per point and `tokens_updated`. The rows are sorted by
-  output tokens. The total covers the rows with tokens. The average per point covers the done
-  rows with tokens and points (each kind's sum over their points' sum). A row with no `tokens_*`
-  shows `—` and is in neither; a zero-point row has no per-point figure.
+  whose `feature:` names none in the tree). Each row shows, from the current frontmatter of its
+  feature or story: the four `tokens_*` kinds, the `tokens_headless_*` share of all four, points
+  (a feature's: its listed stories not `superseded`), output tokens per point and
+  `tokens_updated`. The rows are sorted by output tokens. The total covers the rows with tokens.
+  The average per point covers the done rows with tokens and points (each kind's sum over their
+  points' sum). A row with no `tokens_*` shows `—` and is in neither; a zero-point row has no
+  per-point figure.
 - **Token efficiency** (`data.efficiency`, D7) covers the done rows of **Cost** with tokens and
   points. It holds:
   - output tokens per point by type (`feature` for a feature, else the story's `type`), as
@@ -5298,9 +5298,9 @@ pins the adapter's specs. To rewrite them, set `UPDATE_CHART_FIXTURES=1`, and re
 
 ### `bl next`
 
-`bl next` prints the next work unit that is a feature or a loose story, by the backlog's priority with
-hard dependencies first (F-78 D2, `src/next.js`). `bl what-next` picks a story inside a feature or
-filter, and `bl next` is not its alias.
+`bl next` prints the next work unit that is a feature or a loose story, by the backlog's priority
+with hard dependencies first (F-78 D2, `src/next.js`). `bl what-next` picks a story inside a
+feature or filter, and `bl next` is not its alias.
 
 ```bash
 bl next                       # the first open unit nothing holds
