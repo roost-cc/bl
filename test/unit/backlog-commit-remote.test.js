@@ -241,7 +241,7 @@ test('isGeneratedPath: allowed-tools.json only; the root and component indexes a
   }
 });
 
-test('commandPullsBacklog: committing commands, inbox and updates; never help', () => {
+test('commandPullsBacklog: committing commands and inbox; never help', () => {
   for (const [cmd, argv] of [
     ['new', ['--title', 'x']],
     ['attach', ['S-1', 'F-1']],
@@ -256,8 +256,6 @@ test('commandPullsBacklog: committing commands, inbox and updates; never help', 
     ['init', []],
     ['inbox', []],
     ['inbox', ['done', 'F-1:op1']],
-    ['updates', ['status']],
-    ['updates', ['approve', 'S-1']],
     ['sync', ['--commit', '-m', 'x', '--story', 'S-1']],
     ['s', ['--commit']],
     // A bare bl sync's whole job is the pull and push (F-79 D1).
@@ -276,7 +274,6 @@ test('commandPullsBacklog: committing commands, inbox and updates; never help', 
     ['list', []],
     ['status', ['F-1']],
     ['status', []],
-    ['updates', []],
     ['inbox', ['--help']],
     ['run', ['-h']],
     ['refine', ['--help']],

@@ -6,9 +6,9 @@
  *     `findBacklogRoot`: `$BL_BACKLOG_DIR`, else a subdirectory of the cwd or
  *     of a directory above it.
  *   - Top-level `backlog.json` registers the code repos in `repos`, keyed by
- *     repo name: each entry's `path` and `deployable`, the deprecated
- *     `update_tests`, and the optional per-repo layers `plugins-<stage>` and
- *     `overrides` (F-51 D4).
+ *     repo name: each entry's `path` and `deployable`, `update_tests`
+ *     (running-man's provisioning reads it; bl only accepts it), and the
+ *     optional per-repo layers `plugins-<stage>` and `overrides` (F-51 D4).
  *     Stories, components and features live in `stories/`, `components/` and
  *     `features/` at the backlog root (F-49 D3).
  *   - A repo's `overrides` refine the top-level settings for work in that
@@ -263,23 +263,23 @@ export function dictionariesOf(config) {
 }
 
 /**
- * `backlog.json` `updates` (F-80 D6): the settings running-man's update job
- * and `bl inbox` share. Null when backlog.json has no `updates` block: that
- * backlog has no update job. Otherwise every key is required, with no
- * defaults, and one that is missing or of the wrong type throws, naming it.
- * Other keys in the block (the deprecated `report`) are not read here.
- * Read when used, never by `loadConfig`, so a backlog.json from before
- * F-80's cutover still loads.
+ * `backlog.json` `updates` (F-80 D6): where `bl inbox` reads the update
+ * job's heartbeat. Null when backlog.json has no `updates` block: that
+ * backlog has no update job. Otherwise `heartbeat.repo` and
+ * `heartbeat.branch` are required, with no defaults, and one that is missing
+ * or of the wrong type throws, naming it. `namespace` and `push_attempts`
+ * are running-man's (`updates/settings.mjs`): bl ignores every key but
+ * `heartbeat`. Read when used, never by `loadConfig`, so a backlog.json
+ * from before F-80's cutover still loads.
  * @param {{ topLevel?: object } | null | undefined} config
- * @returns {{ namespace: string, pushAttempts: number,
- *   heartbeat: { repo: string, branch: string } } | null}
+ * @returns {{ heartbeat: { repo: string, branch: string } } | null}
  */
 export function updateSettings(config) {
   if (!config?.topLevel || !Object.hasOwn(config.topLevel, 'updates')) return null;
   const u = config.topLevel.updates;
   const bad = (key, what) =>
     new Error(
-      `backlog.json "updates" ${what} "${key}": the update job and bl inbox read namespace, push_attempts, heartbeat.repo and heartbeat.branch, with no defaults`,
+      `backlog.json "updates" ${what} "${key}": bl inbox reads heartbeat.repo and heartbeat.branch, with no defaults`,
     );
   const name = (obj, key, path = key) => {
     if (!Object.hasOwn(obj, key)) throw bad(path, 'has no');
@@ -287,16 +287,9 @@ export function updateSettings(config) {
     return obj[key].trim();
   };
   if (!isPlainObject(u)) throw new Error('backlog.json "updates" must be an object');
-  const namespace = name(u, 'namespace');
-  if (!Object.hasOwn(u, 'push_attempts')) throw bad('push_attempts', 'has no');
-  if (!Number.isInteger(u.push_attempts) || u.push_attempts < 1) {
-    throw bad('push_attempts', 'needs a positive whole number for');
-  }
   if (!Object.hasOwn(u, 'heartbeat')) throw bad('heartbeat', 'has no');
   if (!isPlainObject(u.heartbeat)) throw bad('heartbeat', 'needs an object { repo, branch } for');
   return {
-    namespace,
-    pushAttempts: u.push_attempts,
     heartbeat: {
       repo: name(u.heartbeat, 'repo', 'heartbeat.repo'),
       branch: name(u.heartbeat, 'branch', 'heartbeat.branch'),
@@ -329,8 +322,9 @@ export function topSettings(config) {
 const REQUIRED_REPO_KEYS = ['path', 'deployable'];
 
 /**
- * `update_tests`, deprecated with `bl updates` (F-80 G3): read when present,
- * so a backlog.json may keep it or drop it.
+ * `update_tests`: running-man's provisioning reads it
+ * (`provision/repos.mjs`). bl only accepts it, so a backlog.json may keep it
+ * or drop it.
  */
 const OPTIONAL_REPO_KEYS = ['update_tests'];
 
@@ -339,15 +333,14 @@ const isNameList = (v) => Array.isArray(v) && v.every((n) => typeof n === 'strin
 
 /**
  * Resolve `backlog.json`'s `repos` block (F-51 D4) into one record per repo:
- * `{ name, path, deployable, updateTests, plugins, overrides }`, with `path`
- * absolute and `plugins` the entry's `plugins-<stage>` lists keyed by stage.
- * `updateTests` is the deprecated `update_tests`, `[]` without it.
+ * `{ name, path, deployable, plugins, overrides }`, with `path` absolute and
+ * `plugins` the entry's `plugins-<stage>` lists keyed by stage.
  * A missing required key, a value of the wrong type or an unknown key throws,
  * naming the repo and the key.
  * @param {string} backlogRoot
  * @param {unknown} raw — the `repos` value
  * @returns {Record<string, { name: string, path: string, deployable: boolean,
- *   updateTests: string[], plugins: Record<string, string[]>, overrides: object | null }>}
+ *   plugins: Record<string, string[]>, overrides: object | null }>}
  */
 function resolveRepos(backlogRoot, raw) {
   if (!isPlainObject(raw)) {
@@ -391,7 +384,6 @@ function resolveRepos(backlogRoot, raw) {
       name,
       path: resolve(backlogRoot, def.path),
       deployable: def.deployable,
-      updateTests: [...(def.update_tests ?? [])],
       plugins,
       overrides: def.overrides ?? null,
     };
@@ -1793,27 +1785,20 @@ export function openTmuxWindow(name, argv, { cwd = process.cwd() } = {}) {
 
 /**
  * The forge ops bl calls (F-42 D4), each with the `{{vars}}` it is given. A
- * forge plugin holds these and no others (`bl validate`), and only
- * `update.notes` (Renovate's release notes) may read a PR body.
+ * forge plugin holds these and no others (`bl validate`), and no op reads a
+ * PR body.
  *
  *   change.open      title, body       prints the new PR's URL   (bl run)
  *   change.describe  number, body      rewrites an open PR's body (bl run)
  *   change.find      branch            JSON [{number,url,state,headRefOid,labels}]
- *   change.close     number, comment   (bl merge, bl updates drop)
- *   change.ready     number            marks a draft PR ready (bl updates run)
- *   update.notes     number            Renovate's PR body (bl updates run)
+ *   change.close     number, comment   (bl merge)
  */
 export const FORGE_OPS = Object.freeze({
   'change.open': ['title', 'body'],
   'change.describe': ['number', 'body'],
   'change.find': ['branch'],
   'change.close': ['number', 'comment'],
-  'change.ready': ['number'],
-  'update.notes': ['number'],
 });
-
-/** The one op allowed to read a PR body. */
-export const BODY_READING_OP = 'update.notes';
 
 /**
  * Run a forge op (e.g. `change.find`, `change.close`) through the

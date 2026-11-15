@@ -79,12 +79,6 @@ Per-command stdout contracts:
 | `bl review`          | nothing (progress → stderr)                               |
 | `bl allow`           | nothing                                                   |
 | `bl agent`           | passes through to the configured agent                    |
-| `bl updates sync`    | one line per story: created, updated, closed or unchanged |
-| `bl updates run`     | one line per story: merged, held, decision or skipped     |
-| `bl updates vulns`   | one line per story, reported finding and failed scan      |
-| `bl updates status`  | the open update stories by repo and state (`--json`)      |
-| `bl updates approve` | one line: requested                                       |
-| `bl updates drop`    | one line: requested                                       |
 | `bl inbox`           | the items by kind (`--json`: an array); `inbox: empty`    |
 | `bl inbox done`      | nothing: refuses, naming the verb (stderr)                |
 | `bl top --json`      | one JSON object (schema `bl-top-json/v1`)                 |
@@ -215,8 +209,9 @@ run.)
 - `path` (relative to the backlog) and `deployable` are required. `deployable` means that a
   release manifest records the repo (`bl merge F-n`). `loadConfig` fails and names the repo and
   the key; it has no defaults.
-- `update_tests` is optional since F-80 G3, and `[]` when absent. It holds the `plugins:` that
-  the deprecated `bl updates sync` writes on the repo's update stories.
+- `update_tests` is optional: a list of plugin names that running-man's provisioning reads
+  (`provision/repos.mjs`). bl only accepts it: `loadConfig` checks that it is a list of names,
+  and the resolved repo record does not carry it.
 - `plugins-<stage>` is the repo layer of the plugin cascade (see **Activation via
   Frontmatter**). There is no generic `plugins:` form here.
 - `overrides` is merged over the top level by `mergeConfig` for work in that repo:
@@ -250,7 +245,7 @@ resolved value. `bl init` writes `"title": "Backlog"` into a new `backlog.json`.
 
 `worktrees` names the **worktree root**, a directory relative to the backlog (`"../worktrees"`).
 A work unit's directory is `<root>/<branch>`, and each of its repos' worktree is
-`<root>/<branch>/<repo>`. This holds for a feature, a story, a side story and an update story
+`<root>/<branch>/<repo>`. This holds for a feature, a story and a side story
 alike. The layout is fixed in code. Only `config.js` builds it, with `worktreeRoot(config)`,
 `unitDirFor(config, branch)` and `worktreePathFor(config, repo, branch)`; no other code joins a
 worktree path. The work unit's directory is not a git repository, so every git command in it
@@ -264,9 +259,9 @@ names its repo (`git -C <repo>`).
   `loadConfig({ legacyWorktrees: true })`.
 - A repo's `overrides.worktrees` throws: a repo outside the work unit's directory would split the
   work unit.
-- A bl worktree is `<root>/<branch>/bl[/…]` (`isBlBranchPath(root, path)`). `foreignCheckout` and
-  the Codex branch-bl approval read it that way, never as a substring of the path.
-- Some steps remove a worktree: `bl merge`'s cleanup, a `bl side` undo and an update story's run.
+- A bl worktree is `<root>/<branch>/bl[/…]` (`isBlBranchPath(root, path)`). The Codex branch-bl approval
+  reads it that way, never as a substring of the path.
+- Some steps remove a worktree: `bl merge`'s cleanup and a `bl side` undo.
   Each one also removes the work unit's directory when it is empty (`story.js`
   `removeUnitDirIfEmpty`). A work unit's directory that still holds another worktree stays. A
   session's lock file is not in the work unit's directory: it is in the backlog's `.bl/lock/`
@@ -580,9 +575,6 @@ and component index files only under the backlog lock, and they need `atomicWrit
     while it holds the spec lock. A collection failure is non-fatal; a write failure fails
     `bl done`;
   - the writers in `feature-run.js` (`writeEscalation`, `recordStoryRunFields`);
-  - the writers of `bl updates`: `recordMerge`, `recordOutcome`, `dropStory`, the request write
-    in `requestUpdate`, and the refresh and close of `syncUpdates`. The refresh and close apply
-    their change to the spec read under the lock, inside the backlog lock;
   - `bl new`'s feature links (each story's `feature:` in `bl new --feature`), and the
     `markSideStory` of `bl attach` and `bl side`, each inside the backlog lock.
 
@@ -593,8 +585,7 @@ and component index files only under the backlog lock, and they need `atomicWrit
   `depends_on` / `required_for`, are edges in `blockers.json` (F-111 D5).
 
   bl writes these files with `atomicWriteFile`:
-  - a new feature's file, and a new update story;
-  - `dropStory`'s restore after a failed PR close, inside the story's spec lock;
+  - a new feature's file;
   - `bl new`'s new story, component, theme and epic files, each under its covering lock;
   - the snapshot restores of `bl side`, `bl task` and `settleRecord`, each under its covering
     lock.
@@ -693,32 +684,32 @@ once the feature spans two repos.
 
 ### Field Reference
 
-| Field               | Required | Values                                         | Notes                                                                                                             |
-| ------------------- | -------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `component`         | yes      | `C<nn>`                                        | The code boundary; the story's repo is its `repo` (F-49 D4, F-52 D1)                                              |
-| `story_id`          | yes      | `S-<nn>` (dash required)                       | Unique across the entire backlog                                                                                  |
-| `title`             | yes      | short string                                   | Appears in all index tables                                                                                       |
-| `type`              | yes      | `feature` `bug` `chore`                        | Story type                                                                                                        |
-| `points`            | yes      | 1 2 3 5 8 13                                   | Fibonacci; feature and backlog totals roll up                                                                     |
-| `effort`            | no       | `low` `medium` `high` `xhigh` `max`            | The effort level refine chose (F-85 D1); unset runs at `effort.default`; `bad-effort` refuses another value       |
-| `status`            | yes      | `flow.json`'s story statuses (`draft` first)   | Drives table placement and gates                                                                                  |
-| `added`             | yes      | `YYYY-MM-DD`                                   | Set once, never changed                                                                                           |
-| `parent`            | no       | `S-<nn>`                                       | Parent story if this was split from one                                                                           |
-| `superseded_by`     | no       | `S-<nn>`                                       | Replacement story ID                                                                                              |
-| `commit`            | on done  | short hash _or_ map `<repo>: <sha>`            | String for single-repo stories; map for multi-repo                                                                |
-| `completed`         | on done  | `YYYY-MM-DD`                                   | Set by the log's entry to `done` or `superseded`                                                                  |
-| `feature`           | no       | `F-<n>`                                        | The feature this story is part of (see **Features**); set by `bl new --feature`                                   |
-| `batch`             | no       | `B-<n>`                                        | The story batch this story is part of (see **Story batches**); never with `feature`                               |
-| `found_by`          | no       | `F-<n>` or `S-<n>`                             | The work unit whose work found a side story; set by `bl side --from` (F-48 D2)                                    |
-| `review_rounds_max` | no       | integer                                        | Written by a story run; caps review rounds                                                                        |
-| `update_repo`       | no       | forge slug, e.g. `acme/tools`                  | Written by `bl updates sync`; with `update_branch` the key of an update story                                     |
-| `update_branch`     | no       | branch name, e.g. `renovate/koa-3.x`           | Written by `bl updates sync`                                                                                      |
-| `update_pr`         | no       | PR number                                      | Written by `bl updates sync`                                                                                      |
-| `update_head`       | no       | commit sha                                     | The branch head the last sync saw; `bl updates run` skips a known-red head                                        |
-| `update_security`   | no       | `true`, else absent                            | A vulnerability-alert update; `bl updates run` takes it first                                                     |
-| `update_lockfile`   | no       | path in the repo, e.g. `mcp/package-lock.json` | Written by `bl updates vulns`; with `update_repo` the key of a vulns story                                        |
-| `update_advisory`   | no       | advisory ids (list)                            | Written by `bl updates vulns` on a `decide` story, sorted; any id matches, directly or through a chain of aliases |
-| `update_dropped`    | no       | date                                           | The operator dropped this vulns story: the same findings file no new one                                          |
+| Field               | Required | Values                                         | Notes                                                                                                               |
+| ------------------- | -------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `component`         | yes      | `C<nn>`                                        | The code boundary; the story's repo is its `repo` (F-49 D4, F-52 D1)                                                |
+| `story_id`          | yes      | `S-<nn>` (dash required)                       | Unique across the entire backlog                                                                                    |
+| `title`             | yes      | short string                                   | Appears in all index tables                                                                                         |
+| `type`              | yes      | `feature` `bug` `chore`                        | Story type                                                                                                          |
+| `points`            | yes      | 1 2 3 5 8 13                                   | Fibonacci; feature and backlog totals roll up                                                                       |
+| `effort`            | no       | `low` `medium` `high` `xhigh` `max`            | The effort level refine chose (F-85 D1); unset runs at `effort.default`; `bad-effort` refuses another value         |
+| `status`            | yes      | `flow.json`'s story statuses (`draft` first)   | Drives table placement and gates                                                                                    |
+| `added`             | yes      | `YYYY-MM-DD`                                   | Set once, never changed                                                                                             |
+| `parent`            | no       | `S-<nn>`                                       | Parent story if this was split from one                                                                             |
+| `superseded_by`     | no       | `S-<nn>`                                       | Replacement story ID                                                                                                |
+| `commit`            | on done  | short hash _or_ map `<repo>: <sha>`            | String for single-repo stories; map for multi-repo                                                                  |
+| `completed`         | on done  | `YYYY-MM-DD`                                   | Set by the log's entry to `done` or `superseded`                                                                    |
+| `feature`           | no       | `F-<n>`                                        | The feature this story is part of (see **Features**); set by `bl new --feature`                                     |
+| `batch`             | no       | `B-<n>`                                        | The story batch this story is part of (see **Story batches**); never with `feature`                                 |
+| `found_by`          | no       | `F-<n>` or `S-<n>`                             | The work unit whose work found a side story; set by `bl side --from` (F-48 D2)                                      |
+| `review_rounds_max` | no       | integer                                        | Written by a story run; caps review rounds                                                                          |
+| `update_repo`       | no       | forge slug, e.g. `acme/tools`                  | Old update stories keep it: the removed `bl updates sync` wrote it, with `update_branch` the key of an update story |
+| `update_branch`     | no       | branch name, e.g. `renovate/koa-3.x`           | Old update stories keep it: the removed `bl updates sync` wrote it                                                  |
+| `update_pr`         | no       | PR number                                      | Old update stories keep it: the removed `bl updates sync` wrote it                                                  |
+| `update_head`       | no       | commit sha                                     | Old update stories keep it: the branch head the removed `bl updates sync` last saw                                  |
+| `update_security`   | no       | `true`, else absent                            | Old update stories keep it: a vulnerability-alert update                                                            |
+| `update_lockfile`   | no       | path in the repo, e.g. `mcp/package-lock.json` | Old vulns stories keep it: the removed `bl updates vulns` wrote it, with `update_repo` the key of a vulns story     |
+| `update_advisory`   | no       | advisory ids (list)                            | Old vulns stories keep it: the removed `bl updates vulns` wrote it on a `decide` story, sorted                      |
+| `update_dropped`    | no       | date                                           | Old vulns stories keep it: the date the operator dropped the story                                                  |
 
 ## Component Frontmatter
 
@@ -737,8 +728,7 @@ paths: ['src/**', 'test/**'] # optional: globs relative to the repo root (F-61 D
 A component is a label, never a container. It has no `status`, `points` or `completed`, and
 `bl done` refuses it. `bl new --component --repo <r> --title <t> [--paths <glob,…>] [--home]`
 creates one with the next number (`bl next-id component`). Every registered repo has exactly one
-home component. `bl new --repo <r>` with no component files a story there, and so does
-`bl updates sync`.
+home component. `bl new --repo <r>` with no component files a story there.
 
 A component is an organizational map (F-61): a name for a real code boundary that people and
 agents read. `bl` does not enforce it.
@@ -1078,11 +1068,9 @@ document. This section holds the notes on the code.
     `bl attach`;
   - the set of `escalation-not-none` (`Flow.isRunnable`, short of `escalated`).
 
-  The start-state check of every verb handler is the table's (`startOf`, F-69 D3). Two things
-  still live in code:
-  - comparisons that name the one status that a line acts on (`s.status === 'superseded'` in
-    `progress()`);
-  - the closing write of `src/updates.js`.
+  The start-state check of every verb handler is the table's (`startOf`, F-69 D3). Comparisons
+  that name the one status that a line acts on (`s.status === 'superseded'` in `progress()`)
+  still live in code.
 
   `test/unit/status-literals.test.js` counts every set of story statuses in `src/`. The status
   names in this document are the shipped flow's. Messages and help name the current backlog's.
@@ -1139,8 +1127,7 @@ An entry's `from` is the `to` of the entry before it.
 
   `test/unit/single-writer.test.js` fails when another module in `src/` assigns or deletes a
   frontmatter `status` or `transitions`. It fails too when the module renders one into a
-  template or writes a `status:` line. `updates.js`, `updates-run.js` and `updates-vulns.js` are
-  exempt (Out of Scope).
+  template or writes a `status:` line.
 
 - **The writers (F-69 D3).** These are the entries that each verb records:
   - `applyNew` gives a new story, feature or task its first entry, `draft` by `new`. The
@@ -1283,8 +1270,10 @@ An entry's `from` is the `to` of the entry before it.
   the same counts and the paths that it would carry, and writes nothing.
 
   The migration leaves an update story (`update_repo:`, `isUpdateStory` in `src/priority.js`)
-  and its change documents in the old shape. The reason is that the updates flow still reads and
-  writes the story's `status:` (F-69 Out of Scope). The migration and the dry run print
+  and its change documents in the old shape. F-69 left them out because the updates flow then
+  read and wrote the story's `status:` (F-69 Out of Scope). S-1559 removed that flow and kept the
+  rule: the tolerant reader (`legacyLog`) reads the old shape, so the kept stories need no
+  conversion. The migration and the dry run print
   `kept in the old shape (update stories, F-69 Out of Scope): <n>`. The counts and the commit
   message leave those stories out.
 
@@ -4126,8 +4115,8 @@ bl's prompts and plugin commands use, not a new format.
   right after `captureTmuxWindowId()`, before the backlog pull, `settlePending` and dispatch.
   `commandTitle` (`src/command-table.js`) gives the status: the canonical command name
   (`ALIASES` maps `ls` to `list`), or `<command> <subcommand>` for a `COMMANDS` entry with
-  `subcommands: true` (`task`, `updates`, `inbox`, `block`) whose first argument is a word,
-  not a flag or a unit id (`updates run`, `inbox done`). It is `help` for no command, `help`,
+  `subcommands: true` (`task`, `inbox`, `block`) whose first argument is a word, not a
+  flag or a unit id (`inbox done`). It is `help` for no command, `help`,
   `-h`, `--help`, or `-h`/`--help` among the arguments; an unknown command shows its word.
   The `feature` and `story` fields are the unit ids the arguments name (`classifyId`, also
   the value of `--name=value`), one through `unitTitleFields`, several as `<n> features` or
@@ -4157,8 +4146,7 @@ bl's prompts and plugin commands use, not a new format.
   final and sends it unpadded. It drops an earlier `next`, so the final title shows `next`
   only when the code path sets it. The run loop's ends: `clean → bl merge`,
   `escalated → fix, --resume` (`→ fix, bl review` under `bl review`, `→ fix, bl merge` under
-  `bl merge`), `done` for no change, `failed`. `bl updates run` ends with its outcome counts,
-  and `→ approve/drop` when an outcome is a decision; a run that throws sets no final title.
+  `bl merge`), `done` for no change, `failed`.
   A later `updateTabTitle` or `clearTabTitle` clears the mark.
 - After a tool that had the terminal returns (the agent in `launchSession` and triage, the
   editor in `runEditor`), the caller calls `reassertTabTitle`, because that tool may have set
@@ -5435,8 +5423,8 @@ unstages `priority.yaml` with `resetPaths` under the lock. The migration restore
 (`migration-txn.js`) runs in a signal listener and cannot wait: it takes the lock with one try
 (`tryLockOnce`), and when another process holds it, it leaves the backlog and prints the manual
 `git reset --hard HEAD && git clean -fd`. Every command that commits the
-backlog (`new`, `side`, `run`, `implement`, `merge`, `done`, `updates`, `sync --commit`,
-`block add`, `block remove`, `block list --fix`, `task`, `task done`), plus `bl inbox` and `bl updates status`, first rebases onto `origin/main` with
+backlog (`new`, `side`, `run`, `implement`, `merge`, `done`, `sync --commit`,
+`block add`, `block remove`, `block list --fix`, `task`, `task done`), plus `bl inbox`, first rebases onto `origin/main` with
 `--autostash` (`backlog-commit.js` `pullBacklog`, under the backlog lock and the main sync
 lock; `bl.js` decides which commands through `commandPullsBacklog`). When `origin/main` brings
 nothing new the work tree is not touched. A conflict on a story or feature aborts the rebase,
@@ -5455,8 +5443,7 @@ regeneration that cannot be built or committed stops the command and stays pendi
 that ended `pulled` or `current` and made no regeneration commit (whose push carries `main`), a
 `main` still ahead of `origin/main` is pushed, with the same retry (`pushIfAhead`, F-74
 Decision A1): a commit whose push failed is carried by the next command of any kind that pulls,
-not only the next one that commits, and `bl updates status` is the running-man guest's way to
-push an unpushed backlog. A backlog with no `origin` remote neither pulls nor pushes.
+not only the next one that commits. A backlog with no `origin` remote neither pulls nor pushes.
 
 **Rendered pages (F-79 D2, D3).** No committed file holds a derived list. `renderPage(graph,
 unit)` (`src/render.js`) gives a page's committed text with its generated sections placed in
@@ -5554,7 +5541,7 @@ a log, which bl does not read. A closed unit, one whose status (`statusOf`) is i
 `terminal` list in `flow.json`, gets neither warning. The default `flow.json` moves no closed unit (`supersede`'s `from: "*"` leaves out terminal statuses), but a
 custom edge can, for example a story from `done` to `superseded`. That move goes through `applyTransition`, which turns `status:` into a log
 first, so the old shape does no harm. This covers the closed update stories, which the migration leaves in the old shape; an open
-update story keeps the warning until the updates flow moves onto the transition log. A unit with a log needs no
+update story keeps the warning: the removed `bl updates` wrote it in the old shape. A unit with a log needs no
 `status:` (`missing-required-key`).
 
 `derived-key` (F-77 D3, error) is a key the graph derives stored in a unit file: a story's
@@ -5702,8 +5689,8 @@ four token kinds to non-negative integers (`validate.js`
 `bad-update-request` is an error on an update story whose request state is
 malformed (`validate.js` `updateRequestProblem`): an `update_request` other
 than `approve` or `drop`, a drop without a non-empty `update_request_reason`,
-or a reason on anything but a drop. `bl updates run` skips such a story and
-`bl updates status` shows it as `decision needed`.
+or a reason on anything but a drop. The removed `bl updates` wrote these keys, and old
+stories keep them.
 
 `plugin-binary` is a warning that fires for every plugin entry whose
 resolved first-token is not on PATH. The finding carries extra
@@ -5985,7 +5972,7 @@ run, and a git command ended by one is a failed command. Every `## Gate` line
 `gateLine` in `src/change-doc.js`.
 
 **The main checkout's dependencies are installed after the merge** (S-1452).
-After the push, `cleanupOneRepo` runs the command that `installCommand` gives
+After the push, `cleanupOneRepo` runs the command that `installCommand` (`src/cleanup.js`) gives
 (`npm ci` or `pnpm install --frozen-lockfile`) in the main checkout, because
 `bl` and other repos' sessions run from it. A failed install stops `bl merge`
 with the command to run by hand, and the rerun installs again. Every child of
@@ -6008,305 +5995,6 @@ order because it is closed, and an entry still naming it is skipped until the ne
 appends `- <date>: F-<n> done (<title>).` to the `## State` of the feature's theme, creating the section at the end when
 absent and writing the frontmatter back byte for byte; the commit takes the theme file too. A
 feature whose theme is missing or unreadable only warns.
-
-### `bl updates`
-
-Deprecated since F-80 (G3): running-man's update job gates and merges
-Renovate's branches, and `bl inbox` reads its heartbeat. Every verb below
-still works and first prints one warning on stderr, `bl updates is
-deprecated: running-man's update job (F-80) does this` (`src/bl.js`);
-`--help` prints none, as no verb's help writes to stderr. A later story
-removes the verbs and the code only they use.
-
-Renovate's dependency updates as backlog stories (F-32). Renovate opens the
-branch and the PR and, at the end of each cycle, writes a report
-(`backlog.json` `updates.report`, relative to the backlog's parent directory, for
-example `renovate/reports/renovate-report.json`, F-50 D3) listing every
-branch it manages with its PR number, title and upgrades. `bl updates sync`
-turns that report into stories; `bl updates run` rebases, gates and merges
-them; `bl updates status`, `approve` and `drop` (`src/updates-answer.js`)
-are the operator's answer: one report per run, one or two commands back.
-`approve` and `drop` are requests the runner's next `run` executes (F-50
-D8): the operator's workstation runs no gate, merge or close.
-
-```bash
-bl updates sync                              # the report updates.report names
-bl updates sync --report ./report.json       # a dated copy, or a fixture
-bl updates sync --dry-run                    # print the plan, write nothing
-bl updates run                               # every refined/in_progress update story
-bl updates run S-840 S-841 --max-merges 3    # only these; at most 3 merges per repo
-bl updates run --dry-run                     # print the order, touch nothing
-bl updates vulns                             # stories from the scanner's findings on main
-bl updates vulns --repo tools --dry-run      # one repo; print the plan, write nothing
-bl updates status                            # open update stories by repo and state
-bl updates status --json                     # the same as JSON
-bl updates approve S-840                     # request: the run regates it, merges on green
-bl updates drop S-841 --reason "not now"     # request: the run closes the PR, supersedes it
-```
-
-Rules (`src/updates.js`, F-32 Design D2 and D3):
-
-- A branch is **open** when the report gives it a `prNo`; the rest wait
-  (`pending`, `needs-approval`, `not-scheduled`) and get no story. The
-  report, not the forge, says what is open.
-- One story per open branch, keyed by `update_repo` (the forge slug) and
-  `update_branch`, filed in its repo's home component (`home: true`, F-49 D4);
-  a repo with no home component is skipped with a warning, and
-  `updates.epic` is no longer read. A slug maps to a checkout only when it
-  is exactly `<updates.namespace>/<repo>` for a repo `repos` lists
-  (`repoForSlug`): `attacker/bl`, a nested path or a case variant is an
-  unknown repo, never the registered `bl`. Open and no story: created from
-  `templates/story-update.md` as `type: chore`, `status: refined`, the PR
-  title as title, in the repo's home component (whose repo is the story's;
-  no `primary_repo` is written), points 1 (3 when any upgrade is a
-  major), `update_pr`, `update_head`
-  (from `git ls-remote --heads origin`), `update_security` when an upgrade
-  carries Renovate's `isVulnerabilityAlert` or the PR carries the `security`
-  label (`change.find`, asked only for a new or renumbered PR), and
-  `plugins` from the repo's `update_tests` in `backlog.json` `repos`.
-  The body holds a summary, the upgrades table, the acceptance list and
-  empty `## Gate result`, `## Release notes` and `## Decision needed`
-  sections for the run.
-- Open and a story exists: title, points, `update_pr`, `update_head` and the
-  upgrades table are updated where they changed; status and the run's
-  sections are kept. A closed story (`done`, `superseded`) counts only for
-  the same PR number, so a PR Renovate recreates gets a new story.
-- A story whose branch, or whose PR number, has left the report is marked
-  `superseded` with the note "gone from the report: merged or closed on the
-  forge" under its Summary. Only repos the report covers are closed this way;
-  a repo Renovate did not reach keeps its stories.
-- A repo slug `backlog.json` does not know is skipped with a warning, never a
-  story. A missing report file (`loop.sh` deletes it before each run) means a
-  run is in progress or failed: sync says so and exits 0 (the message is
-  `no report: run in progress or failed`). A report of the wrong shape
-  (`validateReport`: `repositories` not an object, a repository without an
-  explicit `branches` array, a branch that is not an object, a `branchName`
-  that is missing, empty or not a string, a `prNo` that is neither absent,
-  null nor a positive integer, a `prTitle` that is not a string, `upgrades`
-  that are not an array of objects) is refused before any story is created,
-  updated or closed; only an explicit `branches: []` closes a repo's stories,
-  and only an absent or null `prNo` reads as "not open".
-
-The run (`src/updates-run.js`, F-32 Design D4, F-50 D5) is a state machine
-like the feature loop, with no LLM: git, the gate's commands, forge ops and
-the bell go through an injected runner, and every outcome is read from files.
-It holds `.bl/run/updates.lock` (the lock `sync`, `approve` and `drop` take
-too, before any story is read, so one command at a time rewrites stories or
-touches the forge; a command that meets another is refused) and takes
-stories with an operator's `update_request` first, then `update_security`
-stories, then repo by repo (by repo name), oldest story first, one branch
-at a time per repo, so each branch is rebased on the `main` the previous merge
-produced. Per story:
-
-1. `git fetch origin main <branch>`; the fetched head becomes `update_head`.
-   A story whose `## Gate result` says `Red` at that same head and that same
-   `origin/main` is **skipped**: nothing changed since. A Renovate rebase
-   changes the head, a merge changes main, and either one gates it again (a
-   red that was main's clears once main is repaired). A `Conflict` is
-   retried: main may have moved.
-2. A detached worktree at `worktrees/<story-dir, lower case>/<repo>` on
-   `origin/<branch>`, rebased onto `origin/main`. A conflict aborts the rebase,
-   records `conflict, left for Renovate` and holds the story; the remote branch
-   is untouched.
-3. The gate, in order, stopping at the first failure: a frozen install when
-   the worktree has a lockfile (`pnpm install --frozen-lockfile` or `npm ci`,
-   so a stale lockfile fails here), then the repo's `bootstrap` plugins (one
-   step each, `bootstrap plugin <name>`, resolved through the same cascade as
-   a story worktree's: backlog index, the story's repo entry, its component,
-   the story; none is the log note
-   `no bootstrap plugin for <repo>: stage skipped`),
-   `<roostDir>/ci-cd/bin/ci gate` when it has a `.ci-cd.json`, then the test
-   plugins the story names (`plugins:`, from the repo's `update_tests`). Both
-   plugin stages get `{{sessionNum}}` / `{{sessionId}}` set to the story's
-   number, as a story run does, plus `{{repoPath}}` / `{{repoName}}`. A
-   failing bootstrap step, a missing binary included, is red like any other
-   step: no soft skip. An unknown plugin or an unresolved placeholder in
-   either stage is a broken gate, never a green one. After each step the
-   worktree must still be the rebased commit the merge publishes: a step that
-   moves HEAD or leaves a staged or unstaged change to a tracked file is red
-   (ignored and untracked build output is fine). The whole output goes to
-   `.bl/run/updates.<S-id>.gate-<n>.log`; the last 30 lines go under
-   `## Gate result` after a record line
-   `<Green|Red|Conflict> · <time> · Renovate head `<sha>`· main`<sha>` · <detail>`.
-4. A major (an upgrade row of type `major`) takes the same gate and merges
-   on green; nothing assesses it. A red major is held like any red, with
-   the PR body from the forge op `update.notes` (Renovate's release notes)
-   fenced under `## Release notes` beside `## Gate result`: the migration
-   story starts there. A missing or failed op writes a one-line note in that
-   section instead and the run goes on. Its outcome reason starts `major, `.
-5. Merge, for a green gate: the repo's main checkout must be on `main`
-   with no uncommitted tracked changes (else the story is held and nothing
-   is touched); `git merge --ff-only origin/main`; the final head is pushed
-   to the Renovate branch with `--force-with-lease` on the fetched head (so
-   the forge marks the PR merged, and a branch Renovate moved meanwhile is
-   left alone);
-   `git merge --no-ff <sha> -m "Merge branch '<branch>' into main (S-n)"`;
-   the PR marked ready through the forge op `change.ready` (Renovate opens
-   drafts, F-50 D6; a no-op on a ready PR, and a failure is a note on the
-   story, not a hold);
-   `git push origin main` (a failed push resets local main to where it was,
-   except that an interrupted push that `ls-remote` shows on origin's main
-   keeps it; every rollback the run makes, the merge abort and that reset in the main
-   checkout and the rebase abort in the worktree, is checked, and
-   one that fails is reported on the story with what the checkout is left
-   holding, never claimed);
-   the merge commit written to the story (`recordMerge`: from here the merge
-   is a fact on the forge, whatever fails next);
-   `git push origin --delete <branch>`. The story is `done` with `commit` and `completed`, its
-   acceptance boxes checked; a `## Decision needed` asked on an earlier run
-   (a held security update whose branch then moved) gets a dated "merged by
-   the run" line. A deletion that fails leaves the story `in_progress` with
-   `commit` set and the branch box unchecked (the report lists the merge,
-   with the failure); the next run or `approve` only finishes it
-   (`finishMerge`: `ls-remote --exit-code`, `push --delete`, done), never
-   gating or merging it again, and the sync marks it `done` when its branch
-   leaves the report. When the write of `commit` itself fails (or the run
-   dies between the push of main and that write), the merge commit on
-   `origin/main` is the record: the next run finds it by its message
-   (`mergeOnMain`: `git log --merges --fixed-strings --grep`, right after
-   the fetch and before any gate) and finishes the story the same way. A
-   run that throws after a merge (a story write, the output stream) still
-   appends its report and commits what changed before the error surfaces.
-6. Everything else is `in_progress` with the evidence under `## Gate result`.
-   A held security update gets a mechanical `## Decision needed` (rule,
-   options A approve / B drop, the question).
-   `--max-merges <n>` (default 10) caps merges per repo per run; a story past
-   the cap is skipped untouched.
-7. One report block per run in `updates/<YYYY-MM-DD>.md`: an
-   `## Approve S-<n> · <time>` or `## Drop S-<n> · <time>` entry per request
-   the run executed, then `## Run <time>` (merged with packages and commit,
-   held with reason, decisions needed, skipped). Each story is committed
-   and pushed through `syncAndCommit` as it finishes (F-74 D2), with the
-   message `chore: updates run: <id> <kind>`, its directory, and the block
-   rewritten in place from the outcomes so far (`writeRunReport`, which
-   finds the run's earlier sections by their whole text, never by heading
-   alone): the final file reads as one append, and a run that dies keeps
-   what it recorded. A commit that fails leaves its paths for the next one.
-   An outcome written but not committed when something stops the run is
-   committed (the counts as message) before the error surfaces; then the
-   tmux bell. One still uncommitted after that fails the run, naming the
-   paths to commit by hand. A run with nothing open still writes `## Run <time>` (`No open update stories.`); since
-   F-80, `bl inbox` reads the update job's heartbeat instead. stdout: one line per story (`merged`,
-   `dropped`, `held`, `decision`, `skipped`, or `would run` with
-   `--dry-run`).
-
-Requests (F-50 D8). A requested **approve** is the machine above with the
-approve flag: a known-red head is gated again instead of skipped, a green
-gate merges whatever `## Decision needed` says (a decision asked gets a
-dated "approved by the operator" line), a red gate holds the story as a run
-would. The request is cleared once the gate gave a verdict (or the rebase
-its conflict); one that never reached the gate (a failed fetch, a dirty main
-checkout) stays for the next run. A requested **drop** (`dropStory`) marks
-the story `superseded` with `update_request_reason` under its Summary (and
-under `## Decision needed` when one was asked), clears the request, then
-closes the PR through the forge op `change.close` with the reason as the
-comment. The story goes first so a failure after the close never leaves an
-open story for a closed PR; a forge that is not configured or a failed close
-puts the story back, request and all, and the story is held for this run.
-An interrupt that ends the close leaves its result unknown: the story stays
-dropped when `change.find` no longer shows the PR open, and goes back otherwise.
-Renovate does not reopen a PR a user closed, and the sync keeps the
-superseded story for that PR number. A drop on a story already merged
-(`commit` set) only finishes the merge.
-
-`bl updates vulns` (`src/updates-vulns.js`, F-71 D4) does for the local scanner
-what `sync` does for Renovate. Since S-1147 a finding on `main` blocks nothing,
-so this verb keeps it from sitting unnoticed. It takes the run lock, runs
-`<roostDir>/ci-cd/bin/ci vulns --ages --json <file> --working-directory <repoPath>`
-for each `backlog.json` repo with a `.ci-cd.json` (`--repo <name>` for one), then
-takes the backlog lock and writes the stories. It reads `ci-cd-vulns/v1` and knows
-no age and no ecosystem. The scan reads the checkout as it stands: on the guest,
-`roost-update.service` has fast-forwarded it to `main`.
-
-- **A failed scan** (no report, an unreadable or unknown one, `status` other than
-  `findings`, `clean` or `no-lockfiles`, or an exit above 1) is reported and leaves
-  that repo's stories as they are. Exit 1 with a report is a scan: `--ages` exits 1
-  on an `overdue` finding. So is a repo with no home component reported, not filed.
-- **Only a finding with `at_fail_on` acts,** since only that one is `--fix`'s to
-  upgrade. A lock file with `ready` findings gets one story from
-  `templates/story-vulns.md`: `type: chore`, 1 point, `status: refined`, in the repo's
-  home component, `plugins-implement: [vulns-fix]`, `plugins` from `update_tests`,
-  titled `vulns: <repo> <lockfile>: <pkg>@<ver> …`, cut with `…` to fit commitlint's
-  100-column header in the commit it becomes. Its Summary lists the findings. A
-  `decide` advisory gets one agent story from `templates/story-vulns-decide.md`, 2
-  points and no plugin, with `update_advisory` and the two outcomes (pivot, or a
-  stronger evaluation that reaches the operator as a `bl task`), one story when
-  several packages share the advisory. Every other finding (`young`, `watching`,
-  `no-age`, `unknown`, `overdue`, or below `fail_on`) is reported and makes no story.
-- **Idempotent.** An open story with the same findings and ids is left byte for byte.
-  Changed findings or ids rewrite its Summary, title and `update_advisory` and clear
-  `## Gate result`, so the run tries again. A `decide` story matches through any of the
-  finding's ids, since an advisory's ids regroup. A story whose findings are gone is
-  superseded with the reason, and a `decide` story when every linked finding at
-  `fail_on` has a fix, or none is left at `fail_on`. A finding this cycle could not read
-  (`unknown`, `no-age`) leaves its story open, so a registry outage closes nothing.
-- **No `update_branch`,** so `readUpdateStories` leaves these stories out and `sync`
-  can never supersede them. `readVulnsStories` reads them. `bl updates status` shows
-  them last, in a `vulns` group, with an `agent` state for a `decide` story.
-- The report gets `## Vulns <at>` (`### Stories`, `### Reported`, `### Failed scans`),
-  committed with the stories. A dry run prints the same lines and writes nothing.
-
-`bl updates run` takes a scripted vulns story through a branchless path
-(`processVulnsStory`) beside `processStory`. An agent story it never takes, and
-it is refused by name; the operator runs it with `bl run`.
-
-1. `git fetch origin main`. `commit` set, or a merge commit `Merge '<id>' into main`
-   on `origin/main` (`mergeOnMain`), closes the story and does nothing else.
-2. A `Red` record on the same `origin/main` is skipped, unless the operator approved.
-3. A detached worktree at `origin/main`. `runImplementPlugin` runs the plugin with
-   `{{lockfile}}` added, shell-quoted, to the gate's variables, and commits
-   `chore: <title> (<id>)`. This worktree goes when the run ends, so a commit that was
-   not merged goes with it and the next run starts from `origin/main`. No change:
-   `superseded`, "no change needed". A failed
-   command: held, with a `Red` record and the output under `## Gate result`; the record's
-   head is `origin/main`, since no commit exists. `writeOutcome`, not `recordScriptedRun`,
-   writes the story, so a held story has no box checked.
-4. `runGate`, then `mergeBranch` with `branch: null`: the same checks, merge and push of
-   `main`, with no branch pushed or deleted and no forge call. Red: held.
-
-A `bl implement` or `bl run` of a scripted vulns story stops on the unresolved
-`{{lockfile}}`: `bl updates run` is its one path. `approve` regates a held story; on an
-agent story it is refused. `drop` on either kind only supersedes it (`dropVulnsStory`:
-no PR) and writes `update_dropped`, so the next tick does not file the same findings
-again. Other findings file a new story.
-
-The operator's answer (`src/updates-answer.js`, D4's last step):
-
-- `bl updates status [--json]` lists every open update story (`refined` or
-  `in_progress`) by repo, security first, then oldest first, with a state read
-  from the story alone: `skipped` (its repo is not in `backlog.json`),
-  `approve pending` / `drop pending` (an `update_request` the runner has not
-  executed yet; a drop's detail is its reason),
-  `decision needed` (`## Decision needed` has content; the detail is its
-  question), `new` (no `## Gate result` record yet), `green` (the last gate
-  was green but the story is open: a failed merge, or a merge whose remote
-  branch is still to delete, with the commit
-  in the detail), `held` (the last gate was red or the rebase conflicted;
-  the detail says whether the branch has moved since), `agent` (a vulns story for
-  `bl run`). The last line names the newest
-  report under `updates/` and its last entry. `--json` emits
-  `{ stories, last_report }` with the same fields.
-- `bl updates approve S-<n>` and `bl updates drop S-<n> --reason <text>`
-  (`requestUpdate`) write `update_request: approve` or `drop` (a drop also
-  `update_request_reason`; an approve removes it) and commit through
-  `syncAndCommit`, which pushes. Nothing is gated, fetched, merged or
-  closed, and nothing goes in the report: the runner writes it when it acts.
-  A second request replaces the first. Refused for a closed story, an id
-  that is not an update story, a repo not in `backlog.json`, and (drop) a
-  story with no `update_pr` or one merged already. Both take the run lock
-  before reading the story, as the sync does, so a local sync is not raced.
-
-Changes are synced and committed on the backlog's current branch
-(`syncAndCommit`), as `bl new` does, under one lock hold from the first read.
-A second sync on the same report changes nothing.
-
-A `bl` that runs from a bl worktree (`<root>/<branch>/bl` or a path in it,
-`foreignCheckout` through `isBlBranchPath`) refuses `sync`, `run`, `vulns`, `approve` and `drop` against the
-backlog it found; a dry run is allowed. Every test and every check of a
-branch uses a temporary backlog (`mkTempBacklog`, or `runBl` with
-`BL_BACKLOG_DIR`) with the runner, git and the forge stubbed, never the
-real backlog: on 2026-10-13 a session that simulated the host unit from
-a worktree merged four Renovate PRs for real.
 
 ### `bl block`
 
@@ -6387,10 +6075,11 @@ the next update run tests it again`, in the heartbeat's order; an entry
 leaves the inbox when a later heartbeat no longer lists it. A `"red": null`
 is a warning that the red updates are not known.
 
-`updateSettings` (`src/config.js`) reads the `updates` block: `namespace`,
-`push_attempts`, `heartbeat.repo` and `heartbeat.branch`, every key required
-with no defaults, and other keys (the deprecated `report`) left alone. A
-backlog.json with no `updates` block has no update job, and the inbox reads
+`updateSettings` (`src/config.js`) reads only `heartbeat.repo` and
+`heartbeat.branch` of the `updates` block, both required with no defaults, and
+returns `{ heartbeat: { repo, branch } }`. `namespace` and `push_attempts` are
+running-man's (`updates/settings.mjs`), and bl ignores every key but
+`heartbeat`. A backlog.json with no `updates` block has no update job, and the inbox reads
 no heartbeat. A missing key, a fetch that fails, or a message that is not a
 heartbeat is one warning on stderr (`update job heartbeat not read: …`), and
 the other kinds are still listed. `loadConfig` never reads the block, so a
@@ -7030,7 +6719,7 @@ plugins: [session-stack]
 | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `new`        | After `bl new` creates a story and runs sync                                                                                                                                |
 | `workon`     | After `bl implement` sets up the worktree (new worktrees only)                                                                                                              |
-| `bootstrap`  | During `bl implement`, once per repo configured for the story, and in every `bl updates run` gate, after the frozen install (red on failure, no soft skip)                  |
+| `bootstrap`  | During `bl implement`, once per repo configured for the story                                                                                                               |
 | `format`     | On `bl format --story <id>` and during `bl sync` (`.md` only)                                                                                                               |
 | `lint`       | On `bl lint --story <id>`                                                                                                                                                   |
 | `cleanup`    | During `bl merge`, before worktree removal                                                                                                                                  |
@@ -7085,8 +6774,7 @@ plugins-implement: [relock]
 `bl new --implement relock` writes the key. It is read from the story alone: there is no cascade, and
 it names exactly one plugin with an `implement` command. `bl validate` fails anything else with
 `implement-plugin`, and with a `review` that is not `true` or `false`. `bl implement` and the `implement`
-step of `bl run` call `src/scripted.js` where they would start a session (`bl updates vulns`'s
-branchless path, S-901, too). The command runs in the story's repo's worktree, with `{{worktreePath}}`,
+step of `bl run` call `src/scripted.js` where they would start a session. The command runs in the story's repo's worktree, with `{{worktreePath}}`,
 `{{repoPath}}` (the main checkout, so a command works in `{{worktreePath}}`), `{{repoName}}`,
 `{{storyId}}`, `{{sessionId}}`, `{{sessionNum}}`, `{{branchName}}`, `{{roostDir}}` and `{{backlogDir}}`
 set. Interpolation is `interpolateCommand`, the gate's: an unresolved placeholder is an error.
@@ -7166,8 +6854,7 @@ prettier wrapper) in `bl sync` and to `pnpm install` in `bl implement`.
   feature run does so for each of the feature's repos. JS repos register `"plugins-bootstrap": ["node-ws"]` and get
   `pnpm install`; Go repos register `go-ws` and get `go mod download`;
   etc. Missing binaries print a warning and skip — never block the
-  session. The stage also runs in every `bl updates run` gate, after the
-  frozen install (red on failure, no soft skip).
+  session.
 
 - **`format` / `lint`** — `bl format --story <id>` and
   `bl lint --story <id>` resolve the story's backlog `index.md` and
@@ -7386,8 +7073,6 @@ active forge. `templates/forge-github.json` is the GitHub block:
       "change.describe": "gh pr edit {{number}} --body {{body}}",
       "change.find": "gh pr list --head {{branch}} --state all --json number,url,state,headRefOid,labels --limit 1",
       "change.close": "gh pr close {{number}} --comment {{comment}}",
-      "change.ready": "gh pr ready {{number}}",
-      "update.notes": "gh pr view {{number}} --json body --jq .body",
     },
   },
   "forge": "github",
@@ -7403,14 +7088,12 @@ Every op runs with the repo's checkout as its working directory
 `{{branch}}`, or by the `{{number}}` the change document records. The set
 is `FORGE_OPS` in `src/config.js`.
 
-| Op                | Variables           | Returns                                  | Called by                                                                                                     |
-| ----------------- | ------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `change.open`     | `title`, `body`     | the PR's URL                             | `bl run` (the PR step), `bl review` (a branch with commits and no PR)                                         |
-| `change.describe` | `number`, `body`    | —                                        | `bl run`, when `## Description` changed since the body last sent, and for a PR it adopted                     |
-| `change.find`     | `branch`            | `[{number,url,state,headRefOid,labels}]` | `bl run` (adoption), `bl review` (open or merged), `bl merge` (close, main-checkout gate), `bl updates` (url) |
-| `change.close`    | `number`, `comment` | —                                        | `bl merge`, `bl updates run` (a requested drop)                                                               |
-| `change.ready`    | `number`            | —                                        | `bl updates run`, before it pushes a merge to `main` (Renovate opens drafts; a no-op on a ready PR)           |
-| `update.notes`    | `number`            | Renovate's PR body                       | `bl updates run` (a red major's `## Release notes`); Renovate's PRs only                                      |
+| Op                | Variables           | Returns                                  | Called by                                                                                 |
+| ----------------- | ------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `change.open`     | `title`, `body`     | the PR's URL                             | `bl run` (the PR step), `bl review` (a branch with commits and no PR)                     |
+| `change.describe` | `number`, `body`    | —                                        | `bl run`, when `## Description` changed since the body last sent, and for a PR it adopted |
+| `change.find`     | `branch`            | `[{number,url,state,headRefOid,labels}]` | `bl run` (adoption), `bl review` (open or merged), `bl merge` (close, main-checkout gate) |
+| `change.close`    | `number`, `comment` | —                                        | `bl merge`                                                                                |
 
 - The PR title is `<id>: <title>`; the body is the change document's
   `## Description`, the spec's path, and a line saying edits made on the
@@ -7426,8 +7109,8 @@ is `FORGE_OPS` in `src/config.js`.
   no repo has hosted CI since S-565, so `bl merge` has no CI gate.
 - `bl validate` fails a forge plugin with an op outside the set, a missing
   op, or an op that is not a command string (`forge-op`), a `forge` that
-  names no plugin (`forge-plugin`), and any op
-  but `update.notes` whose template reads a PR body or comments
+  names no plugin (`forge-plugin`), and any op whose template reads a PR
+  body or comments
   (`--json body`, `comments`, `gh pr view`: `forge-op-reads-body`).
 
 ### `runForgeOp` contract

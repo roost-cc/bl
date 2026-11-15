@@ -80,7 +80,7 @@ export function gateRecord({ runner, worktreePath, pushStartedAt }) {
   // exit 1 with a blocking finding, and a report with none is refused too.
   if (said === null && steps.at(-1) === 'vulns') {
     if (vulns == null) return none('the check record has no vulns report');
-    const problem = checkReport(vulns, exit, { ages: false });
+    const problem = checkReport(vulns, exit);
     if (problem) return none(`the check record's vulns report is unusable (${problem})`);
     if (!vulns.findings.some((f) => f.blocking)) return none("the check record's vulns report has no blocking finding");
   }

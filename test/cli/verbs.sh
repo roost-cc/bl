@@ -206,6 +206,21 @@ assert_exit "workon --help" 1 "$RC"
 assert_contains "workon --help is unknown" "bl: unknown command 'workon'" "$ERR"
 if [[ "$OUT" == *"Usage: bl implement"* ]]; then fail "workon --help still shows implement's help"; else pass; fi
 
+# --- Removed verbs (S-1559) ------------------------------------------------
+# bl updates is gone (running-man's update job does its work, F-80): with
+# or without a subcommand, and with --help, it is an unknown command.
+blrun updates
+assert_exit "updates" 1 "$RC"
+assert_contains "updates is unknown" "bl: unknown command 'updates'" "$ERR"
+
+blrun updates status
+assert_exit "updates status" 1 "$RC"
+assert_contains "updates status is unknown" "bl: unknown command 'updates'" "$ERR"
+
+blrun updates --help
+assert_exit "updates --help" 1 "$RC"
+assert_contains "updates --help is unknown" "bl: unknown command 'updates'" "$ERR"
+
 # --- bl help ---------------------------------------------------------------
 blrun help
 for verb in run implement review merge refine status approve done; do

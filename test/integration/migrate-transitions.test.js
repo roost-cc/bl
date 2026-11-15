@@ -478,7 +478,7 @@ test('the migration leaves an update story in the old shape, and a rerun prints 
       { id: 'S-3', title: 'Three', component: 'C01', status: 'in_progress' },
     ],
   });
-  // The `update_*` keys `bl updates` writes, which the fixture helper does not:
+  // The `update_*` keys the removed `bl updates` wrote, which the fixture helper does not:
   // S-2 is a Renovate update story, S-3 a vulns story (no `update_branch`).
   for (const [p, status, update] of [
     [rel.s2, 'done', `update_repo: acme/core\nupdate_branch: renovate/dep-2\nupdate_pr: '2'\n`],

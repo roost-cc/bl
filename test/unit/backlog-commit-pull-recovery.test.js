@@ -100,8 +100,6 @@ test('committing commands pull before settling an interrupted feature-link recor
     ['implement', 'S-3'],
     ['merge', 'S-3'],
     ['done', 'S-3'],
-    ['updates', 'status'],
-    ['updates', 'approve', 'S-3'],
     ['sync', '--commit', '-m', 'x'],
     ['inbox'],
     ['inbox', 'done', 'F-1:op1'],
