@@ -26,6 +26,7 @@ import {
   unitDirFor,
   findChange,
   COMPONENTS_DIR,
+  unitBranchName,
 } from './config.js';
 import { storyEffort } from './effort.js';
 
@@ -397,8 +398,8 @@ export function reposForStory(storyId, config) {
     {
       repoName: name,
       repoPath,
-      worktreePath: worktreePathFor(config, name, found.storyEntry.toLowerCase()),
-      unitDir: unitDirFor(config, found.storyEntry.toLowerCase()),
+      worktreePath: worktreePathFor(config, name, unitBranchName(found.storyEntry)),
+      unitDir: unitDirFor(config, unitBranchName(found.storyEntry)),
       unitRepo: found.unitRepo,
       componentEntry: found.componentEntry,
       storyEntry: found.storyEntry,
@@ -421,9 +422,13 @@ export function reposForStory(storyId, config) {
  * repo with none recorded is reported in `searched` with the forge's reason
  * (`no-forge`, `no-op`, `failed`, …).
  *
+ * The caller gives a nonempty `unit.branch` or a nonempty `unit.featureEntry`
+ * (the work unit's directory name, from which the branch is derived); at least one
+ * is required. An empty string is not a branch source.
+ *
  * @param {object} config — loaded backlog config (see `loadConfig`)
- * @param {{ branch?: string, featureEntry?: string, primaryRepo?: string,
- *   repos?: string[], change?: { repos: object[] } | null }} unit
+ * @param {({ branch: string, featureEntry?: string } | { branch?: string, featureEntry: string })
+ *   & { primaryRepo?: string, repos?: string[], change?: { repos: object[] } | null }} unit
  * @param {{ repo?: string | null, runOp?: Function }} [opts]
  * @returns {{
  *   prs: Array<{ repoName: string, repoPath: string, prNumber: number,
@@ -433,7 +438,7 @@ export function reposForStory(storyId, config) {
  * }}
  */
 export function findUnitPRs(config, unit, { repo = null, runOp } = {}) {
-  const branch = unit.branch || String(unit.featureEntry ?? '').toLowerCase();
+  const branch = unit.branch || unitBranchName(unit.featureEntry);
   const recorded = new Map((unit.change?.repos ?? []).map((r) => [r.repo, r]));
   let names = repo ? [repo] : [...recorded.keys(), unit.primaryRepo, ...(Array.isArray(unit.repos) ? unit.repos : [])];
   names = names.filter((n, i) => n && names.indexOf(n) === i);

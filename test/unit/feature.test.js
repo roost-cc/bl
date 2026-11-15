@@ -12,7 +12,6 @@ import {
   storyLinkFromFeature,
   extractSection,
   sectionHasContent,
-  featureBranchName,
   featureSessionVars,
 } from '../../src/feature.js';
 import { mkTempBacklog } from '../helpers/tempdir.js';
@@ -23,10 +22,6 @@ test('normalizeFeatureId accepts F1 / F-1 / f-1 and rejects others', () => {
   assert.equal(normalizeFeatureId('S-1'), null);
   assert.equal(normalizeFeatureId('E01'), null);
   assert.equal(normalizeFeatureId('F'), null);
-});
-
-test('featureBranchName lowercases the directory name', () => {
-  assert.equal(featureBranchName('F3-Invite-Codes'), 'f3-invite-codes');
 });
 
 test("featureSessionVars takes the first listed story's number, not the lowest", () => {

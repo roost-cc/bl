@@ -42,6 +42,7 @@ import {
   componentIdHint,
   info,
   unitDirFor,
+  unitBranchName,
 } from './config.js';
 import {
   findComponentDir,
@@ -51,13 +52,7 @@ import {
   readComponents,
   removeUnitDirIfEmpty,
 } from './story.js';
-import {
-  featureBranchName,
-  findFeature,
-  isFeatureWorkable,
-  normalizeFeatureId,
-  resolveFeatureStories,
-} from './feature.js';
+import { findFeature, isFeatureWorkable, normalizeFeatureId, resolveFeatureStories } from './feature.js';
 import { featureRepoOrder } from './execution-plan.js';
 import { loadFlow } from './flow.js';
 import { applyTransition } from './transition.js';
@@ -436,7 +431,7 @@ export async function main(argv) {
   const { fromId, feature } = resolveFrom(fromRaw.trim(), config);
   const cfg = configForRepo(config, repo);
   const repoPath = config.reposByName[repo];
-  const featureBranch = feature ? featureBranchName(feature.featureEntry) : null;
+  const featureBranch = feature ? unitBranchName(feature.featureEntry) : null;
 
   // A new worktree's guards (uncommitted changes, local main ahead) run
   // before anything is written. A standalone story's branch is always new.
@@ -482,7 +477,7 @@ export async function main(argv) {
       const indexPath = join(cfg.backlogRoot, created.path);
       found = findStoryDir(normalizeId(storyId), cfg);
       if (!found) fail(`bl side: bl new reported ${storyId} at ${created.path}, but it is not there.`);
-      const branch = feature ? featureBranch : found.storyEntry.toLowerCase();
+      const branch = feature ? featureBranch : unitBranchName(found.storyEntry);
       await markSideStory(cfg.backlogRoot, indexPath, fromId);
       let changePath;
       if (feature) {
@@ -523,7 +518,7 @@ export async function main(argv) {
     }),
   );
 
-  const branch = feature ? featureBranch : found.storyEntry.toLowerCase();
+  const branch = feature ? featureBranch : unitBranchName(found.storyEntry);
   if (!feature) {
     // A standalone story's branch is named after it, so its worktree comes
     // after the commit. When it fails, the committed story stays.

@@ -36,6 +36,7 @@ import {
   info,
   unitDirFor,
   worktreeRoot,
+  unitBranchName,
 } from './config.js';
 import {
   findStoryDir,
@@ -57,7 +58,7 @@ import { interpolateCommand } from './scripted.js';
 import { storyUnit } from './unit.js';
 import { mergeGates, noReviewLines, reportMergeGates } from './merge-gates.js';
 import { integrateForMerge } from './merge-integrate.js';
-import { extractSection, featureBranchName } from './feature.js';
+import { extractSection } from './feature.js';
 import { DEFERRED_HEADING } from './deferred.js';
 import { resolvePermissionScopes } from './permissions.js';
 import { getProvider } from './agents/index.js';
@@ -593,7 +594,7 @@ export async function cleanupOneRepo({
   noCommits = false,
   changeDir = null,
 }) {
-  const branchName = featureBranchName(storyEntry);
+  const branchName = unitBranchName(storyEntry);
   // A repo whose branch may have nothing to merge: a secondary no story
   // changed (S-862), or a story whose branch has no commits (S-1437).
   const mayBeEmpty = isSecondary || noCommits;
@@ -1391,7 +1392,7 @@ the main checkout as it was.`);
         sessionId: `s${parsed.num}`,
         storyId: parsed.id,
         worktreePath: '',
-        branchName: featureBranchName(storyEntry),
+        branchName: unitBranchName(storyEntry),
         componentId: componentEntry.replace(/-.*/, ''),
         roostDir: config.roostDir,
         backlogDir: config.backlogRoot,

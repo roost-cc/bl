@@ -22,7 +22,12 @@ import {
   runEditor,
   runEditorAsync,
   slugify,
+  unitBranchName,
 } from '../../src/config.js';
+
+test('unitBranchName lowercases the directory name', () => {
+  assert.equal(unitBranchName('F3-Invite-Codes'), 'f3-invite-codes');
+});
 
 // ---------------------------------------------------------------------------
 // Frontmatter
