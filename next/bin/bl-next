@@ -1,0 +1,11 @@
+#!/usr/bin/env node
+/**
+ * bl-next — the entry point of the rewrite (F-135 D2).
+ *
+ * It has no commands yet: F-138 gives it argument parsing and commands. It
+ * exists now because `lib/child.js`'s `BL_PATH` names it, and because the
+ * cutover (F-146) points `bin/bl` at it.
+ */
+
+process.stderr.write('bl-next: no commands yet\n');
+process.exitCode = 2;
