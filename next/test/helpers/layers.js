@@ -1,12 +1,13 @@
 // The layer rule of next/ (F-135 D3), as a function over a repo's import graph.
 // It reads each JavaScript file of `next/` and `src/` with acorn, collects its
 // imports (`import … from`, `export … from`, `import('<literal>')`), and
-// resolves each one that is a relative path. A bare specifier (`node:fs`,
-// `acorn`) is not checked.
+// resolves each one that names a file (a path or a `file:` URL) to its real
+// path, as Node loads it. A bare specifier (`node:fs`, `acorn`) is not checked.
 import { readFileSync } from 'fs';
-import { dirname, join, relative, resolve, sep } from 'path';
+import { join, relative, sep } from 'path';
 import { simple } from 'acorn-walk';
-import { jsFiles, parseSource } from './source-ast.js';
+import { realOrResolved } from '../../lib/real-path.js';
+import { importTarget, jsFiles, literalOf, parseSource } from './source-ast.js';
 
 /**
  * Each layer of next/ → the other layers it may import. A layer may also
@@ -30,16 +31,6 @@ export const LAYERS = Object.freeze({
 const TEST_HELPERS = `test${sep}helpers${sep}`;
 
 /**
- * The string a specifier node always holds: a string literal, or a template
- * with no `${…}` (`` import(`../src/x.js`) ``). Else null.
- */
-function literalOf(node) {
-  if (node?.type === 'Literal' && typeof node.value === 'string') return node.value;
-  if (node?.type === 'TemplateLiteral' && node.expressions.length === 0) return node.quasis[0].value.cooked;
-  return null;
-}
-
-/**
  * The imports of one source: `[{ line, specifier }]`. `import()` counts only
  * with a string literal or a template with no `${…}`.
  * @param {string} source
@@ -59,7 +50,6 @@ function importsOf(source) {
   return found;
 }
 
-const isRelative = (specifier) => specifier.startsWith('.') || specifier.startsWith('/');
 const isInside = (path, dir) => path.startsWith(dir + sep);
 
 /**
@@ -68,32 +58,39 @@ const isInside = (path, dir) => path.startsWith(dir + sep);
  * @property {number|null} line  the line of the import; null for rule 4
  * @property {string|null} specifier  the import as written; null for rule 4
  * @property {1|2|3|4} rule      F-135 D3's rule: 1 a layer the row does not allow,
- *   2 a relative import out of next/, 3 a src/ file that imports next/,
+ *   2 an import of a file out of next/, 3 a src/ file that imports next/,
  *   4 a file in a directory the table does not name
  */
 
 /**
  * Every violation of the layer rule in `<repoRoot>/next` and `<repoRoot>/src`.
- * @param {string} repoRoot
+ * A file's layer is the directory it is listed in; its imports resolve from
+ * its real path to their targets' real paths, as Node loads a module, so a
+ * symlink counts as the file it points to.
+ * @param {string} repoRoot  absolute, or relative to the working directory
  * @returns {Violation[]}
  */
 export function layerViolations(repoRoot) {
-  const next = join(repoRoot, 'next');
-  const src = join(repoRoot, 'src');
+  const root = realOrResolved(repoRoot);
+  const next = realOrResolved(join(root, 'next'));
+  const src = realOrResolved(join(root, 'src'));
   const violations = [];
   const report = (path, line, specifier, rule) =>
-    violations.push({ file: relative(repoRoot, path), line, specifier, rule });
-  const relativeImports = (path) =>
-    importsOf(readFileSync(path, 'utf8'))
-      .filter(({ specifier }) => isRelative(specifier))
-      .map((i) => ({ ...i, target: resolve(dirname(path), i.specifier) }));
+    violations.push({ file: relative(root, path), line, specifier, rule });
+  const fileImports = (path) => {
+    const from = realOrResolved(path);
+    return importsOf(readFileSync(path, 'utf8')).flatMap((i) => {
+      const target = importTarget(i.specifier, from);
+      return target === null ? [] : [{ ...i, target: realOrResolved(target) }];
+    });
+  };
 
   for (const path of jsFiles(next)) {
     const [layer, ...rest] = relative(next, path).split(sep);
     const known = rest.length > 0 && Object.hasOwn(LAYERS, layer);
     if (!known) report(path, null, null, 4);
     const isTest = path.endsWith('.test.js');
-    for (const { line, specifier, target } of relativeImports(path)) {
+    for (const { line, specifier, target } of fileImports(path)) {
       if (!isInside(target, next)) {
         report(path, line, specifier, 2);
         continue;
@@ -107,7 +104,7 @@ export function layerViolations(repoRoot) {
   }
 
   for (const path of jsFiles(src))
-    for (const { line, specifier, target } of relativeImports(path))
+    for (const { line, specifier, target } of fileImports(path))
       if (isInside(target, next)) report(path, line, specifier, 3);
 
   return violations;

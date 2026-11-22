@@ -4,10 +4,10 @@
 // below show that each rule fails.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
-import { layerViolations } from './helpers/layers.js';
+import { mkdirSync, symlinkSync, writeFileSync } from 'fs';
+import { dirname, join, relative } from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
+import { LAYERS, layerViolations } from './helpers/layers.js';
 import { jsFiles } from './helpers/source-ast.js';
 import { mkTempDir } from './helpers/tempdir.js';
 
@@ -139,4 +139,41 @@ test('a *.test.js file may import test/helpers/; a module outside test/ may not'
       { file: 'next/lib/a.test.js', line: 2, specifier: '../test/other.js', rule: 1 },
     ],
   );
+});
+
+// Node loads a module by its real path, from a path, a `file:` URL or a
+// symlink alike (F-135 review r1). Every named layer imports src/ through a
+// `file:` URL in each import form; symlinks in lib/ point to src/ and config/,
+// one in src/ points to next/; and a relative root gives the same findings.
+test('layerViolations_resolves_file_urls_symlinks_and_relative_roots', () => {
+  const root = fixture({
+    'src/s.js': 'export const s = 1;\n',
+    'next/lib/a.js': 'export const a = 1;\n',
+    'next/config/c.js': "import { a } from '../lib/a.js';\n",
+    'next/lib/via-src-link.js': "import { s } from './to-src.js';\n",
+    'next/lib/via-config-link.js': "import { c } from './to-config.js';\n",
+    'src/via-next-link.js': "import { a } from './to-next.js';\n",
+  });
+  symlinkSync('../../src/s.js', join(root, 'next/lib/to-src.js'));
+  symlinkSync('../config/c.js', join(root, 'next/lib/to-config.js'));
+  symlinkSync('../next/lib/a.js', join(root, 'src/to-next.js'));
+  const srcUrl = pathToFileURL(join(root, 'src/s.js')).href;
+  const nextUrl = pathToFileURL(join(root, 'next/lib/a.js')).href;
+  const forms = [`import { s } from '${srcUrl}';`, `export * from '${srcUrl}';`, `await import(\`${srcUrl}\`);`];
+  const want = [
+    { file: 'next/lib/via-config-link.js', line: 1, specifier: './to-config.js', rule: 1 },
+    { file: 'next/lib/via-src-link.js', line: 1, specifier: './to-src.js', rule: 2 },
+    { file: 'src/url.js', line: 1, specifier: nextUrl, rule: 3 },
+    { file: 'src/via-next-link.js', line: 1, specifier: './to-next.js', rule: 3 },
+  ];
+  writeFileSync(join(root, 'src/url.js'), `import { a } from '${nextUrl}';\n`);
+  for (const layer of Object.keys(LAYERS).filter((l) => l !== 'test')) {
+    mkdirSync(join(root, 'next', layer), { recursive: true });
+    writeFileSync(join(root, 'next', layer, 'url.js'), forms.join('\n') + '\n');
+    want.push(...forms.map((_, i) => ({ file: `next/${layer}/url.js`, line: i + 1, specifier: srcUrl, rule: 2 })));
+  }
+  const sorted = (vs) => vs.sort((x, y) => x.file.localeCompare(y.file) || x.line - y.line);
+  sorted(want);
+  assert.deepEqual(sorted(layerViolations(root)), want);
+  assert.deepEqual(sorted(layerViolations(relative(process.cwd(), root))), want);
 });

@@ -4,6 +4,7 @@
 // with no extension (`bin/bl-next`) by its `node` shebang.
 import { readdirSync, readFileSync } from 'fs';
 import { extname, join, relative, sep } from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { parse } from 'acorn';
 
 /**
@@ -45,6 +46,30 @@ export function codeFiles(dir) {
     .filter((f) => !f.startsWith(`test${sep}`) && !f.endsWith('.test.js'))
     .sort()
     .map((file) => ({ file, source: readFileSync(join(dir, file), 'utf8') }));
+}
+
+/**
+ * The string an import's specifier node always holds: a string literal, or a
+ * template with no `${…}` (`` import(`../src/x.js`) ``). Else null.
+ */
+export function literalOf(node) {
+  if (node?.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (node?.type === 'TemplateLiteral' && node.expressions.length === 0) return node.quasis[0].value.cooked;
+  return null;
+}
+
+/**
+ * The file an import specifier names from the file `from`, as Node resolves
+ * it: a relative path (`./`, `../`) or an absolute one (`/`) against `from`'s
+ * URL, a `file:` URL on its own. Null for a bare specifier (`node:fs`, `acorn`).
+ * Symlinks are not resolved.
+ * @param {string} specifier
+ * @param {string} from  an absolute path
+ */
+export function importTarget(specifier, from) {
+  if (specifier.startsWith('file:')) return fileURLToPath(new URL(specifier));
+  if (/^(\/|\.\.?(\/|$))/.test(specifier)) return fileURLToPath(new URL(specifier, pathToFileURL(from)));
+  return null;
 }
 
 /** The name a call's callee ends in: `spawnSync` for `spawnSync(…)` and `cp.spawnSync(…)`. */
