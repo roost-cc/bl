@@ -3,8 +3,8 @@
 // `test/integration/prepare-worktree-once.test.js` (S-1394).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { findExistingWorktree, listWorktrees, prepareWorktreeOnce, worktreeChanges } from './worktree.js';
 import { holderOf } from './kernel-lock.js';
@@ -89,6 +89,23 @@ test('findExistingWorktree finds a worktree by branch, and returns null for an u
   try {
     assert.deepEqual(findExistingWorktree(repo, 'feat'), { path: linked, branch: 'feat' });
     assert.equal(findExistingWorktree(repo, 'nope'), null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The main checkout stays out of the list however the repo path names it
+// (F-135 review r1), so findExistingWorktree never returns it.
+test('listWorktrees_excludes_main_for_path_aliases', () => {
+  const { root, repo, linked } = makeRepo();
+  try {
+    symlinkSync(repo, join(root, 'alias'));
+    const aliases = [repo, relative(process.cwd(), repo), `${repo}/`, join(root, 'alias')];
+    for (const alias of aliases) {
+      assert.deepEqual(listWorktrees(alias), [{ path: linked, branch: 'feat' }], alias);
+      assert.equal(findExistingWorktree(alias, 'main'), null, alias);
+      assert.deepEqual(findExistingWorktree(alias, 'feat'), { path: linked, branch: 'feat' }, alias);
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
