@@ -1,36 +1,14 @@
-// Carried from `test/unit/kernel-lock.test.js` (F-135 D4). Its `git` helper,
-// from `test/helpers/git-backlog.js`, is copied below: only this test uses it.
+// Carried from `test/unit/kernel-lock.test.js` (F-135 D4).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import { closeSync, existsSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import fsExt from 'fs-ext';
 import { spawnSyncFiles } from './child-stdio.js';
 import { adopt, assertHeld, holderOf, release, tryLock, tryLockOnce } from './kernel-lock.js';
+import { git } from '../test/helpers/git.js';
 import { holdLock, holdLockInChild } from '../test/helpers/hold-lock.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
-
-/** Identity for commits, without reading the developer's git config. */
-const GIT_ENV = {
-  GIT_AUTHOR_NAME: 't',
-  GIT_AUTHOR_EMAIL: 't@t',
-  GIT_COMMITTER_NAME: 't',
-  GIT_COMMITTER_EMAIL: 't@t',
-  GIT_CONFIG_GLOBAL: '/dev/null',
-};
-
-/** Run git in `cwd`; throws on a non-zero exit, returns trimmed stdout. */
-function git(cwd, ...args) {
-  const r = spawnSync('git', args, {
-    cwd,
-    encoding: 'utf8',
-    env: { ...process.env, ...GIT_ENV },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
-  return r.stdout.trim();
-}
 
 const STAMP = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
 
