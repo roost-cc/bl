@@ -119,6 +119,8 @@ export function tryLockOnce(path, info) {
  * `flock(fd, 'un')`: an inherited descriptor (D5) shares its lock with the
  * parent, and an unlock from the child would free the parent's lock too.
  * Never unlinks the file (D3). A handle this process no longer holds is a no-op.
+ * A close that throws leaves the lock held at depth 1 (`holds` stays true),
+ * so a later release can close it again.
  *
  * @param {LockHandle} handle
  */
@@ -127,8 +129,13 @@ export function release(handle) {
   if (mine?.handle !== handle) return;
   mine.depth -= 1;
   if (mine.depth > 0) return;
+  try {
+    closeSync(handle.fd);
+  } catch (e) {
+    mine.depth = 1;
+    throw e;
+  }
   held.delete(handle.path);
-  closeSync(handle.fd);
 }
 
 /**

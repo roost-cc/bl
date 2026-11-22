@@ -5,7 +5,7 @@ import { closeSync, existsSync, openSync, readFileSync, writeFileSync } from 'no
 import { join } from 'node:path';
 import fsExt from 'fs-ext';
 import { spawnSyncFiles } from './child-stdio.js';
-import { adopt, assertHeld, holderOf, release, tryLock, tryLockOnce } from './kernel-lock.js';
+import { adopt, assertHeld, holderOf, holds, release, tryLock, tryLockOnce } from './kernel-lock.js';
 import { git } from '../test/helpers/git.js';
 import { holdLock, holdLockInChild } from '../test/helpers/hold-lock.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
@@ -94,6 +94,35 @@ test('a release of a freed handle leaves the lock that a later take holds', asyn
     release(now);
   }
   assert.equal(holderOf(path), null);
+});
+
+// A release whose close fails leaves the lock live, so this process still
+// holds it (F-135 review r1), at the outermost depth and after a nested take.
+// The handle names a descriptor that is not open, so the close fails with
+// EBADF while the real descriptor keeps the lock.
+test('release-keeps-ownership-after-close-failure', () => {
+  for (const depth of [1, 2]) {
+    const path = join(mkTempDir('bl-kernel-lock-'), 'x.lock');
+    const handle = tryLock(path).taken;
+    for (let i = 1; i < depth; i += 1) tryLock(path);
+    const fd = handle.fd;
+    handle.fd = 2 ** 30;
+    for (let i = 1; i < depth; i += 1) release(handle);
+    assert.throws(() => release(handle), { code: 'EBADF' }, `depth ${depth}`);
+    assert.equal(holds(path), true, `depth ${depth}: holds() after the failed close`);
+    assert.equal(holderOf(path), process.pid, `depth ${depth}`);
+    // A descriptor of its own finds the lock taken: the real one still holds it.
+    const other = openSync(path, 'r');
+    try {
+      assert.throws(() => fsExt.flockSync(other, 'exnb'), { code: 'EAGAIN' }, `depth ${depth}: the lock is live`);
+    } finally {
+      closeSync(other);
+    }
+    handle.fd = fd;
+    release(handle);
+    assert.equal(holds(path), false, `depth ${depth}: a later release frees it`);
+    assert.equal(holderOf(path), null, `depth ${depth}`);
+  }
 });
 
 test('tryLockOnce refuses a lock this process holds with its own PID, and takes a free one', () => {
