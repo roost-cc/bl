@@ -30,15 +30,25 @@ export const LAYERS = Object.freeze({
 const TEST_HELPERS = `test${sep}helpers${sep}`;
 
 /**
+ * The string a specifier node always holds: a string literal, or a template
+ * with no `${…}` (`` import(`../src/x.js`) ``). Else null.
+ */
+function literalOf(node) {
+  if (node?.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (node?.type === 'TemplateLiteral' && node.expressions.length === 0) return node.quasis[0].value.cooked;
+  return null;
+}
+
+/**
  * The imports of one source: `[{ line, specifier }]`. `import()` counts only
- * with a string literal.
+ * with a string literal or a template with no `${…}`.
  * @param {string} source
  */
 export function importsOf(source) {
   const found = [];
   const add = (node) => {
-    if (node.source?.type === 'Literal' && typeof node.source.value === 'string')
-      found.push({ line: node.loc.start.line, specifier: node.source.value });
+    const specifier = literalOf(node.source);
+    if (specifier !== null) found.push({ line: node.loc.start.line, specifier });
   };
   simple(parseSource(source), {
     ImportDeclaration: add,

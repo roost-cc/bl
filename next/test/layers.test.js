@@ -116,6 +116,14 @@ test('the checker sees import … from, export … from and import() of a litera
   );
 });
 
+test('the checker sees import() of a template with no ${…}', () => {
+  const root = fixture({
+    'src/x.js': 'export const x = 1;\n',
+    'next/lib/a.js': 'const m = await import(`../../src/x.js`);\n',
+  });
+  assert.deepEqual(layerViolations(root), [{ file: 'next/lib/a.js', line: 1, specifier: '../../src/x.js', rule: 2 }]);
+});
+
 test('a *.test.js file may import test/helpers/; a module outside test/ may not', () => {
   const root = fixture({
     'next/test/helpers/h.js': 'export const h = 1;\n',
