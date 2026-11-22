@@ -451,6 +451,49 @@ test('atomicWriteFile with unchanged fails with ECHANGED when the target changed
   }
 });
 
+// The option paths over every target state (F-135 review r1): an existing
+// file, a live symlink, a dangling symlink (one hop and two) and a missing
+// file, each with `preserve`; and `unchanged` with the target as read, edited
+// and removed before the rename.
+test('atomicWriteFile_preserve_dangling_symlink_and_deleted_unchanged_target', () => {
+  const { root, target } = backlog();
+  const dir = dirname(target);
+  try {
+    const cases = [
+      { name: 'an existing file', path: 'index.md', written: 'index.md' },
+      { name: 'a live symlink', path: 'live.md', link: 'index.md', written: 'index.md' },
+      { name: 'a dangling symlink', path: 'dangling.md', link: 'gone.md', written: 'gone.md' },
+      { name: 'a dangling chain', path: 'chain.md', link: 'dangling2.md', written: 'gone2.md' },
+      { name: 'a missing file', path: 'fresh.md', written: 'fresh.md' },
+    ];
+    symlinkSync('gone2.md', join(dir, 'dangling2.md'));
+    for (const c of cases) {
+      if (c.link) symlinkSync(c.link, join(dir, c.path));
+      atomicWriteFile(root, join(dir, c.path), `${c.name}\n`, { preserve: true });
+      assert.equal(lstatSync(join(dir, c.path)).isSymbolicLink(), Boolean(c.link), `${c.name}: stays what it was`);
+      assert.equal(readFileSync(join(dir, c.written), 'utf8'), `${c.name}\n`, `${c.name}: the file written`);
+    }
+    assert.ok(lstatSync(join(dir, 'dangling2.md')).isSymbolicLink(), 'the middle of a chain stays a link');
+
+    const unchangedCases = [
+      { name: 'as read', before: () => {}, code: null },
+      { name: 'edited', before: () => writeFileSync(target, 'edited\n'), code: 'ECHANGED' },
+      { name: 'removed', before: () => unlinkSync(target), code: 'ECHANGED' },
+    ];
+    for (const c of unchangedCases) {
+      writeFileSync(target, 'initial\n');
+      _hooks.beforeRename = c.before;
+      const err = thrown(() => atomicWriteFile(root, target, 'replacement\n', { unchanged: 'initial\n' }));
+      _hooks.beforeRename = null;
+      assert.equal(err?.code ?? null, c.code, `unchanged, target ${c.name}: ${err?.message}`);
+      assert.equal(existsSync(target), c.name !== 'removed', `unchanged, target ${c.name}: the removal stays`);
+    }
+  } finally {
+    _hooks.beforeRename = null;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('BL_INTERNAL_TEST_FAIL_ON_RENAME fails each listed call before its rename', () => {
   const { root, target, staging } = backlog();
   // The count is per process, so a child counts from its first call.

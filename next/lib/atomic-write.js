@@ -29,13 +29,14 @@ import {
   linkSync,
   mkdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'fs';
-import { basename, join } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import { warn } from './stderr.js';
 
 /** Staging directory under the backlog root. */
@@ -53,6 +54,35 @@ export const STAGING_ATTEMPTS = 10;
 export const _hooks = { beforeRename: null };
 
 let renameCallCount = 0;
+
+/**
+ * The missing file that `path` names: `path` itself, or, when `path` is a
+ * dangling symlink, the missing file at the end of its chain. `realpathSync`
+ * already failed with ENOENT, so the chain has no loop.
+ * @param {string} path
+ */
+function missingTarget(path) {
+  for (;;) {
+    let link;
+    try {
+      link = readlinkSync(path);
+    } catch (e) {
+      if (e.code === 'EINVAL' || e.code === 'ENOENT') return path;
+      throw e;
+    }
+    path = resolve(dirname(path), link);
+  }
+}
+
+/** The text of `path`, or null when it is not there. */
+function textOrNull(path) {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch (e) {
+    if (e.code === 'ENOENT') return null;
+    throw e;
+  }
+}
 
 /**
  * Write `text` to `path` atomically: stage it at
@@ -80,7 +110,8 @@ let renameCallCount = 0;
  * With `{ preserve: true }` an existing target keeps what it was: a symlink
  * stays a symlink and the file it resolves to is the one replaced, and the
  * staging file takes that file's mode, owner and group before the rename.
- * When those cannot be given (chmod or chown refused, or the resolved file is on
+ * A dangling symlink stays a symlink too: the missing file at the end of its
+ * chain is the one created. When those cannot be given (chmod or chown refused, or the resolved file is on
  * another filesystem, EXDEV) the write fails and the target is unchanged.
  *
  * With `{ exclusive: true }` the staging file is hard-linked to `path`
@@ -89,8 +120,8 @@ let renameCallCount = 0;
  * write fails with EEXIST.
  *
  * With `{ unchanged: <text> }` the target is read again just before the
- * rename: when it no longer holds `<text>` (another caller edited it after
- * this caller read it), the write fails with code `ECHANGED` and the target
+ * rename: when it no longer holds `<text>` (another caller edited or removed
+ * it after this caller read it), the write fails with code `ECHANGED` and the target
  * keeps that edit. The caller reads the file again and retries.
  *
  * @param {string} backlogRoot
@@ -111,6 +142,7 @@ export function atomicWriteFile(
       st = statSync(path);
     } catch (e) {
       if (e.code !== 'ENOENT') throw e;
+      path = missingTarget(path);
     }
   }
   const dir = join(backlogRoot, STAGING_DIR);
@@ -148,7 +180,7 @@ export function atomicWriteFile(
       }
     }
     _hooks.beforeRename?.(tmp);
-    if (unchanged !== undefined && readFileSync(path, 'utf8') !== unchanged) {
+    if (unchanged !== undefined && textOrNull(path) !== unchanged) {
       throw Object.assign(new Error(`${path} changed while bl wrote it`), { code: 'ECHANGED' });
     }
     try {
