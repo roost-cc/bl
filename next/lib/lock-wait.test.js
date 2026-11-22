@@ -1,6 +1,6 @@
 // Carried from `test/unit/lock-wait.test.js` (F-135 D4). The rows of the spec
-// lock (`src/spec-file.js`) stay out: it is not `lib/` material. The rows of
-// the main-sync lock move with `main-sync.js` (S-1589).
+// lock (`src/spec-file.js`) stay out: it is not `lib/` material. The row of
+// the main-sync lock is in `main-sync.test.js`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
