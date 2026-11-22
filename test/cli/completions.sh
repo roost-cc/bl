@@ -58,11 +58,13 @@ git -C "$EMPTY" init -q
 # so the zsh runner stubs `_describe` and sets CURRENT=2 to return early;
 # `backlog.zsh` ends with `compdef`, which fails outside an interactive
 # shell, so the collector runs regardless of the source's exit status.
+# zsh runs with `-f` (no startup files): a `~/.zshenv` that puts a directory
+# with the real `bl` first on PATH would hide the test's stub `bl`.
 run_collector() {
   local shell="$1" file="$2" fn="$3" cwd="$4"
   case "$shell" in
     bash) bash -c 'cd "$3" && { source "$1"; "$2"; }' _ "$file" "$fn" "$cwd" 2>/dev/null || true ;;
-    zsh) zsh -c '_describe() { :; }; CURRENT=2; cd "$3" && { source "$1"; "$2"; }' _ "$file" "$fn" "$cwd" 2>/dev/null || true ;;
+    zsh) zsh -f -c '_describe() { :; }; CURRENT=2; cd "$3" && { source "$1"; "$2"; }' _ "$file" "$fn" "$cwd" 2>/dev/null || true ;;
   esac
 }
 
