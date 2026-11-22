@@ -44,7 +44,7 @@ function literalOf(node) {
  * with a string literal or a template with no `${…}`.
  * @param {string} source
  */
-export function importsOf(source) {
+function importsOf(source) {
   const found = [];
   const add = (node) => {
     const specifier = literalOf(node.source);
