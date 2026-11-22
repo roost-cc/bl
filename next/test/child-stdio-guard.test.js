@@ -25,10 +25,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'fs';
-import { dirname, join, relative } from 'path';
-import { fileURLToPath } from 'url';
+import { join, relative } from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { ancestor, simple } from 'acorn-walk';
-import { calleeName, codeFiles, jsFiles, parseSource } from './helpers/source-ast.js';
+import { calleeName, codeFiles, importTarget, jsFiles, literalOf, parseSource } from './helpers/source-ast.js';
 
 const NEXT = fileURLToPath(new URL('../', import.meta.url));
 const EXEMPT = new Set(['lib/child-stdio.js']);
@@ -568,10 +568,13 @@ const ALLOWED = new Map([]);
  */
 export function childImports(source, rel) {
   const ast = parseSource(source);
-  const moduleOf = (spec) => {
-    if (typeof spec !== 'string') return null;
+  // A specifier in any form (a literal, a template with no `${…}`, a path or
+  // a `file:` URL), as `literalOf` and `importTarget` read it.
+  const moduleOf = (node) => {
+    const spec = literalOf(node);
+    if (spec === null) return null;
     if (spec === 'child_process' || spec === 'node:child_process') return 'child_process';
-    return spec.startsWith('.') && join(dirname(rel), spec) === CHILD_STDIO ? CHILD_STDIO : null;
+    return importTarget(spec, join(NEXT, rel)) === join(NEXT, CHILD_STDIO) ? CHILD_STDIO : null;
   };
   const specName = (s) =>
     s.type === 'ImportSpecifier'
@@ -581,7 +584,7 @@ export function childImports(source, rel) {
         : '*';
   const out = [];
   const add = (n, names) => {
-    const module = n.source ? moduleOf(n.source.value) : null;
+    const module = moduleOf(n.source);
     if (module) out.push({ line: n.loc.start.line, module, names: names.length > 0 ? names : ['*'] });
   };
   simple(ast, {
@@ -598,7 +601,7 @@ export function childImports(source, rel) {
       add(n, ['*']);
     },
     ImportExpression(n) {
-      const module = n.source.type === 'Literal' ? moduleOf(n.source.value) : null;
+      const module = moduleOf(n.source);
       if (module) out.push({ line: n.loc.start.line, module, names: ['*'] });
     },
   });
@@ -724,3 +727,39 @@ for (const c of IMPORT_CASES) {
     assert.equal(found.length, c.hits, JSON.stringify(found));
   });
 }
+
+// Every specifier form of both watched modules, in every import form (F-135
+// review r1): a string literal, a template with no `${…}`, a relative path, an
+// absolute path and a `file:` URL. A file of next/ other than an importer
+// imports each from lib/x.js, and nothing else matches.
+test('childImports_constant_template_and_file_url', () => {
+  const stdioPath = join(NEXT, CHILD_STDIO);
+  const specs = {
+    child_process: ['child_process', 'node:child_process'],
+    [CHILD_STDIO]: ['./child-stdio.js', stdioPath, pathToFileURL(stdioPath).href],
+  };
+  const forms = [
+    (s) => `import { spawnSync } from '${s}';`,
+    (s) => `export { spawnSync } from '${s}';`,
+    (s) => `export * from '${s}';`,
+    (s) => `await import('${s}');`,
+    (s) => `await import(\`${s}\`);`,
+  ];
+  for (const [module, list] of Object.entries(specs)) {
+    for (const spec of list) {
+      for (const form of forms) {
+        const src = form(spec);
+        assert.deepEqual(
+          childImports(src, 'lib/x.js').map((i) => i.module),
+          [module],
+          src,
+        );
+        assert.equal(childImportViolations(src, 'lib/x.js').length, 1, src);
+      }
+    }
+  }
+  const others = ['./child.js', pathToFileURL(join(NEXT, 'lib/child.js')).href, 'file:./child-stdio.js', 'child'];
+  for (const spec of others) {
+    for (const form of forms) assert.deepEqual(childImports(form(spec), 'lib/x.js'), [], form(spec));
+  }
+});
