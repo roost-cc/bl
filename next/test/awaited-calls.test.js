@@ -14,11 +14,11 @@
 // `*.test.js`), as today's guard covers src/ and not test/.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { join, relative, sep } from 'path';
+import { mkdirSync, writeFileSync } from 'fs';
+import { join, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { fullAncestor } from 'acorn-walk';
-import { calleeName, declaredName, jsFiles, parseSource } from './helpers/source-ast.js';
+import { calleeName, codeFiles, declaredName, parseSource } from './helpers/source-ast.js';
 import { mkTempDir } from './helpers/tempdir.js';
 
 const NEXT = fileURLToPath(new URL('../', import.meta.url));
@@ -79,19 +79,6 @@ function unawaitedCalls(source, asyncNames) {
     if (name && asyncNames.has(name) && !isAwaited(ancestors)) found.push({ line: n.loc.start.line, name });
   });
   return found;
-}
-
-/**
- * The code files under `dir`, tests left out: `[{ file, source }]`, `file`
- * relative to `dir`.
- * @param {string} dir
- */
-function codeFiles(dir) {
-  return jsFiles(dir)
-    .map((p) => relative(dir, p))
-    .filter((f) => !f.startsWith(`test${sep}`) && !f.endsWith('.test.js'))
-    .sort()
-    .map((file) => ({ file, source: readFileSync(join(dir, file), 'utf8') }));
 }
 
 /**

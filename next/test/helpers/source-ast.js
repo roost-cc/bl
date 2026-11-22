@@ -3,7 +3,7 @@
 // Copied from `test/helpers/source-ast.js`; `jsFiles` also lists an entry point
 // with no extension (`bin/bl-next`) by its `node` shebang.
 import { readdirSync, readFileSync } from 'fs';
-import { extname, join } from 'path';
+import { extname, join, relative, sep } from 'path';
 import { parse } from 'acorn';
 
 /**
@@ -29,6 +29,22 @@ export function jsFiles(dir) {
     if (e.name.endsWith('.js')) return [p];
     return extname(e.name) === '' && NODE_SHEBANG.test(readFileSync(p, 'utf8')) ? [p] : [];
   });
+}
+
+/**
+ * The code files under `dir`, tests left out (`test/` and `*.test.js`), in
+ * sorted order: `[{ file, source }]`, `file` relative to `dir`. A guard that
+ * covers the code of next/ reads these, as today's guards cover src/ and not
+ * test/.
+ * @param {string} dir
+ * @returns {{ file: string, source: string }[]}
+ */
+export function codeFiles(dir) {
+  return jsFiles(dir)
+    .map((p) => relative(dir, p))
+    .filter((f) => !f.startsWith(`test${sep}`) && !f.endsWith('.test.js'))
+    .sort()
+    .map((file) => ({ file, source: readFileSync(join(dir, file), 'utf8') }));
 }
 
 /** The name a call's callee ends in: `spawnSync` for `spawnSync(…)` and `cp.spawnSync(…)`. */
