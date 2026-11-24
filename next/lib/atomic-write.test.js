@@ -465,8 +465,17 @@ test('atomicWriteFile_preserve_dangling_symlink_and_deleted_unchanged_target', (
       { name: 'a dangling symlink', path: 'dangling.md', link: 'gone.md', written: 'gone.md' },
       { name: 'a dangling chain', path: 'chain.md', link: 'dangling2.md', written: 'gone2.md' },
       { name: 'a missing file', path: 'fresh.md', written: 'fresh.md' },
+      // `..` in the link goes up from the real directory, not from the alias.
+      {
+        name: 'a dangling symlink in a linked directory',
+        path: 'via/up.md',
+        link: '../gone3.md',
+        written: '../elsewhere/gone3.md',
+      },
     ];
     symlinkSync('gone2.md', join(dir, 'dangling2.md'));
+    mkdirSync(join(root, 'elsewhere', 'deep'), { recursive: true });
+    symlinkSync('../elsewhere/deep', join(dir, 'via'));
     for (const c of cases) {
       if (c.link) symlinkSync(c.link, join(dir, c.path));
       atomicWriteFile(root, join(dir, c.path), `${c.name}\n`, { preserve: true });

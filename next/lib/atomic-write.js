@@ -58,7 +58,8 @@ let renameCallCount = 0;
 /**
  * The missing file that `path` names: `path` itself, or, when `path` is a
  * dangling symlink, the missing file at the end of its chain. `realpathSync`
- * already failed with ENOENT, so the chain has no loop.
+ * already failed with ENOENT, so the chain has no loop. A link's target
+ * resolves from the real directory that holds the link, as the kernel does.
  * @param {string} path
  */
 function missingTarget(path) {
@@ -70,7 +71,7 @@ function missingTarget(path) {
       if (e.code === 'EINVAL' || e.code === 'ENOENT') return path;
       throw e;
     }
-    path = resolve(dirname(path), link);
+    path = resolve(realpathSync(dirname(path)), link);
   }
 }
 
