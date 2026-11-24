@@ -119,23 +119,27 @@ export function tryLockOnce(path, info) {
  * `flock(fd, 'un')`: an inherited descriptor (D5) shares its lock with the
  * parent, and an unlock from the child would free the parent's lock too.
  * Never unlinks the file (D3). A handle this process no longer holds is a no-op.
- * A close that throws leaves the lock held at depth 1 (`holds` stays true),
- * so a later release can close it again.
+ * A close that throws (EBADF: the descriptor was already closed) still ends
+ * this handle's ownership, unless the lock is still live for this process:
+ * another descriptor holds it and the file names this process (`holderOf`).
+ * Then the lock stays held at depth 1, so a later release can close it.
+ * The handle is read once, so nothing after the close can fail.
  *
  * @param {LockHandle} handle
  */
 export function release(handle) {
-  const mine = held.get(handle.path);
+  const { path, fd } = handle;
+  const mine = held.get(path);
   if (mine?.handle !== handle) return;
   mine.depth -= 1;
   if (mine.depth > 0) return;
+  held.delete(path);
   try {
-    closeSync(handle.fd);
+    closeSync(fd);
   } catch (e) {
-    mine.depth = 1;
+    if (holderOf(path) === process.pid) held.set(path, { handle, depth: 1 });
     throw e;
   }
-  held.delete(handle.path);
 }
 
 /**

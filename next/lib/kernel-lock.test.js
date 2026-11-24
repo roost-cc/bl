@@ -5,7 +5,7 @@ import { closeSync, existsSync, openSync, readFileSync, writeFileSync } from 'no
 import { join } from 'node:path';
 import fsExt from 'fs-ext';
 import { spawnSyncFiles } from './child-stdio.js';
-import { adopt, assertHeld, holderOf, holds, release, tryLock, tryLockOnce } from './kernel-lock.js';
+import { adopt, assertHeld, holderFileOf, holderOf, holds, release, tryLock, tryLockOnce } from './kernel-lock.js';
 import { git } from '../test/helpers/git.js';
 import { holdLock, holdLockInChild } from '../test/helpers/hold-lock.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
@@ -123,6 +123,60 @@ test('release-keeps-ownership-after-close-failure', () => {
     assert.equal(holds(path), false, `depth ${depth}: a later release frees it`);
     assert.equal(holderOf(path), null, `depth ${depth}`);
   }
+});
+
+// Once the descriptor has closed, a release ends this process's ownership even
+// when it meets an error (F-135 review r2). `fail(handle)` sets the error up
+// just before the last release, at the outermost depth and after a nested
+// take; then every query agrees that the lock is free, and both takes get it.
+function assertReleaseClearsOwnership(fail) {
+  for (const depth of [1, 2]) {
+    const what = `depth ${depth}`;
+    const path = join(mkTempDir('bl-kernel-lock-'), 'x.lock');
+    const handle = tryLock(path).taken;
+    for (let i = 1; i < depth; i += 1) tryLock(path);
+    for (let i = 1; i < depth; i += 1) release(handle);
+    const error = fail(handle);
+    if (error) assert.throws(() => release(handle), error, what);
+    else release(handle);
+    assert.equal(holds(path), false, `${what}: holds`);
+    assert.equal(holderOf(path), null, `${what}: holderOf`);
+    assert.equal(holderFileOf(path), null, `${what}: holderFileOf`);
+    const once = tryLockOnce(path);
+    assert.ok('taken' in once, `${what}: tryLockOnce ${JSON.stringify(once)}`);
+    release(once.taken);
+    const again = tryLock(path);
+    assert.ok('taken' in again, `${what}: tryLock ${JSON.stringify(again)}`);
+    release(again.taken);
+    assert.equal(holderOf(path), null, `${what}: free at the end`);
+  }
+}
+
+// The descriptor was closed before the release: the close fails with EBADF.
+test('release_clears_ownership_when_descriptor_is_closed', () => {
+  assertReleaseClearsOwnership((handle) => {
+    closeSync(handle.fd);
+    return { code: 'EBADF' };
+  });
+});
+
+// The handle's fields throw on a second read, so any read after the close fails.
+test('release-clears-ownership-after-post-close-error', () => {
+  assertReleaseClearsOwnership((handle) => {
+    for (const field of ['path', 'fd']) {
+      const value = handle[field];
+      let reads = 0;
+      Object.defineProperty(handle, field, {
+        configurable: true,
+        get() {
+          reads += 1;
+          if (reads > 1) throw new Error(`a second read of ${field}`);
+          return value;
+        },
+      });
+    }
+    return null;
+  });
 });
 
 test('tryLockOnce refuses a lock this process holds with its own PID, and takes a free one', () => {
