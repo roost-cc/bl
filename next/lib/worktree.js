@@ -14,7 +14,6 @@ import { join } from 'path';
 import { git, gitOut } from './child.js';
 import { release, tryLockOnce } from './kernel-lock.js';
 import { awaitLock } from './lock-wait.js';
-import { realOrResolved } from './real-path.js';
 import { info } from './stderr.js';
 
 /**
@@ -33,20 +32,19 @@ export function listWorktrees(repoPath, { detached = false, strict = false } = {
     if (strict) throw new Error(`no repo at ${repoPath}`);
     return results;
   }
-  // The main checkout, however `repoPath` names it (relative, a trailing
-  // slash, a symlink).
-  const mainPath = realOrResolved(repoPath);
   try {
     const output = gitOut(repoPath, ['worktree', 'list', '--porcelain']);
-    for (const entry of output.split('\n\n').filter(Boolean)) {
+    // Git lists the main checkout first, whichever checkout `repoPath` names
+    // and however it names it (relative, a trailing slash, a symlink).
+    for (const [index, entry] of output.split('\n\n').filter(Boolean).entries()) {
       const lines = entry.split('\n');
       const pathLine = lines.find((l) => l.startsWith('worktree '));
       const branchLine = lines.find((l) => l.startsWith('branch '));
       if (!pathLine && strict) throw new Error(`git worktree list: a record has no worktree line: ${lines[0]}`);
-      if (!pathLine || (!branchLine && !detached)) continue;
+      if (index === 0 || !pathLine || (!branchLine && !detached)) continue;
       const wPath = pathLine.slice('worktree '.length);
       const wBranch = branchLine ? branchLine.slice('branch refs/heads/'.length) : null;
-      if (realOrResolved(wPath) !== mainPath) results.push({ path: wPath, branch: wBranch });
+      results.push({ path: wPath, branch: wBranch });
     }
   } catch (err) {
     // no worktrees or not a git repo

@@ -111,6 +111,39 @@ test('listWorktrees_excludes_main_for_path_aliases', () => {
   }
 });
 
+// The main checkout stays out of the list whichever checkout the caller names
+// (F-135 review r2): the main, the linked or the detached checkout, each by
+// its path, a relative path, a trailing slash and a symlink, with every
+// combination of `detached` and `strict`. Then the main checkout on a detached
+// HEAD stays out too.
+test('listWorktrees_excludes_main_when_called_from_linked_worktree', () => {
+  const { root, repo, linked, detached } = makeRepo();
+  try {
+    const byPath = (a, b) => a.path.localeCompare(b.path);
+    const onBranch = [{ path: linked, branch: 'feat' }];
+    const all = [...onBranch, { path: detached, branch: null }].sort(byPath);
+    for (const checkout of [repo, linked, detached]) {
+      const alias = join(root, `alias-${relative(root, checkout)}`);
+      symlinkSync(checkout, alias);
+      for (const caller of [checkout, relative(process.cwd(), checkout), `${checkout}/`, alias]) {
+        for (const strict of [false, true]) {
+          const what = `${caller} strict=${strict}`;
+          assert.deepEqual(listWorktrees(caller, { strict }), onBranch, what);
+          assert.deepEqual(listWorktrees(caller, { strict, detached: true }).sort(byPath), all, `${what} detached`);
+        }
+        assert.equal(findExistingWorktree(caller, 'main'), null, caller);
+        assert.deepEqual(findExistingWorktree(caller, 'feat'), onBranch[0], caller);
+      }
+    }
+    git(repo, 'checkout', '-q', '--detach');
+    for (const caller of [repo, linked, detached]) {
+      assert.deepEqual(listWorktrees(caller, { detached: true }).sort(byPath), all, `${caller}: main detached`);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('prepareWorktreeOnce returns what fn returns and releases its lock', async () => {
   const repo = mkTempDir('bl-prepare-once-');
   git(repo, 'init', '-q');
