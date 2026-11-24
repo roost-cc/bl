@@ -123,7 +123,8 @@ export function tryLockOnce(path, info) {
  * this handle's ownership, unless the lock is still live for this process:
  * another descriptor holds it and the file names this process (`holderOf`).
  * Then the lock stays held at depth 1, so a later release can close it.
- * The handle is read once, so nothing after the close can fail.
+ * The handle is read once, before the record is removed, so no read of it
+ * after the close can fail.
  *
  * @param {LockHandle} handle
  */
