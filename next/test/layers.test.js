@@ -167,7 +167,7 @@ test('layerViolations_resolves_file_urls_symlinks_and_relative_roots', () => {
     { file: 'src/via-next-link.js', line: 1, specifier: './to-next.js', rule: 3 },
   ];
   writeFileSync(join(root, 'src/url.js'), `import { a } from '${nextUrl}';\n`);
-  for (const layer of Object.keys(LAYERS).filter((l) => l !== 'test')) {
+  for (const layer of Object.keys(LAYERS)) {
     mkdirSync(join(root, 'next', layer), { recursive: true });
     writeFileSync(join(root, 'next', layer, 'url.js'), forms.join('\n') + '\n');
     want.push(...forms.map((_, i) => ({ file: `next/${layer}/url.js`, line: i + 1, specifier: srcUrl, rule: 2 })));
