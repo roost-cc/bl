@@ -6,6 +6,7 @@ import { readdirSync, readFileSync, realpathSync, statSync } from 'fs';
 import { extname, join, relative, sep } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { parse } from 'acorn';
+import { realOrResolved } from '../../lib/real-path.js';
 
 /**
  * Parse one module's source, with line locations.
@@ -80,17 +81,19 @@ export function literalOf(node) {
 }
 
 /**
- * The file an import specifier names from the file `from`, as Node resolves
- * it: a relative path (`./`, `../`) or an absolute one (`/`) against `from`'s
- * URL, a `file:` URL on its own. Null for a bare specifier (`node:fs`, `acorn`).
- * Symlinks are not resolved.
+ * The real path of the file an import specifier names from the file `from`,
+ * as Node loads it: a relative path (`./`, `../`) or an absolute one (`/`)
+ * against `from`'s real path, a `file:` URL on its own, and then the target's
+ * symlinks resolved. So an alias names the file it points to. Null for a bare
+ * specifier (`node:fs`, `acorn`).
  * @param {string} specifier
  * @param {string} from  an absolute path
  */
 export function importTarget(specifier, from) {
-  if (specifier.startsWith('file:')) return fileURLToPath(new URL(specifier));
-  if (/^(\/|\.\.?(\/|$))/.test(specifier)) return fileURLToPath(new URL(specifier, pathToFileURL(from)));
-  return null;
+  let url = null;
+  if (specifier.startsWith('file:')) url = new URL(specifier);
+  else if (/^(\/|\.\.?(\/|$))/.test(specifier)) url = new URL(specifier, pathToFileURL(realOrResolved(from)));
+  return url === null ? null : realOrResolved(fileURLToPath(url));
 }
 
 /** The name a call's callee ends in: `spawnSync` for `spawnSync(…)` and `cp.spawnSync(…)`. */

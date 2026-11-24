@@ -77,13 +77,11 @@ export function layerViolations(repoRoot) {
   const violations = [];
   const report = (path, line, specifier, rule) =>
     violations.push({ file: relative(root, path), line, specifier, rule });
-  const fileImports = (path) => {
-    const from = realOrResolved(path);
-    return importsOf(readFileSync(path, 'utf8')).flatMap((i) => {
-      const target = importTarget(i.specifier, from);
-      return target === null ? [] : [{ ...i, target: realOrResolved(target) }];
+  const fileImports = (path) =>
+    importsOf(readFileSync(path, 'utf8')).flatMap((i) => {
+      const target = importTarget(i.specifier, path);
+      return target === null ? [] : [{ ...i, target }];
     });
-  };
 
   for (const path of jsFiles(next)) {
     const [layer, ...rest] = relative(next, path).split(sep);

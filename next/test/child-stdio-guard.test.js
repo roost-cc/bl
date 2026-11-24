@@ -24,11 +24,13 @@
 // `verbs.js`) are not carried.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'fs';
+import { readFileSync, symlinkSync } from 'fs';
 import { join, relative } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { ancestor, simple } from 'acorn-walk';
 import { calleeName, codeFiles, importTarget, jsFiles, literalOf, parseSource } from './helpers/source-ast.js';
+import { realOrResolved } from '../lib/real-path.js';
+import { mkTempDir } from './helpers/tempdir.js';
 
 const NEXT = fileURLToPath(new URL('../', import.meta.url));
 const EXEMPT = new Set(['lib/child-stdio.js']);
@@ -574,7 +576,7 @@ export function childImports(source, rel) {
     const spec = literalOf(node);
     if (spec === null) return null;
     if (spec === 'child_process' || spec === 'node:child_process') return 'child_process';
-    return importTarget(spec, join(NEXT, rel)) === join(NEXT, CHILD_STDIO) ? CHILD_STDIO : null;
+    return importTarget(spec, join(NEXT, rel)) === realOrResolved(join(NEXT, CHILD_STDIO)) ? CHILD_STDIO : null;
   };
   const specName = (s) =>
     s.type === 'ImportSpecifier'
@@ -761,5 +763,41 @@ test('childImports_constant_template_and_file_url', () => {
   const others = ['./child.js', pathToFileURL(join(NEXT, 'lib/child.js')).href, 'file:./child-stdio.js', 'child'];
   for (const spec of others) {
     for (const form of forms) assert.deepEqual(childImports(form(spec), 'lib/x.js'), [], form(spec));
+  }
+});
+
+// Node loads a symlink as the file it points to (F-135 review r2): a link to
+// lib/child-stdio.js, and the file through a link to lib/, is that module in
+// each specifier form (relative, absolute, `file:` URL) and import form. A link
+// to lib/child.js is not.
+test('childImports_detects_symlink_alias_of_child_stdio', () => {
+  const dir = mkTempDir('bl-child-alias-');
+  symlinkSync(join(NEXT, CHILD_STDIO), join(dir, 'alias.js'));
+  symlinkSync(join(NEXT, 'lib'), join(dir, 'lib'));
+  symlinkSync(join(NEXT, 'lib/child.js'), join(dir, 'child-alias.js'));
+  const rel = 'adapters/x.js';
+  const specsOf = (path) => [relative(join(NEXT, 'adapters'), path), path, pathToFileURL(path).href];
+  const forms = [
+    (s) => `import { spawnSyncFiles } from '${s}';`,
+    (s) => `export { spawnSyncFiles } from '${s}';`,
+    (s) => `export * from '${s}';`,
+    (s) => `await import('${s}');`,
+    (s) => `await import(\`${s}\`);`,
+  ];
+  for (const path of [join(dir, 'alias.js'), join(dir, 'lib/child-stdio.js')]) {
+    for (const spec of specsOf(path)) {
+      for (const form of forms) {
+        const src = form(spec);
+        assert.deepEqual(
+          childImports(src, rel).map((i) => i.module),
+          [CHILD_STDIO],
+          src,
+        );
+        assert.equal(childImportViolations(src, rel).length, 1, src);
+      }
+    }
+  }
+  for (const spec of specsOf(join(dir, 'child-alias.js'))) {
+    for (const form of forms) assert.deepEqual(childImports(form(spec), rel), [], form(spec));
   }
 });
