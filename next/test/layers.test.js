@@ -8,7 +8,7 @@ import { mkdirSync, symlinkSync, writeFileSync } from 'fs';
 import { dirname, join, relative } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { LAYERS, layerViolations } from './helpers/layers.js';
-import { jsFiles } from './helpers/source-ast.js';
+import { codeFiles, jsFiles } from './helpers/source-ast.js';
 import { mkTempDir } from './helpers/tempdir.js';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -34,6 +34,53 @@ test('the bl repo keeps the layer rule', () => {
 
 test('the walk lists next/bin/bl-next, a file with no extension', () => {
   assert.ok(jsFiles(join(ROOT, 'next')).includes(join(ROOT, 'next', 'bin', 'bl-next')));
+});
+
+// The walk that every static guard uses (F-135 review r2) takes a symlink as
+// what it points to: each row adds links under next/lib/ (which holds x.js)
+// and names the files that jsFiles, codeFiles and layerViolations then see.
+test('jsFiles_handles_symlinked_directories_and_dangling_links', () => {
+  const rows = [
+    {
+      name: 'a directory alias',
+      links: { 'next/alias': 'lib' },
+      files: ['alias/x.js', 'lib/x.js'],
+      rule4: ['alias/x.js'],
+    },
+    { name: 'a dangling extensionless link', links: { 'next/lib/entry': 'missing' }, files: ['lib/x.js'] },
+    { name: 'a dangling .js link', links: { 'next/lib/gone.js': 'missing.js' }, files: ['lib/x.js'] },
+    { name: 'a loop of links', links: { 'next/lib/a.js': 'b.js', 'next/lib/b.js': 'a.js' }, files: ['lib/x.js'] },
+    { name: 'a directory link back up the walk', links: { 'next/lib/up': '..' }, files: ['lib/x.js'] },
+    { name: 'a live .js link', links: { 'next/lib/live.js': 'x.js' }, files: ['lib/live.js', 'lib/x.js'] },
+    {
+      name: 'an alias of a directory with a link back up',
+      links: { 'next/alias': 'lib', 'next/lib/up': '..' },
+      files: ['alias/x.js', 'lib/x.js'],
+      rule4: ['alias/x.js'],
+    },
+  ];
+  for (const { name, links, files, rule4 = [] } of rows) {
+    const root = fixture({ 'next/lib/x.js': 'export const x = 1;\n' });
+    for (const [path, target] of Object.entries(links)) symlinkSync(target, join(root, path));
+    const next = join(root, 'next');
+    assert.deepEqual(
+      jsFiles(next)
+        .map((p) => relative(next, p))
+        .sort(),
+      files,
+      `${name}: jsFiles`,
+    );
+    assert.deepEqual(
+      codeFiles(next).map((f) => f.file),
+      files,
+      `${name}: codeFiles`,
+    );
+    assert.deepEqual(
+      layerViolations(root),
+      rule4.map((f) => ({ file: `next/${f}`, line: null, specifier: null, rule: 4 })),
+      `${name}: layerViolations`,
+    );
+  }
 });
 
 test('rule 1: a lib/ module that imports config/', () => {

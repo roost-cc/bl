@@ -2,7 +2,7 @@
 // acorn, list the JavaScript files of a tree, and name a callee or a function.
 // Copied from `test/helpers/source-ast.js`; `jsFiles` also lists an entry point
 // with no extension (`bin/bl-next`) by its `node` shebang.
-import { readdirSync, readFileSync } from 'fs';
+import { readdirSync, readFileSync, realpathSync, statSync } from 'fs';
 import { extname, join, relative, sep } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { parse } from 'acorn';
@@ -17,19 +17,40 @@ export function parseSource(source) {
 
 const NODE_SHEBANG = /^#!\/usr\/bin\/env node\b/;
 
+/** What the symlink `p` resolves to, or null when it does not resolve (ENOENT, ELOOP). */
+function linkTarget(p) {
+  try {
+    return statSync(p);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Every JavaScript file under `dir`, `node_modules` left out: each `.js` file,
  * and each file with no extension whose first line is `#!/usr/bin/env node`.
+ * A symlink counts as what it points to, as Node loads it: a link to a
+ * directory is walked under the link's name, unless it points back to a
+ * directory of the walk (a loop); a link that does not resolve (dangling, or
+ * a loop of links) is left out.
  * @param {string} dir
  * @returns {string[]}
  */
 export function jsFiles(dir) {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-    const p = join(dir, e.name);
-    if (e.isDirectory()) return e.name === 'node_modules' ? [] : jsFiles(p);
-    if (e.name.endsWith('.js')) return [p];
-    return extname(e.name) === '' && NODE_SHEBANG.test(readFileSync(p, 'utf8')) ? [p] : [];
-  });
+  const walk = (d, ancestors) =>
+    readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+      const p = join(d, e.name);
+      const kind = e.isSymbolicLink() ? linkTarget(p) : e;
+      if (!kind) return [];
+      if (kind.isDirectory()) {
+        const real = realpathSync(p);
+        return e.name === 'node_modules' || ancestors.has(real) ? [] : walk(p, new Set([...ancestors, real]));
+      }
+      if (!kind.isFile()) return [];
+      if (e.name.endsWith('.js')) return [p];
+      return extname(e.name) === '' && NODE_SHEBANG.test(readFileSync(p, 'utf8')) ? [p] : [];
+    });
+  return walk(dir, new Set([realpathSync(dir)]));
 }
 
 /**
