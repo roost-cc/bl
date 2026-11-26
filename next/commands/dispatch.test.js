@@ -461,6 +461,50 @@ part:
   assert.match(await runInProcess('page --flag x', context), /\| S-1 \| from S-1S-2 \|/);
 });
 
+test('run_in_process_rejects_incomplete_shell_quote: an unfinished quote or a trailing backslash fails before the op runs', async () => {
+  let runs = 0;
+  const counted = { ...rows, run: (args) => (runs++, rows.run(args)) };
+  const context = { ...fixture(BL_COMMANDS, { views: BL_VIEWS }), ops: Object.freeze({ ...BL_OPS, rows: counted }) };
+  for (const line of [
+    "rows --flag 'unfinished",
+    'rows --flag "unfinished',
+    'rows --flag trailing\\',
+    'rows \\',
+    'rows --flag \'a" b',
+    'rows --flag "a\' b',
+    "rows --flag $'abc",
+    'rows --flag "a\\',
+  ]) {
+    await assert.rejects(runInProcess(line, context), (error) => {
+      assert.ok(error instanceof CommandFailed, line);
+      assert.deepEqual(error.exit, {
+        status: 2,
+        stdout: '',
+        stderr: `bl-next: {{#bl}} ${line}: unfinished quote or trailing backslash\n`,
+      });
+      return true;
+    });
+  }
+  assert.equal(runs, 0);
+  // Complete quoted arguments run, with each word as a shell gives it.
+  for (const [line, title] of [
+    ['rows --flag "a b"', 'a b'],
+    ["rows --flag 'it''s'", 'its'],
+    ['rows --flag a\\ b', 'a b'],
+    ['rows --flag "a\\"b"', 'a"b'],
+    ["rows --flag $'a\\'b'", "a'b"],
+    ['rows --flag \\\\', '\\'],
+    ['rows --flag ""', ''],
+  ]) {
+    assert.ok((await runInProcess(line, context)).includes(`| S-1 | ${title} |`), line);
+  }
+  assert.equal(runs, 7);
+  // An operator, help and an argument error keep their own messages.
+  await assert.rejects(runInProcess("rows | 'x", context), /'\|' is a shell operator/);
+  assert.match(await runInProcess('rows --help', context), /^usage: bl-next rows /);
+  await assert.rejects(runInProcess('rows --flg x', context), /'--flg' is not an option of 'rows'/);
+});
+
 test('an inner command that fails gives CommandFailed with its exit', async () => {
   await assert.rejects(inProcess('rosw'), (error) => {
     assert.ok(error instanceof CommandFailed);

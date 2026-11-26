@@ -247,9 +247,22 @@ export class CommandFailed extends Error {
 }
 
 /**
+ * The word `runInProcess` adds after a `{{#bl}}` line, and its text. `shell-quote`
+ * gives no error for an unfinished quote or a trailing backslash: it drops the
+ * character. With this word after the line, its quotes or the backslash join
+ * the word to the line's last word, and the parse no longer ends with
+ * `END_TEXT`. Each quote kind is in the word, so either kind of open quote
+ * meets a closing one. So the check reads the library's own parse, with no
+ * second parser.
+ */
+const END_WORD = `A'B'C"D"E`;
+const END_TEXT = 'ABCDE';
+
+/**
  * Run the command line of a `{{#bl}}` lambda in this process, and give its
  * Markdown form (D7, D-442). `shell-quote` splits the line as a shell does; a
- * shell operator such as `|` or `>` outside quotes is an error. The parse and
+ * shell operator such as `|` or `>` outside quotes, an unfinished quote and a
+ * trailing backslash are errors, before the op runs. The parse and
  * the op are those of `dispatch`; `--help` gives the help text. A command
  * that is in `chain`, the commands whose views run this line, is an error
  * before its op runs, so a view cannot run itself.
@@ -261,12 +274,16 @@ export class CommandFailed extends Error {
  */
 export async function runInProcess(line, context, chain = []) {
   // A `$name` stays as it is: the line is not a shell's, and has no variables.
-  const words = parse(line, (name) => `$${name}`);
-  const operator = words.find((word) => typeof word !== 'string');
+  const parsed = parse(`${line} ${END_WORD}`, (name) => `$${name}`);
+  const operator = parsed.find((word) => typeof word !== 'string');
   if (operator !== undefined) {
     const text = operator.pattern ?? operator.op ?? '#';
     throw new CommandFailed(usageError(`${PROG}: {{#bl}} ${line}: '${text}' is a shell operator\n`));
   }
+  if (parsed.at(-1) !== END_TEXT) {
+    throw new CommandFailed(usageError(`${PROG}: {{#bl}} ${line}: unfinished quote or trailing backslash\n`));
+  }
+  const words = parsed.slice(0, -1);
   const command = /** @type {string} */ (words[0]);
   if (chain.includes(command)) {
     const cycle = [...chain, command].join(' → ');
