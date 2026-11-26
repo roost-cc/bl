@@ -25,6 +25,8 @@
   "dependencies": {
     "@marcbachmann/cel-js": "8.0.0",
     "ajv": "8.20.0",
+    "argparse": "2.0.1",
+    "fastest-levenshtein": "1.0.16",
     "fs-ext": "2.1.1",
     "json-merge-patch": "1.0.2",
     "mdast-util-from-markdown": "2.1.0",
