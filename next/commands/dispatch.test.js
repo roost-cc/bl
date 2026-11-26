@@ -13,7 +13,7 @@ import { loadConfiguration } from '../config/load.js';
 import { withEnv } from '../test/helpers/env.js';
 import { ESCAPE, recorder } from '../test/helpers/streams.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
-import { CommandFailed, dispatch, runInProcess, startFaults } from './dispatch.js';
+import { blIn, CommandFailed, dispatch, runInProcess, startFaults } from './dispatch.js';
 import { writeOutput } from './output.js';
 
 /** The fixture op: it gives back its arguments and its context. */
@@ -404,6 +404,61 @@ test('dispatch_rejects_invalid_pattern_before_op_run: an invalid search pattern 
   assert.equal((await dispatch(['rows', '--flag', 'S-?'], context)).name, 'rows');
   assert.equal((await dispatch(['rows', '--flag', ''], context)).name, 'rows');
   assert.equal(runs, 2);
+});
+
+test('template_bl_rejects_recursive_commands: a {{#bl}} line that runs a command of its own chain fails before its op runs', async () => {
+  let runs = 0;
+  const counted = { ...rows, run: (args) => (runs++, rows.run(args)) };
+  const ops = Object.freeze({ ...BL_OPS, rows: counted });
+  const commands = ['self', 'each', 'ping', 'pong', 'part'].map((n) => `${n}:\n  op: rows\n  help: ${n}\n`).join('');
+  const views = `
+self:
+  records_template: '{{#bl}}self --flag x{{/bl}}'
+each:
+  template: '{{#bl}}each{{/bl}}'
+ping:
+  records_template: '{{#bl}}pong{{/bl}}'
+pong:
+  records_template: '{{#bl}}ping{{/bl}}'
+part:
+  records_template: '{{> loop}}'
+`;
+  const at = fixture(`${BL_COMMANDS}${commands}`, { views: `${BL_VIEWS}${views}` });
+  const partial = (name) => (name === 'loop' ? '{{#bl}}part{{/bl}}' : undefined);
+  const context = { ...at, config: { ...at.config, partial }, ops };
+  for (const [line, failing, cycle, expectedRuns] of [
+    ['self', 'self --flag x', 'self → self', 1],
+    ['each', 'each', 'each → each', 1],
+    ['ping', 'ping', 'ping → pong → ping', 2],
+    ['part', 'part', 'part → part', 1],
+  ]) {
+    runs = 0;
+    await assert.rejects(runInProcess(line, context), (error) => {
+      assert.ok(error instanceof CommandFailed, line);
+      assert.equal(
+        error.exit.stderr,
+        `bl-next: {{#bl}} ${failing}: '${failing.split(' ')[0]}' runs itself: ${cycle}\n`,
+      );
+      return true;
+    });
+    assert.equal(runs, expectedRuns, line);
+  }
+  // From the outer command (main passes its name), the first inner run is already refused.
+  runs = 0;
+  const outcome = await dispatch(['self'], context);
+  await assert.rejects(
+    writeOutput({
+      command: 'self',
+      ...outcome,
+      config: context.config,
+      stdout: recorder().stream,
+      bl: blIn(context, ['self']),
+    }),
+    (error) => error instanceof CommandFailed && /'self' runs itself: self → self/.test(error.message),
+  );
+  assert.equal(runs, 1);
+  // A line that runs another command, as each record of `rows` does, still runs.
+  assert.match(await runInProcess('page --flag x', context), /\| S-1 \| from S-1S-2 \|/);
 });
 
 test('an inner command that fails gives CommandFailed with its exit', async () => {

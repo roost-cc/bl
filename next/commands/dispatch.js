@@ -250,13 +250,16 @@ export class CommandFailed extends Error {
  * Run the command line of a `{{#bl}}` lambda in this process, and give its
  * Markdown form (D7, D-442). `shell-quote` splits the line as a shell does; a
  * shell operator such as `|` or `>` outside quotes is an error. The parse and
- * the op are those of `dispatch`; `--help` gives the help text.
+ * the op are those of `dispatch`; `--help` gives the help text. A command
+ * that is in `chain`, the commands whose views run this line, is an error
+ * before its op runs, so a view cannot run itself.
  * @param {string} line
  * @param {{ config: Configuration, backlogDir: string, ops: Readonly<Record<string, Op>> }} context
+ * @param {string[]} [chain]  the commands whose views run this line, outermost first
  * @returns {Promise<string>}
- * @throws {CommandFailed} when the line has an operator or the command ends with an error
+ * @throws {CommandFailed} when the line has an operator, runs a command of `chain`, or the command ends with an error
  */
-export async function runInProcess(line, context) {
+export async function runInProcess(line, context, chain = []) {
   // A `$name` stays as it is: the line is not a shell's, and has no variables.
   const words = parse(line, (name) => `$${name}`);
   const operator = words.find((word) => typeof word !== 'string');
@@ -264,19 +267,28 @@ export async function runInProcess(line, context) {
     const text = operator.pattern ?? operator.op ?? '#';
     throw new CommandFailed(usageError(`${PROG}: {{#bl}} ${line}: '${text}' is a shell operator\n`));
   }
+  const command = /** @type {string} */ (words[0]);
+  if (chain.includes(command)) {
+    const cycle = [...chain, command].join(' → ');
+    throw new CommandFailed(usageError(`${PROG}: {{#bl}} ${line}: '${command}' runs itself: ${cycle}\n`));
+  }
   const outcome = await dispatch(/** @type {string[]} */ (words), context);
   if ('status' in outcome) {
     if (outcome.status === 0) return outcome.stdout;
     throw new CommandFailed(outcome);
   }
   const { name, op, args, result } = outcome;
-  return markdownForm({ command: name, op, args, result, config: context.config, bl: blIn(context) });
+  return markdownForm({ command: name, op, args, result, config: context.config, bl: blIn(context, [...chain, name]) });
 }
 
 /**
  * The `bl` of a template view: it runs each `{{#bl}}` line through
  * `runInProcess` with `context`.
  * @param {{ config: Configuration, backlogDir: string, ops: Readonly<Record<string, Op>> }} context
+ * @param {string[]} [chain]  the commands whose views run the lines, outermost first
  * @returns {(line: string) => Promise<string>}
  */
-export const blIn = (context) => async (line) => runInProcess(line, context);
+export const blIn =
+  (context, chain = []) =>
+  async (line) =>
+    runInProcess(line, context, chain);
