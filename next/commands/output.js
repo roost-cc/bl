@@ -43,12 +43,14 @@ const jsonLine = (record) => `${JSON.stringify(record)}\n`;
 
 /**
  * The search pattern of a run as a global RegExp, when the op names a
- * `pattern` argument and the run gave it a value (D-469).
+ * `pattern` argument and the run gave it a value (D-469). `dispatch` calls it
+ * before the op runs, so an invalid pattern is a usage error.
  * @param {Op} op
  * @param {Record<string, unknown>} args
  * @returns {RegExp|undefined}
+ * @throws {SyntaxError} when the value is not a valid pattern
  */
-function matchOf(op, args) {
+export function matchOf(op, args) {
   const value = op.pattern === undefined ? undefined : args[op.pattern];
   return typeof value === 'string' && value !== '' ? new RegExp(value, 'g') : undefined;
 }

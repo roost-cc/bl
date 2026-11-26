@@ -16,7 +16,7 @@ import { parse } from 'shell-quote';
 import { attribute, compileCel } from '../config/check.js';
 import { pointerToken } from '../config/files.js';
 import { addArgs } from './args.js';
-import { markdownForm } from './output.js';
+import { markdownForm, matchOf } from './output.js';
 import { colorScheme, refusedFormats } from './style.js';
 import { suggest } from './suggest.js';
 import { viewEnvironment } from './view-cel.js';
@@ -188,7 +188,8 @@ function buildParser(commands, ops) {
 
 /**
  * Parse `argv` and run its command (D3 steps 2 to 6). A line's `args` go
- * before the caller's arguments, as a git alias does.
+ * before the caller's arguments, as a git alias does. A search pattern that
+ * is not a valid RegExp (`matchOf`) is a usage error, before the op runs.
  * @param {string[]} argv  the arguments after the program name
  * @param {{ config: Configuration, backlogDir: string, ops: Readonly<Record<string, Op>> }} options
  *   `config` has passed `startFaults` with `ops`
@@ -227,6 +228,12 @@ export async function dispatch(argv, { config, backlogDir, ops }) {
   if (line.entry !== undefined) return usageError(`${PROG}: ${name}: entries are not supported yet\n`);
   const op = ops[line.op];
   const args = { ...parsed };
+  try {
+    matchOf(op, args);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return usageError(`${PROG} ${name}: error: ${error.message}\n`);
+  }
   return { name, op, args, result: await op.run(args, { config, backlogDir }) };
 }
 

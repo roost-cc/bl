@@ -375,6 +375,37 @@ test('runInProcess refuses a shell operator outside quotes, and takes one inside
   assert.match(await inProcess("rows --flag 'x | y > z'"), /\| S-1 \| x \\\| y > z \|/);
 });
 
+test('dispatch_rejects_invalid_pattern_before_op_run: an invalid search pattern exits 2 and runs no op', async () => {
+  let runs = 0;
+  const counted = { ...rows, pattern: 'flag', run: (args) => (runs++, rows.run(args)) };
+  const ops = Object.freeze({ ...BL_OPS, rows: counted });
+  const stderr = 'bl-next NAME: error: Invalid regular expression: /[/g: Unterminated character class\n';
+  for (const [label, views, command, extra] of [
+    ['columns view', BL_VIEWS, 'rows', []],
+    ['--json', BL_VIEWS, 'rows', ['--json']],
+    ['no view', undefined, 'rows', []],
+    ['template view', BL_VIEWS, 'page', []],
+  ]) {
+    const context = { ...fixture(BL_COMMANDS, { views }), ops };
+    assert.deepEqual(
+      await dispatch([command, '--flag', '[', ...extra], context),
+      { status: 2, stdout: '', stderr: stderr.replace('NAME', command) },
+      label,
+    );
+    await assert.rejects(runInProcess(`${command} --flag '[' ${extra.join(' ')}`, context), (error) => {
+      assert.ok(error instanceof CommandFailed, label);
+      assert.equal(error.exit.stderr, stderr.replace('NAME', command), label);
+      return true;
+    });
+  }
+  assert.equal(runs, 0);
+  // A valid pattern and an empty one run the op.
+  const context = { ...fixture(BL_COMMANDS, { views: BL_VIEWS }), ops };
+  assert.equal((await dispatch(['rows', '--flag', 'S-?'], context)).name, 'rows');
+  assert.equal((await dispatch(['rows', '--flag', ''], context)).name, 'rows');
+  assert.equal(runs, 2);
+});
+
 test('an inner command that fails gives CommandFailed with its exit', async () => {
   await assert.rejects(inProcess('rosw'), (error) => {
     assert.ok(error instanceof CommandFailed);
