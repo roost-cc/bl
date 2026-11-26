@@ -160,8 +160,36 @@ function withTrials(schema) {
   return out;
 }
 
+/** An ISO 8601 timestamp in UTC, in whole or fractional seconds. */
+const UTC_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/;
+
 /**
- * The shape checker of one load: one ajv instance, with the `cel` keyword.
+ * Whether `text` is an ISO 8601 timestamp in UTC that names a real moment,
+ * for example `2026-11-14T13:08:57Z` or `2026-11-14T13:08:57.120Z`: the date
+ * exists (no `2026-02-30`) and the clock is in range (no `24:00:00`, no leap
+ * second). The schemas name it as `"format": "utc-timestamp"`.
+ * @param {string} text
+ */
+export function isUtcTimestamp(text) {
+  const match = UTC_TIMESTAMP.exec(text);
+  if (match === null) return false;
+  const [year, month, day, hour, minute, second] = match.slice(1).map(Number);
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, second);
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day &&
+    date.getUTCHours() === hour &&
+    date.getUTCMinutes() === minute &&
+    date.getUTCSeconds() === second
+  );
+}
+
+/**
+ * The shape checker of one load: one ajv instance, with the `cel` keyword
+ * and the `utc-timestamp` format (`isUtcTimestamp`).
  * @returns {{ compile: (schema: Record<string, unknown>) =>
  *   (result: unknown, layers: Layer[]) => { faults: Fault[], cel: CelString[] } }}
  */
@@ -171,6 +199,7 @@ export function shapeChecker() {
   /** How many `propertyNames` subschemas run now: above 0, the data is a key. */
   const keys = { depth: 0 };
   const ajv = new Ajv2020({ strict: true, allErrors: true, useDefaults: false });
+  ajv.addFormat('utc-timestamp', { type: 'string', validate: isUtcTimestamp });
   ajv.addKeyword({
     keyword: 'cel',
     schemaType: 'string',

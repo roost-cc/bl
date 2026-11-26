@@ -9,8 +9,8 @@
   "properties": {
     "at": {
       "type": "string",
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
-      "description": "When the step execution ended: an ISO 8601 timestamp in UTC."
+      "format": "utc-timestamp",
+      "description": "When the step execution ended: an ISO 8601 timestamp in UTC. `config/check.js` defines the format."
     },
     "step": { "type": "string", "minLength": 1, "description": "The box path of the step." },
     "agent": { "type": "string", "minLength": 1, "description": "The agent that ran it, for example `headless`." },

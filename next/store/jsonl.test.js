@@ -82,11 +82,50 @@ test('log-entry.schema.json rejects an unknown event, a missing required field, 
     assert.deepEqual(rules(checkLogEntry(entry)), [`required /${field}`], `${event} without ${field}`);
   }
   assert.ok(rules(checkLogEntry({ ...EVENTS.created, box: 'x' })).includes('additionalProperties /box'));
-  assert.ok(rules(checkLogEntry({ ...EVENTS.created, at: '2026-11-14 13:08' })).includes('pattern /at'));
+  assert.ok(rules(checkLogEntry({ ...EVENTS.created, at: '2026-11-14 13:08' })).includes('format /at'));
   assert.ok(rules(checkLogEntry({ ...EVENTS.flow_end, ended: 'done' })).includes('pattern /ended'));
   const { entry: _entry, ...neither } = EVENTS.flow_start;
   assert.ok(rules(checkLogEntry(neither)).includes('oneOf '));
   assert.ok(rules(checkLogEntry({ ...EVENTS.flow_start, resume: true })).includes('oneOf '));
+});
+
+/** Timestamps that are not a real moment in UTC, or not in the ISO 8601 UTC form. */
+const BAD_AT = [
+  '2026-99-99T99:99:99Z',
+  '2026-13-01T00:00:00Z',
+  '2026-00-10T00:00:00Z',
+  '2026-02-29T00:00:00Z',
+  '2026-04-31T00:00:00Z',
+  '2026-11-00T00:00:00Z',
+  '2026-11-14T24:00:00Z',
+  '2026-11-14T13:60:00Z',
+  '2026-11-14T13:08:60Z',
+  '2026-11-14T13:08:57.Z',
+  '2026-11-14T13:08:57+01:00',
+  '2026-11-14T13:08:57',
+  '2026-11-14',
+  ' 2026-11-14T13:08:57Z',
+];
+/** Timestamps that are: whole and fractional seconds, a leap day, the edges of the clock. */
+const GOOD_AT = [
+  '2026-11-14T13:08:57Z',
+  '2026-11-14T13:08:57.1Z',
+  '2026-11-14T13:08:57.123456789Z',
+  '2028-02-29T00:00:00Z',
+  '2000-02-29T23:59:59Z',
+  '0050-01-01T00:00:00Z',
+];
+
+test('checkLogEntry_rejects_invalid_utc_dates', () => {
+  for (const [event, entry] of Object.entries(EVENTS)) {
+    for (const at of BAD_AT) assert.deepEqual(rules(checkLogEntry({ ...entry, at })), ['format /at'], `${event} ${at}`);
+    for (const at of GOOD_AT) assert.deepEqual(checkLogEntry({ ...entry, at }), [], `${event} ${at}`);
+  }
+});
+
+test('checkUsageEntry_rejects_invalid_utc_dates', () => {
+  for (const at of BAD_AT) assert.deepEqual(rules(checkUsageEntry({ ...USAGE, at })), ['format /at'], at);
+  for (const at of GOOD_AT) assert.deepEqual(checkUsageEntry({ ...USAGE, at }), [], at);
 });
 
 test("usage-entry.schema.json accepts the example's entry and rejects a negative token count or a missing field", () => {

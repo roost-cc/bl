@@ -33,8 +33,8 @@
   "$defs": {
     "At": {
       "type": "string",
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
-      "description": "When the event happened: an ISO 8601 timestamp in UTC, for example `2026-11-14T13:08:57Z`."
+      "format": "utc-timestamp",
+      "description": "When the event happened: an ISO 8601 timestamp in UTC, for example `2026-11-14T13:08:57Z`. `config/check.js` defines the format."
     },
     "By": {
       "type": "string",
