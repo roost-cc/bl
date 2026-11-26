@@ -5,7 +5,8 @@
  * --trailer … -- <paths>`, under the main sync lock (`lib/main-sync.js`
  * `withMainSyncLock`), as today's `commitPaths` does (F-126 D1). The pathspec
  * makes the commit take only those paths: what the operator staged for
- * another path stays staged and out of the commit. The commit does not push:
+ * another path stays staged and out of the commit. Paths that hold what
+ * `HEAD` holds make no commit. The commit does not push:
  * pulling and pushing the backlog is the `sync` operation's (F-138).
  *
  * A backlog that is not a git repo of its own is an error; today's no-repo
@@ -39,7 +40,9 @@ export async function commitPaths(root, paths, message, trailers) {
 }
 
 /**
- * The add and the commit, under the main sync lock. Returns nothing.
+ * The add and the commit, under the main sync lock. Returns nothing. When
+ * the added paths hold what `HEAD` holds (a write that undid an uncommitted
+ * edit), there is nothing to commit, and it makes no commit.
  *
  * @param {string} root
  * @param {readonly string[]} paths
@@ -49,6 +52,7 @@ export async function commitPaths(root, paths, message, trailers) {
 function commitLocked(root, paths, message, trailers) {
   const index = gitOut(root, ['ls-files', '-s', '-z', '--', ...paths]);
   const add = git(root, ['add', '--', ...paths]);
+  if (add.status === 0 && git(root, ['diff', '--cached', '--quiet', '--', ...paths]).status === 0) return;
   const commit =
     add.status === 0
       ? git(root, ['commit', '-q', '-m', message, ...trailers.flatMap((t) => ['--trailer', t]), '--', ...paths])

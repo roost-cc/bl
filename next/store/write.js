@@ -341,7 +341,9 @@ function putBack(ctx, written, made) {
  * If a write or the commit fails, each written file is put back as it was,
  * each directory that the write made is removed, and the error is thrown.
  * A staged file whose text equals the file's is not
- * written. When nothing changed, nothing is written or committed. An error
+ * written. When nothing changed, nothing is written or committed. When the
+ * written files hold what `HEAD` holds (the write undid uncommitted edits),
+ * the files are written and nothing is committed. An error
  * that `fn` throws ends the write before anything is written.
  *
  * @template T

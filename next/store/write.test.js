@@ -111,6 +111,16 @@ test('a file with uncommitted edits is committed as the write leaves it, edits i
   assert.deepEqual(status(ctx), []);
 });
 
+test('a write that undoes an uncommitted edit leaves the file as HEAD holds it, with no commit', async () => {
+  const ctx = backlog();
+  writeFileSync(join(ctx.backlogDir, S1), doc('One').replace('- [ ] a', '- [x] a'));
+  const before = head(ctx);
+  await storeWrite(ctx, { message: 'm' }, (w) => w.uncheck('S-1', 'Acceptance Criteria', 1));
+  assert.equal(read(ctx, S1), doc('One'));
+  assert.equal(head(ctx), before);
+  assert.deepEqual(status(ctx), []);
+});
+
 test('a write that fails the document check throws a StoreCheckError, writes no file and makes no commit', async () => {
   const broken = doc('One').replace('## Notes', '## Extra\n\nx\n\n## Notes');
   const ctx = backlog({ [S1]: broken });

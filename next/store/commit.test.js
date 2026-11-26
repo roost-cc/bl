@@ -52,6 +52,17 @@ test('a path the operator staged stays staged and out of the commit', async () =
   assert.deepEqual(status(root), ['M  b.md']);
 });
 
+test('paths that hold what HEAD holds make no commit and no error', async () => {
+  const root = backlog();
+  writeFileSync(join(root, 'a.md'), 'a2\n');
+  git(root, 'add', 'a.md');
+  writeFileSync(join(root, 'a.md'), 'a\n');
+  const head = git(root, 'rev-parse', 'HEAD');
+  await commitPaths(root, ['a.md'], 'm', []);
+  assert.equal(git(root, 'rev-parse', 'HEAD'), head);
+  assert.deepEqual(status(root), []);
+});
+
 test('a failed commit throws and puts the index entries of its paths back', async () => {
   const root = backlog();
   const hook = join(root, '.git', 'hooks', 'pre-commit');
