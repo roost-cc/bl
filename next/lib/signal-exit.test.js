@@ -1,0 +1,147 @@
+/**
+ * F-96: `raiseSignal` raises only an interrupt (`INTERRUPT_SIGNALS`), to the
+ * listeners when there are any, and as Node's default action when there are
+ * none. `isInterrupt` is the one test of which signals interrupt `bl`.
+ *
+ * Carried from `test/unit/signal-exit.test.js` (F-135 D4).
+ */
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { spawnSyncFiles } from './child-stdio.js';
+import { EXIT_CODES, INTERRUPT_SIGNALS, interruptOf, isInterrupt, raiseSignal } from './signal-exit.js';
+
+const SIGNAL_EXIT = fileURLToPath(new URL('./signal-exit.js', import.meta.url));
+
+/** Run the module code `lines` in a Node child; its result, utf8. */
+function runNode(lines) {
+  return spawnSyncFiles(process.execPath, ['--input-type=module', '-e', lines.join('\n')], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+test('isInterrupt is true for SIGINT and SIGTERM only', () => {
+  assert.deepEqual(INTERRUPT_SIGNALS, ['SIGINT', 'SIGTERM']);
+  const cases = [
+    ['SIGINT', true],
+    ['SIGTERM', true],
+    ['SIGHUP', false],
+    ['SIGABRT', false],
+    ['SIGKILL', false],
+    ['SIGSEGV', false],
+    [null, false],
+    [undefined, false],
+  ];
+  for (const [signal, want] of cases) assert.equal(isInterrupt(signal), want, String(signal));
+});
+
+test('interruptOf is the interrupt that ended a child, never a kill by Node (r.error set)', () => {
+  const enobufs = Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' });
+  const timedOut = Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' });
+  const cases = [
+    [{ signal: 'SIGINT', status: null }, 'SIGINT'],
+    [{ signal: 'SIGTERM', status: null }, 'SIGTERM'],
+    [{ signal: 'SIGTERM', status: null, error: enobufs }, null],
+    [{ signal: 'SIGTERM', status: null, error: timedOut }, null],
+    [{ signal: 'SIGINT', status: null, error: enobufs }, null],
+    [{ signal: 'SIGKILL', status: null }, null],
+    [{ signal: null, status: 1 }, null],
+    [{ signal: null, status: 0 }, null],
+  ];
+  for (const [r, want] of cases) assert.equal(interruptOf(r), want, JSON.stringify(r));
+});
+
+test('raiseSignal raises nothing for a signal that is not an interrupt', () => {
+  for (const signal of ['SIGABRT', 'SIGKILL', 'SIGHUP', null, undefined]) {
+    assert.equal(raiseSignal(signal), false, String(signal));
+  }
+});
+
+test('the interrupt exit codes have one definition, EXIT_CODES, in signal-exit.js', () => {
+  assert.deepEqual(EXIT_CODES, { SIGINT: 130, SIGTERM: 143 });
+  // Code only: the comments may name 130 and 143.
+  const code = (file) =>
+    readFileSync(fileURLToPath(new URL(`./${file}`, import.meta.url)), 'utf8').replace(
+      /\/\*[\s\S]*?\*\/|\/\/.*$/gm,
+      '',
+    );
+  assert.doesNotMatch(code('child.js'), /\b130\b|\b143\b|128 \+/);
+  assert.doesNotMatch(code('signal-exit.js'), /\b130\b|\b143\b/);
+  assert.equal(code('signal-exit.js').match(/128 \+/g).length, 1);
+});
+
+for (const signal of INTERRUPT_SIGNALS) {
+  test(`exitOnSignal exits with EXIT_CODES.${signal} on ${signal}`, () => {
+    const r = runNode([
+      `import { exitOnSignal } from ${JSON.stringify(SIGNAL_EXIT)};`,
+      'exitOnSignal();',
+      `process.kill(process.pid, '${signal}');`,
+      `setTimeout(() => { process.stdout.write('alive'); process.exit(0); }, 2000);`,
+    ]);
+    assert.equal(r.status, EXIT_CODES[signal], `signal ${r.signal}, stdout ${r.stdout}: ${r.stderr}`);
+  });
+
+  // F-128 D8: `bl run` takes the first interrupt as a stop.
+  test(`takeInterrupts: a first ${signal} calls the handler and the process goes on; a second exits`, () => {
+    const r = runNode([
+      `import { takeInterrupts } from ${JSON.stringify(SIGNAL_EXIT)};`,
+      `takeInterrupts((s) => process.stdout.write('handled ' + s + '\\n'));`,
+      `process.kill(process.pid, '${signal}');`,
+      `setTimeout(() => { process.stdout.write('went on\\n'); process.kill(process.pid, '${signal}'); }, 200);`,
+      `setTimeout(() => { process.stdout.write('alive'); process.exit(0); }, 2000);`,
+    ]);
+    assert.equal(r.status, EXIT_CODES[signal], `signal ${r.signal}: ${r.stderr}`);
+    assert.equal(r.stdout, `handled ${signal}\nwent on\n`);
+  });
+
+  test(`takeInterrupts: after the release, a ${signal} exits`, () => {
+    const r = runNode([
+      `import { takeInterrupts } from ${JSON.stringify(SIGNAL_EXIT)};`,
+      `const release = takeInterrupts(() => process.stdout.write('handled'));`,
+      'release();',
+      `process.kill(process.pid, '${signal}');`,
+      `setTimeout(() => { process.stdout.write('alive'); process.exit(0); }, 2000);`,
+    ]);
+    assert.equal(r.status, EXIT_CODES[signal], `signal ${r.signal}: ${r.stderr}`);
+    assert.equal(r.stdout, '');
+  });
+
+  test(`raiseSignal runs the ${signal} listeners when there are some`, () => {
+    const seen = [];
+    const listener = (s) => seen.push(s);
+    process.on(signal, listener);
+    try {
+      assert.equal(raiseSignal(signal), true);
+    } finally {
+      process.off(signal, listener);
+    }
+    assert.deepEqual(seen, [signal]);
+  });
+
+  test(`raiseSignal takes the default action for ${signal} when there is no listener`, () => {
+    // The child would print `alive` and exit 0 if the signal did not end it.
+    const r = runNode([
+      `import { raiseSignal } from ${JSON.stringify(SIGNAL_EXIT)};`,
+      `raiseSignal('${signal}');`,
+      `setTimeout(() => { process.stdout.write('alive'); process.exit(0); }, 2000);`,
+    ]);
+    assert.equal(r.signal, signal, `status ${r.status}, stdout ${r.stdout}: ${r.stderr}`);
+  });
+}
+
+// S-1182: `bl view` ignores SIGINT, SIGQUIT and SIGTERM while its editor runs.
+test('ignoreSignals: SIGINT, SIGQUIT and SIGTERM are ignored until the release; then SIGINT exits 130', () => {
+  const r = runNode([
+    `import { exitOnSignal, ignoreSignals } from ${JSON.stringify(SIGNAL_EXIT)};`,
+    'exitOnSignal();',
+    `const release = ignoreSignals(['SIGINT', 'SIGQUIT', 'SIGTERM']);`,
+    `for (const s of ['SIGINT', 'SIGQUIT', 'SIGTERM']) process.kill(process.pid, s);`,
+    `setTimeout(() => { process.stdout.write('went on\\n'); release(); process.kill(process.pid, 'SIGINT'); }, 200);`,
+    `setTimeout(() => { process.stdout.write('alive'); process.exit(0); }, 2000);`,
+  ]);
+  assert.equal(r.status, EXIT_CODES.SIGINT, `signal ${r.signal}: ${r.stderr}`);
+  assert.equal(r.stdout, 'went on\n');
+});
