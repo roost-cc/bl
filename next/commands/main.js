@@ -17,13 +17,13 @@ import { ConfigurationFaults } from '../config/check.js';
 import { findBacklogRoot, operatorDir } from '../config/files.js';
 import { KINDS } from '../config/kinds.js';
 import { loadConfiguration } from '../config/load.js';
-import { blIn, CommandFailed, dispatch, startFaults } from './dispatch.js';
+import { blIn, CommandFailed, dispatch, PROG, startFaults } from './dispatch.js';
 import { OPS } from './ops/index.js';
 import { writeOutput } from './output.js';
 import { captureTmuxWindowId, updateTabTitle } from './tab-title.js';
 
 /** The last line of a configuration fault report (D-423). */
-const DOES_NOT_LOAD = 'bl-next: the configuration does not load; bl-validate checks it';
+const DOES_NOT_LOAD = `${PROG}: the configuration does not load; bl-validate checks it`;
 
 /**
  * The start status of the tab title: `help` when `argv` is empty or holds
@@ -58,7 +58,7 @@ export async function main(argv, { ops = OPS } = {}) {
     if (faults.length > 0) throw new ConfigurationFaults(faults, backlogDir);
   } catch (error) {
     process.stderr.write(
-      error instanceof ConfigurationFaults ? `${error.message}\n${DOES_NOT_LOAD}\n` : `bl-next: ${error.message}\n`,
+      error instanceof ConfigurationFaults ? `${error.message}\n${DOES_NOT_LOAD}\n` : `${PROG}: ${error.message}\n`,
     );
     return 1;
   }

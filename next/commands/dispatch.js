@@ -26,7 +26,7 @@ import { viewEnvironment } from './view-cel.js';
 /** @typedef {import('./ops/index.js').Op} Op */
 
 /** The program name in every message and in the help. */
-const PROG = 'bl-next';
+export const PROG = 'bl-next';
 
 /**
  * @typedef {object} Exit  a command that ends without a run: help, an error, an entry
