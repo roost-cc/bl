@@ -91,6 +91,13 @@ test('checkDocument reports nothing for a document that matches its definition',
 
 test('checkDocument reports a document with no title', () => {
   assert.deepEqual(check('## Summary\n\n## Acceptance Criteria\n'), [{ rule: 'no-title', section: null }]);
+  for (const title of ['#', '# ', '#  #', '# ###']) {
+    assert.deepEqual(
+      check(`${title}\n\n## Summary\n\n## Acceptance Criteria\n`),
+      [{ rule: 'no-title', section: null }],
+      title,
+    );
+  }
 });
 
 test('checkDocument reports a section the type does not define', () => {

@@ -64,13 +64,22 @@ function slugify(title) {
     .replace(/^-+|-+$/g, '');
 }
 
+/** The longest file name, in bytes, that Linux file systems allow (`NAME_MAX`). */
+const NAME_MAX = 255;
+
 /**
  * The directory name of an item: the prefix and the number with no dash, a
  * dash and the slug of the title, `S1567-the-guest-installs-git-filter-repo`.
+ * A name over `NAME_MAX` bytes is an error that names the title.
  *
  * @param {{ prefix: string, number: number }} id
  * @param {string} title
  */
 export function dirName({ prefix, number }, title) {
-  return `${prefix}${number}-${slugify(title)}`;
+  const name = `${prefix}${number}-${slugify(title)}`;
+  const bytes = Buffer.byteLength(name);
+  if (bytes > NAME_MAX) {
+    throw new Error(`the title "${title}" makes a directory name of ${bytes} bytes, over ${NAME_MAX}`);
+  }
+  return name;
 }

@@ -423,6 +423,44 @@ test('a w.create that fails a check, such as a missing required attribute, chang
   assert.deepEqual(status(ctx), []);
 });
 
+test('create_refuses_empty_multiline_and_overlong_titles', async () => {
+  const noTitle = (error) => {
+    assert.deepEqual(findingsOf(error), [['S-3', 'index.md', undefined, 'no-title', undefined]]);
+    return true;
+  };
+  const lineBreak = (title) => ({ message: `a title is one line: ${JSON.stringify(title)} holds a line break` });
+  const TITLES = [
+    ['', noTitle],
+    ['   ', noTitle],
+    ['\t', noTitle],
+    ['#', noTitle],
+    ['a\n## Summary\n\nINJECTED', lineBreak('a\n## Summary\n\nINJECTED')],
+    ['a\n- [x] boxed', lineBreak('a\n- [x] boxed')],
+    ['a\r\nb', lineBreak('a\r\nb')],
+    ['a\rb', lineBreak('a\rb')],
+    ['\n', lineBreak('\n')],
+    ['a'.repeat(253), { message: /^the title "a{253}" makes a directory name of 256 bytes, over 255$/ }],
+  ];
+  const ctx = backlog();
+  const before = head(ctx);
+  for (const [title, refused] of TITLES) {
+    await assert.rejects(
+      storeWrite(ctx, { message: 'm' }, (w) =>
+        w.create('story', title, { state: DRAFT, attributes: { category: 'bug' }, by: 'operator' }),
+      ),
+      refused,
+      JSON.stringify(title),
+    );
+    assert.equal(head(ctx), before, JSON.stringify(title));
+    assert.deepEqual(status(ctx), [], JSON.stringify(title));
+  }
+  const longest = 'a'.repeat(252);
+  await storeWrite(ctx, { message: 'm' }, (w) =>
+    w.create('story', longest, { state: DRAFT, attributes: { category: 'bug' }, by: 'operator' }),
+  );
+  assert.equal(read(ctx, `stories/S3-${longest}/index.md`).split('\n')[0], `# ${longest}`);
+});
+
 test('w.log and w.state that agree by the status and log rule commit both files', async () => {
   const ctx = backlog({
     'stories/S1-one/state.json': `${JSON.stringify(DRAFT)}\n`,

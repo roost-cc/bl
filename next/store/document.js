@@ -113,7 +113,8 @@ export function parseDocument(text) {
 
 /**
  * Check a parsed document against its type's definition (D-764). The
- * findings are, in this order: `no-title` (section null); `unknown-section`
+ * findings are, in this order: `no-title` (section null) when there is no
+ * level-1 heading or its text is empty or blank; `unknown-section`
  * for each section the type does not define; `duplicate-section` for each
  * repeat of a defined section; `section-order` for each defined section that
  * comes after a section defined later than it; `missing-section` for each
@@ -127,7 +128,7 @@ export function parseDocument(text) {
 export function checkDocument(parsed, definition) {
   /** @type {DocumentFinding[]} */
   const findings = [];
-  if (parsed.title === null) findings.push({ rule: 'no-title', section: null });
+  if ((parsed.title ?? '').trim() === '') findings.push({ rule: 'no-title', section: null });
   const defined = definition.sections ?? [];
   const order = new Map(defined.map((s, i) => [s.name, i]));
   const seen = new Set();

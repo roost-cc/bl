@@ -143,12 +143,15 @@ function writer(ctx, staged, created) {
   /**
    * Make a new item of `type` (D6): the next number of the type, after any
    * that this write already created, and the first prefix that `id_prefixes`
-   * gives the type.
+   * gives the type. A title with a line break is an error: the document would
+   * hold the rest of it as Markdown of its own. An empty title is a `no-title`
+   * finding, and one too long for a directory name is an error (`dirName`).
    * @param {string} type
    * @param {string} title
    * @param {CreateOptions} options
    */
   const create = (type, title, { state, attributes = {}, by, items }) => {
+    if (/[\r\n]/.test(title)) throw new Error(`a title is one line: ${JSON.stringify(title)} holds a line break`);
     const definition = itemDefinition(ctx, type);
     const prefix = Object.entries(idPrefixes(ctx)).find(([, t]) => t === type)?.[0];
     if (prefix === undefined) throw new Error(`no prefix in id_prefixes for type ${type}`);
