@@ -98,9 +98,10 @@ test('rule 1: a layer may import its own files and the layers its row names', ()
     'next/lib/a.js': 'export const a = 1;\n',
     'next/lib/b.js': "import { a } from './a.js';\n",
     'next/config/c.js': "import { a } from '../lib/a.js';\n",
-    'next/commands/d.js': "import { c } from '../config/c.js';\nimport { a } from '../lib/a.js';\n",
+    'next/commands/e.js': "import { c } from '../config/c.js';\nimport { a } from '../lib/a.js';\n",
+    'next/bin/d.js': "import { e } from '../commands/e.js';\nimport { a } from '../lib/a.js';\n",
   });
-  assert.deepEqual(layerViolations(root), [{ file: 'next/commands/d.js', line: 2, specifier: '../lib/a.js', rule: 1 }]);
+  assert.deepEqual(layerViolations(root), [{ file: 'next/bin/d.js', line: 2, specifier: '../lib/a.js', rule: 1 }]);
 });
 
 test('rule 2: a next/ file that imports ../src/…', () => {

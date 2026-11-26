@@ -6,22 +6,26 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
+import { chmodSync, mkdirSync, writeFileSync } from 'fs';
+import { delimiter, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { fakeTmux, renamedTitles } from '../test/helpers/fake-tmux.js';
 import { spawnToFiles } from '../test/helpers/spawn-files.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
+import { TMUX_TIMEOUT_MS } from './tab-title.js';
 
 const BL_NEXT = fileURLToPath(new URL('../bin/bl-next', import.meta.url));
 
 /**
  * Run `bl-next` in a fresh home with `files` written under it; the backlog is
- * `<home>/backlog`, the operator's directory `<home>/.config/bl`.
+ * `<home>/backlog`, the operator's directory `<home>/.config/bl`. It runs
+ * outside tmux unless `env` sets `TMUX`, so it never renames a real window.
  * @param {Record<string, string>} files  path under the home → text
- * @param {{ backlog?: boolean, argv?: string[] }} [opts]  `backlog: false` leaves
- *   BL_BACKLOG_DIR unset; `argv` are the arguments
+ * @param {{ backlog?: boolean, argv?: string[], env?: Record<string, string|undefined> }} [opts]
+ *   `backlog: false` leaves BL_BACKLOG_DIR unset; `argv` are the arguments;
+ *   `env` adds to or (undefined) removes from the environment
  */
-async function runBlNext(files, { backlog = true, argv = [] } = {}) {
+async function runBlNext(files, { backlog = true, argv = [], env: extra = {} } = {}) {
   const home = mkTempDir('bl-main-');
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(dirname(join(home, path)), { recursive: true });
@@ -33,10 +37,32 @@ async function runBlNext(files, { backlog = true, argv = [] } = {}) {
     XDG_CONFIG_HOME: join(home, '.config'),
     // The walk for a backlog looks no higher than the home.
     BL_CEILING_DIRECTORIES: dirname(home),
+    TMUX: undefined,
+    BL_TMUX_WINDOW_ID: undefined,
+    BL_TAB_TITLE: undefined,
+    ...extra,
   };
   if (backlog) env.BL_BACKLOG_DIR = join(home, 'backlog');
   else delete env.BL_BACKLOG_DIR;
+  for (const [k, v] of Object.entries(env)) if (v === undefined) delete env[k];
   return spawnToFiles(BL_NEXT, argv, { cwd: home, env }).closed;
+}
+
+/**
+ * Run `bl-next` as `runBlNext` does, under a fake tmux with window `@7`;
+ * resolve with its exit status and the titles it set.
+ * @param {Record<string, string>} files
+ * @param {{ backlog?: boolean, argv?: string[], env?: Record<string, string|undefined> }} [opts]
+ */
+async function runUnderFakeTmux(files, { env = {}, ...opts } = {}) {
+  const fake = fakeTmux();
+  const tmuxEnv = {
+    PATH: `${fake.dir}${delimiter}${process.env.PATH}`,
+    TMUX: '/tmp/tmux-fake,1,0',
+    BL_TMUX_WINDOW_ID: '@7',
+  };
+  const { status } = await runBlNext(files, { ...opts, env: { ...tmuxEnv, ...env } });
+  return { status, calls: fake.calls(), titles: renamedTitles(fake.calls()) };
 }
 
 const ADDITIONAL = 'additionalProperties: must NOT have additional properties';
@@ -137,4 +163,62 @@ test('bl-next with no backlog to find exits 1 with bl-next: and the error', asyn
   const { status, stderr } = await runBlNext({}, { backlog: false });
   assert.match(stderr, /^bl-next: no backlog found: .*\n$/);
   assert.equal(status, 1);
+});
+
+// ---------------------------------------------------------------------------
+// the tab title (F-138 D9)
+// ---------------------------------------------------------------------------
+
+const VALID = { 'backlog/backlog.yaml': BACKLOG, 'backlog/config/commands.yaml': ENTRIES };
+
+test('bl-next list --help and bl-next --help rename the window to help, then ended', async () => {
+  for (const argv of [['list', '--help'], ['--help'], ['list', '-h']]) {
+    const { status, calls, titles } = await runUnderFakeTmux(VALID, { argv });
+    assert.equal(status, 0, argv.join(' '));
+    assert.ok(
+      calls.every((c) => c.startsWith('rename-window\n-t\n@7\n--\n')),
+      argv.join(' '),
+    );
+    assert.deepEqual(titles, ['help', 'ended'], argv.join(' '));
+  }
+});
+
+test('bl-next <command> renames the window to the command name, also before a load fault', async () => {
+  const { status, titles } = await runUnderFakeTmux(VALID, { argv: ['start'] });
+  assert.equal(status, 2);
+  assert.deepEqual(titles, ['start', 'failed (exit 2)']);
+  const noBacklog = await runUnderFakeTmux({}, { backlog: false, argv: ['list'] });
+  assert.equal(noBacklog.status, 1);
+  assert.deepEqual(noBacklog.titles, ['list', 'failed (exit 1)']);
+});
+
+test('bl-next with no arguments renames the window to help', async () => {
+  const { titles } = await runUnderFakeTmux(VALID);
+  assert.equal(titles[0], 'help');
+});
+
+test("with BL_TAB_TITLE='', bl-next sends no title", async () => {
+  const { status, calls } = await runUnderFakeTmux(VALID, { argv: ['list', '--help'], env: { BL_TAB_TITLE: '' } });
+  assert.equal(status, 0);
+  assert.deepEqual(calls, []);
+});
+
+test('a hung tmux does not hold bl-next back', async () => {
+  // Each tmux call hangs for 20 s. Without BL_TMUX_WINDOW_ID, bl-next calls
+  // tmux three times: display-message, the start title and the exit title.
+  const dir = mkTempDir('bl-tmux-hung-');
+  writeFileSync(join(dir, 'tmux'), '#!/bin/sh\nexec sleep 20\n');
+  chmodSync(join(dir, 'tmux'), 0o755);
+  for (const windowId of ['@7', undefined]) {
+    const env = {
+      PATH: `${dir}${delimiter}${process.env.PATH}`,
+      TMUX: '/tmp/tmux-fake,1,0',
+      BL_TMUX_WINDOW_ID: windowId,
+    };
+    const started = Date.now();
+    const { status } = await runBlNext(VALID, { argv: ['list', '--help'], env });
+    const ms = Date.now() - started;
+    assert.equal(status, 0);
+    assert.ok(ms < 3 * TMUX_TIMEOUT_MS + 5000, `bl-next list --help took ${ms} ms (window id ${windowId})`);
+  }
 });
