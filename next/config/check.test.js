@@ -316,6 +316,19 @@ test('a key that propertyNames checks has its own path: its CEL string and its s
   );
 });
 
+test('a key that unevaluatedProperties rejects has its own path, in the file that wrote the key', () => {
+  const schema = { type: 'object', properties: { a: {} }, unevaluatedProperties: false };
+  const layers = [
+    { file: SHOP, pointer: '', patch: { o: { extra: 1 } } },
+    { file: OPERATOR, pointer: '', patch: { o: { a: 1 } } },
+  ];
+  const { faults } = shapeChecker().compile({ type: 'object', properties: { o: schema } })(applyLayers(layers), layers);
+  assert.deepEqual(
+    faults.map((f) => [f.file, f.path, f.rule]),
+    [[SHOP, '/o/extra', 'unevaluatedProperties']],
+  );
+});
+
 test('a rejected branch leaves no cel string under any subschema keyword, $ref to definitions included', () => {
   const MARKED = { type: 'string', maxLength: 1, cel: 'bool' };
   const PLAIN = { type: 'string' };

@@ -73,12 +73,17 @@ export function attribute(path, layers) {
 
 /**
  * The failing path of an ajv error. An error about a key has the path of the
- * key: for `required` and `additionalProperties` with the property; for
- * `propertyNames` and each error of its subschema, with the key it checks.
+ * key: for `required`, `additionalProperties` and `unevaluatedProperties`
+ * with the property; for `propertyNames` and each error of its subschema,
+ * with the key it checks.
  */
 function errorPath(error) {
   const property =
-    error.params.missingProperty ?? error.params.additionalProperty ?? error.params.propertyName ?? error.propertyName;
+    error.params.missingProperty ??
+    error.params.additionalProperty ??
+    error.params.unevaluatedProperty ??
+    error.params.propertyName ??
+    error.propertyName;
   return property === undefined ? error.instancePath : `${error.instancePath}/${pointerToken(property)}`;
 }
 
