@@ -191,6 +191,60 @@ test('a CEL string inside a list that the operator replaced names the operator f
   ]);
 });
 
+test('the cel keyword counts a string only in a branch that accepts the value', () => {
+  const MARKED = { type: 'string', maxLength: 1, cel: 'bool' };
+  const PLAIN = { type: 'string' };
+  const OBJ = (required) => ({
+    type: 'object',
+    required,
+    properties: { when: { type: 'string', cel: 'bool' }, other: {} },
+  });
+  const rows = [
+    // [the schema of x, the value of x, the paths of the strings that count]
+    [{ anyOf: [MARKED, PLAIN] }, 'title', []],
+    [{ oneOf: [MARKED, PLAIN] }, 'title', []],
+    [{ anyOf: [PLAIN, MARKED] }, 'title', []],
+    [{ anyOf: [{ type: 'string', cel: 'bool' }, PLAIN] }, 'title', ['/x']],
+    [{ oneOf: [{ type: 'string', cel: 'bool' }, { type: 'object' }] }, 'title', ['/x']],
+    // The branch fails above the marked string: a required key is missing.
+    [{ anyOf: [OBJ(['other']), { type: 'object' }] }, { when: 'title' }, []],
+    [{ anyOf: [OBJ([]), { type: 'object' }] }, { when: 'title' }, ['/x/when']],
+    // Nested combinators, and a branch reached by $ref.
+    [{ oneOf: [{ anyOf: [MARKED, { type: 'number' }] }, PLAIN] }, 'title', []],
+    [{ anyOf: [{ $ref: '#/$defs/marked' }, PLAIN] }, 'title', []],
+    [{ anyOf: [{ $ref: '#/$defs/marked' }, PLAIN] }, 't', ['/x']],
+    // if, not and contains: their subschemas are trials too.
+    [{ if: MARKED, then: PLAIN, else: PLAIN }, 'title', []],
+    [{ if: PLAIN, then: { type: 'string', cel: 'bool' } }, 'title', ['/x']],
+    [{ if: { type: 'number' }, then: PLAIN, else: { type: 'string', cel: 'bool' } }, 'title', ['/x']],
+    [{ not: { type: 'string', cel: 'bool', minLength: 9 } }, 'title', []],
+    [{ type: 'array', contains: { type: 'string', maxLength: 1, cel: 'bool' } }, ['title', 't'], ['/x/1']],
+  ];
+  for (const [x, value, paths] of rows) {
+    const schema = { type: 'object', properties: { x }, $defs: { marked: MARKED } };
+    const layers = [{ file: '/b/config/x.yaml', pointer: '', patch: { x: value } }];
+    const { faults, cel } = shapeChecker().compile(schema)(applyLayers(layers), layers);
+    assert.deepEqual(faults, [], JSON.stringify(x));
+    assert.deepEqual(
+      cel.map((c) => c.path),
+      paths,
+      JSON.stringify(x),
+    );
+  }
+  // The reviewer's case: 'title' in a rejected marked branch is no cel fault; in the accepted one it is.
+  const check = (x) => {
+    const layers = [{ file: '/b/config/x.yaml', pointer: '', patch: { x: 'title' } }];
+    const { cel } = shapeChecker().compile({ type: 'object', properties: { x } })(applyLayers(layers), layers);
+    return compileCel(cel, celEnvironment({ predicates: {} }));
+  };
+  for (const combinator of ['anyOf', 'oneOf']) {
+    assert.deepEqual(check({ [combinator]: [MARKED, PLAIN] }), []);
+    assert.deepEqual(check({ [combinator]: [{ type: 'string', cel: 'bool' }, { type: 'object' }] }), [
+      { file: '/b/config/x.yaml', path: '/x', rule: 'cel', message: 'the type is string, not bool' },
+    ]);
+  }
+});
+
 test('a schema whose cel keyword is neither bool nor dyn does not compile', () => {
   assert.throws(() => shapeChecker().compile({ type: 'string', cel: 'int' }), /cel/);
 });

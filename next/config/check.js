@@ -6,14 +6,14 @@
  *     defaults). Its `compile(schema)` gives a check of one layered result,
  *     whose faults name the file and the path of the layer that holds the
  *     failing value, and which records each string that the schema marks with
- *     `cel`.
+ *     `cel`, in a schema branch that accepts the value.
  *   - `compileCel(recorded, env)`: the cross-check after the shape check
  *     (graphs.md, D-622): each recorded string type-checks in the CEL
  *     environment, to the marked type.
  *   - `ConfigurationFaults`: every fault of a load, sorted, one line each.
  */
 
-import Ajv2020 from 'ajv/dist/2020.js';
+import Ajv2020, { _ } from 'ajv/dist/2020.js';
 import { isAbsolute, relative, sep } from 'path';
 import { isMapping } from './files.js';
 import { pointerToken } from './layers.js';
@@ -79,13 +79,68 @@ function errorPath(error) {
 }
 
 /**
+ * The keyword that wraps a trial subschema (below). `compile` adds it; a
+ * shipped schema does not write it.
+ */
+const TRIAL = 'x-bl-trial';
+
+/** The keywords whose value is one subschema, a list of them, or a map of them (JSON Schema 2020-12). */
+const ONE = [
+  'additionalProperties',
+  'items',
+  'contains',
+  'not',
+  'if',
+  'then',
+  'else',
+  'propertyNames',
+  'unevaluatedItems',
+  'unevaluatedProperties',
+];
+const LIST = ['allOf', 'anyOf', 'oneOf', 'prefixItems'];
+const MAP = ['properties', 'patternProperties', 'dependentSchemas', '$defs'];
+
+/**
+ * The keywords whose subschemas are trials: a subschema that fails there does
+ * not fail the schema that holds it (a rejected `anyOf` or `oneOf` branch, an
+ * `if`, a `contains` that an item does not match, the subschema of a `not`).
+ */
+const TRIALS = new Set(['anyOf', 'oneOf', 'if', 'contains', 'not']);
+
+/**
+ * `schema` with each trial subschema, at any depth, wrapped as
+ * `{ "x-bl-trial": <subschema> }`. The wrapper validates as its subschema, and
+ * when that fails, it drops the CEL strings the subschema recorded: a string
+ * counts only in a branch that accepts the value.
+ * @param {unknown} schema
+ * @returns {unknown}
+ */
+function withTrials(schema) {
+  if (!isMapping(schema)) return schema;
+  const out = { ...schema };
+  const sub = (keyword, value) => (TRIALS.has(keyword) ? { [TRIAL]: withTrials(value) } : withTrials(value));
+  for (const keyword of ONE) {
+    if (Object.hasOwn(schema, keyword)) out[keyword] = sub(keyword, schema[keyword]);
+  }
+  for (const keyword of LIST) {
+    if (Array.isArray(schema[keyword])) out[keyword] = schema[keyword].map((s) => sub(keyword, s));
+  }
+  for (const keyword of MAP) {
+    if (isMapping(schema[keyword])) {
+      out[keyword] = Object.fromEntries(Object.entries(schema[keyword]).map(([name, s]) => [name, withTrials(s)]));
+    }
+  }
+  return out;
+}
+
+/**
  * The shape checker of one load: one ajv instance, with the `cel` keyword.
  * @returns {{ compile: (schema: Record<string, unknown>) =>
  *   (result: unknown, layers: Layer[]) => { faults: Fault[], cel: CelString[] } }}
  */
 export function shapeChecker() {
   /** @type {{ path: string, expr: string, type: 'bool'|'dyn' }[]} */
-  let recorded = [];
+  const recorded = [];
   const ajv = new Ajv2020({ strict: true, allErrors: true, useDefaults: false });
   ajv.addKeyword({
     keyword: 'cel',
@@ -96,11 +151,25 @@ export function shapeChecker() {
       return true;
     },
   });
+  ajv.addKeyword({
+    keyword: TRIAL,
+    schemaType: ['object', 'boolean'],
+    // As `allOf` with one subschema; when it fails, `recorded` goes back to its length before it.
+    code(cxt) {
+      const { gen } = cxt;
+      const list = gen.scopeValue('keyword', { ref: recorded });
+      const mark = gen.const('celMark', _`${list}.length`);
+      const valid = gen.name('valid');
+      cxt.subschema({ keyword: TRIAL }, valid);
+      gen.if(_`!${valid}`, () => gen.assign(_`${list}.length`, mark));
+      cxt.ok(valid);
+    },
+  });
   return {
     compile(schema) {
-      const validate = ajv.compile(schema);
+      const validate = ajv.compile(/** @type {object} */ (withTrials(schema)));
       return (result, layers) => {
-        recorded = [];
+        recorded.length = 0;
         validate(result);
         const faults = (validate.errors ?? []).map((error) => ({
           ...attribute(errorPath(error), layers),
