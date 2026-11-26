@@ -31,16 +31,27 @@ function idPrefixes(ctx) {
 }
 
 /**
- * The `dir` of a type's item definition. A type of `id_prefixes` with no
+ * A type's item definition (`config/items/<type>.yaml`). A type with no
  * definition is an error.
+ *
+ * @param {StoreContext} ctx
+ * @param {string} type
+ * @returns {Record<string, any>}
+ */
+export function itemDefinition(ctx, type) {
+  const definition = ctx.config.file('items', `${type}.yaml`);
+  if (definition === undefined) throw new Error(`no item definition for type ${type}: config/items/${type}.yaml`);
+  return definition;
+}
+
+/**
+ * The `dir` of a type's item definition.
  *
  * @param {StoreContext} ctx
  * @param {string} type
  */
 function typeDir(ctx, type) {
-  const definition = ctx.config.file('items', `${type}.yaml`);
-  if (definition === undefined) throw new Error(`no item definition for type ${type}: config/items/${type}.yaml`);
-  return /** @type {string} */ (definition.dir);
+  return /** @type {string} */ (itemDefinition(ctx, type).dir);
 }
 
 /**
