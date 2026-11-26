@@ -399,7 +399,7 @@ export async function storeWrite(ctx, commit, fn) {
   const outer = running.getStore() ?? [];
   if (outer.includes(root)) throw new Error(`a store write to ${root} cannot start inside another store write to it`);
   const run = (queues.get(root) ?? Promise.resolve()).then(() =>
-    running.run([...outer, root], () => withLock(ctx.backlogDir, () => writeLocked(ctx, commit, fn))),
+    running.run([...outer, root], async () => withLock(ctx.backlogDir, async () => writeLocked(ctx, commit, fn))),
   );
   const done = run.then(
     () => {},
