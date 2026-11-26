@@ -79,7 +79,7 @@ test('log-entry.schema.json rejects an unknown event, a missing required field, 
   };
   for (const [event, field] of Object.entries(missing)) {
     const { [field]: _dropped, ...entry } = EVENTS[/** @type {keyof EVENTS} */ (event)];
-    assert.ok(rules(checkLogEntry(entry)).includes(`required /${field}`), `${event} without ${field}`);
+    assert.deepEqual(rules(checkLogEntry(entry)), [`required /${field}`], `${event} without ${field}`);
   }
   assert.ok(rules(checkLogEntry({ ...EVENTS.created, box: 'x' })).includes('additionalProperties /box'));
   assert.ok(rules(checkLogEntry({ ...EVENTS.created, at: '2026-11-14 13:08' })).includes('pattern /at'));

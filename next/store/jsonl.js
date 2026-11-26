@@ -71,11 +71,13 @@ export function appendLine(text, entry) {
 }
 
 /**
- * The faults of a log entry by the log-entry schema.
+ * The faults of a log entry by the log-entry schema. The schema selects the
+ * event's shape with `if`/`then`, so ajv adds an `if` fault beside each fault
+ * of the shape; it names nothing new and is dropped.
  * @param {unknown} entry
  * @returns {Fault[]}
  */
-export const checkLogEntry = (entry) => checkValue(LOG_ENTRY_SCHEMA, entry);
+export const checkLogEntry = (entry) => checkValue(LOG_ENTRY_SCHEMA, entry).filter((fault) => fault.rule !== 'if');
 
 /**
  * The faults of a usage entry by the usage-entry schema.

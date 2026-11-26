@@ -411,7 +411,6 @@ test('a log line that is not JSON, an entry that fails its schema and an unknown
         ['S-1', 'log.jsonl', 2, 'json', ''],
         ['S-1', 'log.jsonl', 3, 'item', '/items/found_by'],
         ['S-2', 'log.jsonl', 1, 'required', '/by'],
-        ['S-2', 'log.jsonl', 1, 'if', ''],
         ['S-2', 'usage.jsonl', 1, 'minimum', '/input'],
       ]);
       assert.match(error.message, /S-1 log\.jsonl line 2: json: /);
