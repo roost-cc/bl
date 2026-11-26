@@ -253,6 +253,69 @@ test('the cel keyword counts a string only in a branch that accepts the value', 
   }
 });
 
+test('a key that propertyNames checks has its own path: its CEL string and its shape faults name the key and its file', () => {
+  const KEY_CEL = { type: 'string', cel: 'dyn' };
+  const layersOf = (shop, operator) => [
+    { file: SHOP, pointer: '', patch: shop },
+    { file: OPERATOR, pointer: '', patch: operator },
+  ];
+  const run = (schema, shop, operator) => {
+    const layers = layersOf(shop, operator);
+    const full = { type: 'object', ...schema, $defs: { key: KEY_CEL } };
+    return shapeChecker().compile(full)(applyLayers(layers), layers);
+  };
+  const cel = [
+    // [the schema, the shop patch, the operator patch, the [file, path] of each CEL string]
+    [
+      { propertyNames: KEY_CEL },
+      { 'status ==': 1 },
+      { other: 2 },
+      [
+        [SHOP, '/status =='],
+        [OPERATOR, '/other'],
+      ],
+    ],
+    // In a nested mapping, with a key that a JSON pointer escapes.
+    [{ properties: { o: { type: 'object', propertyNames: KEY_CEL } } }, { o: { 'a/b': 1 } }, {}, [[SHOP, '/o/a~1b']]],
+    // In a mapping inside a list that the operator replaced.
+    [
+      { properties: { l: { type: 'array', items: { type: 'object', propertyNames: KEY_CEL } } } },
+      { l: [{ a: 1 }] },
+      { l: [{ b: 1 }] },
+      [[OPERATOR, '/l/0/b']],
+    ],
+    // Through $ref and through an accepting anyOf branch.
+    [{ propertyNames: { $ref: '#/$defs/key' } }, { k: 1 }, {}, [[SHOP, '/k']]],
+    [{ propertyNames: { anyOf: [KEY_CEL, { minLength: 5 }] } }, {}, { k: 1 }, [[OPERATOR, '/k']]],
+    // A value keeps the value's path, also when the key and its object's name match.
+    [{ properties: { o: { type: 'object', properties: { o: KEY_CEL } } } }, { o: { o: 'o' } }, {}, [[SHOP, '/o/o']]],
+  ];
+  for (const [schema, shop, operator, expected] of cel) {
+    const { faults, cel: strings } = run(schema, shop, operator);
+    assert.deepEqual(faults, [], JSON.stringify(schema));
+    assert.deepEqual(
+      strings.map((s) => [s.file, s.path]),
+      expected,
+      JSON.stringify(schema),
+    );
+  }
+  // The reviewer's case, through compileCel.
+  const { cel: marked } = run({ propertyNames: { type: 'string', cel: 'bool' } }, { 'status ==': 1 }, { other: 2 });
+  assert.deepEqual(compileCel(marked, celEnvironment({ predicates: {} })), [
+    { file: SHOP, path: '/status ==', rule: 'cel', message: 'Unexpected token: EOF' },
+    { file: OPERATOR, path: '/other', rule: 'cel', message: 'Unknown variable: other' },
+  ]);
+  // A shape fault of a key: the key's path, in the file that wrote the key.
+  const { faults } = run({ propertyNames: { pattern: '^[a-z]+$' } }, { ok: 1 }, { 'Not ok': 1 });
+  assert.deepEqual(
+    faults.map((f) => [f.file, f.path, f.rule]),
+    [
+      [OPERATOR, '/Not ok', 'pattern'],
+      [OPERATOR, '/Not ok', 'propertyNames'],
+    ],
+  );
+});
+
 test('a rejected branch leaves no cel string under any subschema keyword, $ref to definitions included', () => {
   const MARKED = { type: 'string', maxLength: 1, cel: 'bool' };
   const PLAIN = { type: 'string' };

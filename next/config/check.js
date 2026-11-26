@@ -71,9 +71,14 @@ export function attribute(path, layers) {
   return { file: best.file, path: best.pointer + path };
 }
 
-/** The failing path of an ajv error: for `required` and `additionalProperties`, with the property. */
+/**
+ * The failing path of an ajv error. An error about a key has the path of the
+ * key: for `required` and `additionalProperties` with the property; for
+ * `propertyNames` and each error of its subschema, with the key it checks.
+ */
 function errorPath(error) {
-  const property = error.params.missingProperty ?? error.params.additionalProperty;
+  const property =
+    error.params.missingProperty ?? error.params.additionalProperty ?? error.params.propertyName ?? error.propertyName;
   return property === undefined ? error.instancePath : `${error.instancePath}/${pointerToken(property)}`;
 }
 
@@ -82,6 +87,13 @@ function errorPath(error) {
  * shipped schema does not write it.
  */
 const TRIAL = 'x-bl-trial';
+
+/**
+ * The keyword that wraps each `propertyNames` subschema, so the `cel` keyword
+ * knows that its data is a key, at any depth and through `$ref`. `compile`
+ * adds it; a shipped schema does not write it.
+ */
+const KEY = 'x-bl-key';
 
 /**
  * The keywords whose value is one subschema, a list of them, or a map of them:
@@ -116,14 +128,17 @@ const TRIALS = new Set(['anyOf', 'oneOf', 'if', 'contains', 'not']);
  * `schema` with each trial subschema, at any depth, wrapped as
  * `{ "x-bl-trial": <subschema> }`. The wrapper validates as its subschema, and
  * when that fails, it drops the CEL strings the subschema recorded: a string
- * counts only in a branch that accepts the value.
+ * counts only in a branch that accepts the value. Each `propertyNames`
+ * subschema is wrapped as `{ "x-bl-key": <subschema> }` (`KEY`).
  * @param {unknown} schema
  * @returns {unknown}
  */
 function withTrials(schema) {
   if (!isMapping(schema)) return schema;
   const out = { ...schema };
-  const sub = (keyword, value) => (TRIALS.has(keyword) ? { [TRIAL]: withTrials(value) } : withTrials(value));
+  const wrapper = (keyword) => (TRIALS.has(keyword) ? TRIAL : keyword === 'propertyNames' ? KEY : undefined);
+  const sub = (keyword, value) =>
+    wrapper(keyword) === undefined ? withTrials(value) : { [wrapper(keyword)]: withTrials(value) };
   for (const keyword of ONE) {
     if (Object.hasOwn(schema, keyword)) out[keyword] = sub(keyword, schema[keyword]);
   }
@@ -146,13 +161,18 @@ function withTrials(schema) {
 export function shapeChecker() {
   /** @type {{ path: string, expr: string, type: 'bool'|'dyn' }[]} */
   const recorded = [];
+  /** How many `propertyNames` subschemas run now: above 0, the data is a key. */
+  const keys = { depth: 0 };
   const ajv = new Ajv2020({ strict: true, allErrors: true, useDefaults: false });
   ajv.addKeyword({
     keyword: 'cel',
     schemaType: 'string',
     metaSchema: { enum: CEL_TYPES },
     validate: (type, data, _parent, cxt) => {
-      if (typeof data === 'string') recorded.push({ path: cxt?.instancePath ?? '', expr: data, type });
+      if (typeof data !== 'string') return true;
+      const at = cxt?.instancePath ?? '';
+      // Under `propertyNames`, `data` is a key and ajv gives its object's path.
+      recorded.push({ path: keys.depth > 0 ? `${at}/${pointerToken(data)}` : at, expr: data, type });
       return true;
     },
   });
@@ -167,6 +187,21 @@ export function shapeChecker() {
       const valid = gen.name('valid');
       const sub = cxt.subschema({ keyword: TRIAL }, valid);
       gen.if(_`!${valid}`, () => gen.assign(_`${list}.length`, mark));
+      cxt.ok(valid);
+      cxt.mergeEvaluated(sub);
+    },
+  });
+  ajv.addKeyword({
+    keyword: KEY,
+    schemaType: ['object', 'boolean'],
+    // As `allOf` with one subschema, with `keys.depth` raised while it runs.
+    code(cxt) {
+      const { gen } = cxt;
+      const ref = gen.scopeValue('keyword', { ref: keys });
+      gen.code(_`${ref}.depth++`);
+      const valid = gen.name('valid');
+      const sub = cxt.subschema({ keyword: KEY }, valid);
+      gen.code(_`${ref}.depth--`);
       cxt.ok(valid);
       cxt.mergeEvaluated(sub);
     },
