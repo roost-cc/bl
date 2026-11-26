@@ -78,6 +78,14 @@ test('an empty or missing dir holds no item, and its next number is 1', () => {
   assert.equal(nextNumber(ctx, 'feature'), 1);
 });
 
+test("a type's dir that is a file is an error that names the type", () => {
+  const ctx = backlog({ stories: 'a file\n' });
+  const message = 'the dir of type story, stories, is not a directory';
+  assert.throws(() => itemDir(ctx, 'S-1'), { message });
+  assert.throws(() => listItems(ctx), { message });
+  assert.throws(() => nextNumber(ctx, 'story'), { message });
+});
+
 test('two directories for one id are an error that names both', () => {
   const ctx = backlog({ 'stories/S7-one/index.md': '', 'stories/S7-two/index.md': '' });
   const both = /two directories for S-7: stories\/S7-(one|two) and stories\/S7-(one|two)/;

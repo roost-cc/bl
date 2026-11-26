@@ -98,7 +98,9 @@ function itemsOf(ctx, type) {
   try {
     entries = readdirSync(join(ctx.backlogDir, dir), { withFileTypes: true });
   } catch (error) {
-    if (/** @type {NodeJS.ErrnoException} */ (error).code === 'ENOENT') return [];
+    const code = /** @type {NodeJS.ErrnoException} */ (error).code;
+    if (code === 'ENOENT') return [];
+    if (code === 'ENOTDIR') throw new Error(`the dir of type ${type}, ${dir}, is not a directory`);
     throw error;
   }
   /** @type {Map<string, Item>} */
