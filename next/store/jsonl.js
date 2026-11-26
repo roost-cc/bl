@@ -12,6 +12,7 @@
  */
 
 import { checkValue } from '../config/check.js';
+import { pointerToken } from '../config/files.js';
 import { parseId } from './ids.js';
 import { parseJson } from './item-json.js';
 import { backlogText } from './items.js';
@@ -103,7 +104,9 @@ export function checkLogItems(entry, idPrefixes, exists) {
       id = null;
     }
     if (id !== null && exists(id)) return [];
-    return [{ file: '', path: `/items/${role}`, rule: 'item', message: `no item ${text} in the backlog` }];
+    return [
+      { file: '', path: `/items/${pointerToken(role)}`, rule: 'item', message: `no item ${text} in the backlog` },
+    ];
   });
 }
 

@@ -146,6 +146,23 @@ test('checkLogItems gives an item fault for each id in items that names no item,
   ]);
 });
 
+test('checkLogItems_escapes_role_in_path', () => {
+  const ROLES = [
+    ['found_by', '/items/found_by'],
+    ['a/b', '/items/a~1b'],
+    ['a~b', '/items/a~0b'],
+    ['~/', '/items/~0~1'],
+    ['', '/items/'],
+  ];
+  for (const [role, path] of ROLES) {
+    assert.deepEqual(
+      checkLogItems({ items: { [role]: 'S-2' } }, { S: 'story' }, () => false).map((fault) => fault.path),
+      [path],
+      role,
+    );
+  }
+});
+
 test('readJsonl gives the entries in order, [] for a missing file, and an error that names the file and the line', () => {
   const dirs = fixture({
     'backlog/backlog.yaml': 'repos: {}\nid_prefixes:\n  S: story\n',
