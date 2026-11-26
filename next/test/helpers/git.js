@@ -2,7 +2,8 @@
  * git.js — run git in a test's temp repo (F-135 D1).
  *
  * Copied from `test/helpers/git-backlog.js`, cut down to `git` and its
- * identity. The tests of `next/` that build temp repos share it.
+ * identity. The tests of `next/` that build temp repos share it, and
+ * `initRepo` for a repo that `bl`'s own git children commit in.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -31,4 +32,21 @@ export function git(cwd, ...args) {
   });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
   return r.stdout.trim();
+}
+
+/**
+ * Make `dir` a git repo on `main` whose own config gives the commit identity
+ * and the repo's own hooks (`.git/hooks`), so that a git child that reads the
+ * developer's config (`lib/child.js` `git`) commits there as `git` above does.
+ * @param {string} dir
+ */
+export function initRepo(dir) {
+  git(dir, 'init', '-q', '-b', 'main');
+  for (const [key, value] of Object.entries({
+    'user.name': GIT_ENV.GIT_AUTHOR_NAME,
+    'user.email': GIT_ENV.GIT_AUTHOR_EMAIL,
+    'commit.gpgsign': 'false',
+    'core.hooksPath': '.git/hooks',
+  }))
+    git(dir, 'config', key, value);
 }
