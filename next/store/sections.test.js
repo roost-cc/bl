@@ -151,6 +151,12 @@ test('an unknown section is an error that lists the type sections', () => {
     });
 });
 
+test('a type that defines no sections has none to write: every name is unknown', () => {
+  assert.throws(() => set('# T\n', { dir: 'tasks' }, 'Notes', 'x'), {
+    message: 'unknown section "Notes": the type\'s sections are ',
+  });
+});
+
 test('check and uncheck change only the mark of the Nth checkbox, a nested one included', () => {
   const checked = check(DOC, DEFINITION, 'Acceptance Criteria', 2);
   const box = section(DOC, 'Acceptance Criteria').checkboxes[1];

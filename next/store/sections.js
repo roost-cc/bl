@@ -13,7 +13,8 @@ import { parseDocument } from './document.js';
 
 /**
  * @typedef {{ name: string, initial?: string }} SectionDefinition
- * @typedef {{ sections: SectionDefinition[] }} ItemDefinition  the type's item definition
+ * @typedef {{ sections?: SectionDefinition[] }} ItemDefinition  the type's item definition;
+ *   a type with no `sections` defines none
  * @typedef {import('./document.js').Section} Section
  */
 
@@ -25,9 +26,9 @@ import { parseDocument } from './document.js';
  * @param {string} name
  */
 function defined(definition, name) {
-  const found = definition.sections.find((s) => s.name === name);
+  const found = definition.sections?.find((s) => s.name === name);
   if (found) return found;
-  const names = definition.sections.map((s) => s.name).join(', ');
+  const names = (definition.sections ?? []).map((s) => s.name).join(', ');
   throw new Error(`unknown section "${name}": the type's sections are ${names}`);
 }
 

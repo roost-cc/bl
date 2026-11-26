@@ -99,6 +99,13 @@ test('checkDocument reports a section the type does not define', () => {
   ]);
 });
 
+test('checkDocument of a type that defines no sections reports each section as unknown', () => {
+  assert.deepEqual(checkDocument(parseDocument('# T\n'), { dir: 'tasks' }), []);
+  assert.deepEqual(checkDocument(parseDocument('# T\n\n## Notes\n'), { dir: 'tasks' }), [
+    { rule: 'unknown-section', section: 'Notes' },
+  ]);
+});
+
 test('checkDocument reports a missing required section', () => {
   assert.deepEqual(check('# T\n\n## Summary\n\n## Notes\n'), [
     { rule: 'missing-section', section: 'Acceptance Criteria' },

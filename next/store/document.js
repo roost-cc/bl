@@ -117,14 +117,16 @@ export function parseDocument(text) {
  * required section the document does not have.
  *
  * @param {ParsedDocument} parsed
- * @param {{ sections: Array<{ name: string, required?: boolean }> }} definition  the type's item definition
+ * @param {{ sections?: Array<{ name: string, required?: boolean }> }} definition  the type's
+ *   item definition; a type with no `sections` defines none
  * @returns {DocumentFinding[]}  empty when the document matches
  */
 export function checkDocument(parsed, definition) {
   /** @type {DocumentFinding[]} */
   const findings = [];
   if (parsed.title === null) findings.push({ rule: 'no-title', section: null });
-  const order = new Map(definition.sections.map((s, i) => [s.name, i]));
+  const defined = definition.sections ?? [];
+  const order = new Map(defined.map((s, i) => [s.name, i]));
   const seen = new Set();
   let latest = -1;
   for (const { name } of parsed.sections) {
@@ -137,7 +139,7 @@ export function checkDocument(parsed, definition) {
       latest = Math.max(latest, index);
     }
   }
-  for (const { name, required } of definition.sections)
+  for (const { name, required } of defined)
     if (required && !seen.has(name)) findings.push({ rule: 'missing-section', section: name });
   return findings;
 }
