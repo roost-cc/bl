@@ -148,6 +148,28 @@ test('readYaml reports every fault of a file: each reserved key and each YAML er
         ['/b/2/prototype', RESERVED('prototype')],
       ],
     ],
+    // Below a reserved key: a reserved key in its mapping, in a deeper
+    // mapping, and in a mapping inside its list, under each of the four keys.
+    ...['__proto__', 'constructor', 'prototype', 'hasOwnProperty'].map((key) => [
+      `'${key}':\n  '__proto__': 1\n  a:\n    'hasOwnProperty': 1\n  b:\n    - 'constructor': 1\n    - 'prototype': 1\n`,
+      [
+        [`/${key}`, RESERVED(key)],
+        [`/${key}/__proto__`, RESERVED('__proto__')],
+        [`/${key}/a/hasOwnProperty`, RESERVED('hasOwnProperty')],
+        [`/${key}/b/0/constructor`, RESERVED('constructor')],
+        [`/${key}/b/1/prototype`, RESERVED('prototype')],
+      ],
+    ]),
+    // The reviewer's case: below a reserved key at the top and in a list.
+    [
+      'constructor:\n  prototype: 1\nitems:\n  - hasOwnProperty:\n      __proto__: 2\n',
+      [
+        ['/constructor', RESERVED('constructor')],
+        ['/constructor/prototype', RESERVED('prototype')],
+        ['/items/0/hasOwnProperty', RESERVED('hasOwnProperty')],
+        ['/items/0/hasOwnProperty/__proto__', RESERVED('__proto__')],
+      ],
+    ],
     // Two repeated keys: two YAML errors, each with its line.
     [
       'a: 1\na: 2\nb: 1\nb: 2\n',

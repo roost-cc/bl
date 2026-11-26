@@ -194,9 +194,12 @@ function unmergeable(value, path = '', ancestors = new Set()) {
   ancestors.add(value);
   const found = Object.entries(value).flatMap(([key, child]) => {
     const at = `${path}/${pointerToken(key)}`;
-    return isMapping(value) && RESERVED_KEYS.has(key)
-      ? [{ path: at, message: `the key ${key} is reserved: the merge cannot hold it` }]
-      : unmergeable(child, at, ancestors);
+    // A reserved key is a fault, and the check goes on below it.
+    const reserved = isMapping(value) && RESERVED_KEYS.has(key);
+    return [
+      ...(reserved ? [{ path: at, message: `the key ${key} is reserved: the merge cannot hold it` }] : []),
+      ...unmergeable(child, at, ancestors),
+    ];
   });
   ancestors.delete(value);
   return found;

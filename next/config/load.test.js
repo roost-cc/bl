@@ -241,6 +241,15 @@ test('every reserved key and every YAML error of one file reaches the load fault
         `backlog.yaml: /repos/prototype: ${MESSAGE('prototype')}`,
       ],
     ],
+    // A reserved key below a reserved key, in the operator file.
+    [
+      { ...SHOP_ONLY, '.config/bl/config.yaml': "'constructor':\n  - 'hasOwnProperty':\n      'prototype': 1\n" },
+      [
+        `~/.config/bl/config.yaml: /constructor: ${MESSAGE('constructor')}`,
+        `~/.config/bl/config.yaml: /constructor/0/hasOwnProperty: ${MESSAGE('hasOwnProperty')}`,
+        `~/.config/bl/config.yaml: /constructor/0/hasOwnProperty/prototype: ${MESSAGE('prototype')}`,
+      ],
+    ],
     [
       { ...SHOP_ONLY, '.config/bl/views.yaml': 'a: x\na: y\nb: x\nb: y\n' },
       [
