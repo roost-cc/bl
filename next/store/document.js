@@ -14,6 +14,9 @@ import { gfmTaskListItemFromMarkdown } from 'mdast-util-gfm-task-list-item';
 import { toString } from 'mdast-util-to-string';
 import { gfmTaskListItem } from 'micromark-extension-gfm-task-list-item';
 
+/** The file name of the item document in an item directory. */
+export const DOCUMENT = 'index.md';
+
 /**
  * @typedef {{ start: number, end: number }} Range  offsets into the text; `end` is exclusive
  *

@@ -27,7 +27,7 @@ import { join } from 'path';
 import { atomicWriteFile } from '../lib/atomic-write.js';
 import { withLock } from '../lib/lock.js';
 import { commitPaths } from './commit.js';
-import { checkDocument, parseDocument } from './document.js';
+import { DOCUMENT, checkDocument, parseDocument } from './document.js';
 import { dirName, formatId, parseId } from './ids.js';
 import { ATTRIBUTES, STATE, checkAttributes, checkState, jsonText, parseJson } from './item-json.js';
 import { backlogText, idPrefixes, itemDefinition, itemDir, nextNumber } from './items.js';
@@ -173,7 +173,7 @@ function writer(ctx, staged, created) {
     );
     const entry = { at: now(), event: 'created', by, ...(items === undefined ? {} : { items }) };
     for (const [file, text] of [
-      ['index.md', document],
+      [DOCUMENT, document],
       [STATE, jsonText(state)],
       [ATTRIBUTES, jsonText(attributes)],
       [LOG, appendLine('', entry)],
@@ -187,8 +187,7 @@ function writer(ctx, staged, created) {
    * @param {string} id
    * @param {(text: string, definition: Record<string, any>) => string} edit
    */
-  const document = (id, edit) =>
-    stage(id, 'index.md', (text, item) => edit(text ?? '', itemDefinition(ctx, item.type)));
+  const document = (id, edit) => stage(id, DOCUMENT, (text, item) => edit(text ?? '', itemDefinition(ctx, item.type)));
   return {
     set: (id, name, content) => document(id, (text, d) => sections.set(text, d, name, content)),
     append: (id, name, content) => document(id, (text, d) => sections.append(text, d, name, content)),
@@ -219,10 +218,10 @@ function writer(ctx, staged, created) {
  */
 function checkItem(ctx, item, read, exists) {
   const definition = itemDefinition(ctx, item.type);
-  const text = read(`${item.path}/index.md`) ?? '';
+  const text = read(`${item.path}/${DOCUMENT}`) ?? '';
   const documentFindings = checkDocument(parseDocument(text), definition).map(({ rule, section }) => ({
     item: item.id,
-    file: 'index.md',
+    file: DOCUMENT,
     rule,
     section,
   }));
