@@ -46,6 +46,8 @@ test('readYaml turns a YAML syntax error into a fault with the file and the line
   assert.match(fault.message, /^line \d+: /);
   const line = Number(/^line (\d+)/.exec(fault.message)[1]);
   assert.ok(line >= 2, fault.message);
+  // One line, without the library's code frame or its own "at line N, column M".
+  assert.doesNotMatch(fault.message, /\n| at line \d+/);
 });
 
 test('readYaml turns a top level that is not a mapping into a fault with the file', () => {

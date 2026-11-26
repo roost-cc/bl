@@ -136,8 +136,11 @@ export function readYaml(path) {
     value = parse(readFileSync(path, 'utf8'));
   } catch (error) {
     if (!(error instanceof YAMLParseError)) throw error;
+    // The library's message ends in " at line N, column M:" and a code frame;
+    // a fault is one line (D5), so it keeps the first line without that tail.
+    const text = error.message.split('\n')[0].replace(/ at line \d+, column \d+:$/, '');
     const line = error.linePos?.[0]?.line;
-    return fault(line === undefined ? error.message : `line ${line}: ${error.message}`);
+    return fault(line === undefined ? text : `line ${line}: ${text}`);
   }
   if (!isMapping(value)) return fault('the top level must be a mapping');
   return { value };
