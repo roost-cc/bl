@@ -500,6 +500,21 @@ test('storeWrite_preserves_file_mode_on_commit_and_rollback', async () => {
   }
 });
 
+test('a w.create whose next number is above the safe range throws and changes no file', async () => {
+  const max = Number.MAX_SAFE_INTEGER;
+  const ctx = backlog(storyFiles(`stories/S${max - 1}-last`, 'Last'));
+  const create = (w) => w.create('story', 'Over', { state: DRAFT, attributes: { category: 'bug' }, by: 'operator' });
+  const over = { message: new RegExp(`no item id can have the number ${max + 1}`) };
+  await assert.rejects(
+    storeWrite(ctx, { message: 'm' }, (w) => [create(w), create(w)]),
+    over,
+  );
+  assert.deepEqual(status(ctx), []);
+  assert.equal(await storeWrite(ctx, { message: 'm' }, create), `S-${max}`);
+  await assert.rejects(storeWrite(ctx, { message: 'm' }, create), over);
+  assert.deepEqual(status(ctx), []);
+});
+
 /** One store write operation on S-1, with the item file it writes. */
 const OPERATIONS = [
   ['set', 'index.md', (w) => w.set('S-1', 'Summary', 'Changed.')],

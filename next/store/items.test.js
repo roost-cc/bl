@@ -118,6 +118,20 @@ test('item_directory_stays_inside_the_backlog: a dir or an item file that leaves
   assert.equal(backlogText(ctx, 'stories/S1-one/attributes.json'), null);
 });
 
+test('directories whose numbers are above the safe range are no items, so two of them do not collide', () => {
+  const ctx = backlog({
+    'stories/S9007199254740992-a/index.md': '',
+    'stories/S9007199254740993-b/index.md': '',
+    'stories/S5-five/index.md': '',
+  });
+  assert.deepEqual(
+    listItems(ctx).map((item) => item.id),
+    ['S-5'],
+  );
+  assert.equal(nextNumber(ctx, 'story'), 6);
+  assert.throws(() => itemDir(ctx, 'S-9007199254740993'), { message: /has a number above/ });
+});
+
 test('an id with no known prefix is an error that names it', () => {
   assert.throws(() => itemDir(backlog({}), 'X-1'), { message: /"X-1"/ });
 });

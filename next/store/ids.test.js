@@ -25,6 +25,18 @@ test('formatId prints the prefix, a dash and the number', () => {
   assert.equal(formatId('TH', 7), 'TH-7');
 });
 
+test('parseId_rejects_unsafe_numbers', () => {
+  const max = String(Number.MAX_SAFE_INTEGER);
+  assert.equal(parseId(`S-${max}`, PREFIXES).id, `S-${max}`);
+  assert.equal(formatId('S', Number.MAX_SAFE_INTEGER), `S-${max}`);
+  for (const text of ['S-9007199254740992', 's9007199254740993', 'S-1000000000000000000000', `S-${'9'.repeat(400)}`]) {
+    assert.throws(() => parseId(text, PREFIXES), { message: new RegExp(`"${text}" has a number above ${max}`) }, text);
+  }
+  for (const number of [Number.MAX_SAFE_INTEGER + 1, 1e21, Infinity, 1.5]) {
+    assert.throws(() => formatId('S', number), { message: /no item id can have the number/ }, String(number));
+  }
+});
+
 test('a directory name is the prefix, the number, - and the slug', () => {
   const id = parseId('S-1567', PREFIXES);
   assert.equal(dirName(id, 'The guest installs git-filter-repo'), 'S1567-the-guest-installs-git-filter-repo');

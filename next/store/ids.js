@@ -14,8 +14,10 @@
  */
 
 /**
- * Read an id. Text with no known prefix, or with anything other than an
- * optional dash and digits after the prefix, is an error that names the text.
+ * Read an id. Text with no known prefix, with anything other than an
+ * optional dash and digits after the prefix, or with a number above
+ * `Number.MAX_SAFE_INTEGER` (which a JavaScript number cannot hold exactly,
+ * so two ids would read as one) is an error that names the text.
  *
  * @param {string} text
  * @param {Record<string, string>} idPrefixes  prefix → type
@@ -30,16 +32,22 @@ export function parseId(text, idPrefixes) {
   const digits = /^-?(\d+)$/.exec(text.slice(prefix.length));
   if (digits === null) throw new Error(`not an item id: "${text}" has no number after its prefix ${prefix}`);
   const number = Number(digits[1]);
+  if (!Number.isSafeInteger(number)) {
+    throw new Error(`not an item id: "${text}" has a number above ${Number.MAX_SAFE_INTEGER}`);
+  }
   return { id: formatId(prefix, number), prefix, number, type: idPrefixes[prefix] };
 }
 
 /**
- * The printed form of an id, `S-123`.
+ * The printed form of an id, `S-123`. A number above
+ * `Number.MAX_SAFE_INTEGER`, such as the next number after it, is an error.
  *
  * @param {string} prefix
  * @param {number} number
  */
 export function formatId(prefix, number) {
+  if (!Number.isSafeInteger(number))
+    throw new Error(`no item id can have the number ${number}: it is above ${Number.MAX_SAFE_INTEGER}`);
   return `${prefix}-${number}`;
 }
 
