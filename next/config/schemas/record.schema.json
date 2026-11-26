@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "The record of an item",
+  "description": "The record that `bl list` gives for an item and that CEL runs over (commands.md D-437, core.md \"Records and CEL\"). `next/config/cel.js` derives the CEL types from it (F-136 D6). F-137's record builder produces it.",
+  "$ref": "#/$defs/Record",
+  "$defs": {
+    "Record": {
+      "type": "object",
+      "properties": {
+        "item_id": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "unit": { "type": "string", "description": "An id; for a work unit, its own id." },
+        "id_prefix": { "type": "string" },
+        "id_number": { "type": "integer" },
+        "status": { "type": "string" },
+        "run": { "type": "string", "description": "The run state." },
+        "status_since": { "type": "string", "format": "date-time", "description": "When the status last changed." },
+        "attributes": { "type": "object", "additionalProperties": {} },
+        "attribute_list": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Attribute" },
+          "description": "The attributes in the order of the item definition (D-438)."
+        },
+        "parents": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Slot name to id."
+        },
+        "sections": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Section name to text."
+        },
+        "body": { "type": "string" },
+        "path": { "type": "string" },
+        "dir": { "type": "string" },
+        "rank": { "type": ["integer", "null"], "description": "null for an item that is not a work unit." },
+        "counters": { "type": "object", "additionalProperties": { "$ref": "#/$defs/Counter" } },
+        "findings": { "type": "array", "items": { "$ref": "#/$defs/Finding" } },
+        "deferred": { "type": "array", "items": { "$ref": "#/$defs/Deferred" } },
+        "checkboxes": {
+          "type": "object",
+          "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/Checkbox" } },
+          "description": "Section name to its checkboxes."
+        },
+        "gates": { "type": "array", "items": { "$ref": "#/$defs/Gate" }, "description": "The failing gate entries." },
+        "change": { "type": "string", "description": "The text of the change.md of the item's work unit." },
+        "depth": { "type": "integer", "description": "The depth in the tree, with --tree." },
+        "closed": { "type": "boolean", "description": "Set on a child record from children()." }
+      },
+      "required": [
+        "item_id",
+        "type",
+        "title",
+        "unit",
+        "id_prefix",
+        "id_number",
+        "status",
+        "run",
+        "status_since",
+        "attributes",
+        "attribute_list",
+        "parents",
+        "sections",
+        "body",
+        "path",
+        "dir",
+        "rank",
+        "counters",
+        "findings",
+        "deferred",
+        "checkboxes",
+        "gates",
+        "change"
+      ],
+      "additionalProperties": false
+    },
+    "Counter": {
+      "type": "object",
+      "properties": {
+        "value": { "type": "integer" },
+        "threshold": { "type": "integer" }
+      },
+      "required": ["value", "threshold"],
+      "additionalProperties": false
+    },
+    "Finding": {
+      "type": "object",
+      "description": "A review finding, the same record as `bl findings` gives.",
+      "properties": {
+        "id": { "type": "string" },
+        "round": { "type": "integer" },
+        "category": { "type": "string" },
+        "text": { "type": "string" },
+        "file": { "type": "string" },
+        "state": { "type": "string" }
+      },
+      "required": ["id", "round", "category", "text", "file", "state"],
+      "additionalProperties": false
+    },
+    "Deferred": {
+      "type": "object",
+      "description": "A bullet of the Deferred section.",
+      "properties": {
+        "text": { "type": "string" },
+        "marked": { "type": "boolean" }
+      },
+      "required": ["text", "marked"],
+      "additionalProperties": false
+    },
+    "Checkbox": {
+      "type": "object",
+      "properties": {
+        "checked": { "type": "boolean" },
+        "text": { "type": "string" }
+      },
+      "required": ["checked", "text"],
+      "additionalProperties": false
+    },
+    "Gate": {
+      "type": "object",
+      "description": "A failing gate entry: `entry` as the configuration writes it (a CEL string or an object `{condition, class}`), `text` the expression as written.",
+      "properties": {
+        "entry": { "anyOf": [{ "type": "string" }, { "type": "object" }] },
+        "text": { "type": "string" }
+      },
+      "required": ["entry", "text"],
+      "additionalProperties": false
+    },
+    "Attribute": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "value": {}
+      },
+      "required": ["name", "value"],
+      "additionalProperties": false
+    }
+  }
+}
