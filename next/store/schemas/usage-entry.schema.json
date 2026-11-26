@@ -10,7 +10,7 @@
     "at": {
       "type": "string",
       "format": "utc-timestamp",
-      "description": "When the step execution ended: an ISO 8601 timestamp in UTC. `config/check.js` defines the format."
+      "description": "When the step execution ended: an ISO 8601 timestamp in UTC, in whole or fractional seconds, with a date that exists, a clock from 00:00:00 to 23:59:59 and no leap second (`isUtcTimestamp` in `config/check.js`)."
     },
     "step": { "type": "string", "minLength": 1, "description": "The box path of the step." },
     "agent": { "type": "string", "minLength": 1, "description": "The agent that ran it, for example `headless`." },

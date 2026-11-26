@@ -34,7 +34,7 @@
     "At": {
       "type": "string",
       "format": "utc-timestamp",
-      "description": "When the event happened: an ISO 8601 timestamp in UTC, for example `2026-11-14T13:08:57Z`. `config/check.js` defines the format."
+      "description": "When the event happened: an ISO 8601 timestamp in UTC, for example `2026-11-14T13:08:57Z`, in whole or fractional seconds, with a date that exists, a clock from 00:00:00 to 23:59:59 and no leap second (`isUtcTimestamp` in `config/check.js`)."
     },
     "By": {
       "type": "string",
