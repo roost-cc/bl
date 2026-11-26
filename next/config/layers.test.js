@@ -6,7 +6,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyLayers, bothAxes, scopesOf, whoAxis, whoEntries } from './layers.js';
+import { applyLayers, bothAxes, reposLayers, scopesOf, whoAxis, whoEntries } from './layers.js';
 
 const SHOP = 'backlog.yaml';
 const OPERATOR = '~/.config/bl/config.yaml';
@@ -88,6 +88,28 @@ test('scopes: the top level and every repo either file names, with no operator f
     bothAxes(shop, null, 'a').map((l) => l.file),
     [SHOP, SHOP],
   );
+});
+
+test('reposLayers: each file that has repos, as a layer of its own, shop first', () => {
+  const { shop, operator } = fourLayers();
+  const layers = reposLayers(shop, operator);
+  assert.deepEqual(
+    layers.map(({ file, pointer }) => [file, pointer]),
+    [
+      [SHOP, ''],
+      [OPERATOR, ''],
+    ],
+  );
+  assert.deepEqual(applyLayers(layers), {
+    repos: { utop: { who: 'operator utop', path: '../utop' }, web: { path: '../web' } },
+  });
+  assert.deepEqual(reposLayers({ file: SHOP, value: { who: 1 } }, null), []);
+});
+
+test('a repo entry that is not a mapping gives no layer', () => {
+  const shop = { file: SHOP, value: { repos: { utop: 'x', web: ['a'] } } };
+  assert.deepEqual(bothAxes(shop, null, 'utop'), [{ file: SHOP, pointer: '', patch: {} }]);
+  assert.deepEqual(bothAxes(shop, null, 'web'), [{ file: SHOP, pointer: '', patch: {} }]);
 });
 
 test('a repo name with / or ~ is escaped in the pointer', () => {

@@ -17,7 +17,7 @@ import { realOrResolved } from '../lib/real-path.js';
 const MARKER = 'backlog.yaml';
 
 /** True when `value` is a mapping: an object that is not a list. */
-const isMapping = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+export const isMapping = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /**
  * True when `dir` holds a `backlog.yaml` that is a regular file and parses to

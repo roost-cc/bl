@@ -1,0 +1,221 @@
+/**
+ * The one load of `next/config/load.js` (F-136 D8), on fixture backlogs and
+ * fixture kinds of each layer order.
+ */
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { ConfigurationFaults } from './check.js';
+import { KINDS } from './kinds.js';
+import { loadConfiguration } from './load.js';
+import { withEnv } from '../test/helpers/env.js';
+import { mkTempDir } from '../test/helpers/tempdir.js';
+
+/**
+ * A home directory with a backlog in `<home>/backlog` and the operator's
+ * directory in `<home>/.config/bl`, and `files` written under the home.
+ * @param {Record<string, string>} files  path under the home → text
+ */
+function fixture(files) {
+  const home = mkTempDir('bl-load-');
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(home, path)), { recursive: true });
+    writeFileSync(join(home, path), text);
+  }
+  return { home, backlogDir: join(home, 'backlog'), operatorDir: join(home, '.config', 'bl') };
+}
+
+/** `loadConfiguration` on the fixture, with `$HOME` its home. */
+function load({ home, backlogDir, operatorDir }, kinds = KINDS) {
+  return withEnv({ HOME: home }, () => loadConfiguration({ backlogDir, operatorDir, kinds }));
+}
+
+/** The fault lines of a load that must fail. */
+function faultLines(dirs, kinds) {
+  try {
+    load(dirs, kinds);
+  } catch (error) {
+    if (error instanceof ConfigurationFaults) return error.message.split('\n');
+    throw error;
+  }
+  assert.fail('the load gave no fault');
+}
+
+/** A `both` kind whose schema has `who` beside `repos`. */
+const BOTH = {
+  ...KINDS[0],
+  schema: { ...KINDS[0].schema, properties: { ...KINDS[0].schema.properties, who: { type: 'string' } } },
+};
+
+test('scope(utop) has the four layers applied, scope(null) the two top levels, and the result is frozen', () => {
+  const dirs = fixture({
+    'backlog/backlog.yaml': 'who: shop top\nrepos:\n  utop:\n    who: shop utop\n  web: {}\n',
+    '.config/bl/config.yaml': 'who: operator top\nrepos:\n  utop:\n    who: operator utop\n',
+  });
+  const config = load(dirs, [BOTH]);
+  const repos = { utop: { who: 'operator utop' }, web: {} };
+  assert.deepEqual(config.scope('utop'), { who: 'operator utop', repos });
+  assert.deepEqual(config.scope('web'), { who: 'operator top', repos });
+  assert.deepEqual(config.scope(null), { who: 'operator top', repos });
+  assert.equal(config.scope('nope'), undefined);
+  assert.ok(Object.isFrozen(config));
+  assert.ok(Object.isFrozen(config.scope('utop')));
+  assert.ok(Object.isFrozen(config.scope('utop').repos.utop));
+  assert.throws(() => {
+    config.scope('utop').who = 'x';
+  }, TypeError);
+  assert.deepEqual(config.celInputs, { predicates: {} });
+});
+
+test('each layer of scope(utop) shows when the layers above it are left out', () => {
+  const rows = [
+    ['who: shop top\nrepos: { utop: {} }\n', null, 'shop top'],
+    ['who: shop top\nrepos: { utop: { who: shop utop } }\n', null, 'shop utop'],
+    ['who: shop top\nrepos: { utop: { who: shop utop } }\n', 'who: operator top\n', 'operator top'],
+    [
+      'who: shop top\nrepos: { utop: { who: shop utop } }\n',
+      'who: operator top\nrepos: { utop: { who: operator utop } }\n',
+      'operator utop',
+    ],
+  ];
+  for (const [shop, operator, who] of rows) {
+    const files = {
+      'backlog/backlog.yaml': shop,
+      ...(operator === null ? {} : { '.config/bl/config.yaml': operator }),
+    };
+    assert.equal(load(fixture(files), [BOTH]).scope('utop').who, who);
+  }
+});
+
+test('an unknown top-level key in backlog.yaml is a fault that names backlog.yaml', () => {
+  const dirs = fixture({ 'backlog/backlog.yaml': 'repos: {}\nsigning_kye: git\n' });
+  assert.deepEqual(faultLines(dirs), [
+    'backlog.yaml: /signing_kye: additionalProperties: must NOT have additional properties',
+  ]);
+});
+
+test('two faults in two files are both reported, sorted by file and path, each once', () => {
+  const dirs = fixture({
+    'backlog/backlog.yaml': 'repos:\n  utop: {}\n  web: {}\nzz: 1\naa: 1\n',
+    '.config/bl/config.yaml': 'repos:\n  utop:\n    signing_kye: x\n',
+  });
+  assert.deepEqual(faultLines(dirs), [
+    'backlog.yaml: /aa: additionalProperties: must NOT have additional properties',
+    'backlog.yaml: /zz: additionalProperties: must NOT have additional properties',
+    '~/.config/bl/config.yaml: /repos/utop/signing_kye: additionalProperties: must NOT have additional properties',
+  ]);
+});
+
+test('a YAML error is a fault with its line, and no shape fault follows from the missing layer', () => {
+  const dirs = fixture({
+    'backlog/backlog.yaml': 'repos: {}\n',
+    '.config/bl/config.yaml': 'a: 1\nb: [\n',
+  });
+  const lines = faultLines(dirs);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^~\/\.config\/bl\/config\.yaml: : yaml: line \d+: /);
+});
+
+test('a missing operator file is no layer, not a fault', () => {
+  const config = load(fixture({ 'backlog/backlog.yaml': 'repos: { utop: {} }\n' }));
+  assert.deepEqual(config.scope('utop'), { repos: { utop: {} } });
+});
+
+/** A fixture `none` kind: one shop file, with a condition the schema marks `cel: bool`. */
+const FLOW = {
+  name: 'flow',
+  shop: 'config/flow.yaml',
+  order: 'none',
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['when'],
+    properties: {
+      when: { type: 'string', cel: 'bool' },
+      columns: { type: 'array', items: { type: 'string', cel: 'dyn' } },
+    },
+  },
+};
+
+/** A fixture `who` file kind. */
+const VIEWS = {
+  name: 'views',
+  shop: 'config/views.yaml',
+  operator: 'views.yaml',
+  order: 'who',
+  schema: { type: 'object', additionalProperties: { type: 'string' } },
+};
+
+/** A fixture `who` directory kind. */
+const TEMPLATES = { ...VIEWS, name: 'templates', shop: 'config/templates/', operator: 'templates/' };
+
+const SHOP_ONLY = { 'backlog/backlog.yaml': 'repos: {}\n' };
+
+test('a who file kind: the shop file, then the operator file of the same name', () => {
+  const dirs = fixture({
+    ...SHOP_ONLY,
+    'backlog/config/views.yaml': 'list: id\nboard: id status\n',
+    '.config/bl/views.yaml': 'list: id title\n',
+  });
+  const config = load(dirs, [...KINDS, VIEWS]);
+  assert.deepEqual(config.file('views'), { list: 'id title', board: 'id status' });
+  assert.ok(Object.isFrozen(config.file('views')));
+  assert.throws(() => config.file('backlog'), /no who or none configuration kind: backlog/);
+  assert.throws(() => config.file('nope'), /no who or none configuration kind: nope/);
+});
+
+test('a who directory kind: each file name is an entry, and an operator file with a new name adds one', () => {
+  const dirs = fixture({
+    ...SHOP_ONLY,
+    'backlog/config/templates/en.yaml': 'merged: Merged\nfailed: Failed\n',
+    'backlog/config/templates/notes.txt': 'not a kind file\n',
+    '.config/bl/templates/en.yaml': 'failed: It broke\n',
+    '.config/bl/templates/de.yaml': 'merged: Zusammengeführt\n',
+  });
+  const config = load(dirs, [...KINDS, TEMPLATES]);
+  assert.deepEqual(config.file('templates', 'en.yaml'), { merged: 'Merged', failed: 'It broke' });
+  assert.deepEqual(config.file('templates', 'de.yaml'), { merged: 'Zusammengeführt' });
+  assert.equal(config.file('templates', 'notes.txt'), undefined);
+});
+
+test('a fault in a directory kind names the operator file that set the value', () => {
+  const dirs = fixture({
+    ...SHOP_ONLY,
+    'backlog/config/templates/en.yaml': 'merged: Merged\n',
+    '.config/bl/templates/en.yaml': 'merged: 5\n',
+  });
+  assert.deepEqual(faultLines(dirs, [...KINDS, TEMPLATES]), [
+    '~/.config/bl/templates/en.yaml: /merged: type: must be string',
+  ]);
+});
+
+test('a none kind: a CEL string that does not compile, or types to string, is a fault; a valid one is none', () => {
+  const rows = [
+    ['when: status ==\n', 'config/flow.yaml: /when: cel: Unexpected token: EOF'],
+    ['when: title\n', 'config/flow.yaml: /when: cel: the type is string, not bool'],
+    [
+      'when: \'status == "review"\'\ncolumns: [title, "title +"]\n',
+      'config/flow.yaml: /columns/1: cel: Unexpected token: EOF',
+    ],
+  ];
+  for (const [text, line] of rows) {
+    assert.deepEqual(faultLines(fixture({ ...SHOP_ONLY, 'backlog/config/flow.yaml': text }), [...KINDS, FLOW]), [line]);
+  }
+  const ok = fixture({ ...SHOP_ONLY, 'backlog/config/flow.yaml': 'when: status == "review" && size(findings) > 0\n' });
+  assert.deepEqual(load(ok, [...KINDS, FLOW]).file('flow'), { when: 'status == "review" && size(findings) > 0' });
+});
+
+test('the CEL strings of a kind with a shape fault are not compiled', () => {
+  const dirs = fixture({ ...SHOP_ONLY, 'backlog/config/flow.yaml': 'when: title\nextra: 1\n' });
+  assert.deepEqual(faultLines(dirs, [...KINDS, FLOW]), [
+    'config/flow.yaml: /extra: additionalProperties: must NOT have additional properties',
+  ]);
+});
+
+test('a none kind with no file: the result is {}, and a required key names the shop file', () => {
+  assert.deepEqual(faultLines(fixture(SHOP_ONLY), [...KINDS, FLOW]), [
+    "config/flow.yaml: /when: required: must have required property 'when'",
+  ]);
+});

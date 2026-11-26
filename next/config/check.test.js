@@ -1,0 +1,169 @@
+/**
+ * The shape check, the `cel` keyword and the fault report of
+ * `next/config/check.js` (F-136 D5).
+ */
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { celEnvironment } from './cel.js';
+import { ConfigurationFaults, attribute, compileCel, shapeChecker } from './check.js';
+import { applyLayers, bothAxes, reposLayers } from './layers.js';
+import BACKLOG_SCHEMA from './schemas/backlog.schema.json' with { type: 'json' };
+import { withEnv } from '../test/helpers/env.js';
+
+const SHOP = '/b/backlog.yaml';
+const OPERATOR = '/home/o/.config/bl/config.yaml';
+
+/** The layers of one scope as the loader checks them: the repos layers, then both axes. */
+const scopeLayers = (shop, operator, repo) => [...reposLayers(shop, operator), ...bothAxes(shop, operator, repo)];
+
+/** A schema with `key`, a string, beside `repos`. */
+const SCHEMA_WITH_KEY = {
+  ...BACKLOG_SCHEMA,
+  properties: { ...BACKLOG_SCHEMA.properties, key: { type: 'string' } },
+};
+
+/** The faults of one scope's result, by the given schema. */
+function faultsOf(schema, shop, operator, repo) {
+  const layers = scopeLayers(shop, operator, repo);
+  return shapeChecker().compile(schema)(applyLayers(layers), layers).faults;
+}
+
+test('a type fault names the layer that set the value: each of the four layers', () => {
+  // Each row sets `key: 5` in one layer, and a good value in every layer below it.
+  const rows = [
+    { shop: { key: 5, repos: { utop: {} } }, operator: {}, file: SHOP, path: '/key' },
+    { shop: { key: 'ok', repos: { utop: { key: 5 } } }, operator: {}, file: SHOP, path: '/repos/utop/key' },
+    { shop: { key: 'ok', repos: { utop: { key: 'ok' } } }, operator: { key: 5 }, file: OPERATOR, path: '/key' },
+    {
+      shop: { key: 'ok', repos: { utop: { key: 'ok' } } },
+      operator: { key: 'ok', repos: { utop: { key: 5 } } },
+      file: OPERATOR,
+      path: '/repos/utop/key',
+    },
+  ];
+  for (const row of rows) {
+    const shop = { file: SHOP, value: row.shop };
+    const operator = { file: OPERATOR, value: row.operator };
+    assert.deepEqual(
+      faultsOf(SCHEMA_WITH_KEY, shop, operator, 'utop'),
+      [{ file: row.file, path: row.path, rule: 'type', message: 'must be string' }],
+      `${row.file} ${row.path}`,
+    );
+  }
+});
+
+test('an unknown key in the operator repos.utop: additionalProperties at /repos/utop/<key>', () => {
+  const shop = { file: SHOP, value: { repos: { utop: {} } } };
+  const operator = { file: OPERATOR, value: { repos: { utop: { signing_kye: 'x' } } } };
+  assert.deepEqual(faultsOf(BACKLOG_SCHEMA, shop, operator, 'utop'), [
+    {
+      file: OPERATOR,
+      path: '/repos/utop/signing_kye',
+      rule: 'additionalProperties',
+      message: 'must NOT have additional properties',
+    },
+  ]);
+  assert.deepEqual(faultsOf(BACKLOG_SCHEMA, shop, operator, null), []);
+});
+
+test('a required key that nobody set names the lowest layer; one deleted by null names the file that deleted it', () => {
+  const shop = { file: SHOP, value: { other: 1 } };
+  const operator = { file: OPERATOR, value: { key: 'x' } };
+  const schema = { ...SCHEMA_WITH_KEY, properties: { ...SCHEMA_WITH_KEY.properties, other: {} } };
+  assert.deepEqual(faultsOf(schema, shop, operator, null), [
+    { file: SHOP, path: '/repos', rule: 'required', message: "must have required property 'repos'" },
+  ]);
+  const deleting = { file: OPERATOR, value: { repos: null } };
+  assert.deepEqual(faultsOf(BACKLOG_SCHEMA, { file: SHOP, value: { repos: {} } }, deleting, null), [
+    { file: OPERATOR, path: '/repos', rule: 'required', message: "must have required property 'repos'" },
+  ]);
+});
+
+test('the layer that holds the whole path wins over a higher one that holds only a prefix', () => {
+  const layers = [
+    { file: SHOP, pointer: '', patch: { a: { b: 5 } } },
+    { file: OPERATOR, pointer: '', patch: { a: { c: 1 } } },
+  ];
+  assert.deepEqual(attribute('/a/b', layers), { file: SHOP, path: '/a/b' });
+  assert.deepEqual(attribute('/a/d', layers), { file: OPERATOR, path: '/a/d' });
+  assert.deepEqual(attribute('/z', layers), { file: SHOP, path: '/z' });
+  assert.deepEqual(attribute('', layers), { file: OPERATOR, path: '' });
+});
+
+test('a repo entry that is not a mapping is a fault at /repos/<name>, in the file that wrote it', () => {
+  const shop = { file: SHOP, value: { repos: { utop: {} } } };
+  const operator = { file: OPERATOR, value: { repos: { utop: 'x' } } };
+  const fault = { file: OPERATOR, path: '/repos/utop', rule: 'type', message: 'must be object' };
+  assert.deepEqual(faultsOf(BACKLOG_SCHEMA, shop, operator, null), [fault]);
+  assert.deepEqual(faultsOf(BACKLOG_SCHEMA, shop, operator, 'utop'), [fault]);
+});
+
+/** A fixture schema with one condition and one list of view columns. */
+const CEL_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    when: { type: 'string', cel: 'bool' },
+    columns: { type: 'array', items: { type: 'string', cel: 'dyn' } },
+  },
+};
+
+/** The CEL faults of `value` as one layer of `file`. */
+function celFaultsOf(value, file = '/b/config/x.yaml') {
+  const layers = [{ file, pointer: '', patch: value }];
+  const { faults, cel } = shapeChecker().compile(CEL_SCHEMA)(applyLayers(layers), layers);
+  assert.deepEqual(faults, []);
+  return compileCel(cel, celEnvironment({ predicates: {} }));
+}
+
+test('the cel keyword: a string that does not compile, and one whose type is not bool, are faults', () => {
+  assert.deepEqual(celFaultsOf({ when: 'status ==' }), [
+    { file: '/b/config/x.yaml', path: '/when', rule: 'cel', message: 'Unexpected token: EOF' },
+  ]);
+  assert.deepEqual(celFaultsOf({ when: 'title' }), [
+    { file: '/b/config/x.yaml', path: '/when', rule: 'cel', message: 'the type is string, not bool' },
+  ]);
+  assert.deepEqual(celFaultsOf({ when: 'nope' }), [
+    { file: '/b/config/x.yaml', path: '/when', rule: 'cel', message: 'Unknown variable: nope' },
+  ]);
+  assert.deepEqual(celFaultsOf({ when: 'status == "review" && size(findings) > 0' }), []);
+});
+
+test('the cel keyword: a dyn string takes any type, and still must compile', () => {
+  assert.deepEqual(celFaultsOf({ columns: ['title', 'id_number + 1', 'record.type'] }), []);
+  assert.deepEqual(celFaultsOf({ columns: ['title', 'title +'] }), [
+    { file: '/b/config/x.yaml', path: '/columns/1', rule: 'cel', message: 'Unexpected token: EOF' },
+  ]);
+});
+
+test('a schema whose cel keyword is neither bool nor dyn does not compile', () => {
+  assert.throws(() => shapeChecker().compile({ type: 'string', cel: 'int' }), /cel/);
+});
+
+test('ConfigurationFaults: one line per fault, sorted by file and path, repeats dropped, ~ for $HOME', () => {
+  const faults = [
+    { file: '/home/o/.config/bl/config.yaml', path: '/b', rule: 'type', message: 'must be string' },
+    {
+      file: '/b/backlog.yaml',
+      path: '/z',
+      rule: 'additionalProperties',
+      message: 'must NOT have additional properties',
+    },
+    { file: '/b/backlog.yaml', path: '/a', rule: 'type', message: 'must be string' },
+    { file: '/b/backlog.yaml', path: '/a', rule: 'type', message: 'must be string' },
+    { file: '/elsewhere/x.yaml', path: '', rule: 'yaml', message: 'the top level must be a mapping' },
+  ];
+  const error = withEnv({ HOME: '/home/o' }, () => new ConfigurationFaults(faults, '/b'));
+  assert.ok(error instanceof Error);
+  assert.equal(
+    error.message,
+    [
+      '/elsewhere/x.yaml: : yaml: the top level must be a mapping',
+      'backlog.yaml: /a: type: must be string',
+      'backlog.yaml: /z: additionalProperties: must NOT have additional properties',
+      '~/.config/bl/config.yaml: /b: type: must be string',
+    ].join('\n'),
+  );
+  assert.equal(error.faults.length, 4);
+});

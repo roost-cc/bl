@@ -7,8 +7,9 @@
  * Patch (RFC 7396), with the `json-merge-patch` library (D-86). Two orders
  * exist:
  *
- *   - both axes (`bothAxes`), for `backlog.yaml` and the operator's
- *     `config.yaml` (core.md, "The layer order", D-87);
+ *   - both axes (`bothAxes`, with `reposLayers` below it for the shape
+ *     check), for `backlog.yaml` and the operator's `config.yaml` (core.md,
+ *     "The layer order", D-87);
  *   - the who axis only (`whoAxis`, `whoEntries`), for the files for people
  *     (views.md, D-471).
  *
@@ -17,6 +18,7 @@
  */
 
 import mergePatch from 'json-merge-patch';
+import { isMapping } from './files.js';
 
 /**
  * @typedef {object} Layer
@@ -41,7 +43,7 @@ export function applyLayers(layers) {
 }
 
 /** One token of a JSON pointer (RFC 6901, section 3). */
-const pointerToken = (name) => name.replaceAll('~', '~0').replaceAll('/', '~1');
+export const pointerToken = (name) => name.replaceAll('~', '~0').replaceAll('/', '~1');
 
 /** A source's top level without its `repos` key, as a layer. */
 function topLayer(source) {
@@ -57,13 +59,16 @@ function topLayer(source) {
  */
 function reposOf(source) {
   const repos = source?.value.repos;
-  return repos !== null && typeof repos === 'object' && !Array.isArray(repos) ? repos : {};
+  return isMapping(repos) ? repos : {};
 }
 
-/** A source's `repos.<repo>` entry as a layer, or nothing when it has none. */
+/**
+ * A source's `repos.<repo>` entry as a layer, or nothing when it has none or
+ * it is not a mapping (the shape check reports that, D5).
+ */
 function repoLayers(source, repo) {
   const repos = reposOf(source);
-  if (!Object.hasOwn(repos, repo)) return [];
+  if (!isMapping(repos[repo])) return [];
   return [{ file: source.file, pointer: `/repos/${pointerToken(repo)}`, patch: repos[repo] }];
 }
 
@@ -84,7 +89,22 @@ export function bothAxes(shop, operator, repo) {
 }
 
 /**
- * The scopes of the both-axes order: `null` (the top level), then each repo
+ * The `repos` key of each source that has one, as a layer of its own: the
+ * shop's, then the operator's. The loader puts these below the both-axes
+ * layers of every scope, so each scope's result holds the merged `repos` map
+ * and the shape check sees it (D5); `bothAxes` leaves `repos` out (D-87).
+ * @param {Source} shop
+ * @param {Source} operator
+ * @returns {Layer[]}
+ */
+export function reposLayers(shop, operator) {
+  return [shop, operator]
+    .filter((source) => source !== null && Object.hasOwn(source.value, 'repos'))
+    .map((source) => ({ file: source.file, pointer: '', patch: { repos: source.value.repos } }));
+}
+
+/**
+ * The scopes of the both-axes order:`null` (the top level), then each repo
  * name that either file has under `repos`, sorted.
  * @param {Source} shop
  * @param {Source} operator

@@ -2,10 +2,11 @@
 /**
  * bl-next — the entry point of the rewrite (F-135 D2).
  *
- * It has no commands yet: F-138 gives it argument parsing and commands. It
- * exists now because `lib/child.js`'s `BL_PATH` names it, and because the
- * cutover (F-146) points `bin/bl` at it.
+ * It calls `main` of `commands/main.js` (F-136 D8), so `bin/` imports only
+ * `commands/` (F-135 D3). It exists now because `lib/child.js`'s `BL_PATH`
+ * names it, and because the cutover (F-146) points `bin/bl` at it.
  */
 
-process.stderr.write('bl-next: no commands yet\n');
-process.exitCode = 2;
+import { main } from '../commands/main.js';
+
+process.exitCode = main(process.argv.slice(2));
