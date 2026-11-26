@@ -678,6 +678,7 @@ test('storeWrite_serializes_same_process_callers_and_rejects_changed_source', as
             }),
             (error) => {
               assert.match(error.message, /changed while bl wrote it/);
+              assert.equal(error.code, 'ECHANGED');
               return true;
             },
           );

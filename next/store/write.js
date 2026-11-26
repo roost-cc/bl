@@ -354,7 +354,8 @@ function putBack(ctx, written, made) {
  * A file that no longer holds what the write first read from it (another
  * writer changed it), or that another writer changed after the store write
  * wrote it and before the commit, fails the write with code `ECHANGED`, and
- * keeps the other writer's change. A staged file whose text equals what the write
+ * keeps the other writer's change. The error keeps its `code`, `ECHANGED`
+ * included, when paths could not be put back. A staged file whose text equals what the write
  * first read is not written. When nothing changed, nothing is written or
  * committed. When the
  * written files hold what `HEAD` holds (the write undid uncommitted edits),
@@ -459,7 +460,7 @@ async function writeLocked(ctx, { message, trailers = [] }, fn) {
     const failed = putBack(ctx, written, made);
     if (failed.length === 0) throw e;
     const why = `${/** @type {Error} */ (e).message}; these paths were not put back: ${failed.join(', ')}`;
-    throw new Error(why, { cause: e });
+    throw Object.assign(new Error(why, { cause: e }), { code: /** @type {NodeJS.ErrnoException} */ (e).code });
   }
   return result;
 }
