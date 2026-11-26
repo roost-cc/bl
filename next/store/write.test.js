@@ -614,6 +614,74 @@ test('storeWrite_serializes_same_process_callers_and_rejects_changed_source', as
   }
 });
 
+test('putBack_preserves_later_edits_and_unowned_files', async (t) => {
+  /** Make the backlog's commits run `script` in a pre-commit hook, and then fail. */
+  const hook = (ctx, script) => {
+    const path = join(ctx.backlogDir, '.git', 'hooks', 'pre-commit');
+    writeFileSync(path, `#!/bin/sh\n${script}\nexit 1\n`);
+    chmodSync(path, 0o755);
+  };
+  const exists = (ctx, path) => existsSync(join(ctx.backlogDir, path));
+  const createBoth = (w) => {
+    w.create('story', 'Three', { state: DRAFT, attributes: { category: 'bug' }, by: 'operator' });
+    w.create('task', 'Task', { state: DRAFT, by: 'operator' });
+  };
+  /** [name, the hook's script, the write, then what each path must hold] */
+  const CASES = [
+    [
+      'an existing file edited after its write keeps the edit; the others go back',
+      `printf 'later\\n' > ${S1}`,
+      (w) => {
+        w.set('S-1', 'Summary', 'Alice.');
+        w.set('S-2', 'Summary', 'Alice.');
+      },
+      { [S1]: 'later\n', [S2]: doc('Two') },
+    ],
+    [
+      'a file made in a new item directory stays, with the directory; the files of the write go',
+      'printf "hook\\n" > stories/S3-three/hook.txt',
+      createBoth,
+      {
+        'stories/S3-three/hook.txt': 'hook\n',
+        'stories/S3-three/index.md': null,
+        'stories/S3-three/state.json': null,
+        'tasks/T1-task': null,
+        tasks: null,
+      },
+    ],
+    [
+      'a new file edited after its write keeps the edit; the other new files go',
+      "printf 'later\\n' > stories/S3-three/state.json",
+      createBoth,
+      {
+        'stories/S3-three/state.json': 'later\n',
+        'stories/S3-three/index.md': null,
+        'stories/S3-three/log.jsonl': null,
+        'tasks/T1-task': null,
+      },
+    ],
+    [
+      'a file made in a new parent directory keeps that directory; the item directory goes',
+      "printf 'hook\\n' > tasks/hook.txt",
+      createBoth,
+      { 'tasks/hook.txt': 'hook\n', 'tasks/T1-task': null, 'stories/S3-three': null },
+    ],
+  ];
+  for (const [name, script, write, expected] of CASES) {
+    await t.test(name, async () => {
+      const ctx = backlog();
+      hook(ctx, script);
+      const before = head(ctx);
+      await assert.rejects(storeWrite(ctx, { message: 'm' }, write), { message: /backlog commit failed/ });
+      for (const [path, text] of Object.entries(expected)) {
+        if (text === null) assert.equal(exists(ctx, path), false, `${path} is gone`);
+        else assert.equal(read(ctx, path), text, path);
+      }
+      assert.equal(head(ctx), before);
+    });
+  }
+});
+
 /** One store write operation on S-1, with the item file it writes. */
 const OPERATIONS = [
   ['set', 'index.md', (w) => w.set('S-1', 'Summary', 'Changed.')],

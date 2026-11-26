@@ -23,8 +23,8 @@
  */
 
 import { AsyncLocalStorage } from 'async_hooks';
-import { mkdirSync, rmSync, unlinkSync } from 'fs';
-import { join } from 'path';
+import { mkdirSync, rmdirSync, unlinkSync } from 'fs';
+import { dirname, join } from 'path';
 import { atomicWriteFile } from '../lib/atomic-write.js';
 import { canonical, withLock } from '../lib/lock.js';
 import { commitPaths } from './commit.js';
@@ -316,31 +316,41 @@ function checkItem(ctx, item, read, exists) {
 
 /**
  * Put each written file back to the text it had before the write, with its
- * mode, the last written first; a file that did not exist is deleted. Then remove each
- * directory that the write made, with what is left in it. Returns the paths
- * it could not put back or remove, each with its error.
+ * mode, the last written first; a file that did not exist is deleted. Then
+ * remove each directory that the write made, the deepest first. Each step
+ * changes only what the store write still owns: a file that no longer holds
+ * the text the write gave it, and a directory that holds anything (another
+ * writer, or a commit hook, changed them after the write began), stay as they
+ * are. Returns the paths it could not put back or remove, each with the
+ * reason.
  *
  * @param {StoreContext} ctx
- * @param {Array<{ path: string, before: string|null }>} written
+ * @param {Array<{ path: string, before: string|null, text: string }>} written
+ *   each file's text before the write, and the text the write gave it
  * @param {string[]} made  the absolute directories the write made
  * @returns {string[]}
  */
 function putBack(ctx, written, made) {
   const failed = [];
-  for (const { path, before } of [...written].reverse()) {
+  const changed = 'another writer changed it after the store write, and its change stays';
+  for (const { path, before, text } of [...written].reverse()) {
     const abs = join(ctx.backlogDir, path);
     try {
-      if (before === null) unlinkSync(abs);
-      else atomicWriteFile(ctx.backlogDir, abs, before, { preserve: true });
+      if (before !== null) atomicWriteFile(ctx.backlogDir, abs, before, { preserve: true, unchanged: text });
+      else if (backlogText(ctx, path) === text) unlinkSync(abs);
+      else failed.push(`${path} (${changed})`);
     } catch (e) {
-      failed.push(`${path} (${/** @type {Error} */ (e).message})`);
+      const why = /** @type {NodeJS.ErrnoException} */ (e).code === 'ECHANGED' ? changed : e.message;
+      failed.push(`${path} (${why})`);
     }
   }
-  for (const dir of [...made].reverse()) {
+  for (const dir of [...made].sort((a, b) => b.length - a.length)) {
     try {
-      rmSync(dir, { recursive: true, force: true });
+      rmdirSync(dir);
     } catch (e) {
-      failed.push(`${dir} (${/** @type {Error} */ (e).message})`);
+      const code = /** @type {NodeJS.ErrnoException} */ (e).code;
+      if (code === 'ENOTEMPTY') failed.push(`${dir} (it holds files the store write did not make, so it stays)`);
+      else if (code !== 'ENOENT') failed.push(`${dir} (${/** @type {Error} */ (e).message})`);
     }
   }
   return failed;
@@ -359,7 +369,9 @@ function putBack(ctx, written, made) {
  *    id order.
  *
  * If a write or the commit fails, each written file is put back as it was,
- * each directory that the write made is removed, and the error is thrown.
+ * each directory that the write made is removed, and the error is thrown;
+ * a file or a directory that another writer changed after the write began
+ * stays as that writer left it (`putBack`).
  * A file that no longer holds what the write first read from it (another
  * writer changed it) fails its write with code `ECHANGED`, and keeps the
  * other writer's change. A staged file whose text equals what the write
@@ -430,18 +442,19 @@ async function writeLocked(ctx, { message, trailers = [] }, fn) {
   const findings = items.flatMap((item) => checkItem(ctx, item, read, exists));
   if (findings.length > 0) throw new StoreCheckError(findings);
 
-  /** @type {Array<{ path: string, before: string|null }>} */
+  /** @type {Array<{ path: string, before: string|null, text: string }>} */
   const written = [];
   /** @type {string[]} */
   const made = [];
   try {
     for (const item of created.values()) {
-      const first = mkdirSync(join(ctx.backlogDir, item.path), { recursive: true });
-      if (first !== undefined) made.push(first);
+      const dir = join(ctx.backlogDir, item.path);
+      const first = mkdirSync(dir, { recursive: true });
+      if (first !== undefined) for (let d = dir; d.length >= first.length; d = dirname(d)) made.push(d);
     }
     for (const { path, base, text } of changed) {
       atomicWriteFile(ctx.backlogDir, join(ctx.backlogDir, path), text, { preserve: true, unchanged: base });
-      written.push({ path, before: base });
+      written.push({ path, before: base, text });
     }
     const itemTrailers = items.map((item) => `Bl-Item: ${item.id}`);
     await commitPaths(
@@ -453,7 +466,7 @@ async function writeLocked(ctx, { message, trailers = [] }, fn) {
   } catch (e) {
     const failed = putBack(ctx, written, made);
     if (failed.length === 0) throw e;
-    const why = `${/** @type {Error} */ (e).message}; these files could not be put back: ${failed.join(', ')}`;
+    const why = `${/** @type {Error} */ (e).message}; these paths were not put back: ${failed.join(', ')}`;
     throw new Error(why, { cause: e });
   }
   return result;
