@@ -17,13 +17,14 @@
  * items.md; today's covering-lock table is not carried.
  */
 
-import { readFileSync, unlinkSync } from 'fs';
+import { unlinkSync } from 'fs';
 import { join } from 'path';
 import { atomicWriteFile } from '../lib/atomic-write.js';
 import { withLock } from '../lib/lock.js';
 import { commitPaths } from './commit.js';
 import { checkDocument, parseDocument } from './document.js';
-import { itemDefinition, itemDir } from './items.js';
+import { ATTRIBUTES, STATE, checkAttributes, checkState, jsonText, parseJson } from './item-json.js';
+import { backlogText, itemDefinition, itemDir } from './items.js';
 import * as sections from './sections.js';
 
 /**
@@ -32,9 +33,12 @@ import * as sections from './sections.js';
  *
  * @typedef {object} Finding  one failed check of a store write
  * @property {string} item  the item's id
- * @property {string} file  the item file, `index.md`
+ * @property {string} file  the item file, for example `index.md`
  * @property {string} rule  the rule it breaks, for example `missing-section`
- * @property {string|null} section  the section the rule names, or null
+ *   in `index.md`, or the schema keyword (`required`) or `json` in a JSON file
+ * @property {string|null} [section]  in `index.md`, the section the rule names, or null
+ * @property {string} [path]  in a JSON file, the JSON pointer of the failing value
+ * @property {string} [message]  in a JSON file, what is wrong
  *
  * @typedef {object} Writer  the operations of one store write
  * @property {(id: string, name: string, content: string) => void} set
@@ -47,6 +51,10 @@ import * as sections from './sections.js';
  *   tick the Nth checkbox of section `name`, from 1
  * @property {(id: string, name: string, n: number) => void} uncheck
  *   clear the Nth checkbox of section `name`, from 1
+ * @property {(id: string, state: Record<string, unknown>) => void} state
+ *   replace the item's `state.json`
+ * @property {(id: string, attributes: Record<string, unknown>) => void} attributes
+ *   replace the item's `attributes.json`
  *
  * @typedef {{ item: Item, file: string, text: string }} Staged  a file's new text
  */
@@ -55,26 +63,14 @@ import * as sections from './sections.js';
 export class StoreCheckError extends Error {
   /** @param {Finding[]} findings */
   constructor(findings) {
-    const lines = findings.map((f) => `  ${f.item} ${f.file}: ${f.rule}${f.section === null ? '' : ` (${f.section})`}`);
+    const lines = findings.map(
+      (f) =>
+        `  ${f.item} ${f.file}: ${f.rule}${f.section == null ? '' : ` (${f.section})`}` +
+        `${f.path ? ` at ${f.path}` : ''}${f.message === undefined ? '' : `: ${f.message}`}`,
+    );
     super(['the store write breaks these rules, so it changed no file:', ...lines].join('\n'));
     this.name = 'StoreCheckError';
     this.findings = findings;
-  }
-}
-
-/**
- * The text of the backlog file `path` (backlog-relative), or null when it is
- * not there.
- *
- * @param {StoreContext} ctx
- * @param {string} path
- */
-function diskText(ctx, path) {
-  try {
-    return readFileSync(join(ctx.backlogDir, path), 'utf8');
-  } catch (e) {
-    if (/** @type {NodeJS.ErrnoException} */ (e).code === 'ENOENT') return null;
-    throw e;
   }
 }
 
@@ -88,30 +84,42 @@ function diskText(ctx, path) {
  */
 function writer(ctx, staged) {
   /**
-   * Stage the item's document as `edit` changes it. An id with no item
+   * Stage the item's file `file` as `edit` changes it; `edit` gets the text
+   * that the write has so far, or null when there is none. An id with no item
    * directory is an error.
+   * @param {string} id
+   * @param {string} file
+   * @param {(text: string|null, item: Item) => string} edit
+   */
+  const stage = (id, file, edit) => {
+    const item = itemDir(ctx, id);
+    if (item === null) throw new Error(`no item ${id} in the backlog`);
+    const path = `${item.path}/${file}`;
+    const text = staged.get(path)?.text ?? backlogText(ctx, path);
+    staged.set(path, { item, file, text: edit(text, item) });
+  };
+  /**
+   * Stage the item's document as `edit` changes it.
    * @param {string} id
    * @param {(text: string, definition: Record<string, any>) => string} edit
    */
-  const document = (id, edit) => {
-    const item = itemDir(ctx, id);
-    if (item === null) throw new Error(`no item ${id} in the backlog`);
-    const path = `${item.path}/index.md`;
-    const text = staged.get(path)?.text ?? diskText(ctx, path) ?? '';
-    staged.set(path, { item, file: 'index.md', text: edit(text, itemDefinition(ctx, item.type)) });
-  };
+  const document = (id, edit) =>
+    stage(id, 'index.md', (text, item) => edit(text ?? '', itemDefinition(ctx, item.type)));
   return {
     set: (id, name, content) => document(id, (text, d) => sections.set(text, d, name, content)),
     append: (id, name, content) => document(id, (text, d) => sections.append(text, d, name, content)),
     reset: (id, name) => document(id, (text, d) => sections.reset(text, d, name)),
     check: (id, name, n) => document(id, (text, d) => sections.check(text, d, name, n)),
     uncheck: (id, name, n) => document(id, (text, d) => sections.uncheck(text, d, name, n)),
+    state: (id, state) => stage(id, STATE, () => jsonText(state)),
+    attributes: (id, attributes) => stage(id, ATTRIBUTES, () => jsonText(attributes)),
   };
 }
 
 /**
  * The findings of every check of one item, its files read as the write
- * leaves them (`read`).
+ * leaves them (`read`): the document check of `index.md`, and the schema
+ * check of `state.json` and of `attributes.json` when the item has the file.
  *
  * @param {StoreContext} ctx
  * @param {Item} item
@@ -119,13 +127,31 @@ function writer(ctx, staged) {
  * @returns {Finding[]}
  */
 function checkItem(ctx, item, read) {
+  const definition = itemDefinition(ctx, item.type);
   const text = read(`${item.path}/index.md`) ?? '';
-  return checkDocument(parseDocument(text), itemDefinition(ctx, item.type)).map(({ rule, section }) => ({
+  const documentFindings = checkDocument(parseDocument(text), definition).map(({ rule, section }) => ({
     item: item.id,
     file: 'index.md',
     rule,
     section,
   }));
+  /**
+   * The findings of one JSON file of the item by `check`.
+   * @param {string} file
+   * @param {(value: unknown) => import('../config/files.js').Fault[]} check
+   */
+  const jsonFindings = (file, check) => {
+    const json = read(`${item.path}/${file}`);
+    if (json === null) return [];
+    const parsed = parseJson(json);
+    const faults = 'fault' in parsed ? [parsed.fault] : check(parsed.value);
+    return faults.map(({ path, rule, message }) => ({ item: item.id, file, rule, path, message }));
+  };
+  return [
+    ...documentFindings,
+    ...jsonFindings(STATE, checkState),
+    ...jsonFindings(ATTRIBUTES, (value) => checkAttributes(value, definition)),
+  ];
 }
 
 /**
@@ -180,7 +206,7 @@ export async function storeWrite(ctx, { message, trailers = [] }, fn) {
     const result = await fn(writer(ctx, staged));
 
     const changed = [...staged].flatMap(([path, entry]) => {
-      const before = diskText(ctx, path);
+      const before = backlogText(ctx, path);
       return before === entry.text ? [] : [{ path, before, ...entry }];
     });
     if (changed.length === 0) return result;
@@ -188,7 +214,7 @@ export async function storeWrite(ctx, { message, trailers = [] }, fn) {
     const items = [...new Map(changed.map(({ item }) => [item.id, item])).values()].sort((a, b) =>
       a.id.localeCompare(b.id, 'en', { numeric: true }),
     );
-    const read = (/** @type {string} */ path) => staged.get(path)?.text ?? diskText(ctx, path);
+    const read = (/** @type {string} */ path) => staged.get(path)?.text ?? backlogText(ctx, path);
     const findings = items.flatMap((item) => checkItem(ctx, item, read));
     if (findings.length > 0) throw new StoreCheckError(findings);
 

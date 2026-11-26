@@ -14,6 +14,10 @@ const STORY = [
   '  - name: Acceptance Criteria',
   '  - name: Notes',
   '    initial: None.',
+  'attributes:',
+  '  - name: category',
+  '    schema: { enum: [feature, bug, chore] }',
+  '    required: true',
   '',
 ].join('\n');
 
@@ -195,4 +199,72 @@ test('an error in fn, such as an unknown item or section, ends the write before 
   );
   assert.equal(read(ctx, S1), doc('One'));
   assert.deepEqual(status(ctx), []);
+});
+
+test('w.state and w.attributes that pass their checks commit the files, as two-space JSON', async () => {
+  const ctx = backlog({ 'stories/S1-one/state.json': '{ "status": "draft", "run": "idle" }\n' });
+  await storeWrite(ctx, { message: 'm' }, (w) => {
+    w.state('S-1', { status: 'review', run: 'active: review', counters: { rounds: { value: 1, threshold: 3 } } });
+    w.attributes('S-1', { category: 'bug' });
+    w.attributes('S-2', { category: 'chore' });
+  });
+  assert.deepEqual(changedIn(ctx, 'HEAD').sort(), [
+    'stories/S1-one/attributes.json',
+    'stories/S1-one/state.json',
+    'stories/S2-two/attributes.json',
+  ]);
+  assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%B'), 'm\n\nBl-Item: S-1\nBl-Item: S-2');
+  assert.deepEqual(JSON.parse(read(ctx, 'stories/S1-one/state.json')), {
+    status: 'review',
+    run: 'active: review',
+    counters: { rounds: { value: 1, threshold: 3 } },
+  });
+  assert.equal(read(ctx, 'stories/S1-one/attributes.json'), '{\n  "category": "bug"\n}\n');
+  assert.deepEqual(status(ctx), []);
+});
+
+test('a w.state or w.attributes that fails its check changes no file and makes no commit', async () => {
+  const state = '{ "status": "draft", "run": "idle" }\n';
+  const ctx = backlog({ 'stories/S1-one/state.json': state });
+  const before = head(ctx);
+  await assert.rejects(
+    storeWrite(ctx, { message: 'm' }, (w) => {
+      w.set('S-1', 'Summary', 'Changed.');
+      w.state('S-1', { status: 'review', run: 'interrupted: review' });
+      w.attributes('S-2', { category: 'fix', owner: 'alice' });
+    }),
+    (error) => {
+      assert.ok(error instanceof StoreCheckError);
+      assert.deepEqual(
+        error.findings.map(({ item, file, rule, path }) => [item, file, rule, path]),
+        [
+          ['S-1', 'state.json', 'pattern', '/run'],
+          ['S-2', 'attributes.json', 'additionalProperties', '/owner'],
+          ['S-2', 'attributes.json', 'enum', '/category'],
+        ],
+      );
+      assert.match(error.message, /S-1 state\.json: pattern at \/run: must match pattern/);
+      return true;
+    },
+  );
+  assert.equal(read(ctx, S1), doc('One'));
+  assert.equal(read(ctx, 'stories/S1-one/state.json'), state);
+  assert.equal(head(ctx), before);
+  assert.deepEqual(status(ctx), []);
+});
+
+test("a section write checks the item's JSON files as they are: one that is not JSON fails it", async () => {
+  const ctx = backlog({ 'stories/S1-one/attributes.json': '{ "category": \n' });
+  await assert.rejects(
+    storeWrite(ctx, { message: 'm' }, (w) => w.set('S-1', 'Summary', 'Changed.')),
+    (error) => {
+      assert.ok(error instanceof StoreCheckError);
+      assert.deepEqual(
+        error.findings.map(({ item, file, rule, path }) => [item, file, rule, path]),
+        [['S-1', 'attributes.json', 'json', '']],
+      );
+      return true;
+    },
+  );
+  assert.equal(read(ctx, S1), doc('One'));
 });

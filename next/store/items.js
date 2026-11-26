@@ -6,10 +6,11 @@
  * backlog's root. The types are the values of `id_prefixes`. An entry of a
  * type's `dir` is an item when it is a directory whose name is a prefix of
  * that type and a number, followed by `-` (`ids.js` reads it). Two such
- * directories for one id are an error that names both.
+ * directories for one id are an error that names both. `backlogText` reads
+ * one backlog file, for the store's other modules.
  */
 
-import { readdirSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { parseId } from './ids.js';
 
@@ -126,4 +127,21 @@ export function listItems(ctx) {
  */
 export function nextNumber(ctx, type) {
   return Math.max(0, ...itemsOf(ctx, type).map((item) => item.number)) + 1;
+}
+
+/**
+ * The text of the backlog file `path` (relative to the backlog's root), or
+ * `null` when it is not there.
+ *
+ * @param {StoreContext} ctx
+ * @param {string} path
+ * @returns {string|null}
+ */
+export function backlogText(ctx, path) {
+  try {
+    return readFileSync(join(ctx.backlogDir, path), 'utf8');
+  } catch (e) {
+    if (/** @type {NodeJS.ErrnoException} */ (e).code === 'ENOENT') return null;
+    throw e;
+  }
 }
