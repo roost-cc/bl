@@ -49,9 +49,10 @@ class ParserExit extends Error {
 
 /**
  * `ArgumentParser` that throws `ParserExit` where `argparse` writes and exits,
- * so that the caller writes the text and gives the exit code.
+ * so that the caller writes the text and gives the exit code. The op schema
+ * gate test parses each mock's `argv` with it.
  */
-class Parser extends ArgumentParser {
+export class Parser extends ArgumentParser {
   print_help() {
     throw new ParserExit({ status: 0, stdout: this.format_help(), stderr: '' });
   }

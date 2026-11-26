@@ -21,11 +21,12 @@ const BL_NEXT = fileURLToPath(new URL('../bin/bl-next', import.meta.url));
  * `<home>/backlog`, the operator's directory `<home>/.config/bl`. It runs
  * outside tmux unless `env` sets `TMUX`, so it never renames a real window.
  * @param {Record<string, string>} files  path under the home → text
- * @param {{ backlog?: boolean, argv?: string[], env?: Record<string, string|undefined> }} [opts]
+ * @param {{ backlog?: boolean, argv?: string[], env?: Record<string, string|undefined>, bin?: string }} [opts]
  *   `backlog: false` leaves BL_BACKLOG_DIR unset; `argv` are the arguments;
- *   `env` adds to or (undefined) removes from the environment
+ *   `env` adds to or (undefined) removes from the environment; `bin` is the
+ *   script to run, `bl-next` by default
  */
-async function runBlNext(files, { backlog = true, argv = [], env: extra = {} } = {}) {
+async function runBlNext(files, { backlog = true, argv = [], env: extra = {}, bin = BL_NEXT } = {}) {
   const home = mkTempDir('bl-main-');
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(dirname(join(home, path)), { recursive: true });
@@ -45,7 +46,7 @@ async function runBlNext(files, { backlog = true, argv = [], env: extra = {} } =
   if (backlog) env.BL_BACKLOG_DIR = join(home, 'backlog');
   else delete env.BL_BACKLOG_DIR;
   for (const [k, v] of Object.entries(env)) if (v === undefined) delete env[k];
-  return spawnToFiles(BL_NEXT, argv, { cwd: home, env }).closed;
+  return spawnToFiles(process.execPath, [bin, ...argv], { cwd: home, env }).closed;
 }
 
 /**
@@ -157,6 +158,25 @@ test("bl-next lsit exits 2 and suggests 'list'", async () => {
   assert.equal(stderr, "bl-next: 'lsit' is not a command. Did you mean 'list'?\n");
   assert.equal(status, 2);
   assert.equal(stdout, '');
+});
+
+/** bl-next with the fixture ops `story` (one record) and `stories` (an async iterable). */
+const WITH_FIXTURE_OPS = fileURLToPath(new URL('../test/helpers/bl-next-fixture-ops.js', import.meta.url));
+const FIXTURE_COMMANDS = 'story:\n  op: story\n  help: show a story\nstories:\n  op: stories\n  help: list stories\n';
+
+test('bl-next <command> --json prints one record as one JSON document, a record set as JSON Lines', async () => {
+  const files = { 'backlog/backlog.yaml': BACKLOG, 'backlog/config/commands.yaml': FIXTURE_COMMANDS };
+  const one = await runBlNext(files, { bin: WITH_FIXTURE_OPS, argv: ['story', 'S-1', '--json'] });
+  assert.equal(one.stderr, '');
+  assert.equal(one.status, 0);
+  assert.equal(one.stdout, '{"id":"S-1","title":"Story S-1"}\n');
+  const set = await runBlNext(files, { bin: WITH_FIXTURE_OPS, argv: ['stories', 'S-1', 'S-2', '--json'] });
+  assert.equal(set.stderr, '');
+  assert.equal(set.status, 0);
+  assert.equal(set.stdout, '{"id":"S-1","title":"Story S-1"}\n{"id":"S-2","title":"Story S-2"}\n');
+  // With no view in views.yaml, the output is the same without --json.
+  const noView = await runBlNext(files, { bin: WITH_FIXTURE_OPS, argv: ['stories', 'S-1', 'S-2'] });
+  assert.equal(noView.stdout, set.stdout);
 });
 
 test('bl-next with no backlog to find exits 1 with bl-next: and the error', async () => {
