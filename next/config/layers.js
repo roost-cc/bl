@@ -104,15 +104,16 @@ export function reposLayers(shop, operator) {
 }
 
 /**
- * The scopes of the both-axes order:`null` (the top level), then each repo
- * name that either file has under `repos`, sorted.
+ * The scopes of the both-axes order: `null` (the top level), then each repo
+ * name of the merged `repos` map, sorted. A repo that the operator deletes
+ * with `null` is no scope, so no layer of it reaches a result.
  * @param {Source} shop
  * @param {Source} operator
  * @returns {(string|null)[]}
  */
 export function scopesOf(shop, operator) {
-  const names = new Set([shop, operator].flatMap((source) => Object.keys(reposOf(source))));
-  return [null, ...[...names].sort()];
+  const repos = /** @type {any} */ (applyLayers(reposLayers(shop, operator))).repos;
+  return [null, ...Object.keys(isMapping(repos) ? repos : {}).sort()];
 }
 
 /**

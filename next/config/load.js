@@ -33,7 +33,7 @@ const CEL_INPUTS = Object.freeze({ predicates: Object.freeze({}) });
  * @typedef {object} Configuration
  * @property {(repo: string|null) => any} scope  the result of the `both` kind
  *   for work in `repo`, or outside any repo with `null`; `undefined` for a repo
- *   that neither file names
+ *   that the merged `repos` map does not name
  * @property {(kind: string, name?: string) => any} file  the result of a `who`
  *   or `none` kind; for a directory kind, of its file `name` (`en.yaml`), and
  *   `undefined` for a name that neither directory holds

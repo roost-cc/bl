@@ -119,6 +119,17 @@ test('a YAML error is a fault with its line, and no shape fault follows from the
   assert.match(lines[0], /^~\/\.config\/bl\/config\.yaml: : yaml: line \d+: /);
 });
 
+test('a repo that the operator deletes with null has no scope, and its shop entry reaches no result', () => {
+  const dirs = fixture({
+    'backlog/backlog.yaml': 'who: shop top\nrepos:\n  x: { who: shop x }\n  y: {}\n',
+    '.config/bl/config.yaml': 'repos:\n  x: null\n',
+  });
+  const config = load(dirs, [BOTH]);
+  assert.equal(config.scope('x'), undefined);
+  assert.deepEqual(config.scope('y'), { who: 'shop top', repos: { y: {} } });
+  assert.deepEqual(config.scope(null), { who: 'shop top', repos: { y: {} } });
+});
+
 test('a missing operator file is no layer, not a fault', () => {
   const config = load(fixture({ 'backlog/backlog.yaml': 'repos: { utop: {} }\n' }));
   assert.deepEqual(config.scope('utop'), { repos: { utop: {} } });

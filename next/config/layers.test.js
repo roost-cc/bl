@@ -90,6 +90,25 @@ test('scopes: the top level and every repo either file names, with no operator f
   );
 });
 
+test('scopes are the repos of the merged map: a repo deleted by null is none, each other entry is one', () => {
+  const src = (file, repos) => (repos === undefined ? null : { file, value: repos === 'absent' ? {} : { repos } });
+  const rows = [
+    // [shop repos, operator repos, scopes]; undefined: no file, 'absent': a file without repos
+    [{ x: { v: 'shop' } }, { x: null }, [null]],
+    [{ x: { v: 'shop' }, y: {} }, { x: null }, [null, 'y']],
+    [{ x: {} }, undefined, [null, 'x']],
+    [undefined, { x: {} }, [null, 'x']],
+    ['absent', { x: {} }, [null, 'x']],
+    [{ x: {} }, 'absent', [null, 'x']],
+    [{ x: 5 }, { y: 'text' }, [null, 'x', 'y']],
+    [{ x: {} }, null, [null]],
+    [null, { x: {} }, [null, 'x']],
+  ];
+  for (const [shop, operator, scopes] of rows) {
+    assert.deepEqual(scopesOf(src(SHOP, shop), src(OPERATOR, operator)), scopes, JSON.stringify([shop, operator]));
+  }
+});
+
 test('reposLayers: each file that has repos, as a layer of its own, shop first', () => {
   const { shop, operator } = fourLayers();
   const layers = reposLayers(shop, operator);
