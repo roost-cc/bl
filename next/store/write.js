@@ -311,7 +311,9 @@ function checkItem(ctx, item, read, exists) {
  */
 function putBack(ctx, written, made) {
   const failed = [];
-  const changed = 'another writer changed it after the store write, and its change stays';
+  const changed =
+    'another writer or a commit hook changed it after the store write wrote it, so it stays as it is now, ' +
+    "which can hold the store write's text with that change";
   for (const { path, before, text } of [...written].reverse()) {
     const abs = join(ctx.backlogDir, path);
     try {
