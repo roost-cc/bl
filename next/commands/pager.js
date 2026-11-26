@@ -5,11 +5,10 @@
  * When stdout is a terminal and the text has more lines than it has rows,
  * `page` runs `$PAGER` (when set and not blank) through a shell. Else it runs
  * `less`, and when `less` cannot start, `more`, each with no shell; when
- * neither can start, it writes the text to stdout with no message. When the
- * pager that runs cannot start (a launch error, or shell status 126 or 127),
- * it writes the text to stdout too, so no text is lost. When the pager starts
- * and exits nonzero, it may have shown part of the text, so `page` writes
- * nothing and gives the pager's status, which fails the command. The pager
+ * neither can start (`ENOENT`), it writes the text to stdout with no message.
+ * Any other pager that exits nonzero, a `$PAGER` with shell status 126 or 127
+ * included, may have shown part of the text, so `page` writes nothing and
+ * gives the pager's status, which fails the command (Decision A10). The pager
  * gets the text on its stdin, and stdout and stderr on the terminal. Its
  * environment has `LESS=FRX` when `LESS` is not set, as git does, so `less`
  * passes the colors through and quits on a text that fits.
@@ -20,9 +19,6 @@ import { LINE_BREAK } from './table.js';
 
 /** The pagers to try, in order, when `$PAGER` is unset or empty. */
 const FALLBACKS = ['less', 'more'];
-
-/** The exit statuses of a pager that did not start: a launch error (127), or a shell that could not find (127) or run (126) it. */
-const NOT_STARTED = new Set([126, 127]);
 
 /** The `LESS` of a pager when the operator has none. */
 const LESS = 'FRX';
@@ -52,13 +48,8 @@ export function page(text, stdout) {
     env: { ...process.env, LESS: process.env.LESS ?? LESS },
   };
   const pager = process.env.PAGER?.trim();
-  /** The text goes to stdout when the pager did not start; a pager that started and failed gives its status. */
-  const settle = (result, cmd) => {
-    const status = exitStatus(result);
-    if (!NOT_STARTED.has(status)) return status === 0 ? 0 : reportExit(cmd, result);
-    stdout.write(text);
-    return 0;
-  };
+  /** A pager that ran gives its status, and a failed one writes no text (Decision A10). */
+  const settle = (result, cmd) => (exitStatus(result) === 0 ? 0 : reportExit(cmd, result));
   if (pager) return settle(runCommandLine(pager, opts), pager);
   for (const fallback of FALLBACKS) {
     const result = runChild(fallback, [], opts);
