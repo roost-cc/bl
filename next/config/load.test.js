@@ -154,6 +154,24 @@ const TEMPLATES = { ...VIEWS, name: 'templates', shop: 'config/templates/', oper
 
 const SHOP_ONLY = { 'backlog/backlog.yaml': 'repos: {}\n' };
 
+test('a cycle of aliases is a fault that names its file, in each file a load reads', () => {
+  const CYCLE = 'repos: &x { x: *x }\n';
+  const rows = [
+    ['backlog/backlog.yaml', 'backlog.yaml'],
+    ['.config/bl/config.yaml', '~/.config/bl/config.yaml'],
+    ['backlog/config/views.yaml', 'config/views.yaml'],
+    ['.config/bl/views.yaml', '~/.config/bl/views.yaml'],
+    ['backlog/config/templates/en.yaml', 'config/templates/en.yaml'],
+    ['.config/bl/templates/en.yaml', '~/.config/bl/templates/en.yaml'],
+  ];
+  for (const [path, shown] of rows) {
+    const dirs = fixture({ ...SHOP_ONLY, [path]: CYCLE });
+    assert.deepEqual(faultLines(dirs, [...KINDS, VIEWS, TEMPLATES]), [
+      `${shown}: : yaml: an alias refers to a node that holds it`,
+    ]);
+  }
+});
+
 test('a who file kind: the shop file, then the operator file of the same name', () => {
   const dirs = fixture({
     ...SHOP_ONLY,

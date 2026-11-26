@@ -125,7 +125,7 @@ export function operatorDir() {
 /**
  * One YAML file as a mapping. A YAML error is a fault with the error's line;
  * a top level that is not a mapping is a fault too, because a layer must be
- * an object to merge (D3). A file that cannot be read throws: the caller
+ * an object to merge (D3), and so is a cycle of aliases. A file that cannot be read throws: the caller
  * reads only files it found.
  *
  * @param {string} path
@@ -145,5 +145,22 @@ export function readYaml(path) {
     return fault(line === undefined ? text : `line ${line}: ${text}`);
   }
   if (!isMapping(value)) return fault('the top level must be a mapping');
+  if (holdsItself(value)) return fault('an alias refers to a node that holds it');
   return { value };
+}
+
+/**
+ * True when `value` holds itself: a YAML alias inside the node that it names
+ * (`a: &x { b: *x }`) parses to a cycle, which no merge or check can walk.
+ * An alias used twice side by side is no cycle.
+ * @param {unknown} value
+ * @param {Set<object>} [ancestors]
+ */
+function holdsItself(value, ancestors = new Set()) {
+  if (value === null || typeof value !== 'object') return false;
+  if (ancestors.has(value)) return true;
+  ancestors.add(value);
+  const found = Object.values(value).some((child) => holdsItself(child, ancestors));
+  ancestors.delete(value);
+  return found;
 }

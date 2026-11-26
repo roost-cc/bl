@@ -61,6 +61,18 @@ test('readYaml turns a second document, and a repeated key, into a fault with th
   }
 });
 
+test('readYaml turns a cycle of aliases into a fault with the file; an alias used twice is no cycle', () => {
+  for (const text of ['repos: &x { x: *x }\n', 'a: &x [1, *x]\n', 'a: &x { b: { c: [*x] } }\n']) {
+    const file = yamlFile(text);
+    assert.deepEqual(readYaml(file), {
+      fault: { file, path: '', rule: 'yaml', message: 'an alias refers to a node that holds it' },
+    });
+  }
+  assert.deepEqual(readYaml(yamlFile('a: &x { v: 1 }\nb: *x\nc: [*x, *x]\n')), {
+    value: { a: { v: 1 }, b: { v: 1 }, c: [{ v: 1 }, { v: 1 }] },
+  });
+});
+
 test('readYaml turns a top level that is not a mapping into a fault with the file', () => {
   for (const text of ['- a\n- b\n', 'just text\n', '']) {
     const file = yamlFile(text);
