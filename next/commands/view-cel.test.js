@@ -34,6 +34,20 @@ test('evaluate gives the value over a record, its integers as BigInt', () => {
   assert.equal(evaluate(env, 'string(size(records)) + " items"', all), '2 items');
 });
 
+test('view_environment_accepts_reserved_record_fields: a field named record or records is read through record', () => {
+  for (const name of ['record', 'records']) {
+    const env = viewEnvironment({ type: 'object', properties: { [name]: { type: 'string' }, id: {} } });
+    const vars = recordVars({ [name]: 'x', id: 'S-1' });
+    for (const expr of [`record.${name}`, 'id', 'record'])
+      assert.equal(env.check(expr).valid, true, `${name}: ${expr}`);
+    assert.equal(evaluate(env, `record.${name}`, vars), 'x', name);
+    assert.equal(evaluate(env, 'id', vars), 'S-1', name);
+    assert.deepEqual(evaluate(env, 'record', vars), { [name]: 'x', id: 'S-1' }, name);
+    assert.equal(env.check('size(records)').type, 'int', name);
+    assert.equal(evaluate(env, 'size(records)', recordsVars([{ [name]: 'x' }, { [name]: 'y' }])), 2n, name);
+  }
+});
+
 test('a failed evaluation, or an expression that does not compile, gives undefined', () => {
   const env = viewEnvironment(SCHEMA);
   const vars = recordVars({ id: 'S-1' });

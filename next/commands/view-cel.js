@@ -22,18 +22,24 @@ const UNTYPED = {};
  * @returns {Environment}
  */
 export function viewEnvironment(schema) {
-  const env = new Environment({ enableOptionalTypes: true });
-  // A property whose name the library declares already (`type`) is read as `record.<name>`.
+  const env = new Environment({ enableOptionalTypes: true })
+    .registerVariable('record', 'dyn')
+    .registerVariable('records', 'list<dyn>');
+  // A property whose name is declared already (`type`, `record`, `records`) is read as `record.<name>`.
   for (const name of Object.keys(schema.properties ?? {})) {
     if (!env.hasVariable(name)) env.registerVariable(name, 'dyn');
   }
-  return env.registerVariable('record', 'dyn').registerVariable('records', 'list<dyn>');
+  return env;
 }
 
-/** The variables of an expression over one record: its top-level fields and `record`. */
+/**
+ * The variables of an expression over one record: its top-level fields and
+ * `record`. A field named `records` is read as `record.records` only.
+ */
 export function recordVars(record) {
   const value = /** @type {Record<string, unknown>} */ (toCelValue(UNTYPED, record));
-  return { ...value, record: value };
+  const { records: _records, ...fields } = value;
+  return { ...fields, record: value };
 }
 
 /** The variables of an expression over a record set: `records`. */

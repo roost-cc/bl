@@ -200,6 +200,15 @@ test('views whose expressions name top-level fields, record or records pass the 
   assert.equal(viewFaults(GOOD_VIEW), '');
 });
 
+test('view_environment_accepts_reserved_record_fields: an op schema with record or records passes the start check', () => {
+  for (const name of ['record', 'records']) {
+    const ops = { ...OPS, story: { ...story, schema: { type: 'object', properties: { [name]: { type: 'string' } } } } };
+    const views = `stories:\n  columns:\n    - { field: record.${name}, header: H, justify: left, truncate: false }\n  footer: 'string(size(records))'\n`;
+    const at = fixture(VIEW_COMMANDS, { views });
+    assert.deepEqual(startFaults(at.config, ops), [], name);
+  }
+});
+
 test('a view expression with a syntax error or an unknown top-level name is a fault in config/views.yaml at its path', () => {
   const views = `
 stories:
