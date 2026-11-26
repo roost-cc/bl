@@ -133,16 +133,20 @@ export function operatorDir() {
  */
 export function readYaml(path) {
   const fault = (message) => ({ fault: { file: path, path: '', rule: 'yaml', message } });
+  const text = readFileSync(path, 'utf8');
   let value;
   try {
-    value = parse(readFileSync(path, 'utf8'));
+    value = parse(text);
   } catch (error) {
-    if (!(error instanceof YAMLParseError)) throw error;
+    // Each error of `parse` rejects the text: a YAMLParseError, and an error
+    // that the library throws as it builds the value (a ReferenceError for an
+    // alias with no anchor before it, or for aliases that expand too far).
+    if (!(error instanceof YAMLParseError)) return fault(String(error.message).split('\n')[0]);
     // The library's message ends in " at line N, column M:" and a code frame;
     // a fault is one line (D5), so it keeps the first line without that tail.
-    const text = error.message.split('\n')[0].replace(/ at line \d+, column \d+:$/, '');
+    const first = error.message.split('\n')[0].replace(/ at line \d+, column \d+:$/, '');
     const line = error.linePos?.[0]?.line;
-    return fault(line === undefined ? text : `line ${line}: ${text}`);
+    return fault(line === undefined ? first : `line ${line}: ${first}`);
   }
   if (!isMapping(value)) return fault('the top level must be a mapping');
   if (holdsItself(value)) return fault('an alias refers to a node that holds it');

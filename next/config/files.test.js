@@ -73,6 +73,20 @@ test('readYaml turns a cycle of aliases into a fault with the file; an alias use
   });
 });
 
+test('readYaml turns an error the library throws as it builds the value into a fault with the file', () => {
+  const bomb = ['a: &a [x, x]'];
+  for (const [name, prev] of [...'bcdefghijkl'].map((c, i) => [c, 'abcdefghijk'[i]])) {
+    bomb.push(`${name}: &${name} [*${prev}, *${prev}]`);
+  }
+  for (const [text, message] of [
+    [`${bomb.join('\n')}\nrepos: *l\n`, 'Excessive alias count indicates a resource exhaustion attack'],
+    ['repos: *nope\n', 'Unresolved alias (the anchor must be set before the alias): nope'],
+  ]) {
+    const file = yamlFile(text);
+    assert.deepEqual(readYaml(file), { fault: { file, path: '', rule: 'yaml', message } });
+  }
+});
+
 test('readYaml turns a top level that is not a mapping into a fault with the file', () => {
   for (const text of ['- a\n- b\n', 'just text\n', '']) {
     const file = yamlFile(text);

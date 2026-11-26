@@ -165,8 +165,20 @@ const TEMPLATES = { ...VIEWS, name: 'templates', shop: 'config/templates/', oper
 
 const SHOP_ONLY = { 'backlog/backlog.yaml': 'repos: {}\n' };
 
-test('a cycle of aliases is a fault that names its file, in each file a load reads', () => {
-  const CYCLE = 'repos: &x { x: *x }\n';
+/** Twelve levels of aliases, each used twice: 4096 copies, more than the YAML library expands. */
+const ALIAS_BOMB = [
+  'a: &a [x, x]',
+  ...'bcdefghijkl'.split('').map((name, i) => `${name}: &${name} [*${'abcdefghijk'[i]}, *${'abcdefghijk'[i]}]`),
+  'repos: *l',
+].join('\n');
+
+test('each YAML rejection is a fault that names its file, in each file a load reads', () => {
+  const REJECTIONS = [
+    ['repos: &x { x: *x }\n', /^yaml: an alias refers to a node that holds it$/],
+    [`${ALIAS_BOMB}\n`, /^yaml: Excessive alias count/],
+    ['repos: *nope\n', /^yaml: Unresolved alias/],
+    ['repos: [\n', /^yaml: line \d+: /],
+  ];
   const rows = [
     ['backlog/backlog.yaml', 'backlog.yaml'],
     ['.config/bl/config.yaml', '~/.config/bl/config.yaml'],
@@ -175,11 +187,13 @@ test('a cycle of aliases is a fault that names its file, in each file a load rea
     ['backlog/config/templates/en.yaml', 'config/templates/en.yaml'],
     ['.config/bl/templates/en.yaml', '~/.config/bl/templates/en.yaml'],
   ];
-  for (const [path, shown] of rows) {
-    const dirs = fixture({ ...SHOP_ONLY, [path]: CYCLE });
-    assert.deepEqual(faultLines(dirs, [...KINDS, VIEWS, TEMPLATES]), [
-      `${shown}: : yaml: an alias refers to a node that holds it`,
-    ]);
+  for (const [text, message] of REJECTIONS) {
+    for (const [path, shown] of rows) {
+      const lines = faultLines(fixture({ ...SHOP_ONLY, [path]: text }), [...KINDS, VIEWS, TEMPLATES]);
+      assert.equal(lines.length, 1, `${path}: ${lines.join(' | ')}`);
+      assert.ok(lines[0].startsWith(`${shown}: : `), lines[0]);
+      assert.match(lines[0].slice(`${shown}: : `.length), message);
+    }
   }
 });
 
