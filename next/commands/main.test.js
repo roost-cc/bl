@@ -67,6 +67,22 @@ test('bl-next exits 1 on a partial with an unclosed section, with one line that 
   assert.equal(stdout, '');
 });
 
+test('bl-next exits 1 on a null, false, 0 or empty repos, found by BL_BACKLOG_DIR or the walk, and names backlog.yaml and the rule', async () => {
+  const rows = [
+    ['repos: null\n', "backlog.yaml: /repos: required: must have required property 'repos'\n"],
+    ['repos: false\n', 'backlog.yaml: /repos: type: must be object\n'],
+    ['repos: 0\n', 'backlog.yaml: /repos: type: must be object\n'],
+    ["repos: ''\n", 'backlog.yaml: /repos: type: must be object\n'],
+  ];
+  for (const [yaml, line] of rows) {
+    for (const backlog of [true, false]) {
+      const { status, stderr } = await runBlNext({ 'backlog/backlog.yaml': yaml }, { backlog });
+      assert.equal(stderr, line, `${yaml} backlog=${backlog}`);
+      assert.equal(status, 1);
+    }
+  }
+});
+
 test('bl-next with a valid backlog exits 2: no commands yet', async () => {
   const { status, stdout, stderr } = await runBlNext({
     'backlog/backlog.yaml': 'repos:\n  utop: {}\n',

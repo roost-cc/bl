@@ -21,7 +21,9 @@ export const isMapping = (value) => value !== null && typeof value === 'object' 
 
 /**
  * True when `dir` holds a `backlog.yaml` that is a regular file and parses to
- * a mapping with a `repos` key. Any error reading or parsing it is "no".
+ * a mapping with a `repos` key. Any error reading or parsing it is "no". The
+ * key's value does not count (`repos: null` qualifies): the shape check
+ * reports a bad value with the file and the rule (D5).
  * @param {string} dir
  */
 function isBacklogRoot(dir) {
@@ -30,7 +32,7 @@ function isBacklogRoot(dir) {
     // Only a regular file: reading a FIFO there would block for ever.
     if (!statSync(file).isFile()) return false;
     const value = parse(readFileSync(file, 'utf8'));
-    return isMapping(value) && Boolean(value.repos);
+    return isMapping(value) && Object.hasOwn(value, 'repos');
   } catch {
     return false;
   }

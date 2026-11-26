@@ -60,6 +60,17 @@ test('a backlog.yaml without repos, with a list at the top, or not valid YAML do
   assert.equal(findBacklogRoot(mid), real);
 });
 
+test('a backlog.yaml whose repos value is null, false, 0 or empty qualifies, by the walk and by BL_BACKLOG_DIR', () => {
+  // The key, not its value, marks a backlog; the shape check reports the value (D5).
+  for (const yaml of ['repos: null\n', 'repos: false\n', 'repos: 0\n', "repos: ''\n", 'repos:\n']) {
+    const root = mkTempDir('bl-find-');
+    const plans = backlogAt(root, 'plans', yaml);
+    assert.equal(findBacklogRoot(root), plans, yaml);
+    // From a directory where the walk finds nothing, only BL_BACKLOG_DIR can find it.
+    withEnv({ BL_BACKLOG_DIR: plans }, () => assert.equal(findBacklogRoot(mkTempDir('bl-find-')), plans, yaml));
+  }
+});
+
 test('a backlog.json alone does not qualify', () => {
   const root = mkTempDir('bl-find-');
   const mid = dirAt(root, 'mid');
