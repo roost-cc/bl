@@ -71,8 +71,12 @@ export async function renderTemplate(view, records, options) {
 /** The alignment row's cell for each `justify`. */
 const ALIGN = Object.freeze({ left: ':--', right: '--:', center: ':-:' });
 
-/** A cell's text that keeps the table one row per record: `|` as `\|`, a line break as a space. */
-const markdownCell = (text) => oneLine(text).replaceAll('|', '\\|');
+/**
+ * A cell's text that keeps the table one row per record: a line break as a
+ * space, and `|` as `\|`. Each backslash before a `|` is doubled first, so
+ * the `\` that escapes the `|` is not itself escaped.
+ */
+const markdownCell = (text) => oneLine(text).replace(/(\\*)\|/g, (_all, run) => `${run}${run}\\|`);
 
 /** One Markdown table row. */
 const markdownRow = (cells) => `| ${cells.map(markdownCell).join(' | ')} |\n`;

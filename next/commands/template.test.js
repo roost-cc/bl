@@ -151,6 +151,24 @@ test('in a Markdown cell, | becomes \\| and a newline a space; no … and no col
   assert.doesNotMatch(text, /…|\u001b/);
 });
 
+test('markdown_table_escapes_pipe_after_backslash: a | after any run of backslashes stays in its cell', () => {
+  for (const [text, cell] of [
+    ['a|b', 'a\\|b'],
+    ['a\\|b', 'a\\\\\\|b'],
+    ['a\\\\|b', 'a\\\\\\\\\\|b'],
+    ['a\\b', 'a\\b'],
+    ['a\\', 'a\\'],
+    ['|\\|', '\\|\\\\\\|'],
+  ]) {
+    const columns = [{ field: 'title', header: text, justify: 'left', truncate: false }];
+    const [header, , row] = markdownTable({ columns }, [{ title: text }], { env }).split('\n');
+    assert.deepEqual([header, row], [`| ${cell} |`, `| ${cell} |`], text);
+    // A | is a column separator when an even run of backslashes (none included) comes before it.
+    const separators = row.match(/(?<!\\)(?:\\\\)*\|/g) ?? [];
+    assert.equal(separators.length, 2, text);
+  }
+});
+
 test('a Markdown cell gives a failed field as empty, and a list of strings joined by , ', () => {
   const columns = [
     { field: 'title.nope', header: 'Bad', justify: 'left', truncate: false },
