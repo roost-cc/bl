@@ -13,8 +13,8 @@ import { delimiter, dirname, isAbsolute, join, resolve } from 'path';
 import { parse, parseDocument } from 'yaml';
 import { realOrResolved } from '../lib/real-path.js';
 
-/** The file that marks a directory as a backlog. */
-const MARKER = 'backlog.yaml';
+/** The file that marks a directory as a backlog; the `backlog` kind's shop file. */
+export const MARKER = 'backlog.yaml';
 
 /** True when `value` is a mapping: an object that is not a list. */
 export const isMapping = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);

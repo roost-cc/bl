@@ -8,6 +8,7 @@
  * argument, so the tests pass fixture kinds.
  */
 
+import { MARKER } from './files.js';
 import BACKLOG_SCHEMA from './schemas/backlog.schema.json' with { type: 'json' };
 
 /**
@@ -27,7 +28,7 @@ import BACKLOG_SCHEMA from './schemas/backlog.schema.json' with { type: 'json' }
 export const KINDS = Object.freeze([
   Object.freeze({
     name: 'backlog',
-    shop: 'backlog.yaml',
+    shop: MARKER,
     operator: 'config.yaml',
     order: 'both',
     schema: BACKLOG_SCHEMA,

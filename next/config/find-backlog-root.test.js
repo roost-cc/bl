@@ -16,7 +16,9 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'child_process';
 import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from 'fs';
 import { delimiter, join } from 'path';
-import { findBacklogRoot } from './files.js';
+import { MARKER, findBacklogRoot } from './files.js';
+import { KINDS } from './kinds.js';
+import { loadConfiguration } from './load.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 import { withEnv } from '../test/helpers/env.js';
 
@@ -211,4 +213,13 @@ test('BL_BACKLOG_DIR naming a backlog wins over a nearer one', () => {
   withEnv({ BL_BACKLOG_DIR: named }, () => {
     assert.equal(findBacklogRoot(repo), named);
   });
+});
+
+test("the marker that findBacklogRoot reads is the backlog kind's shop file, so the load reads the file the walk found", () => {
+  const root = mkTempDir('bl-find-');
+  backlogAt(root, 'b', 'repos: { utop: {} }\n');
+  const found = findBacklogRoot(root);
+  const config = loadConfiguration({ backlogDir: found, operatorDir: join(found, 'no-operator'), kinds: KINDS });
+  assert.deepEqual(config.scope('utop'), { repos: { utop: {} } });
+  assert.equal(KINDS.find((kind) => kind.name === 'backlog')?.shop, MARKER);
 });
