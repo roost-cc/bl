@@ -23,7 +23,7 @@
  */
 
 import { AsyncLocalStorage } from 'async_hooks';
-import { mkdirSync, rmdirSync, unlinkSync } from 'fs';
+import { lstatSync, mkdirSync, rmdirSync, unlinkSync } from 'fs';
 import { dirname, join } from 'path';
 import { atomicWriteFile } from '../lib/atomic-write.js';
 import { canonical, withLock } from '../lib/lock.js';
@@ -356,7 +356,9 @@ function putBack(ctx, written, made) {
  * committed. When the
  * written files hold what `HEAD` holds (the write undid uncommitted edits),
  * the files are written and nothing is committed. An error
- * that `fn` throws ends the write before anything is written.
+ * that `fn` throws ends the write before anything is written. A changed path
+ * that is a link is an error before anything is written: the write would
+ * change the link's target, and the commit would take the link.
  *
  * The backlog lock serialises store writes of different processes. Store
  * writes of one process to one backlog run one at a time, in call order,
@@ -418,6 +420,12 @@ async function writeLocked(ctx, { message, trailers = [] }, fn) {
   const exists = (/** @type {string} */ id) => created.has(id) || itemDir(ctx, id) !== null;
   const findings = items.flatMap((item) => checkItem(ctx, item, read, exists));
   if (findings.length > 0) throw new StoreCheckError(findings);
+  const links = changed.filter(({ path }) =>
+    lstatSync(join(ctx.backlogDir, path), { throwIfNoEntry: false })?.isSymbolicLink(),
+  );
+  if (links.length > 0) {
+    throw new Error(`a store write does not write through a link: ${links.map(({ path }) => path).join(', ')}`);
+  }
 
   /** @type {Array<{ path: string, before: string|null, text: string }>} */
   const written = [];

@@ -465,6 +465,22 @@ test('a store write to an item file that links outside the backlog throws and le
   assert.equal(readFileSync(outside, 'utf8'), 'outside\n');
 });
 
+test('a store write to an item file that links inside the backlog throws and changes no file', async () => {
+  const real = 'stories/S1-one/real-state.json';
+  const ctx = backlog({ 'stories/S1-one/state.json': null, [real]: '{ "status": "draft", "run": "idle" }\n' });
+  symlinkSync('real-state.json', join(ctx.backlogDir, 'stories/S1-one/state.json'));
+  git(ctx.backlogDir, 'add', '.');
+  git(ctx.backlogDir, 'commit', '-q', '-m', 'link');
+  const before = head(ctx);
+  await assert.rejects(
+    storeWrite(ctx, { message: 'm' }, (w) => w.state('S-1', { status: 'draft', run: 'idle', counters: {} })),
+    { message: 'a store write does not write through a link: stories/S1-one/state.json' },
+  );
+  assert.equal(read(ctx, real), '{ "status": "draft", "run": "idle" }\n');
+  assert.equal(head(ctx), before);
+  assert.deepEqual(status(ctx), []);
+});
+
 test('storeWrite_preserves_file_mode_on_commit_and_rollback', async () => {
   const modeOf = (ctx, path) => statSync(join(ctx.backlogDir, path)).mode & 0o777;
   const S2_DIR = 'stories/S2-two';
