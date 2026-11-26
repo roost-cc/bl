@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { faultLines, fixture, load } from '../test/helpers/config-fixture.js';
 
-const BACKLOG = 'repos: {}\nid_prefixes:\n  S: story\n  F: feature\n';
+const BACKLOG = 'color_scheme: mocha\nrepos: {}\nid_prefixes:\n  S: story\n  F: feature\n';
 
 const STORY = `type: story
 dir: stories
@@ -118,6 +118,8 @@ test('a section definition with only a name is accepted', () => {
 });
 
 test('an id_prefixes value that is not a string is a fault that names backlog.yaml', () => {
-  const dirs = fixture({ 'backlog/backlog.yaml': 'repos: {}\nid_prefixes:\n  S: story\n  F: [feature]\n' });
+  const dirs = fixture({
+    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: {}\nid_prefixes:\n  S: story\n  F: [feature]\n',
+  });
   assert.deepEqual(faultLines(dirs), ['backlog.yaml: /id_prefixes/F: type: must be string']);
 });

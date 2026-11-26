@@ -6,7 +6,7 @@ import { join } from 'path';
 import { fixture, load } from '../test/helpers/config-fixture.js';
 import { backlogText, itemDir, listItems, nextNumber } from './items.js';
 
-const BACKLOG = 'repos: {}\nid_prefixes:\n  S: story\n  F: feature\n  T: task\n  TH: theme\n';
+const BACKLOG = 'color_scheme: mocha\nrepos: {}\nid_prefixes:\n  S: story\n  F: feature\n  T: task\n  TH: theme\n';
 
 /**
  * A backlog with the types story, feature, task and theme, and `files`

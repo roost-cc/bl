@@ -49,7 +49,7 @@ const storyFiles = (dir, title) => ({
  */
 function backlog(files = {}) {
   const all = {
-    'backlog.yaml': 'repos: {}\nid_prefixes:\n  S: story\n  T: task\n',
+    'backlog.yaml': 'color_scheme: mocha\nrepos: {}\nid_prefixes:\n  S: story\n  T: task\n',
     'config/items/story.yaml': STORY,
     'config/items/task.yaml': 'dir: tasks\n',
     '.gitignore': '.bl/\n',
