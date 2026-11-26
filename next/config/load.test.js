@@ -253,6 +253,64 @@ test('every reserved key and every YAML error of one file reaches the load fault
   }
 });
 
+test('a fault in one entry of a directory kind leaves the shape and CEL checks of each other entry', () => {
+  const RULES = {
+    type: 'object',
+    additionalProperties: false,
+    properties: { when: { type: 'string', cel: 'bool' } },
+  };
+  const NONE_DIR = { name: 'rules', shop: 'config/rules/', operator: 'rules/', order: 'none', schema: RULES };
+  const WHO_DIR = { ...NONE_DIR, order: 'who' };
+  const BROKEN = 'bad: [\n';
+  const SHAPE = 'wrong: 1\n';
+  const CEL = 'when: title\n';
+  const yaml = (shown) => new RegExp(`^${shown.replaceAll('.', '\\.')}: : yaml: line \\d+: `);
+  const shape = (shown) => `${shown}: /wrong: additionalProperties: must NOT have additional properties`;
+  const cel = (shown) => `${shown}: /when: cel: the type is string, not bool`;
+  for (const [kind, files, expected] of [
+    // A none directory: a broken shop entry beside a shape fault and a CEL fault.
+    [
+      NONE_DIR,
+      {
+        'backlog/config/rules/a.yaml': BROKEN,
+        'backlog/config/rules/b.yaml': SHAPE,
+        'backlog/config/rules/c.yaml': CEL,
+      },
+      [yaml('config/rules/a.yaml'), shape('config/rules/b.yaml'), cel('config/rules/c.yaml')],
+    ],
+    // A who directory: a broken operator entry beside shop entries.
+    [
+      WHO_DIR,
+      { '.config/bl/rules/a.yaml': BROKEN, 'backlog/config/rules/b.yaml': SHAPE, 'backlog/config/rules/c.yaml': CEL },
+      [shape('config/rules/b.yaml'), cel('config/rules/c.yaml'), yaml('~/.config/bl/rules/a.yaml')],
+    ],
+    // A who directory: a broken shop entry beside operator entries; the
+    // operator's file of the broken name is not checked alone.
+    [
+      WHO_DIR,
+      {
+        'backlog/config/rules/a.yaml': BROKEN,
+        '.config/bl/rules/a.yaml': SHAPE,
+        '.config/bl/rules/b.yaml': SHAPE,
+        '.config/bl/rules/c.yaml': CEL,
+      },
+      [yaml('config/rules/a.yaml'), shape('~/.config/bl/rules/b.yaml'), cel('~/.config/bl/rules/c.yaml')],
+    ],
+    // A shape fault in one entry leaves the CEL check of another.
+    [
+      WHO_DIR,
+      { 'backlog/config/rules/a.yaml': SHAPE, '.config/bl/rules/b.yaml': CEL },
+      [shape('config/rules/a.yaml'), cel('~/.config/bl/rules/b.yaml')],
+    ],
+  ]) {
+    const lines = faultLines(fixture({ ...SHOP_ONLY, ...files }), [...KINDS, kind]);
+    assert.equal(lines.length, expected.length, lines.join('\n'));
+    expected.forEach((line, i) =>
+      typeof line === 'string' ? assert.equal(lines[i], line) : assert.match(lines[i], line),
+    );
+  }
+});
+
 test('a who file kind: the shop file, then the operator file of the same name', () => {
   const dirs = fixture({
     ...SHOP_ONLY,

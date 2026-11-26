@@ -64,17 +64,21 @@ function readSource(path, faults) {
 
 /**
  * The `.yaml` files of a directory kind's directory: file name → source.
- * A missing directory has none.
+ * A missing directory has none. The name of each file that does not read is
+ * added to `broken`.
  * @param {string} dir
  * @param {Fault[]} faults
+ * @param {Set<string>} broken
  * @returns {Record<string, Source>}
  */
-function readDirectory(dir, faults) {
+function readDirectory(dir, faults, broken) {
   if (!isDirectory(dir)) return {};
   const names = readdirSync(dir).filter((name) => name.endsWith('.yaml'));
   return Object.fromEntries(
     names.flatMap((name) => {
+      const before = faults.length;
       const source = readSource(join(dir, name), faults);
+      if (faults.length > before) broken.add(name);
       return source === null ? [] : [[name, source]];
     }),
   );
@@ -83,7 +87,10 @@ function readDirectory(dir, faults) {
 /**
  * The layered results of a kind to check: `[key, layers]`, the key a repo
  * name (or `null`) for a `both` kind, a file name for a directory kind, and
- * `null` for a file kind.
+ * `null` for a file kind. A file that does not read leaves out each result
+ * that it is a layer of, because checking the rest of that result would
+ * report faults that are not there: for a directory kind, the entry of that
+ * file name; for a file kind, every result.
  * @param {Kind} kind
  * @param {string} backlogDir
  * @param {string} operatorDir
@@ -95,11 +102,15 @@ function unitsOf(kind, backlogDir, operatorDir, faults) {
   // A `none` kind is the shop's file alone (D4), whatever operator path it names.
   const operatorPath = kind.operator === undefined || kind.order === 'none' ? null : join(operatorDir, kind.operator);
   if (kind.shop.endsWith('/')) {
-    const shop = readDirectory(shopPath, faults);
-    return Object.entries(whoEntries(shop, operatorPath === null ? {} : readDirectory(operatorPath, faults)));
+    const broken = new Set();
+    const shop = readDirectory(shopPath, faults, broken);
+    const operator = operatorPath === null ? {} : readDirectory(operatorPath, faults, broken);
+    return Object.entries(whoEntries(shop, operator)).filter(([name]) => !broken.has(name));
   }
+  const before = faults.length;
   const shop = readSource(shopPath, faults);
   const operator = operatorPath === null ? null : readSource(operatorPath, faults);
+  if (faults.length > before) return [];
   // With no file at all, the result is `{}`, and a fault names the shop's file.
   const orEmpty = (layers) => (layers.length > 0 ? layers : [{ file: shopPath, pointer: '', patch: {} }]);
   if (kind.order === 'both') {
@@ -167,24 +178,15 @@ export function loadConfiguration({ backlogDir, operatorDir, kinds }) {
   /** @type {Map<string, Map<string|null, unknown>>} */
   const results = new Map();
   for (const kind of kinds) {
-    const readFaults = [];
-    const units = unitsOf(kind, backlogDir, operatorDir, readFaults);
-    faults.push(...readFaults);
-    // A file that does not read leaves its layers out; checking the rest would report faults that are not there.
-    if (readFaults.length > 0) continue;
     const check = checker.compile(kind.schema);
-    const kindFaults = [];
-    const cel = [];
     const kindResults = new Map();
-    for (const [key, layers] of units) {
+    for (const [key, layers] of unitsOf(kind, backlogDir, operatorDir, faults)) {
       const result = applyLayers(layers);
       const checked = check(result, layers);
-      kindFaults.push(...checked.faults);
-      cel.push(...checked.cel);
+      // The cross-check runs after the shape check, and only on a result whose shape holds (D-622).
+      faults.push(...(checked.faults.length > 0 ? checked.faults : compileCel(checked.cel, env)));
       kindResults.set(key, deepFreeze(result));
     }
-    // The cross-check runs after the shape check, and only on a kind whose shape holds (D-622).
-    faults.push(...(kindFaults.length > 0 ? kindFaults : compileCel(cel, env)));
     results.set(kind.name, kindResults);
   }
   celSelfTest(CEL_INPUTS);
