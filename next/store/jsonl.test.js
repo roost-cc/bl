@@ -163,19 +163,50 @@ test('checkLogItems_escapes_role_in_path', () => {
   }
 });
 
+/** A created entry whose related item, S-1, is the fixtures' one item. */
+const CREATED_S1 = { ...EVENTS.created, items: { found_by: 'S-1' } };
+
+test('readJsonl_rejects_invalid_entry', () => {
+  const line = (entry) => `${JSON.stringify(entry)}\n`;
+  /** [file, its text, the error] */
+  const FILES = [
+    ['log.jsonl', `${line(CREATED_S1)}{ nope\n`, /^stories\/S1-one\/log\.jsonl line 2: json: /],
+    ['log.jsonl', line({ at: AT, event: 'deleted', by: 'operator' }), /log\.jsonl line 1: enum at \/event: /],
+    ['log.jsonl', line({ ...EVENTS.created, at: '2026-99-99T00:00:00Z' }), /log\.jsonl line 1: format at \/at: /],
+    [
+      'log.jsonl',
+      line(CREATED_S1) + line(EVENTS.created),
+      /^stories\/S1-one\/log\.jsonl line 2: item at \/items\/found_by: no item S-1112 in the backlog$/,
+    ],
+    ['usage.jsonl', line({ ...USAGE, input: -1 }), /^stories\/S1-one\/usage\.jsonl line 1: minimum at \/input: /],
+    ['usage.jsonl', line(USAGE) + line({ ...USAGE, agent: '' }), /usage\.jsonl line 2: minLength at \/agent: /],
+  ];
+  for (const [file, text, message] of FILES) {
+    const dirs = fixture({
+      'backlog/backlog.yaml': 'repos: {}\nid_prefixes:\n  S: story\n',
+      'backlog/config/items/story.yaml': 'dir: stories\n',
+      'backlog/stories/S1-one/index.md': '# One\n',
+      [`backlog/stories/S1-one/${file}`]: text,
+    });
+    const ctx = { backlogDir: dirs.backlogDir, config: load(dirs) };
+    const item = /** @type {import('./items.js').Item} */ (itemDir(ctx, 'S-1'));
+    assert.throws(() => readJsonl(ctx, item, file), { message }, `${file}: ${text}`);
+  }
+});
+
 test('readJsonl gives the entries in order, [] for a missing file, and an error that names the file and the line', () => {
   const dirs = fixture({
     'backlog/backlog.yaml': 'repos: {}\nid_prefixes:\n  S: story\n',
     'backlog/config/items/story.yaml': 'dir: stories\n',
     'backlog/stories/S1-one/index.md': '# One\n',
-    'backlog/stories/S1-one/log.jsonl': `${JSON.stringify(EVENTS.created)}\n${JSON.stringify(EVENTS.flow_start)}\n`,
+    'backlog/stories/S1-one/log.jsonl': `${JSON.stringify(CREATED_S1)}\n${JSON.stringify(EVENTS.flow_start)}\n`,
     'backlog/stories/S1-one/usage.jsonl': `${JSON.stringify(USAGE)}\n{ "at": \n`,
   });
   const ctx = { backlogDir: dirs.backlogDir, config: load(dirs) };
   const item = /** @type {import('./items.js').Item} */ (itemDir(ctx, 'S-1'));
-  assert.deepEqual(readJsonl(ctx, item, 'log.jsonl'), [EVENTS.created, EVENTS.flow_start]);
+  assert.deepEqual(readJsonl(ctx, item, 'log.jsonl'), [CREATED_S1, EVENTS.flow_start]);
   assert.throws(() => readJsonl(ctx, item, 'usage.jsonl'), {
-    message: /^stories\/S1-one\/usage\.jsonl line 2 is not JSON: /,
+    message: /^stories\/S1-one\/usage\.jsonl line 2: json: /,
   });
   assert.deepEqual(readJsonl(ctx, item, 'missing.jsonl'), []);
 });

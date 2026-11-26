@@ -87,9 +87,49 @@ test('readState and readAttributes give the value, null for a missing file, and 
   const ctx = backlog({ 'state.json': jsonText({ status: 'draft', run: 'idle' }), 'attributes.json': '{ nope' });
   const item = /** @type {import('./items.js').Item} */ (itemDir(ctx, 'S-1'));
   assert.deepEqual(readState(ctx, item), { status: 'draft', run: 'idle' });
-  assert.throws(() => readAttributes(ctx, item), { message: /^stories\/S1-one\/attributes\.json is not JSON: / });
+  assert.throws(() => readAttributes(ctx, item), { message: /^stories\/S1-one\/attributes\.json: json: / });
   const bare = backlog();
   assert.equal(readState(bare, /** @type {import('./items.js').Item} */ (itemDir(bare, 'S-1'))), null);
+});
+
+test('readState_rejects_invalid_schema', () => {
+  const STATES = [
+    [
+      '{}\n',
+      /^stories\/S1-one\/state\.json: required at \/status: .*\nstories\/S1-one\/state\.json: required at \/run: /,
+    ],
+    ['[]\n', /^stories\/S1-one\/state\.json: type: must be object$/],
+    [jsonText({ status: 'draft', run: 'interrupted: x' }), /state\.json: pattern at \/run: /],
+    [jsonText({ status: 'draft', run: 'idle', owner: 'alice' }), /state\.json: additionalProperties at \/owner: /],
+  ];
+  for (const [text, message] of STATES) {
+    const ctx = backlog({ 'state.json': text });
+    assert.throws(
+      () => readState(ctx, /** @type {import('./items.js').Item} */ (itemDir(ctx, 'S-1'))),
+      { message },
+      text,
+    );
+  }
+});
+
+test('readAttributes_rejects_invalid_schema', () => {
+  const ATTRIBUTES = [
+    ['[]\n', /^stories\/S1-one\/attributes\.json: type: must be object$/],
+    ['{}\n', /^stories\/S1-one\/attributes\.json: required at \/category: /],
+    [jsonText({ category: 'fix' }), /attributes\.json: enum at \/category: /],
+    [jsonText({ category: 'bug', points: -1 }), /attributes\.json: minimum at \/points: /],
+    [jsonText({ category: 'bug', owner: 'alice' }), /attributes\.json: additionalProperties at \/owner: /],
+  ];
+  for (const [text, message] of ATTRIBUTES) {
+    const ctx = backlog({ 'attributes.json': text });
+    const item = /** @type {import('./items.js').Item} */ (itemDir(ctx, 'S-1'));
+    assert.throws(() => readAttributes(ctx, item), { message }, text);
+  }
+  const ctx = backlog({ 'attributes.json': jsonText({ category: 'bug', points: 3 }) });
+  assert.deepEqual(readAttributes(ctx, /** @type {import('./items.js').Item} */ (itemDir(ctx, 'S-1'))), {
+    category: 'bug',
+    points: 3,
+  });
 });
 
 test('jsonText writes two spaces of indent and one newline; parseJson gives a json fault for other text', () => {

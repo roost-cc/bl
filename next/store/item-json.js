@@ -12,7 +12,7 @@
 
 import { checkValue } from '../config/check.js';
 import STATE_SCHEMA from '../config/schemas/state.schema.json' with { type: 'json' };
-import { backlogText } from './items.js';
+import { backlogText, itemDefinition } from './items.js';
 
 /**
  * @typedef {import('../config/files.js').Fault} Fault
@@ -45,34 +45,75 @@ export function parseJson(text) {
 }
 
 /**
- * The value of the item's JSON file `file`, or `null` when it is not there.
- * A file that is not JSON is an error that names it.
- * @param {StoreContext} ctx
- * @param {Item} item
- * @param {string} file
+ * A JSON file's text checked by `check`: its faults, a `json` fault when it
+ * is not JSON, and its value when it has none. The store write and the reads
+ * of the item JSON files share it.
+ * @param {string} text
+ * @param {(value: any) => Fault[]} check
+ * @returns {{ faults: Fault[], value: unknown }}
  */
-function readJson(ctx, item, file) {
-  const path = `${item.path}/${file}`;
-  const text = backlogText(ctx, path);
-  if (text === null) return null;
+export function jsonFile(text, check) {
   const parsed = parseJson(text);
-  if ('fault' in parsed) throw new Error(`${path} is not JSON: ${parsed.fault.message}`);
-  return parsed.value;
+  const faults = 'fault' in parsed ? [parsed.fault] : check(parsed.value);
+  return { faults, value: faults.length === 0 ? /** @type {{ value: unknown }} */ (parsed).value : undefined };
 }
 
 /**
- * The item's `state.json`, or `null` when it has none.
- * @param {StoreContext} ctx
- * @param {Item} item
+ * The text of one fault after the file that holds it: ` line <n>` in a JSON
+ * Lines file, then `: <rule>`, ` (<section>)`, ` at <path>` and `: <message>`
+ * where the fault has them. The store write's findings and the errors of
+ * the reads share it.
+ * @param {{ rule: string, line?: number, section?: string|null, path?: string, message?: string }} fault
  */
-export const readState = (ctx, item) => readJson(ctx, item, STATE);
+export const faultText = (fault) =>
+  `${fault.line === undefined ? '' : ` line ${fault.line}`}: ${fault.rule}` +
+  `${fault.section == null ? '' : ` (${fault.section})`}${fault.path ? ` at ${fault.path}` : ''}` +
+  `${fault.message === undefined ? '' : `: ${fault.message}`}`;
 
 /**
- * The item's `attributes.json`, or `null` when it has none.
+ * Throw an error that names the backlog file `path` and gives each of
+ * `faults` on a line of its own, when there is any.
+ * @param {string} path
+ * @param {Array<Fault & { line?: number }>} faults
+ */
+export function throwFaults(path, faults) {
+  if (faults.length > 0) throw new Error(faults.map((fault) => `${path}${faultText(fault)}`).join('\n'));
+}
+
+/**
+ * The value of the item's JSON file `file`, checked by `check`, or `null`
+ * when it is not there. A file that is not JSON or fails `check` is an error
+ * that names it and each fault.
+ * @param {StoreContext} ctx
+ * @param {Item} item
+ * @param {string} file
+ * @param {(value: any) => Fault[]} check
+ */
+function readJson(ctx, item, file, check) {
+  const path = `${item.path}/${file}`;
+  const text = backlogText(ctx, path);
+  if (text === null) return null;
+  const { faults, value } = jsonFile(text, check);
+  throwFaults(path, faults);
+  return value;
+}
+
+/**
+ * The item's `state.json`, checked against the state schema, or `null` when
+ * it has none.
  * @param {StoreContext} ctx
  * @param {Item} item
  */
-export const readAttributes = (ctx, item) => readJson(ctx, item, ATTRIBUTES);
+export const readState = (ctx, item) => readJson(ctx, item, STATE, checkState);
+
+/**
+ * The item's `attributes.json`, checked against its type's attributes, or
+ * `null` when it has none.
+ * @param {StoreContext} ctx
+ * @param {Item} item
+ */
+export const readAttributes = (ctx, item) =>
+  readJson(ctx, item, ATTRIBUTES, (value) => checkAttributes(value, itemDefinition(ctx, item.type)));
 
 /**
  * The faults of a `state.json` value by the state schema.

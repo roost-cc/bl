@@ -30,18 +30,9 @@ import { canonical, withLock } from '../lib/lock.js';
 import { commitPaths } from './commit.js';
 import { DOCUMENT, checkDocument, parseDocument } from './document.js';
 import { dirName, formatId, parseId } from './ids.js';
-import { ATTRIBUTES, STATE, checkAttributes, checkState, jsonText, parseJson } from './item-json.js';
+import { ATTRIBUTES, STATE, checkAttributes, checkState, faultText, jsonFile, jsonText } from './item-json.js';
 import { backlogText, idPrefixes, itemDefinition, itemDir, nextNumber, typeDir } from './items.js';
-import {
-  LOG,
-  USAGE,
-  appendLine,
-  checkLogEntry,
-  checkLogItems,
-  checkStatusAndLog,
-  checkUsageEntry,
-  parseJsonl,
-} from './jsonl.js';
+import { LOG, USAGE, appendLine, checkLogLine, checkStatusAndLog, checkUsageEntry, jsonlFile } from './jsonl.js';
 import * as sections from './sections.js';
 
 /**
@@ -96,12 +87,7 @@ import * as sections from './sections.js';
 export class StoreCheckError extends Error {
   /** @param {Finding[]} findings */
   constructor(findings) {
-    const lines = findings.map(
-      (f) =>
-        `  ${f.item} ${f.file}${f.line === undefined ? '' : ` line ${f.line}`}: ` +
-        `${f.rule}${f.section == null ? '' : ` (${f.section})`}` +
-        `${f.path ? ` at ${f.path}` : ''}${f.message === undefined ? '' : `: ${f.message}`}`,
-    );
+    const lines = findings.map((f) => `  ${f.item} ${f.file}${faultText(f)}`);
     super(['the store write breaks these rules, so it changed no file:', ...lines].join('\n'));
     this.name = 'StoreCheckError';
     this.findings = findings;
@@ -246,15 +232,14 @@ function checkItem(ctx, item, read, exists) {
           section,
         }));
   /**
-   * The findings of faults in the item's file `file`, at `line` of a JSON
-   * Lines file.
+   * The findings of faults in the item's file `file`, each with its `line`
+   * in a JSON Lines file.
    * @param {string} file
-   * @param {import('../config/files.js').Fault[]} faults
-   * @param {number} [line]
+   * @param {Array<import('../config/files.js').Fault & { line?: number }>} faults
    * @returns {Finding[]}
    */
-  const findingsOf = (file, faults, line) =>
-    faults.map(({ path, rule, message }) => ({
+  const findingsOf = (file, faults) =>
+    faults.map(({ path, rule, message, line }) => ({
       item: item.id,
       file,
       ...(line === undefined ? {} : { line }),
@@ -263,42 +248,33 @@ function checkItem(ctx, item, read, exists) {
       message,
     }));
   /**
-   * One JSON file of the item checked by `check`: its findings, and its
-   * value when it is there and passes.
+   * One JSON file of the item checked by `check` (`jsonFile`): its findings,
+   * and its value when it is there and passes.
    * @param {string} file
    * @param {(value: any) => import('../config/files.js').Fault[]} check
    */
   const json = (file, check) => {
     const content = read(`${item.path}/${file}`);
     if (content === null) return { findings: [], value: undefined };
-    const parsed = parseJson(content);
-    const faults = 'fault' in parsed ? [parsed.fault] : check(parsed.value);
-    return { findings: findingsOf(file, faults), value: faults.length === 0 ? parsed.value : undefined };
+    const { faults, value } = jsonFile(content, check);
+    return { findings: findingsOf(file, faults), value };
   };
   /**
-   * One JSON Lines file of the item, each line checked by `check`: its
-   * findings, and its entries when it is there and every line passes.
+   * One JSON Lines file of the item, each line checked by `check`
+   * (`jsonlFile`): its findings, and its entries when it is there and every
+   * line passes.
    * @param {string} file
    * @param {(entry: any) => import('../config/files.js').Fault[]} check
    */
   const jsonl = (file, check) => {
     const content = read(`${item.path}/${file}`);
     if (content === null) return { findings: [], entries: undefined };
-    const lines = parseJsonl(content);
-    const findings = lines.flatMap((parsed) =>
-      findingsOf(file, 'fault' in parsed ? [parsed.fault] : check(parsed.value), parsed.line),
-    );
-    return {
-      findings,
-      entries: findings.length === 0 ? lines.map((parsed) => /** @type {{ value: any }} */ (parsed).value) : undefined,
-    };
+    const { faults, entries } = jsonlFile(content, check);
+    return { findings: findingsOf(file, faults), entries };
   };
   const prefixes = idPrefixes(ctx);
   const state = json(STATE, checkState);
-  const log = jsonl(LOG, (entry) => {
-    const faults = checkLogEntry(entry);
-    return faults.length > 0 ? faults : checkLogItems(entry, prefixes, exists);
-  });
+  const log = jsonl(LOG, (entry) => checkLogLine(entry, prefixes, exists));
   const rule =
     state.value === undefined || log.entries === undefined
       ? []

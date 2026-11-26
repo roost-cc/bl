@@ -14,8 +14,8 @@
 import { checkValue } from '../config/check.js';
 import { pointerToken } from '../config/files.js';
 import { parseId } from './ids.js';
-import { parseJson } from './item-json.js';
-import { backlogText } from './items.js';
+import { parseJson, throwFaults } from './item-json.js';
+import { backlogText, idPrefixes, itemDir } from './items.js';
 import LOG_ENTRY_SCHEMA from './schemas/log-entry.schema.json' with { type: 'json' };
 import USAGE_ENTRY_SCHEMA from './schemas/usage-entry.schema.json' with { type: 'json' };
 
@@ -46,9 +46,43 @@ export function parseJsonl(text) {
 }
 
 /**
+ * A JSON Lines file's text, each line checked by `check`: the faults of
+ * every line, each with its `line`, and the entries when there is none. The
+ * store write and `readJsonl` share it.
+ * @param {string} text
+ * @param {(entry: any) => Fault[]} check
+ * @returns {{ faults: Array<Fault & { line: number }>, entries: Entry[]|undefined }}
+ */
+export function jsonlFile(text, check) {
+  const lines = parseJsonl(text);
+  const faults = lines.flatMap((parsed) =>
+    ('fault' in parsed ? [parsed.fault] : check(parsed.value)).map((fault) => ({ ...fault, line: parsed.line })),
+  );
+  return {
+    faults,
+    entries: faults.length === 0 ? lines.map((parsed) => /** @type {{ value: Entry }} */ (parsed).value) : undefined,
+  };
+}
+
+/**
+ * The faults of one line of `log.jsonl`: its schema faults, or, when it
+ * passes its schema, the faults of its `items` (`checkLogItems`).
+ * @param {unknown} entry
+ * @param {Record<string, string>} idPrefixes  prefix → type
+ * @param {(id: string) => boolean} exists  whether the item with this printed id exists
+ * @returns {Fault[]}
+ */
+export function checkLogLine(entry, idPrefixes, exists) {
+  const faults = checkLogEntry(entry);
+  return faults.length > 0 ? faults : checkLogItems(/** @type {Entry} */ (entry), idPrefixes, exists);
+}
+
+/**
  * The entries of the item's JSON Lines file `file`, in file order, or `[]`
- * when it is not there. A line that is not JSON is an error that names the
- * file and the line.
+ * when it is not there. Each line of `log.jsonl` is checked by
+ * `checkLogLine`, against the items in the backlog, and each line of
+ * `usage.jsonl` by `checkUsageEntry`. A line that is not JSON or fails its
+ * check is an error that names the file, the line and each fault.
  * @param {StoreContext} ctx
  * @param {Item} item
  * @param {string} file  `LOG` or `USAGE`
@@ -56,10 +90,16 @@ export function parseJsonl(text) {
  */
 export function readJsonl(ctx, item, file) {
   const path = `${item.path}/${file}`;
-  return parseJsonl(backlogText(ctx, path) ?? '').map((parsed) => {
-    if ('fault' in parsed) throw new Error(`${path} line ${parsed.line} is not JSON: ${parsed.fault.message}`);
-    return /** @type {Entry} */ (parsed.value);
-  });
+  const text = backlogText(ctx, path);
+  if (text === null) return [];
+  const prefixes = idPrefixes(ctx);
+  const checks = {
+    [LOG]: (/** @type {unknown} */ entry) => checkLogLine(entry, prefixes, (id) => itemDir(ctx, id) !== null),
+    [USAGE]: checkUsageEntry,
+  };
+  const { faults, entries } = jsonlFile(text, checks[file]);
+  throwFaults(path, faults);
+  return /** @type {Entry[]} */ (entries);
 }
 
 /**
