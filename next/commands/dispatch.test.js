@@ -39,13 +39,21 @@ start:
   help: start an item
 `;
 
-/** A loaded configuration of a fixture backlog with `commands` as its commands.yaml. */
-function fixture(commands = COMMANDS) {
+/**
+ * A loaded configuration of a fixture backlog with `commands` as its
+ * commands.yaml, and with `views` and `operatorViews` as the shop's and the
+ * operator's views.yaml when given.
+ */
+function fixture(commands = COMMANDS, { views, operatorViews } = {}) {
   const backlogDir = mkTempDir('bl-dispatch-');
+  const operatorDir = join(backlogDir, 'operator');
   writeFileSync(join(backlogDir, 'backlog.yaml'), 'color_scheme: mocha\nrepos: {}\n');
   mkdirSync(join(backlogDir, 'config'));
+  mkdirSync(operatorDir);
   writeFileSync(join(backlogDir, 'config', 'commands.yaml'), commands);
-  const config = loadConfiguration({ backlogDir, operatorDir: join(backlogDir, 'no-operator'), kinds: KINDS });
+  if (views !== undefined) writeFileSync(join(backlogDir, 'config', 'views.yaml'), views);
+  if (operatorViews !== undefined) writeFileSync(join(operatorDir, 'views.yaml'), operatorViews);
+  const config = loadConfiguration({ backlogDir, operatorDir, kinds: KINDS });
   return { config, backlogDir };
 }
 
@@ -143,4 +151,80 @@ test('startFaults names config/commands.yaml and /<name>/op for each op that the
     "config/commands.yaml: /show/op: op: no op named 'item'",
   );
   assert.deepEqual(startFaults(fixture().config, OPS), []);
+});
+
+// ---------------------------------------------------------------------------
+// the start check of the views (D3 step 1, D5)
+// ---------------------------------------------------------------------------
+
+/** An op whose records have `id`, `title` and `depth` at top level. */
+const story = {
+  args: {},
+  schema: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' }, depth: {} } },
+  run: () => [],
+};
+const VIEW_OPS = Object.freeze({ ...OPS, story });
+const VIEW_COMMANDS = `${COMMANDS}\nstories:\n  op: story\n  help: list stories\n`;
+
+/** The fault lines of the start check on a fixture with these views. */
+function viewFaults(views, operatorViews) {
+  const at = fixture(VIEW_COMMANDS, { views, operatorViews });
+  const faults = startFaults(at.config, VIEW_OPS);
+  return faults.length === 0 ? '' : new ConfigurationFaults(faults, at.backlogDir).message;
+}
+
+const GOOD_VIEW = `
+stories:
+  columns:
+    - { field: id, header: ID, justify: left, truncate: false, style: 'depth > 0 ? "child" : ""' }
+    - { field: record.title, header: Title, justify: left, truncate: true, indent: depth }
+  style: '""'
+  footer: 'string(size(records)) + " stories"'
+`;
+
+test('views whose expressions name top-level fields, record or records pass the start check', () => {
+  assert.equal(viewFaults(GOOD_VIEW), '');
+});
+
+test('a view expression with a syntax error or an unknown top-level name is a fault in config/views.yaml at its path', () => {
+  const views = `
+stories:
+  columns:
+    - { field: 'id +', header: ID, justify: left, truncate: false }
+    - { field: points, header: Points, justify: right, truncate: false, indent: level, style: 'id' }
+  style: owner
+  footer: 'size(items)'
+`;
+  assert.deepEqual(viewFaults(views).split('\n'), [
+    'config/views.yaml: /stories/columns/0/field: cel: Unexpected token: EOF',
+    'config/views.yaml: /stories/columns/1/field: cel: Unknown variable: points',
+    'config/views.yaml: /stories/columns/1/indent: cel: Unknown variable: level',
+    'config/views.yaml: /stories/footer: cel: Unknown variable: items',
+    'config/views.yaml: /stories/style: cel: Unknown variable: owner',
+  ]);
+});
+
+test('a view key that names no command is a fault at /<name>', () => {
+  assert.equal(
+    viewFaults(`${GOOD_VIEW}\nstoreis:\n  template: '{{id}}'\n`),
+    "config/views.yaml: /storeis: view: no command named 'storeis'",
+  );
+});
+
+test("an operator views.yaml that patches a column list gives the fault in the operator's file", () => {
+  const operatorViews = `
+stories:
+  columns:
+    - { field: id, header: ID, justify: left, truncate: false }
+    - { field: titel, header: Title, justify: left, truncate: true }
+`;
+  assert.equal(
+    viewFaults(GOOD_VIEW, operatorViews),
+    'operator/views.yaml: /stories/columns/1/field: cel: Unknown variable: titel',
+  );
+  // The shop's footer, which the operator's patch keeps, is still the shop's.
+  assert.equal(
+    viewFaults(GOOD_VIEW.replace('size(records)', 'size(recrods)'), operatorViews).split('\n')[0],
+    'config/views.yaml: /stories/footer: cel: Unknown variable: recrods',
+  );
 });

@@ -10,6 +10,8 @@
  */
 
 import { once } from 'events';
+import { renderTable } from './table.js';
+import { viewEnvironment } from './view-cel.js';
 
 /** @typedef {import('../config/load.js').Configuration} Configuration */
 /** @typedef {import('./ops/index.js').Op} Op */
@@ -29,11 +31,17 @@ export async function* recordsOf(result) {
 }
 
 /**
- * Render the records through the command's view (D6 to D8).
+ * Render the records through the command's view (D6 to D8): a `columns` view
+ * as a table, shortened to the terminal's width when stdout is a terminal.
+ * @param {{ op: Op, view: Record<string, any>, result: unknown, stdout: NodeJS.WritableStream }} options
  * @returns {Promise<void>}
  */
-async function renderView() {
-  throw new Error('views are not built yet');
+async function renderView({ op, view, result, stdout }) {
+  if (view.columns === undefined) throw new Error('template views are not built yet');
+  const records = await Array.fromAsync(recordsOf(result));
+  const tty = /** @type {import('tty').WriteStream} */ (stdout);
+  const width = tty.isTTY ? tty.columns : null;
+  stdout.write(renderTable(view, records, { env: viewEnvironment(op.schema), width }));
 }
 
 /**

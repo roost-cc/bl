@@ -1,8 +1,7 @@
 /**
  * dispatch.js — the parser and the run of one command (F-138 D3).
  *
- *   - `startFaults(config, ops)`: the start check that each `op` of
- *     `commands.yaml` is in the op registry.
+ *   - `startFaults(config, ops)`: the start checks of the ops and the views.
  *   - `dispatch(argv, { config, backlogDir, ops })`: one `argparse` parser with
  *     a subparser per `commands.yaml` line, typo suggestions, help, and the
  *     run of the command's op.
@@ -11,10 +10,11 @@
  */
 
 import { ArgumentParser } from 'argparse';
-import { attribute } from '../config/check.js';
+import { attribute, compileCel } from '../config/check.js';
 import { pointerToken } from '../config/files.js';
 import { addArgs } from './args.js';
 import { suggest } from './suggest.js';
+import { viewEnvironment } from './view-cel.js';
 
 /** @typedef {import('../config/files.js').Fault} Fault */
 /** @typedef {import('../config/load.js').Configuration} Configuration */
@@ -70,19 +70,60 @@ export class Parser extends ArgumentParser {
 const commandsOf = (config) => config.file('commands') ?? {};
 
 /**
- * The start check of the ops (D3 step 1): each `op` that `ops` does not hold
- * is a fault at `/<name>/op`, in the file that writes it.
+ * The CEL expressions of a view, each with its JSON pointer in `views.yaml`:
+ * each column's `field`, `style` and `indent`, and the view's `style` and
+ * `footer` (views.md D-468, D-476; commands.md D-445).
+ * @param {string} at  the view's pointer
+ * @param {Record<string, any>} view
+ * @returns {{ path: string, expr: string }[]}
+ */
+function viewExpressions(at, view) {
+  const found = (path, expr) => (expr === undefined ? [] : [{ path, expr }]);
+  return [
+    ...(view.columns ?? []).flatMap((column, i) =>
+      ['field', 'style', 'indent'].flatMap((key) => found(`${at}/columns/${i}/${key}`, column[key])),
+    ),
+    ...found(`${at}/style`, view.style),
+    ...found(`${at}/footer`, view.footer),
+  ];
+}
+
+/**
+ * The start checks (D3 step 1), each fault in the file that writes the path:
+ *
+ *   - each `op` of `commands.yaml` that `ops` does not hold, at `/<name>/op`;
+ *   - each view key of `views.yaml` that names no command, at `/<name>`;
+ *   - each view expression that does not compile in the view environment of
+ *     its command's op (D5, Decision A5), at its path. A view of an entry
+ *     command has no op schema, and F-139 checks it.
  * @param {Configuration} config
  * @param {Readonly<Record<string, Op>>} ops
  * @returns {Fault[]}
  */
 export function startFaults(config, ops) {
-  const layers = config.layers('commands');
-  return Object.entries(commandsOf(config)).flatMap(([name, line]) =>
+  const commands = commandsOf(config);
+  const commandLayers = config.layers('commands');
+  const opFaults = Object.entries(commands).flatMap(([name, line]) =>
     line.op === undefined || Object.hasOwn(ops, line.op)
       ? []
-      : [{ ...attribute(`/${pointerToken(name)}/op`, layers), rule: 'op', message: `no op named '${line.op}'` }],
+      : [{ ...attribute(`/${pointerToken(name)}/op`, commandLayers), rule: 'op', message: `no op named '${line.op}'` }],
   );
+  const viewLayers = config.layers('views');
+  const viewFaults = Object.entries(config.file('views') ?? {}).flatMap(([name, view]) => {
+    const at = `/${pointerToken(name)}`;
+    if (!Object.hasOwn(commands, name)) {
+      return [{ ...attribute(at, viewLayers), rule: 'view', message: `no command named '${name}'` }];
+    }
+    const op = ops[commands[name].op];
+    if (op === undefined) return [];
+    const recorded = viewExpressions(at, view).map(({ path, expr }) => ({
+      ...attribute(path, viewLayers),
+      expr,
+      type: /** @type {'dyn'} */ ('dyn'),
+    }));
+    return compileCel(recorded, viewEnvironment(op.schema));
+  });
+  return [...opFaults, ...viewFaults];
 }
 
 /** ` Did you mean 'a' or 'b'?`, or nothing with no names. */

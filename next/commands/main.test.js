@@ -179,6 +179,43 @@ test('bl-next <command> --json prints one record as one JSON document, a record 
   assert.equal(noView.stdout, set.stdout);
 });
 
+const STORIES_VIEW = `
+stories:
+  columns:
+    - { field: id, header: ID, justify: left, truncate: true }
+    - { field: title, header: Title, justify: right, truncate: true }
+  footer: 'string(size(records)) + " stories"'
+`;
+
+test('bl-next <command> without --json prints its columns view, unshortened off a terminal', async () => {
+  const files = {
+    'backlog/backlog.yaml': BACKLOG,
+    'backlog/config/commands.yaml': FIXTURE_COMMANDS,
+    'backlog/config/views.yaml': STORIES_VIEW,
+  };
+  const { status, stdout, stderr } = await runBlNext(files, {
+    bin: WITH_FIXTURE_OPS,
+    argv: ['stories', 'S-1', 'S-22'],
+  });
+  assert.equal(stderr, '');
+  assert.equal(status, 0);
+  assert.equal(stdout, 'ID         Title\nS-1    Story S-1\nS-22  Story S-22\n2 stories\n');
+});
+
+test('bl-next exits 1 before the op runs on a view expression that names an unknown field', async () => {
+  const { status, stdout, stderr } = await runBlNext(
+    {
+      'backlog/backlog.yaml': BACKLOG,
+      'backlog/config/commands.yaml': FIXTURE_COMMANDS,
+      'backlog/config/views.yaml': STORIES_VIEW.replace('field: title', 'field: titel'),
+    },
+    { bin: WITH_FIXTURE_OPS, argv: ['stories', 'S-1'] },
+  );
+  assert.equal(stderr, `config/views.yaml: /stories/columns/1/field: cel: Unknown variable: titel\n${DOES_NOT_LOAD}`);
+  assert.equal(status, 1);
+  assert.equal(stdout, '');
+});
+
 test('bl-next with no backlog to find exits 1 with bl-next: and the error', async () => {
   const { status, stderr } = await runBlNext({}, { backlog: false });
   assert.match(stderr, /^bl-next: no backlog found: .*\n$/);
