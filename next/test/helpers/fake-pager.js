@@ -10,11 +10,12 @@ import { mkTempDir } from './tempdir.js';
  * A fake pager named `name` in a new directory: a node script that copies its
  * stdin to `<script>.in` and its `LESS` (or `<unset>`) to `<script>.less`.
  * It needs nothing from `PATH`. `input()` and `less()` read the copies, `null`
- * when the pager did not run.
+ * when the pager did not run. It exits with `status`.
  * @param {string} name
+ * @param {{ status?: number }} [options]
  * @returns {{ dir: string, script: string, input: () => string|null, less: () => string|null }}
  */
-export function fakePager(name) {
+export function fakePager(name, { status = 0 } = {}) {
   const dir = mkTempDir('bl-pager-');
   const script = join(dir, name);
   const body = [
@@ -22,6 +23,7 @@ export function fakePager(name) {
     "const fs = require('fs');",
     `fs.writeFileSync(${JSON.stringify(`${script}.in`)}, fs.readFileSync(0));`,
     `fs.writeFileSync(${JSON.stringify(`${script}.less`)}, process.env.LESS ?? '<unset>');`,
+    `process.exitCode = ${status};`,
   ].join('\n');
   writeFileSync(script, `${body}\n`);
   chmodSync(script, 0o755);

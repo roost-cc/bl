@@ -84,6 +84,37 @@ test('with PAGER unset and less on PATH, less gets the text, and more does not r
   assert.equal(more.input(), null);
 });
 
+test('page_reports_pager_failure_without_losing_text: a pager that cannot start or exits nonzero leaves the text on stdout', () => {
+  const empty = mkTempDir('bl-pager-none-');
+  const failing = (name) => fakePager(name, { status: 3 });
+  for (const [label, setup] of [
+    ['$PAGER exits nonzero', () => ({ env: { PAGER: failing('pager').script } })],
+    ['$PAGER is missing', () => ({ env: { PAGER: 'definitely_missing_f138_pager', PATH: empty } })],
+    ['less exits nonzero', () => ({ env: { PAGER: undefined, PATH: failing('less').dir } })],
+    ['less is missing and more exits nonzero', () => ({ env: { PAGER: undefined, PATH: failing('more').dir } })],
+  ]) {
+    const { env } = setup();
+    assert.equal(
+      withEnv(env, () => pageOn(TALL, 5)),
+      TALL,
+      label,
+    );
+  }
+  // A pager that exits 0 keeps the text off stdout; less that exits nonzero does not fall through to more.
+  const less = failing('less');
+  const more = fakePager('more');
+  assert.equal(
+    withEnv({ PAGER: undefined, PATH: `${less.dir}${delimiter}${more.dir}` }, () => pageOn(TALL, 5)),
+    TALL,
+  );
+  assert.equal(less.input(), TALL);
+  assert.equal(more.input(), null);
+  assert.equal(
+    withEnv({ PAGER: fakePager('pager').script }, () => pageOn(TALL, 5)),
+    '',
+  );
+});
+
 test('with PAGER unset and neither less nor more on PATH, the text goes to stdout with no message', () => {
   const empty = mkTempDir('bl-pager-none-');
   const errors = [];

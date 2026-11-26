@@ -5,13 +5,15 @@
  * When stdout is a terminal and the text has more lines than it has rows,
  * `page` runs `$PAGER` (when set and not blank) through a shell. Else it runs
  * `less`, and when `less` cannot start, `more`, each with no shell; when
- * neither can start, it writes the text to stdout with no message. The pager
+ * neither can start, it writes the text to stdout with no message. When the
+ * pager that runs cannot start or exits nonzero, it writes the text to stdout
+ * too, so no text is lost. The pager
  * gets the text on its stdin, and stdout and stderr on the terminal. Its
  * environment has `LESS=FRX` when `LESS` is not set, as git does, so `less`
  * passes the colors through and quits on a text that fits.
  */
 
-import { runChild, runCommandLine } from '../lib/child.js';
+import { exitStatus, runChild, runCommandLine } from '../lib/child.js';
 
 /** The pagers to try, in order, when `$PAGER` is unset or empty. */
 const FALLBACKS = ['less', 'more'];
@@ -41,12 +43,20 @@ export function page(text, stdout) {
     env: { ...process.env, LESS: process.env.LESS ?? LESS },
   };
   const pager = process.env.PAGER?.trim();
+  /** The text goes to stdout when the pager could not start or exited unsuccessfully. */
+  const settle = (result) => {
+    if (exitStatus(result) !== 0) stdout.write(text);
+  };
   if (pager) {
-    runCommandLine(pager, opts);
+    settle(runCommandLine(pager, opts));
     return;
   }
   for (const fallback of FALLBACKS) {
-    if (runChild(fallback, [], opts).error?.code !== 'ENOENT') return;
+    const result = runChild(fallback, [], opts);
+    if (result.error?.code !== 'ENOENT') {
+      settle(result);
+      return;
+    }
   }
   stdout.write(text);
 }
