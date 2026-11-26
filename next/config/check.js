@@ -10,6 +10,8 @@
  *   - `compileCel(recorded, env)`: the cross-check after the shape check
  *     (graphs.md, D-622): each recorded string type-checks in the CEL
  *     environment, to the marked type.
+ *   - `checkValue(schema, value)`: the same check of one value, for the files
+ *     that the store writes (F-137 D9 item 3).
  *   - `ConfigurationFaults`: every fault of a load, sorted, one line each.
  */
 
@@ -32,7 +34,7 @@ import { isMapping, pointerToken } from './files.js';
 const CEL_TYPES = ['bool', 'dyn'];
 
 /** The tokens of a JSON pointer (RFC 6901, section 4). */
-const tokensOf = (pointer) =>
+export const tokensOf = (pointer) =>
   pointer === ''
     ? []
     : pointer
@@ -158,8 +160,36 @@ function withTrials(schema) {
   return out;
 }
 
+/** An ISO 8601 timestamp in UTC, in whole or fractional seconds. */
+const UTC_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/;
+
 /**
- * The shape checker of one load: one ajv instance, with the `cel` keyword.
+ * Whether `text` is an ISO 8601 timestamp in UTC that names a real moment,
+ * for example `2026-11-14T13:08:57Z` or `2026-11-14T13:08:57.120Z`: the date
+ * exists (no `2026-02-30`) and the clock is in range (no `24:00:00`, no leap
+ * second). The schemas name it as `"format": "utc-timestamp"`.
+ * @param {string} text
+ */
+export function isUtcTimestamp(text) {
+  const match = UTC_TIMESTAMP.exec(text);
+  if (match === null) return false;
+  const [year, month, day, hour, minute, second] = match.slice(1).map(Number);
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, minute, second);
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day &&
+    date.getUTCHours() === hour &&
+    date.getUTCMinutes() === minute &&
+    date.getUTCSeconds() === second
+  );
+}
+
+/**
+ * The shape checker of one load: one ajv instance, with the `cel` keyword
+ * and the `utc-timestamp` format (`isUtcTimestamp`).
  * @returns {{ compile: (schema: Record<string, unknown>) =>
  *   (result: unknown, layers: Layer[]) => { faults: Fault[], cel: CelString[] } }}
  */
@@ -169,6 +199,7 @@ export function shapeChecker() {
   /** How many `propertyNames` subschemas run now: above 0, the data is a key. */
   const keys = { depth: 0 };
   const ajv = new Ajv2020({ strict: true, allErrors: true, useDefaults: false });
+  ajv.addFormat('utc-timestamp', { type: 'string', validate: isUtcTimestamp });
   ajv.addKeyword({
     keyword: 'cel',
     schemaType: 'string',
@@ -227,6 +258,39 @@ export function shapeChecker() {
       };
     },
   };
+}
+
+/** The shape checker of `checkValue`, made at its first call, and each schema it compiled. */
+let valueChecker;
+/** @type {WeakMap<object, ReturnType<ReturnType<typeof shapeChecker>['compile']>>} */
+const compiledValues = new WeakMap();
+
+/**
+ * The faults of `value` by `schema` (F-137 D9 item 3): the check of a file
+ * that the store writes, with the ajv setup of a load (`shapeChecker`). Each
+ * fault has the D5 shape, with `file` empty: the caller names the file. A
+ * schema is compiled once, at its first check. A schema that ajv does not
+ * compile (strict mode refuses an unknown format or keyword, it is no valid
+ * JSON Schema, or a `$ref` does not resolve) gives every value one fault with
+ * the rule `schema` and ajv's message: an attribute's `schema` comes from the
+ * shop's item definition, and the configuration load does not compile it.
+ * @param {Record<string, unknown>} schema
+ * @param {unknown} value
+ * @returns {Fault[]}
+ */
+export function checkValue(schema, value) {
+  valueChecker ??= shapeChecker();
+  let check = compiledValues.get(schema);
+  if (check === undefined) {
+    try {
+      check = valueChecker.compile(schema);
+    } catch (e) {
+      const faults = [{ file: '', path: '', rule: 'schema', message: /** @type {Error} */ (e).message }];
+      check = () => ({ faults, cel: [] });
+    }
+    compiledValues.set(schema, check);
+  }
+  return check(value, [{ file: '', pointer: '', patch: value }]).faults;
 }
 
 /**

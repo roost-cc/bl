@@ -14,6 +14,11 @@
       "type": "object",
       "description": "Repo name to the repo's own entry, which the layers apply over the top level for work in that repo.",
       "additionalProperties": { "type": "object" }
+    },
+    "id_prefixes": {
+      "type": "object",
+      "description": "Id prefix to item type name, for example `S: story` (items.md, \"Ids\", D-601). The store reads an id's prefix and type from it (F-137 D3).",
+      "additionalProperties": { "type": "string" }
     }
   }
 }

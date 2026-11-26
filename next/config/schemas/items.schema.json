@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "An item definition, config/items/<type>.yaml",
+  "description": "One item type's definition (items.md, \"What a section definition holds\", \"Item attributes\"; F-137 D1 and D9). `additionalProperties` is false at each level, so a typo is a fault; F-148 adds `parents` when it builds the containment graph. The loader adds no defaults (tenet 6).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dir"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "description": "The item type's name."
+    },
+    "dir": {
+      "type": "string",
+      "pattern": "^(?!\\.\\.?(?:/|$))(?!.*/\\.\\.?(?:/|$))[^/\\\\]+(?:/[^/\\\\]+)*$",
+      "description": "The directory of the type's items, relative to the backlog repo's root, for example `stories` (F-137 D1): one or more names joined by `/`, none of them `.` or `..`, so it is never empty, absolute or outside the backlog. bl has no default."
+    },
+    "sections": {
+      "type": "array",
+      "description": "The type's sections, in their order in the item document (D-756 to D-759).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "description": "The heading text." },
+          "purpose": {
+            "type": "string",
+            "description": "What goes in the section, for agents and people."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Whether every item of the type must have the section."
+          },
+          "initial": {
+            "type": "string",
+            "description": "The content of a new item's section, for example `None.`; empty if not set."
+          }
+        }
+      }
+    },
+    "attributes": {
+      "type": "array",
+      "description": "The type's attributes, stored in the item's `attributes.json` (D-610).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "schema"],
+        "properties": {
+          "name": { "type": "string", "description": "The attribute's name." },
+          "schema": {
+            "type": "object",
+            "description": "A JSON Schema for the attribute's value, as an object; `{}` accepts any value."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "Whether every item of the type must have a value."
+          }
+        }
+      }
+    }
+  }
+}

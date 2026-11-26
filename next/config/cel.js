@@ -3,8 +3,9 @@
  * (F-136 D6), with `@marcbachmann/cel-js` (D-495) and optional types on
  * (D-496).
  *
- * The record schema (`schemas/record.schema.json`) gives the types: each
- * `$defs` entry is a registered class, and each top-level property of
+ * The record schema (`schemas/record.schema.json`) gives the types, with the
+ * state schema (`schemas/state.schema.json`) that it refers to: each `$defs`
+ * entry of either is a registered class, and each top-level property of
  * `Record` is a variable. One schema walker (`shapeOf`) serves both
  * `celTypeOf`, the CEL type of a schema node, and `toCelValue`, a JSON value
  * as CEL takes it. The library does not convert plain objects nested in maps
@@ -25,7 +26,9 @@
 
 import { Environment } from '@marcbachmann/cel-js';
 import Mustache from 'mustache';
+import { tokensOf } from './check.js';
 import RECORD_SCHEMA from './schemas/record.schema.json' with { type: 'json' };
+import STATE_SCHEMA from './schemas/state.schema.json' with { type: 'json' };
 
 /**
  * @typedef {object} CelInputs
@@ -34,7 +37,10 @@ import RECORD_SCHEMA from './schemas/record.schema.json' with { type: 'json' };
 
 /** @typedef {Record<string, any>} SchemaNode */
 
-const DEFS = RECORD_SCHEMA.$defs;
+/** The schemas that a `$ref` names, by `$id`. */
+const SCHEMAS = new Map([RECORD_SCHEMA, STATE_SCHEMA].map((schema) => [schema.$id, schema]));
+/** The `$defs` entries of every schema, by name. */
+const DEFS = Object.fromEntries([...SCHEMAS.values()].flatMap((schema) => Object.entries(schema.$defs)));
 const DEF_REF = '#/$defs/';
 const RECORD_REF = { $ref: `${DEF_REF}Record` };
 const BOOL = { type: 'boolean' };
@@ -59,13 +65,20 @@ class Predicates {}
 
 /**
  * The shape of a schema node, the one walk behind `celTypeOf` and
- * `toCelValue`. A `$ref` names a `$defs` entry of the record schema.
+ * `toCelValue`. A `$ref` to a `$defs` entry, in either schema, is that
+ * entry's class; any other `$ref` names a node of another schema
+ * (`state.schema.json#/properties/run`), which the walk follows.
  * @param {SchemaNode} node
  * @returns {{ kind: 'ref', name: string } | { kind: 'list' | 'map', of: SchemaNode }
  *   | { kind: 'string' | 'timestamp' | 'int' | 'double' | 'bool' | 'dyn' }}
  */
 function shapeOf(node) {
-  if (node.$ref !== undefined) return { kind: 'ref', name: node.$ref.slice(DEF_REF.length) };
+  if (node.$ref !== undefined) {
+    const at = node.$ref.indexOf(DEF_REF);
+    if (at !== -1) return { kind: 'ref', name: node.$ref.slice(at + DEF_REF.length) };
+    const [id, pointer] = node.$ref.split('#');
+    return shapeOf(tokensOf(pointer).reduce((n, token) => n[token], SCHEMAS.get(id)));
+  }
   switch (node.type) {
     case 'string':
       return { kind: node.format === 'date-time' ? 'timestamp' : 'string' };
@@ -300,8 +313,7 @@ const SELF_TEST_RECORD = {
   id_prefix: 'S',
   id_number: 1,
   status: 'review',
-  run: '',
-  status_since: '2026-01-01T00:00:00Z',
+  run: 'idle',
   attributes: {},
   attribute_list: [],
   parents: {},
@@ -335,7 +347,6 @@ const SELF_TEST_HANDLERS = {
  */
 export function celSelfTest(inputs) {
   const cases = [
-    ['type(status_since) == google.protobuf.Timestamp', true],
     ['counters.x.value < counters.x.threshold', true],
     ['findings.exists(f, f.state == "open" && f.round == 1)', true],
     ['attributes.?owner.orValue("none")', 'none'],

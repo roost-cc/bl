@@ -12,6 +12,7 @@ import { MARKER } from './files.js';
 import BACKLOG_SCHEMA from './schemas/backlog.schema.json' with { type: 'json' };
 import COLOR_SCHEME_SCHEMA from './schemas/color-scheme.schema.json' with { type: 'json' };
 import COMMANDS_SCHEMA from './schemas/commands.schema.json' with { type: 'json' };
+import ITEMS_SCHEMA from './schemas/items.schema.json' with { type: 'json' };
 import VIEWS_SCHEMA from './schemas/views.schema.json' with { type: 'json' };
 
 /**
@@ -35,6 +36,13 @@ export const KINDS = Object.freeze([
     operator: 'config.yaml',
     order: 'both',
     schema: BACKLOG_SCHEMA,
+  }),
+  // The item definitions, `config/items/<type>.yaml`: the shop's alone (F-137 D9).
+  Object.freeze({
+    name: 'items',
+    shop: 'config/items/',
+    order: 'none',
+    schema: ITEMS_SCHEMA,
   }),
   // F-138 D2: the command layer's files.
   Object.freeze({ name: 'commands', shop: 'config/commands.yaml', order: 'none', schema: COMMANDS_SCHEMA }),

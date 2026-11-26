@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "log-entry.schema.json",
+  "title": "One line of an item's log.jsonl",
+  "description": "A log entry: one of the five events of history.md, \"Log entry shapes\" (D-617), with its fields; `event` selects the shape (F-137 D8). Whether each id in `items` names an existing item is the store's check (history.md, \"References in the log\"), not the schema's.",
+  "type": "object",
+  "required": ["event"],
+  "properties": {
+    "event": { "enum": ["created", "flow_start", "flow_end", "force", "outcome"] }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["event"], "properties": { "event": { "const": "created" } } },
+      "then": { "$ref": "#/$defs/Created" }
+    },
+    {
+      "if": { "required": ["event"], "properties": { "event": { "const": "flow_start" } } },
+      "then": { "$ref": "#/$defs/FlowStart" }
+    },
+    {
+      "if": { "required": ["event"], "properties": { "event": { "const": "flow_end" } } },
+      "then": { "$ref": "#/$defs/FlowEnd" }
+    },
+    {
+      "if": { "required": ["event"], "properties": { "event": { "const": "force" } } },
+      "then": { "$ref": "#/$defs/Force" }
+    },
+    {
+      "if": { "required": ["event"], "properties": { "event": { "const": "outcome" } } },
+      "then": { "$ref": "#/$defs/Outcome" }
+    }
+  ],
+  "$defs": {
+    "At": {
+      "type": "string",
+      "format": "utc-timestamp",
+      "description": "When the event happened: an ISO 8601 timestamp in UTC, for example `2026-11-14T13:08:57Z`, in whole or fractional seconds, with a date that exists, a clock from 00:00:00 to 23:59:59 and no leap second (`isUtcTimestamp` in `config/check.js`)."
+    },
+    "By": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Who started it: `operator`, or the parent item whose `run_children` step started a child."
+    },
+    "Status": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The item's status, as `state.json` stores it."
+    },
+    "Note": { "type": "string", "description": "Prose." },
+    "Items": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 1 },
+      "description": "Related items: a role to an id, for example `{ \"found_by\": \"S-1112\" }` (history.md, \"References in the log\")."
+    },
+    "Created": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "event", "by"],
+      "properties": {
+        "at": { "$ref": "#/$defs/At" },
+        "event": { "const": "created" },
+        "by": { "$ref": "#/$defs/By" },
+        "items": { "$ref": "#/$defs/Items" }
+      }
+    },
+    "FlowStart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "event", "status", "by"],
+      "oneOf": [
+        { "required": ["entry"], "properties": { "entry": true } },
+        { "required": ["resume"], "properties": { "resume": true } }
+      ],
+      "properties": {
+        "at": { "$ref": "#/$defs/At" },
+        "event": { "const": "flow_start" },
+        "entry": { "type": "string", "minLength": 1, "description": "The flow entry that started the invocation." },
+        "resume": { "const": true, "description": "`bl resume` started the invocation." },
+        "status": { "$ref": "#/$defs/Status", "description": "The status at the start." },
+        "replaced": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The run state that the entry dropped."
+        },
+        "by": { "$ref": "#/$defs/By" }
+      }
+    },
+    "FlowEnd": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "event", "ended", "status", "commits"],
+      "properties": {
+        "at": { "$ref": "#/$defs/At" },
+        "event": { "const": "flow_end" },
+        "ended": {
+          "type": "string",
+          "pattern": "^(stop|(gated|gated before|waiting): \\S.*)$",
+          "description": "How the invocation ended: `stop`, `gated: <to status>`, `gated before: <box>` or `waiting: <box>`."
+        },
+        "outcome": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The outcome of the last step; absent when an interactive session at a `wait` box ended with no outcome."
+        },
+        "status": { "$ref": "#/$defs/Status", "description": "The status at the end." },
+        "commits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["repo", "sha"],
+            "properties": {
+              "repo": { "type": "string", "minLength": 1 },
+              "sha": { "type": "string", "minLength": 1 }
+            }
+          },
+          "description": "The commits of the invocation; never the backlog commit that holds this entry."
+        },
+        "note": { "$ref": "#/$defs/Note" },
+        "items": { "$ref": "#/$defs/Items" }
+      }
+    },
+    "Force": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "event", "path", "to", "status", "by", "note"],
+      "properties": {
+        "at": { "$ref": "#/$defs/At" },
+        "event": { "const": "force" },
+        "path": {
+          "type": "string",
+          "pattern": "^(/.*)?$",
+          "description": "The JSON Pointer into `state.json` that `bl force` set (D-613)."
+        },
+        "from": { "description": "The value before; absent when the path did not exist." },
+        "to": { "description": "The value after; `null` when the force deleted it." },
+        "status": { "$ref": "#/$defs/Status", "description": "The item's status after the force." },
+        "by": { "$ref": "#/$defs/By" },
+        "note": { "$ref": "#/$defs/Note" }
+      }
+    },
+    "Outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "event", "box", "outcome", "by"],
+      "properties": {
+        "at": { "$ref": "#/$defs/At" },
+        "event": { "const": "outcome" },
+        "box": { "type": "string", "minLength": 1, "description": "The box path the outcome is for." },
+        "outcome": { "type": "string", "minLength": 1, "description": "The outcome name, for example `success`." },
+        "note": { "$ref": "#/$defs/Note" },
+        "by": { "$ref": "#/$defs/By" }
+      }
+    }
+  }
+}

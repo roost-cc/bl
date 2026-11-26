@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import { Environment, EvaluationError } from '@marcbachmann/cel-js';
 import Ajv2020 from 'ajv/dist/2020.js';
 import RECORD_SCHEMA from './schemas/record.schema.json' with { type: 'json' };
+import STATE_SCHEMA from './schemas/state.schema.json' with { type: 'json' };
 import { bindCel, celEnvironment, celSelfTest, celTypeOf, toCelValue } from './cel.js';
 
 /**
@@ -20,7 +21,6 @@ const plainRecord = (overrides = {}) => ({
   id_number: 1,
   status: 'review',
   run: 'waiting: gate',
-  status_since: '2026-03-01T00:00:00Z',
   attributes: { priority: 2 },
   attribute_list: [{ name: 'priority', value: 2 }],
   parents: { feature: 'F-1' },
@@ -61,15 +61,7 @@ const firstLine = (s) => String(s).split('\n')[0];
 
 test('record.schema.json holds the fields and $defs of D6, and ajv compiles it in strict mode', () => {
   const { $defs } = RECORD_SCHEMA;
-  assert.deepEqual(Object.keys($defs).sort(), [
-    'Attribute',
-    'Checkbox',
-    'Counter',
-    'Deferred',
-    'Finding',
-    'Gate',
-    'Record',
-  ]);
+  assert.deepEqual(Object.keys($defs).sort(), ['Attribute', 'Checkbox', 'Deferred', 'Finding', 'Gate', 'Record']);
   const record = $defs.Record;
   assert.deepEqual(Object.keys(record.properties), [
     'item_id',
@@ -80,7 +72,6 @@ test('record.schema.json holds the fields and $defs of D6, and ajv compiles it i
     'id_number',
     'status',
     'run',
-    'status_since',
     'attributes',
     'attribute_list',
     'parents',
@@ -102,20 +93,26 @@ test('record.schema.json holds the fields and $defs of D6, and ajv compiles it i
     Object.keys(record.properties).filter((name) => !record.required.includes(name)),
     ['depth', 'closed'],
   );
+  // status, run and counters are the state schema's (F-137 D8), so the fields have one list.
+  assert.deepEqual(
+    ['status', 'run', 'counters'].map((name) => record.properties[name]),
+    ['status', 'run', 'counters'].map((name) => ({ $ref: `state.schema.json#/properties/${name}` })),
+  );
+  assert.deepEqual(Object.keys(STATE_SCHEMA.$defs.Counter.properties), ['value', 'threshold']);
   const fields = (name) => Object.keys($defs[name].properties);
-  assert.deepEqual(fields('Counter'), ['value', 'threshold']);
   assert.deepEqual(fields('Finding'), ['id', 'round', 'category', 'text', 'file', 'state']);
   assert.deepEqual(fields('Deferred'), ['text', 'marked']);
   assert.deepEqual(fields('Checkbox'), ['checked', 'text']);
   assert.deepEqual(fields('Gate'), ['entry', 'text']);
   assert.deepEqual(fields('Attribute'), ['name', 'value']);
   // ajv knows no formats of its own; `date-time` is declared, not checked here.
-  const validate = new Ajv2020({ strict: true, allErrors: true, formats: { 'date-time': true } }).compile(
-    RECORD_SCHEMA,
-  );
+  const validate = new Ajv2020({ strict: true, allErrors: true, formats: { 'date-time': true } })
+    .addSchema(STATE_SCHEMA)
+    .compile(RECORD_SCHEMA);
   assert.ok(validate(plainRecord()), JSON.stringify(validate.errors));
   assert.ok(validate(plainRecord({ rank: null, depth: 1, closed: false })), JSON.stringify(validate.errors));
   assert.equal(validate(plainRecord({ statuss: 'x' })), false);
+  assert.equal(validate(plainRecord({ run: 'interrupted: x' })), false);
 });
 
 test('celTypeOf gives the CEL type of each kind of schema node', () => {
@@ -138,6 +135,8 @@ test('celTypeOf gives the CEL type of each kind of schema node', () => {
   ];
   for (const [node, type] of rows) assert.equal(celTypeOf(node), type, JSON.stringify(node));
   const props = RECORD_SCHEMA.$defs.Record.properties;
+  assert.equal(celTypeOf(props.status), 'string');
+  assert.equal(celTypeOf(props.run), 'string');
   assert.equal(celTypeOf(props.counters), 'map<string, Counter>');
   assert.equal(celTypeOf(props.checkboxes), 'map<string, list<Checkbox>>');
   assert.equal(celTypeOf(props.attributes), 'map<string, dyn>');
@@ -160,7 +159,6 @@ test('toCelValue makes BigInts, Dates and class instances', () => {
   assert.equal(record.id_number, 1n);
   assert.equal(record.rank, 3n);
   assert.equal(record.attributes.priority, 2n);
-  assert.ok(record.status_since instanceof Date);
   assert.equal(record.counters.a.constructor.name, 'Counter');
   assert.equal(record.findings[0].constructor.name, 'Finding');
   assert.equal(record.findings[0].round, 1n);
@@ -184,7 +182,10 @@ test('celEnvironment type-checks against the record and refuses unknown names an
     assert.equal(firstLine(chk.error.message), message, expr);
   }
   // `type` is the CEL built-in, so a condition reads the item's type as `record.type`.
-  assert.equal(env.check('record.type == "story" && now - status_since > duration("1h")').type, 'bool');
+  assert.equal(
+    env.check('record.type == "story" && now - timestamp("2026-03-01T00:00:00Z") > duration("1h")').type,
+    'bool',
+  );
   assert.equal(env.check('item(unit).status').type, 'string');
   assert.equal(env.check('children("story")').type, 'list<Record>');
   assert.equal(env.check('attributes.?owner.orValue("")').type, 'dyn');
@@ -231,7 +232,10 @@ test('bindCel evaluates with the given handlers on a plain-JSON record', async (
   assert.equal(await pending, true);
   assert.equal(bound.evaluate('predicates.aged(unit, 180)', record), true);
   assert.deepEqual(calls, [['aged', ['F-1', 180n]]]);
-  assert.equal(bound.evaluate('record.type == "story" && now - status_since > duration("1h")', record), true);
+  assert.equal(
+    bound.evaluate('record.type == "story" && now - timestamp("2026-03-01T00:00:00Z") > duration("1h")', record),
+    true,
+  );
 });
 
 test('bindCel refuses a missing or an unknown handler name', () => {
