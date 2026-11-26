@@ -315,6 +315,31 @@ const findingsOf = (error) => {
   return error.findings.map(({ item, file, line, rule, path }) => [item, file, line, rule, path]);
 };
 
+test('an attribute schema that ajv does not compile fails each write of the item with a schema finding', async () => {
+  const SCHEMAS = [
+    ['{ type: string, format: date }', /unknown format "date"/],
+    ['{ type: string, colour: red }', /unknown keyword: "colour"/],
+  ];
+  const WRITES = [
+    ['S-1', (w) => w.attributes('S-1', { category: 'bug', due: '2026-01-01' })],
+    ['S-1', (w) => w.set('S-1', 'Summary', 'Changed.')],
+    ['S-3', (w) => w.create('story', 'New', { state: DRAFT, attributes: { category: 'bug' }, by: 'operator' })],
+  ];
+  for (const [schema, message] of SCHEMAS) {
+    const ctx = backlog({ 'config/items/story.yaml': `${STORY}  - name: due\n    schema: ${schema}\n` });
+    const before = head(ctx);
+    for (const [id, write] of WRITES) {
+      await assert.rejects(storeWrite(ctx, { message: 'm' }, write), (error) => {
+        assert.deepEqual(findingsOf(error), [[id, 'attributes.json', undefined, 'schema', '']]);
+        assert.match(error.message, new RegExp(`${id} attributes\\.json: schema: .*${message.source}`));
+        return true;
+      });
+    }
+    assert.equal(head(ctx), before);
+    assert.deepEqual(status(ctx), []);
+  }
+});
+
 test('w.create makes the item directory with its four files in one commit, and gives the id', async () => {
   const ctx = backlog();
   writeFileSync(join(ctx.backlogDir, 'notes.md'), 'an uncommitted edit\n');

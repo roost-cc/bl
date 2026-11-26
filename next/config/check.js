@@ -269,7 +269,11 @@ const compiledValues = new WeakMap();
  * The faults of `value` by `schema` (F-137 D9 item 3): the check of a file
  * that the store writes, with the ajv setup of a load (`shapeChecker`). Each
  * fault has the D5 shape, with `file` empty: the caller names the file. A
- * schema is compiled once, at its first check.
+ * schema is compiled once, at its first check. A schema that ajv does not
+ * compile (strict mode refuses an unknown format or keyword, it is no valid
+ * JSON Schema, or a `$ref` does not resolve) gives every value one fault with
+ * the rule `schema` and ajv's message: an attribute's `schema` comes from the
+ * shop's item definition, and the configuration load does not compile it.
  * @param {Record<string, unknown>} schema
  * @param {unknown} value
  * @returns {Fault[]}
@@ -278,7 +282,12 @@ export function checkValue(schema, value) {
   valueChecker ??= shapeChecker();
   let check = compiledValues.get(schema);
   if (check === undefined) {
-    check = valueChecker.compile(schema);
+    try {
+      check = valueChecker.compile(schema);
+    } catch (e) {
+      const faults = [{ file: '', path: '', rule: 'schema', message: /** @type {Error} */ (e).message }];
+      check = () => ({ faults, cel: [] });
+    }
     compiledValues.set(schema, check);
   }
   return check(value, [{ file: '', pointer: '', patch: value }]).faults;

@@ -132,6 +132,32 @@ test('readAttributes_rejects_invalid_schema', () => {
   });
 });
 
+/** Attribute schemas that the configuration load accepts and ajv's strict mode does not compile. */
+const UNCOMPILED_SCHEMAS = [
+  ['an unknown format', '{ type: string, format: date }', /unknown format "date"/],
+  ['an unknown keyword', '{ type: string, colour: red }', /unknown keyword: "colour"/],
+  ['a keyword with no type', '{ minimum: 1 }', /missing type "number" for keyword "minimum"/],
+  ['no valid JSON Schema', '{ type: strin }', /schema is invalid/],
+  ['a $ref that resolves only in the attribute schema', '{ $defs: { d: {} }, $ref: "#/$defs/d" }', /can't resolve/],
+];
+
+test('checkAttributes_with_unknown_format_gives_a_fault_or_config_load_refuses_it', () => {
+  for (const [name, schema, message] of UNCOMPILED_SCHEMAS) {
+    const dirs = fixture({
+      'backlog/backlog.yaml': 'repos: {}\nid_prefixes:\n  S: story\n',
+      'backlog/config/items/story.yaml': `dir: stories\nattributes:\n  - name: due\n    schema: ${schema}\n`,
+      'backlog/stories/S1-one/index.md': '# One\n',
+      'backlog/stories/S1-one/attributes.json': '{ "due": "2026-01-01" }\n',
+    });
+    const ctx = { backlogDir: dirs.backlogDir, config: load(dirs) };
+    const faults = checkAttributes({ due: '2026-01-01' }, itemDefinition(ctx, 'story'));
+    assert.deepEqual(rules(faults), ['schema '], name);
+    assert.match(faults[0].message, message, name);
+    const item = /** @type {import('./items.js').Item} */ (itemDir(ctx, 'S-1'));
+    assert.throws(() => readAttributes(ctx, item), { message: /^stories\/S1-one\/attributes\.json: schema: / }, name);
+  }
+});
+
 test('jsonText writes two spaces of indent and one newline; parseJson gives a json fault for other text', () => {
   assert.equal(jsonText({ status: 'draft', run: 'idle' }), '{\n  "status": "draft",\n  "run": "idle"\n}\n');
   assert.deepEqual(parseJson('{"a":1}'), { value: { a: 1 } });
