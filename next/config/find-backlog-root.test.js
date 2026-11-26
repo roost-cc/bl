@@ -217,9 +217,9 @@ test('BL_BACKLOG_DIR naming a backlog wins over a nearer one', () => {
 
 test("the marker that findBacklogRoot reads is the backlog kind's shop file, so the load reads the file the walk found", () => {
   const root = mkTempDir('bl-find-');
-  backlogAt(root, 'b', 'repos: { utop: {} }\n');
+  backlogAt(root, 'b', 'color_scheme: mocha\nrepos: { utop: {} }\n');
   const found = findBacklogRoot(root);
   const config = loadConfiguration({ backlogDir: found, operatorDir: join(found, 'no-operator'), kinds: KINDS });
-  assert.deepEqual(config.scope('utop'), { repos: { utop: {} } });
+  assert.deepEqual(config.scope('utop'), { color_scheme: 'mocha', repos: { utop: {} } });
   assert.equal(KINDS.find((kind) => kind.name === 'backlog')?.shop, MARKER);
 });

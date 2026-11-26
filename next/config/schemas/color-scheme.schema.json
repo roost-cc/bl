@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "config/color-schemes/<name>.yaml and the operator's color-schemes/<name>.yaml",
+  "description": "One color scheme (views.md, D-470 to D-474; F-138 D2): a map from a style name to the Node `util.styleText` formats of that style, for example `match: [bold, '#f9e2af']`. `match` is required, because the renderer applies it to the text that a search pattern matches (D-469).",
+  "type": "object",
+  "required": ["match"],
+  "properties": { "match": { "$ref": "#/$defs/Formats" } },
+  "additionalProperties": { "$ref": "#/$defs/Formats" },
+  "$defs": {
+    "Formats": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+  }
+}

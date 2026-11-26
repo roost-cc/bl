@@ -7,7 +7,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { KINDS } from './kinds.js';
 import { render } from './template.js';
-import { faultLines, fixture, load } from '../test/helpers/config-fixture.js';
+import { faultLines as fixtureFaultLines, fixture, load as fixtureLoad } from '../test/helpers/config-fixture.js';
+
+/** The shipped backlog kind alone: the fixture kinds below reuse the names and paths of other shipped kinds. */
+const BACKLOG_KINDS = KINDS.filter((kind) => kind.name === 'backlog');
+
+/** The shared fixture load, with the backlog kind alone by default. */
+const load = (dirs, kinds = BACKLOG_KINDS) => fixtureLoad(dirs, kinds);
+
+/** The shared fixture fault lines, with the backlog kind alone by default. */
+const faultLines = (dirs, kinds = BACKLOG_KINDS) => fixtureFaultLines(dirs, kinds);
 
 /** A `both` kind whose schema has `who` beside `repos`. */
 const BOTH = {
@@ -17,14 +26,14 @@ const BOTH = {
 
 test('scope(utop) has the four layers applied, scope(null) the two top levels, and the result is frozen', () => {
   const dirs = fixture({
-    'backlog/backlog.yaml': 'who: shop top\nrepos:\n  utop:\n    who: shop utop\n  web: {}\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nwho: shop top\nrepos:\n  utop:\n    who: shop utop\n  web: {}\n',
     '.config/bl/config.yaml': 'who: operator top\nrepos:\n  utop:\n    who: operator utop\n',
   });
   const config = load(dirs, [BOTH]);
   const repos = { utop: { who: 'operator utop' }, web: {} };
-  assert.deepEqual(config.scope('utop'), { who: 'operator utop', repos });
-  assert.deepEqual(config.scope('web'), { who: 'operator top', repos });
-  assert.deepEqual(config.scope(null), { who: 'operator top', repos });
+  assert.deepEqual(config.scope('utop'), { color_scheme: 'mocha', who: 'operator utop', repos });
+  assert.deepEqual(config.scope('web'), { color_scheme: 'mocha', who: 'operator top', repos });
+  assert.deepEqual(config.scope(null), { color_scheme: 'mocha', who: 'operator top', repos });
   assert.equal(config.scope('nope'), undefined);
   assert.ok(Object.isFrozen(config));
   assert.ok(Object.isFrozen(config.scope('utop')));
@@ -33,15 +42,30 @@ test('scope(utop) has the four layers applied, scope(null) the two top levels, a
     config.scope('utop').who = 'x';
   }, TypeError);
   assert.deepEqual(config.celInputs, { predicates: {} });
+  // layers() of the both kind gives a scope's layers, the repos maps first: the
+  // top level with no name or null.
+  const files = (layers) => layers.map((layer) => `${layer.file.slice(dirs.home.length)} ${layer.pointer}`);
+  assert.deepEqual(files(config.layers('backlog')), [
+    '/backlog/backlog.yaml ',
+    '/.config/bl/config.yaml ',
+    '/backlog/backlog.yaml ',
+    '/.config/bl/config.yaml ',
+  ]);
+  assert.deepEqual(config.layers('backlog', null), config.layers('backlog'));
+  assert.deepEqual(files(config.layers('backlog', 'utop')).slice(-1), ['/.config/bl/config.yaml /repos/utop']);
 });
 
 test('each layer of scope(utop) shows when the layers above it are left out', () => {
   const rows = [
-    ['who: shop top\nrepos: { utop: {} }\n', null, 'shop top'],
-    ['who: shop top\nrepos: { utop: { who: shop utop } }\n', null, 'shop utop'],
-    ['who: shop top\nrepos: { utop: { who: shop utop } }\n', 'who: operator top\n', 'operator top'],
+    ['color_scheme: mocha\nwho: shop top\nrepos: { utop: {} }\n', null, 'shop top'],
+    ['color_scheme: mocha\nwho: shop top\nrepos: { utop: { who: shop utop } }\n', null, 'shop utop'],
     [
-      'who: shop top\nrepos: { utop: { who: shop utop } }\n',
+      'color_scheme: mocha\nwho: shop top\nrepos: { utop: { who: shop utop } }\n',
+      'who: operator top\n',
+      'operator top',
+    ],
+    [
+      'color_scheme: mocha\nwho: shop top\nrepos: { utop: { who: shop utop } }\n',
       'who: operator top\nrepos: { utop: { who: operator utop } }\n',
       'operator utop',
     ],
@@ -56,7 +80,7 @@ test('each layer of scope(utop) shows when the layers above it are left out', ()
 });
 
 test('an unknown top-level key in backlog.yaml is a fault that names backlog.yaml', () => {
-  const dirs = fixture({ 'backlog/backlog.yaml': 'repos: {}\nsigning_kye: git\n' });
+  const dirs = fixture({ 'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: {}\nsigning_kye: git\n' });
   assert.deepEqual(faultLines(dirs), [
     'backlog.yaml: /signing_kye: additionalProperties: must NOT have additional properties',
   ]);
@@ -64,7 +88,7 @@ test('an unknown top-level key in backlog.yaml is a fault that names backlog.yam
 
 test('two faults in two files are both reported, sorted by file and path, each once', () => {
   const dirs = fixture({
-    'backlog/backlog.yaml': 'repos:\n  utop: {}\n  web: {}\nzz: 1\naa: 1\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos:\n  utop: {}\n  web: {}\nzz: 1\naa: 1\n',
     '.config/bl/config.yaml': 'repos:\n  utop:\n    signing_kye: x\n',
   });
   assert.deepEqual(faultLines(dirs), [
@@ -86,18 +110,18 @@ test('a YAML error is a fault with its line, and no shape fault follows from the
 
 test('a repo that the operator deletes with null has no scope, and its shop entry reaches no result', () => {
   const dirs = fixture({
-    'backlog/backlog.yaml': 'who: shop top\nrepos:\n  x: { who: shop x }\n  y: {}\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nwho: shop top\nrepos:\n  x: { who: shop x }\n  y: {}\n',
     '.config/bl/config.yaml': 'repos:\n  x: null\n',
   });
   const config = load(dirs, [BOTH]);
   assert.equal(config.scope('x'), undefined);
-  assert.deepEqual(config.scope('y'), { who: 'shop top', repos: { y: {} } });
-  assert.deepEqual(config.scope(null), { who: 'shop top', repos: { y: {} } });
+  assert.deepEqual(config.scope('y'), { color_scheme: 'mocha', who: 'shop top', repos: { y: {} } });
+  assert.deepEqual(config.scope(null), { color_scheme: 'mocha', who: 'shop top', repos: { y: {} } });
 });
 
 test('a missing operator file is no layer, not a fault', () => {
-  const config = load(fixture({ 'backlog/backlog.yaml': 'repos: { utop: {} }\n' }));
-  assert.deepEqual(config.scope('utop'), { repos: { utop: {} } });
+  const config = load(fixture({ 'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: { utop: {} }\n' }));
+  assert.deepEqual(config.scope('utop'), { color_scheme: 'mocha', repos: { utop: {} } });
 });
 
 /** A fixture `none` kind: one shop file, with a condition the schema marks `cel: bool`. */
@@ -128,7 +152,7 @@ const VIEWS = {
 /** A fixture `who` directory kind. */
 const TEMPLATES = { ...VIEWS, name: 'templates', shop: 'config/templates/', operator: 'templates/' };
 
-const SHOP_ONLY = { 'backlog/backlog.yaml': 'repos: {}\n' };
+const SHOP_ONLY = { 'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: {}\n' };
 
 /** Twelve levels of aliases, each used twice: 4096 copies, more than the YAML library expands. */
 const ALIAS_BOMB = [
@@ -154,7 +178,7 @@ test('each YAML rejection is a fault that names its file, in each file a load re
   ];
   for (const [text, message] of REJECTIONS) {
     for (const [path, shown] of rows) {
-      const lines = faultLines(fixture({ ...SHOP_ONLY, [path]: text }), [...KINDS, VIEWS, TEMPLATES]);
+      const lines = faultLines(fixture({ ...SHOP_ONLY, [path]: text }), [...BACKLOG_KINDS, VIEWS, TEMPLATES]);
       assert.equal(lines.length, 1, `${path}: ${lines.join(' | ')}`);
       assert.ok(lines[0].startsWith(`${shown}: : `), lines[0]);
       assert.match(lines[0].slice(`${shown}: : `.length), message);
@@ -178,19 +202,19 @@ test('every repo name keeps its entry and its scope, or is a fault that names it
       ],
       [{ ...SHOP_ONLY, 'backlog/config/views.yaml': `'${key}': x\n` }, `config/views.yaml: /${key}: ${MESSAGE(key)}`],
     ]) {
-      assert.deepEqual(faultLines(fixture(files), [...KINDS, VIEWS]), [line]);
+      assert.deepEqual(faultLines(fixture(files), [...BACKLOG_KINDS, VIEWS]), [line]);
     }
   }
   // Other names of Object.prototype are ordinary repos, and a null beside them still deletes.
   for (const key of ['toString', 'valueOf', 'isPrototypeOf', '__defineGetter__']) {
     const config = load(
       fixture({
-        'backlog/backlog.yaml': `repos:\n  ${key}: {}\n  later: {}\n`,
+        'backlog/backlog.yaml': `color_scheme: mocha\nrepos:\n  ${key}: {}\n  later: {}\n`,
         '.config/bl/config.yaml': 'repos:\n  later: null\n',
       }),
     );
     assert.deepEqual(Object.keys(config.scope(null).repos), [key]);
-    assert.deepEqual(config.scope(key), { repos: { [key]: {} } });
+    assert.deepEqual(config.scope(key), { color_scheme: 'mocha', repos: { [key]: {} } });
     assert.equal(config.scope('later'), undefined);
   }
 });
@@ -223,7 +247,7 @@ test('every reserved key and every YAML error of one file reaches the load fault
       ],
     ],
   ]) {
-    assert.deepEqual(faultLines(fixture(files), [...KINDS, VIEWS]), lines);
+    assert.deepEqual(faultLines(fixture(files), [...BACKLOG_KINDS, VIEWS]), lines);
   }
 });
 
@@ -277,7 +301,7 @@ test('a fault in one entry of a directory kind leaves the shape and CEL checks o
       [shape('config/rules/a.yaml'), cel('~/.config/bl/rules/b.yaml')],
     ],
   ]) {
-    const lines = faultLines(fixture({ ...SHOP_ONLY, ...files }), [...KINDS, kind]);
+    const lines = faultLines(fixture({ ...SHOP_ONLY, ...files }), [...BACKLOG_KINDS, kind]);
     assert.equal(lines.length, expected.length, lines.join('\n'));
     expected.forEach((line, i) =>
       typeof line === 'string' ? assert.equal(lines[i], line) : assert.match(lines[i], line),
@@ -291,7 +315,7 @@ test('a who file kind: the shop file, then the operator file of the same name', 
     'backlog/config/views.yaml': 'list: id\nboard: id status\n',
     '.config/bl/views.yaml': 'list: id title\n',
   });
-  const config = load(dirs, [...KINDS, VIEWS]);
+  const config = load(dirs, [...BACKLOG_KINDS, VIEWS]);
   assert.deepEqual(config.file('views'), { list: 'id title', board: 'id status' });
   assert.ok(Object.isFrozen(config.file('views')));
   assert.throws(() => config.file('backlog'), /no who or none configuration kind: backlog/);
@@ -306,7 +330,7 @@ test('a who directory kind: each file name is an entry, and an operator file wit
     '.config/bl/templates/en.yaml': 'failed: It broke\n',
     '.config/bl/templates/de.yaml': 'merged: Zusammengeführt\n',
   });
-  const config = load(dirs, [...KINDS, TEMPLATES]);
+  const config = load(dirs, [...BACKLOG_KINDS, TEMPLATES]);
   assert.deepEqual(config.file('templates', 'en.yaml'), { merged: 'Merged', failed: 'It broke' });
   assert.deepEqual(config.file('templates', 'de.yaml'), { merged: 'Zusammengeführt' });
   assert.equal(config.file('templates', 'notes.txt'), undefined);
@@ -318,7 +342,7 @@ test('a fault in a directory kind names the operator file that set the value', (
     'backlog/config/templates/en.yaml': 'merged: Merged\n',
     '.config/bl/templates/en.yaml': 'merged: 5\n',
   });
-  assert.deepEqual(faultLines(dirs, [...KINDS, TEMPLATES]), [
+  assert.deepEqual(faultLines(dirs, [...BACKLOG_KINDS, TEMPLATES]), [
     '~/.config/bl/templates/en.yaml: /merged: type: must be string',
   ]);
 });
@@ -333,15 +357,20 @@ test('a none kind: a CEL string that does not compile, or types to string, is a 
     ],
   ];
   for (const [text, line] of rows) {
-    assert.deepEqual(faultLines(fixture({ ...SHOP_ONLY, 'backlog/config/flow.yaml': text }), [...KINDS, FLOW]), [line]);
+    assert.deepEqual(
+      faultLines(fixture({ ...SHOP_ONLY, 'backlog/config/flow.yaml': text }), [...BACKLOG_KINDS, FLOW]),
+      [line],
+    );
   }
   const ok = fixture({ ...SHOP_ONLY, 'backlog/config/flow.yaml': 'when: status == "review" && size(findings) > 0\n' });
-  assert.deepEqual(load(ok, [...KINDS, FLOW]).file('flow'), { when: 'status == "review" && size(findings) > 0' });
+  assert.deepEqual(load(ok, [...BACKLOG_KINDS, FLOW]).file('flow'), {
+    when: 'status == "review" && size(findings) > 0',
+  });
 });
 
 test('the CEL strings of a kind with a shape fault are not compiled', () => {
   const dirs = fixture({ ...SHOP_ONLY, 'backlog/config/flow.yaml': 'when: title\nextra: 1\n' });
-  assert.deepEqual(faultLines(dirs, [...KINDS, FLOW]), [
+  assert.deepEqual(faultLines(dirs, [...BACKLOG_KINDS, FLOW]), [
     'config/flow.yaml: /extra: additionalProperties: must NOT have additional properties',
   ]);
 });
@@ -380,7 +409,7 @@ test('a partial with an unclosed section is a fault that names its file', () => 
 test('a none kind reads only the shop file, even when it names an operator path; a who kind reads both', () => {
   const OPEN = { type: 'object', additionalProperties: { type: 'string' } };
   const kinds = [
-    ...KINDS,
+    ...BACKLOG_KINDS,
     { name: 'flow', shop: 'config/flow.yaml', operator: 'flow.yaml', order: 'none', schema: OPEN },
     { name: 'flows', shop: 'config/flows/', operator: 'flows/', order: 'none', schema: OPEN },
     { name: 'views', shop: 'config/views.yaml', operator: 'views.yaml', order: 'who', schema: OPEN },
@@ -407,7 +436,7 @@ test('a none kind reads only the shop file, even when it names an operator path;
 });
 
 test('a none kind with no file: the result is {}, and a required key names the shop file', () => {
-  assert.deepEqual(faultLines(fixture(SHOP_ONLY), [...KINDS, FLOW]), [
+  assert.deepEqual(faultLines(fixture(SHOP_ONLY), [...BACKLOG_KINDS, FLOW]), [
     "config/flow.yaml: /when: required: must have required property 'when'",
   ]);
 });
