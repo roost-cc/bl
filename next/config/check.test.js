@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { celEnvironment } from './cel.js';
 import Ajv2020 from 'ajv/dist/2020.js';
-import { ConfigurationFaults, SUBSCHEMA_KEYWORDS, attribute, compileCel, shapeChecker } from './check.js';
+import { ConfigurationFaults, SUBSCHEMA_KEYWORDS, attribute, checkValue, compileCel, shapeChecker } from './check.js';
 import { applyLayers, bothAxes, reposLayers } from './layers.js';
 import BACKLOG_SCHEMA from './schemas/backlog.schema.json' with { type: 'json' };
 import { withEnv } from '../test/helpers/env.js';
@@ -386,6 +386,23 @@ test('a rejected branch leaves no cel string under any subschema keyword, $ref t
   ];
   const known = [...Object.keys(new Ajv2020().RULES.all), '$defs', 'definitions'];
   assert.deepEqual(known.filter((k) => !SUBSCHEMA_KEYWORDS.includes(k)).sort(), NO_SUBSCHEMA.sort());
+});
+
+test('checkValue: a value that fits has no fault; one that fails has a fault with its path and rule', () => {
+  const schema = {
+    type: 'object',
+    required: ['name'],
+    additionalProperties: false,
+    properties: { name: { type: 'string' }, size: { type: 'integer', minimum: 0 } },
+  };
+  assert.deepEqual(checkValue(schema, { name: 'a', size: 1 }), []);
+  assert.deepEqual(checkValue(schema, { size: -1, colour: 'red' }), [
+    { file: '', path: '/name', rule: 'required', message: "must have required property 'name'" },
+    { file: '', path: '/colour', rule: 'additionalProperties', message: 'must NOT have additional properties' },
+    { file: '', path: '/size', rule: 'minimum', message: 'must be >= 0' },
+  ]);
+  // A later check of the same schema gives only its own faults.
+  assert.deepEqual(checkValue(schema, 'x'), [{ file: '', path: '', rule: 'type', message: 'must be object' }]);
 });
 
 test('a schema whose cel keyword is neither bool nor dyn does not compile', () => {

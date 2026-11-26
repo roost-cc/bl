@@ -1,7 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "record.schema.json",
   "title": "The record of an item",
-  "description": "The record that `bl list` gives for an item and that CEL runs over (commands.md D-437, core.md \"Records and CEL\"). `next/config/cel.js` derives the CEL types from it (F-136 D6). F-137's record builder produces it.",
+  "description": "The record that `bl list` gives for an item and that CEL runs over (commands.md D-437, core.md \"Records and CEL\"). `next/config/cel.js` derives the CEL types from it (F-136 D6). `status`, `run` and `counters` refer to `state.schema.json`, so the fields have one list (F-136 A2, D-483). F-148's record builder produces it.",
   "$ref": "#/$defs/Record",
   "$defs": {
     "Record": {
@@ -13,9 +14,8 @@
         "unit": { "type": "string", "description": "An id; for a work unit, its own id." },
         "id_prefix": { "type": "string" },
         "id_number": { "type": "integer" },
-        "status": { "type": "string" },
-        "run": { "type": "string", "description": "The run state." },
-        "status_since": { "type": "string", "format": "date-time", "description": "When the status last changed." },
+        "status": { "$ref": "state.schema.json#/properties/status" },
+        "run": { "$ref": "state.schema.json#/properties/run" },
         "attributes": { "type": "object", "additionalProperties": {} },
         "attribute_list": {
           "type": "array",
@@ -36,7 +36,7 @@
         "path": { "type": "string" },
         "dir": { "type": "string" },
         "rank": { "type": ["integer", "null"], "description": "null for an item that is not a work unit." },
-        "counters": { "type": "object", "additionalProperties": { "$ref": "#/$defs/Counter" } },
+        "counters": { "$ref": "state.schema.json#/properties/counters" },
         "findings": { "type": "array", "items": { "$ref": "#/$defs/Finding" } },
         "deferred": { "type": "array", "items": { "$ref": "#/$defs/Deferred" } },
         "checkboxes": {
@@ -58,7 +58,6 @@
         "id_number",
         "status",
         "run",
-        "status_since",
         "attributes",
         "attribute_list",
         "parents",
@@ -74,15 +73,6 @@
         "gates",
         "change"
       ],
-      "additionalProperties": false
-    },
-    "Counter": {
-      "type": "object",
-      "properties": {
-        "value": { "type": "integer" },
-        "threshold": { "type": "integer" }
-      },
-      "required": ["value", "threshold"],
       "additionalProperties": false
     },
     "Finding": {

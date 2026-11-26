@@ -10,6 +10,8 @@
  *   - `compileCel(recorded, env)`: the cross-check after the shape check
  *     (graphs.md, D-622): each recorded string type-checks in the CEL
  *     environment, to the marked type.
+ *   - `checkValue(schema, value)`: the same check of one value, for the files
+ *     that the store writes (F-137 D9 item 3).
  *   - `ConfigurationFaults`: every fault of a load, sorted, one line each.
  */
 
@@ -32,7 +34,7 @@ import { isMapping, pointerToken } from './files.js';
 const CEL_TYPES = ['bool', 'dyn'];
 
 /** The tokens of a JSON pointer (RFC 6901, section 4). */
-const tokensOf = (pointer) =>
+export const tokensOf = (pointer) =>
   pointer === ''
     ? []
     : pointer
@@ -227,6 +229,30 @@ export function shapeChecker() {
       };
     },
   };
+}
+
+/** The shape checker of `checkValue`, made at its first call, and each schema it compiled. */
+let valueChecker;
+/** @type {WeakMap<object, ReturnType<ReturnType<typeof shapeChecker>['compile']>>} */
+const compiledValues = new WeakMap();
+
+/**
+ * The faults of `value` by `schema` (F-137 D9 item 3): the check of a file
+ * that the store writes, with the ajv setup of a load (`shapeChecker`). Each
+ * fault has the D5 shape, with `file` empty: the caller names the file. A
+ * schema is compiled once, at its first check.
+ * @param {Record<string, unknown>} schema
+ * @param {unknown} value
+ * @returns {Fault[]}
+ */
+export function checkValue(schema, value) {
+  valueChecker ??= shapeChecker();
+  let check = compiledValues.get(schema);
+  if (check === undefined) {
+    check = valueChecker.compile(schema);
+    compiledValues.set(schema, check);
+  }
+  return check(value, [{ file: '', pointer: '', patch: value }]).faults;
 }
 
 /**

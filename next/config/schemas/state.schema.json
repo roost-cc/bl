@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "state.schema.json",
+  "title": "An item's state.json",
+  "description": "The item's status, run state and counters (graphs.md, \"Item data outside the document\", D-615; core.md, \"Run state\", D-3; steps.md, \"Counting\"). F-137 D8 owns it; the record schema refers to its properties. A later feature that stores another fact in state.json adds its property here, in its own story. Whether `status` names a status of the item's type is the flow set's check (F-139).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "run"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "description": "The item's shop status."
+    },
+    "run": {
+      "type": "string",
+      "pattern": "^(idle|(active|waiting|gated|gated before): \\S.*)$",
+      "description": "The run state as stored: `idle`, `active: <box>`, `waiting: <box>`, `gated: <to status>` or `gated before: <box>` (D-3). `interrupted` is found when bl reads, never stored."
+    },
+    "counters": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/Counter" },
+      "description": "Counter name to its counter (steps.md, \"Counting\")."
+    }
+  },
+  "$defs": {
+    "Counter": {
+      "type": "object",
+      "description": "A counter of the `increment` step; a counter with no `value` reads 0.",
+      "properties": {
+        "value": { "type": "integer", "minimum": 0 },
+        "threshold": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    }
+  }
+}
