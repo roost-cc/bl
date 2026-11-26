@@ -10,6 +10,7 @@
 
 import { MARKER } from './files.js';
 import BACKLOG_SCHEMA from './schemas/backlog.schema.json' with { type: 'json' };
+import ITEMS_SCHEMA from './schemas/items.schema.json' with { type: 'json' };
 
 /**
  * @typedef {object} Kind
@@ -32,5 +33,12 @@ export const KINDS = Object.freeze([
     operator: 'config.yaml',
     order: 'both',
     schema: BACKLOG_SCHEMA,
+  }),
+  // The item definitions, `config/items/<type>.yaml`: the shop's alone (F-137 D9).
+  Object.freeze({
+    name: 'items',
+    shop: 'config/items/',
+    order: 'none',
+    schema: ITEMS_SCHEMA,
   }),
 ]);
