@@ -39,7 +39,7 @@ function startStatus(argv) {
  * @param {string[]} argv  the arguments after the program name
  * @param {{ ops?: Readonly<Record<string, import('./ops/index.js').Op>> }} [options]
  *   `ops` is the op registry, `OPS`; a test passes fixture ops
- * @returns {Promise<number>} the exit code: 1 on a configuration fault, 2 on a usage error
+ * @returns {Promise<number>} the exit code: 1 on a configuration fault, 2 on a usage error, the status of a pager that started and failed
  */
 export async function main(argv, { ops = OPS } = {}) {
   // The window id first, before any async work, so every title targets the
