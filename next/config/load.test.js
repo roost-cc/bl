@@ -275,6 +275,35 @@ test('a partial with an unclosed section is a fault that names its file', () => 
   assert.deepEqual(faultLines(dirs), ['~/.config/bl/partials/broken.mustache: : mustache: Unclosed section "a" at 7']);
 });
 
+test('a none kind reads only the shop file, even when it names an operator path; a who kind reads both', () => {
+  const OPEN = { type: 'object', additionalProperties: { type: 'string' } };
+  const kinds = [
+    ...KINDS,
+    { name: 'flow', shop: 'config/flow.yaml', operator: 'flow.yaml', order: 'none', schema: OPEN },
+    { name: 'flows', shop: 'config/flows/', operator: 'flows/', order: 'none', schema: OPEN },
+    { name: 'views', shop: 'config/views.yaml', operator: 'views.yaml', order: 'who', schema: OPEN },
+  ];
+  const dirs = fixture({
+    ...SHOP_ONLY,
+    'backlog/config/flow.yaml': 'v: shop\n',
+    'backlog/config/flows/a.yaml': 'v: shop\n',
+    'backlog/config/views.yaml': 'v: shop\nw: shop\n',
+    // A broken operator file of a none kind is not read, so it is no fault.
+    '.config/bl/flow.yaml': 'v: [\n',
+    '.config/bl/flows/a.yaml': 'v: operator\n',
+    '.config/bl/flows/b.yaml': 'v: operator\n',
+    '.config/bl/views.yaml': 'v: operator\n',
+  });
+  const config = load(dirs, kinds);
+  assert.deepEqual(config.file('flow'), { v: 'shop' });
+  assert.deepEqual(config.file('flows', 'a.yaml'), { v: 'shop' });
+  assert.equal(config.file('flows', 'b.yaml'), undefined);
+  assert.deepEqual(config.file('views'), { v: 'operator', w: 'shop' });
+  // With no shop file, the operator file of a none kind is still not read.
+  const empty = fixture({ ...SHOP_ONLY, '.config/bl/flow.yaml': 'v: operator\n' });
+  assert.deepEqual(load(empty, kinds).file('flow'), {});
+});
+
 test('a none kind with no file: the result is {}, and a required key names the shop file', () => {
   assert.deepEqual(faultLines(fixture(SHOP_ONLY), [...KINDS, FLOW]), [
     "config/flow.yaml: /when: required: must have required property 'when'",

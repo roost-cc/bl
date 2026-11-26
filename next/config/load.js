@@ -92,7 +92,8 @@ function readDirectory(dir, faults) {
  */
 function unitsOf(kind, backlogDir, operatorDir, faults) {
   const shopPath = join(backlogDir, kind.shop);
-  const operatorPath = kind.operator === undefined ? null : join(operatorDir, kind.operator);
+  // A `none` kind is the shop's file alone (D4), whatever operator path it names.
+  const operatorPath = kind.operator === undefined || kind.order === 'none' ? null : join(operatorDir, kind.operator);
   if (kind.shop.endsWith('/')) {
     const shop = readDirectory(shopPath, faults);
     return Object.entries(whoEntries(shop, operatorPath === null ? {} : readDirectory(operatorPath, faults)));
