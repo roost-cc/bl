@@ -11,7 +11,7 @@ import { ConfigurationFaults } from '../config/check.js';
 import { KINDS } from '../config/kinds.js';
 import { loadConfiguration } from '../config/load.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
-import { dispatch, startFaults } from './dispatch.js';
+import { CommandFailed, dispatch, runInProcess, startFaults } from './dispatch.js';
 
 /** The fixture op: it gives back its arguments and its context. */
 const echo = {
@@ -227,4 +227,83 @@ stories:
     viewFaults(GOOD_VIEW.replace('size(records)', 'size(recrods)'), operatorViews).split('\n')[0],
     'config/views.yaml: /stories/footer: cel: Unknown variable: recrods',
   );
+});
+
+// ---------------------------------------------------------------------------
+// runInProcess: the {{#bl}} lambda (D7)
+// ---------------------------------------------------------------------------
+
+/** An op that gives two records; the first's title is its `--flag`, the second's has `|` and a newline. */
+const rows = {
+  args: { '--flag': { help: 'the first title' } },
+  schema: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string' } } },
+  run: (args) => [
+    { id: 'S-1', title: args.flag },
+    { id: 'S-2', title: 'a|b\nc' },
+  ],
+};
+const BL_OPS = Object.freeze({ ...OPS, rows });
+const BL_COMMANDS = `${COMMANDS}\nrows:\n  op: rows\n  help: two rows\npage:\n  op: rows\n  help: a page\n`;
+const BL_VIEWS = `
+rows:
+  columns:
+    - { field: id, header: ID, justify: left, truncate: true }
+    - { field: title, header: Title, justify: right, truncate: true }
+page:
+  records_template: "{{#records}}{{id}}{{/records}}\\n{{#bl}}rows --flag 'from {{#records}}{{id}}{{/records}}'{{/bl}}"
+`;
+
+const inProcess = (line) => {
+  const at = fixture(BL_COMMANDS, { views: BL_VIEWS });
+  return runInProcess(line, { ...at, ops: BL_OPS });
+};
+
+test('runInProcess splits the line as a shell does, runs the command and gives the Markdown table', async () => {
+  assert.equal(
+    await inProcess('rows --flag "a b"'),
+    '| ID | Title |\n| :-- | --: |\n| S-1 | a b |\n| S-2 | a\\|b c |\n',
+  );
+});
+
+test('runInProcess renders a template view, whose own {{#bl}} lines run in the same process', async () => {
+  assert.equal(
+    await inProcess('page --flag x'),
+    'S-1S-2\n| ID | Title |\n| :-- | --: |\n| S-1 | from S-1S-2 |\n| S-2 | a\\|b c |\n',
+  );
+});
+
+test('runInProcess with --json, or with no view, gives the structured form', async () => {
+  const lines = '{"id":"S-1","title":"x"}\n{"id":"S-2","title":"a|b\\nc"}\n';
+  assert.equal(await inProcess('rows --flag x --json'), lines);
+  const at = fixture(BL_COMMANDS);
+  assert.equal(await runInProcess('rows --flag x', { ...at, ops: BL_OPS }), lines);
+});
+
+test('runInProcess refuses a shell operator outside quotes, and takes one inside quotes', async () => {
+  for (const [line, operator] of [
+    ['rows | sort', '|'],
+    ['rows > out.txt', '>'],
+    ['rows; rows', ';'],
+  ]) {
+    await assert.rejects(inProcess(line), (error) => {
+      assert.ok(error instanceof CommandFailed, line);
+      assert.equal(error.exit.status, 2);
+      assert.equal(error.exit.stderr, `bl-next: {{#bl}} ${line}: '${operator}' is a shell operator\n`);
+      return true;
+    });
+  }
+  assert.match(await inProcess("rows --flag 'x | y > z'"), /\| S-1 \| x \\\| y > z \|/);
+});
+
+test('an inner command that fails gives CommandFailed with its exit', async () => {
+  await assert.rejects(inProcess('rosw'), (error) => {
+    assert.ok(error instanceof CommandFailed);
+    assert.deepEqual(error.exit, {
+      status: 2,
+      stdout: '',
+      stderr: "bl-next: 'rosw' is not a command. Did you mean 'rows'?\n",
+    });
+    assert.equal(error.message, "bl-next: 'rosw' is not a command. Did you mean 'rows'?");
+    return true;
+  });
 });

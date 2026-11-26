@@ -216,6 +216,31 @@ test('bl-next exits 1 before the op runs on a view expression that names an unkn
   assert.equal(stdout, '');
 });
 
+const PAGE_FILES = {
+  'backlog/backlog.yaml': BACKLOG,
+  'backlog/config/commands.yaml': FIXTURE_COMMANDS,
+  'backlog/config/partials/heading.mustache': '# {{title}}\n',
+  'backlog/config/views.yaml': `${STORIES_VIEW}
+story:
+  template: "{{> heading}}\\n\\n{{#bl}}stories {{id}} 'S-9'{{/bl}}"
+`,
+};
+
+test('bl-next <command> renders a template view with a partial and a {{#bl}} Markdown table', async () => {
+  const { status, stdout, stderr } = await runBlNext(PAGE_FILES, { bin: WITH_FIXTURE_OPS, argv: ['story', 'S-1'] });
+  assert.equal(stderr, '');
+  assert.equal(status, 0);
+  assert.equal(stdout, '# Story S-1\n\n| ID | Title |\n| :-- | --: |\n| S-1 | Story S-1 |\n| S-9 | Story S-9 |\n');
+});
+
+test('bl-next fails with the inner message when a {{#bl}} command fails', async () => {
+  const files = { ...PAGE_FILES, 'backlog/config/partials/heading.mustache': '{{#bl}}stroies{{/bl}}' };
+  const { status, stdout, stderr } = await runBlNext(files, { bin: WITH_FIXTURE_OPS, argv: ['story', 'S-1'] });
+  assert.equal(stderr, "bl-next: 'stroies' is not a command. Did you mean 'stories'?\n");
+  assert.equal(status, 2);
+  assert.equal(stdout, '');
+});
+
 test('bl-next with no backlog to find exits 1 with bl-next: and the error', async () => {
   const { status, stderr } = await runBlNext({}, { backlog: false });
   assert.match(stderr, /^bl-next: no backlog found: .*\n$/);

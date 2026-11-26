@@ -92,9 +92,9 @@ test('without --json, a command with no view prints the structured form', async 
 });
 
 test('--json reads no view: a view that would fail to render does not change the output', async () => {
-  // Template views are not built yet, so this view fails to render.
-  const views = { list: { template: '{{id}}' } };
-  await assert.rejects(output({ id: 'S-1' }, { json: false, views }), /template views are not built yet/);
+  // The configuration has no partials, so this view fails to render.
+  const views = { list: { template: '{{> nope}}' } };
+  await assert.rejects(output({ id: 'S-1' }, { json: false, views }), /no partial: nope/);
   const { chunks, kinds } = await output({ id: 'S-1' }, { views });
   assert.deepEqual(chunks, ['{"id":"S-1"}\n']);
   assert.deepEqual(kinds, []);

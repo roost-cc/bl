@@ -11,6 +11,7 @@
 
 import { once } from 'events';
 import { renderTable } from './table.js';
+import { markdownTable, renderTemplate } from './template.js';
 import { viewEnvironment } from './view-cel.js';
 
 /** @typedef {import('../config/load.js').Configuration} Configuration */
@@ -30,36 +31,77 @@ export async function* recordsOf(result) {
   else yield result;
 }
 
+/** One record of the structured form: its JSON text and a newline. */
+const jsonLine = (record) => `${JSON.stringify(record)}\n`;
+
+/**
+ * @typedef {(line: string) => Promise<string>} Bl  runs a `{{#bl}}` command
+ *   line in this process and gives its Markdown form (`runInProcess`)
+ */
+
 /**
  * Render the records through the command's view (D6 to D8): a `columns` view
- * as a table, shortened to the terminal's width when stdout is a terminal.
- * @param {{ op: Op, view: Record<string, any>, result: unknown, stdout: NodeJS.WritableStream }} options
+ * as a table, shortened to the terminal's width when stdout is a terminal; a
+ * `template` or `records_template` view through `renderTemplate` (D7).
+ * @param {{ op: Op, view: Record<string, any>, result: unknown, config: Configuration, stdout: NodeJS.WritableStream, bl?: Bl }} options
  * @returns {Promise<void>}
  */
-async function renderView({ op, view, result, stdout }) {
-  if (view.columns === undefined) throw new Error('template views are not built yet');
+async function renderView({ op, view, result, config, stdout, bl }) {
   const records = await Array.fromAsync(recordsOf(result));
+  if (view.columns === undefined) {
+    stdout.write(await renderTemplate(view, records, { config, bl }));
+    return;
+  }
   const tty = /** @type {import('tty').WriteStream} */ (stdout);
   const width = tty.isTTY ? tty.columns : null;
   stdout.write(renderTable(view, records, { env: viewEnvironment(op.schema), width }));
 }
 
 /**
+ * The view of a command, `undefined` with `--json` (which reads no view) or
+ * when `views.yaml` has none.
+ * @param {string} command
+ * @param {Record<string, unknown>} args
+ * @param {Configuration} config
+ * @returns {Record<string, any>|undefined}
+ */
+const viewOf = (command, args, config) => (args.json ? undefined : config.file('views')?.[command]);
+
+/**
+ * @typedef {object} OutputOptions
+ * @property {string} command  the command name, the key of its view
+ * @property {Op} op
+ * @property {Record<string, unknown>} args  the parsed arguments, with `json`
+ * @property {unknown} result  what the op's `run` gave, awaited
+ * @property {Configuration} config
+ * @property {Bl} [bl]  runs the `{{#bl}}` lines of a template view
+ */
+
+/**
+ * The Markdown form of an op's result, for a `{{#bl}}` lambda (D7, D-443): a
+ * `columns` view as a Markdown table, a template view as `renderTemplate`
+ * gives it, and with no view the structured form.
+ * @param {OutputOptions} options
+ * @returns {Promise<string>}
+ */
+export async function markdownForm({ command, op, args, result, config, bl }) {
+  const view = viewOf(command, args, config);
+  const records = await Array.fromAsync(recordsOf(result));
+  if (view === undefined) return records.map(jsonLine).join('');
+  if (view.columns !== undefined) return markdownTable(view, records, { env: viewEnvironment(op.schema) });
+  return renderTemplate(view, records, { config, bl });
+}
+
+/**
  * Print an op's result to `stdout`.
- * @param {object} options
- * @param {string} options.command  the command name, the key of its view
- * @param {Op} options.op
- * @param {Record<string, unknown>} options.args  the parsed arguments, with `json`
- * @param {unknown} options.result  what the op's `run` gave, awaited
- * @param {Configuration} options.config
- * @param {NodeJS.WritableStream} options.stdout
+ * @param {OutputOptions & { stdout: NodeJS.WritableStream }} options
  * @returns {Promise<void>}
  */
-export async function writeOutput({ command, op, args, result, config, stdout }) {
-  const view = args.json ? undefined : config.file('views')?.[command];
-  if (view !== undefined) return renderView({ command, op, args, view, result, config, stdout });
+export async function writeOutput({ command, op, args, result, config, stdout, bl }) {
+  const view = viewOf(command, args, config);
+  if (view !== undefined) return renderView({ op, view, result, config, stdout, bl });
   for await (const record of recordsOf(result)) {
     // Wait for a full stream to drain, so a long stream is not held in memory.
-    if (!stdout.write(`${JSON.stringify(record)}\n`)) await once(stdout, 'drain');
+    if (!stdout.write(jsonLine(record))) await once(stdout, 'drain');
   }
 }

@@ -100,6 +100,25 @@ function columnWidths(columns, rows, width) {
 }
 
 /**
+ * The cells of a record set through `columns`, one row per record: each cell
+ * its indent and its value as text. The table and the Markdown form
+ * (`template.js`) both lay them out.
+ * @param {Column[]} columns
+ * @param {unknown[]} records
+ * @param {Environment} env  the view environment of the command's op
+ * @returns {string[][]}
+ */
+export function tableCells(columns, records, env) {
+  return records.map((record) => {
+    const vars = recordVars(record);
+    return columns.map((column) => {
+      const indent = column.indent === undefined ? '' : indentOf(evaluate(env, column.indent, vars));
+      return indent + formatValue(evaluate(env, column.field, vars));
+    });
+  });
+}
+
+/**
  * The text of a record set through a `columns` view, each line ending with a
  * newline.
  * @param {{ columns: Column[], footer?: string }} view
@@ -111,14 +130,7 @@ function columnWidths(columns, rows, width) {
  */
 export function renderTable(view, records, { env, width }) {
   const { columns } = view;
-  const cells = records.map((record) => {
-    const vars = recordVars(record);
-    return columns.map((column) => {
-      const indent = column.indent === undefined ? '' : indentOf(evaluate(env, column.indent, vars));
-      return indent + formatValue(evaluate(env, column.field, vars));
-    });
-  });
-  const rows = [columns.map((column) => column.header), ...cells];
+  const rows = [columns.map((column) => column.header), ...tableCells(columns, records, env)];
   const widths = columnWidths(columns, rows, width);
   const lines = rows.map((row) =>
     row

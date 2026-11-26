@@ -5,14 +5,18 @@
  *   - `dispatch(argv, { config, backlogDir, ops })`: one `argparse` parser with
  *     a subparser per `commands.yaml` line, typo suggestions, help, and the
  *     run of the command's op.
+ *   - `runInProcess(line, context)`: a `{{#bl}}` command line, run through
+ *     `dispatch` in this process, as its Markdown form (D7).
  *
- * Both take the ops map as an argument, so the tests pass fixture ops.
+ * All three take the ops map as an argument, so the tests pass fixture ops.
  */
 
 import { ArgumentParser } from 'argparse';
+import { parse } from 'shell-quote';
 import { attribute, compileCel } from '../config/check.js';
 import { pointerToken } from '../config/files.js';
 import { addArgs } from './args.js';
+import { markdownForm } from './output.js';
 import { suggest } from './suggest.js';
 import { viewEnvironment } from './view-cel.js';
 
@@ -197,3 +201,47 @@ export async function dispatch(argv, { config, backlogDir, ops }) {
   const args = { ...parsed };
   return { name, op, args, result: await op.run(args, { config, backlogDir }) };
 }
+
+/** A command inside a `{{#bl}}` lambda that ended with an error: the outer command ends with its exit. */
+export class CommandFailed extends Error {
+  /** @param {Exit} exit */
+  constructor(exit) {
+    super(exit.stderr.trimEnd());
+    this.exit = exit;
+  }
+}
+
+/**
+ * Run the command line of a `{{#bl}}` lambda in this process, and give its
+ * Markdown form (D7, D-442). `shell-quote` splits the line as a shell does; a
+ * shell operator such as `|` or `>` outside quotes is an error. The parse and
+ * the op are those of `dispatch`; `--help` gives the help text.
+ * @param {string} line
+ * @param {{ config: Configuration, backlogDir: string, ops: Readonly<Record<string, Op>> }} context
+ * @returns {Promise<string>}
+ * @throws {CommandFailed} when the line has an operator or the command ends with an error
+ */
+export async function runInProcess(line, context) {
+  // A `$name` stays as it is: the line is not a shell's, and has no variables.
+  const words = parse(line, (name) => `$${name}`);
+  const operator = words.find((word) => typeof word !== 'string');
+  if (operator !== undefined) {
+    const text = operator.pattern ?? operator.op ?? '#';
+    throw new CommandFailed(usageError(`${PROG}: {{#bl}} ${line}: '${text}' is a shell operator\n`));
+  }
+  const outcome = await dispatch(/** @type {string[]} */ (words), context);
+  if ('status' in outcome) {
+    if (outcome.status === 0) return outcome.stdout;
+    throw new CommandFailed(outcome);
+  }
+  const { name, op, args, result } = outcome;
+  return markdownForm({ command: name, op, args, result, config: context.config, bl: blIn(context) });
+}
+
+/**
+ * The `bl` of a template view: it runs each `{{#bl}}` line through
+ * `runInProcess` with `context`.
+ * @param {{ config: Configuration, backlogDir: string, ops: Readonly<Record<string, Op>> }} context
+ * @returns {(line: string) => Promise<string>}
+ */
+export const blIn = (context) => async (line) => runInProcess(line, context);

@@ -17,7 +17,7 @@ import { ConfigurationFaults } from '../config/check.js';
 import { findBacklogRoot, operatorDir } from '../config/files.js';
 import { KINDS } from '../config/kinds.js';
 import { loadConfiguration } from '../config/load.js';
-import { dispatch, startFaults } from './dispatch.js';
+import { blIn, CommandFailed, dispatch, startFaults } from './dispatch.js';
 import { OPS } from './ops/index.js';
 import { writeOutput } from './output.js';
 import { captureTmuxWindowId, updateTabTitle } from './tab-title.js';
@@ -62,13 +62,21 @@ export async function main(argv, { ops = OPS } = {}) {
     );
     return 1;
   }
-  const outcome = await dispatch(argv, { config, backlogDir, ops });
-  if ('status' in outcome) {
-    process.stdout.write(outcome.stdout);
-    process.stderr.write(outcome.stderr);
-    return outcome.status;
-  }
+  const context = { config, backlogDir, ops };
+  const exit = ({ status, stdout, stderr }) => {
+    process.stdout.write(stdout);
+    process.stderr.write(stderr);
+    return status;
+  };
+  const outcome = await dispatch(argv, context);
+  if ('status' in outcome) return exit(outcome);
   const { name, op, args, result } = outcome;
-  await writeOutput({ command: name, op, args, result, config, stdout: process.stdout });
+  try {
+    await writeOutput({ command: name, op, args, result, config, stdout: process.stdout, bl: blIn(context) });
+  } catch (error) {
+    // A `{{#bl}}` command that failed fails this one, with its message (D7).
+    if (error instanceof CommandFailed) return exit(error.exit);
+    throw error;
+  }
   return 0;
 }
