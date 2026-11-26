@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "config/commands.yaml",
+  "description": "The commands of `bl` (commands.md, D-421 to D-424; F-138 D2). A map from a command name to its line. Each line runs an op (an operation in `bl`'s code) or a flow entry, and gives the options of `argparse`'s `add_parser` by their own names. `args` go before the caller's arguments, as a git alias does. Only the shop's file counts: no layer patches it (D-422).",
+  "type": "object",
+  "propertyNames": { "pattern": "^[a-z][a-z0-9-]*$" },
+  "additionalProperties": { "$ref": "#/$defs/Line" },
+  "$defs": {
+    "Line": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["help"],
+      "properties": {
+        "op": { "type": "string", "description": "The op that the command runs." },
+        "entry": { "type": "string", "description": "The flow entry that the command runs." },
+        "help": { "type": "string", "description": "The command's line in `bl --help`." },
+        "description": { "type": "string", "description": "The text at the top of `bl <name> --help`." },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Arguments that go before the caller's arguments."
+        }
+      },
+      "oneOf": [
+        { "type": "object", "properties": { "op": true }, "required": ["op"] },
+        { "type": "object", "properties": { "entry": true }, "required": ["entry"] }
+      ]
+    }
+  }
+}

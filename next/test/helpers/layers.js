@@ -22,7 +22,7 @@ export const LAYERS = Object.freeze({
   adapters: Object.freeze(['lib']),
   steps: Object.freeze(['store', 'adapters', 'config', 'lib']),
   engine: Object.freeze(['steps', 'store', 'config', 'lib']),
-  commands: Object.freeze(['engine', 'store', 'config']),
+  commands: Object.freeze(['engine', 'store', 'config', 'lib']),
   bin: Object.freeze(['commands']),
   test: null,
 });

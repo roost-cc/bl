@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "config/views.yaml and the operator's views.yaml",
+  "description": "The views of the commands (views.md, D-463 to D-468 and D-476; F-138 D2). A map from a command name to its view, which gives exactly one of `columns`, `template` and `records_template` (Decision A6). The strings that are CEL expressions (`field`, `style`, `indent`, `footer`) carry no `cel` keyword: the command layer checks them at start in a view environment of its own, by name (Decision A5).",
+  "type": "object",
+  "additionalProperties": { "$ref": "#/$defs/View" },
+  "$defs": {
+    "View": {
+      "type": "object",
+      "oneOf": [{ "$ref": "#/$defs/Table" }, { "$ref": "#/$defs/Template" }, { "$ref": "#/$defs/RecordsTemplate" }]
+    },
+    "Table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["columns"],
+      "properties": {
+        "columns": { "type": "array", "items": { "$ref": "#/$defs/Column" } },
+        "style": { "type": "string", "description": "A CEL expression over the record: the style of the row." },
+        "footer": { "type": "string", "description": "A CEL expression over `records`: one line after the table." }
+      }
+    },
+    "Template": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["template"],
+      "properties": {
+        "template": { "type": "string", "description": "A Mustache template, rendered once per record." }
+      }
+    },
+    "RecordsTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["records_template"],
+      "properties": {
+        "records_template": { "type": "string", "description": "A Mustache template over `records`, rendered once." }
+      }
+    },
+    "Column": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "header", "justify", "truncate"],
+      "properties": {
+        "field": { "type": "string", "description": "A CEL expression over the record: the cell's value." },
+        "header": { "type": "string" },
+        "justify": { "enum": ["left", "right", "center"] },
+        "truncate": { "type": "boolean" },
+        "style": { "type": "string", "description": "A CEL expression over the record: the style of the cell." },
+        "indent": { "type": "string", "description": "A CEL expression over the record: the cell's indent level." }
+      }
+    }
+  }
+}

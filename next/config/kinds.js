@@ -10,6 +10,9 @@
 
 import { MARKER } from './files.js';
 import BACKLOG_SCHEMA from './schemas/backlog.schema.json' with { type: 'json' };
+import COLOR_SCHEME_SCHEMA from './schemas/color-scheme.schema.json' with { type: 'json' };
+import COMMANDS_SCHEMA from './schemas/commands.schema.json' with { type: 'json' };
+import VIEWS_SCHEMA from './schemas/views.schema.json' with { type: 'json' };
 
 /**
  * @typedef {object} Kind
@@ -32,5 +35,21 @@ export const KINDS = Object.freeze([
     operator: 'config.yaml',
     order: 'both',
     schema: BACKLOG_SCHEMA,
+  }),
+  // F-138 D2: the command layer's files.
+  Object.freeze({ name: 'commands', shop: 'config/commands.yaml', order: 'none', schema: COMMANDS_SCHEMA }),
+  Object.freeze({
+    name: 'views',
+    shop: 'config/views.yaml',
+    operator: 'views.yaml',
+    order: 'who',
+    schema: VIEWS_SCHEMA,
+  }),
+  Object.freeze({
+    name: 'color-schemes',
+    shop: 'config/color-schemes/',
+    operator: 'color-schemes/',
+    order: 'who',
+    schema: COLOR_SCHEME_SCHEMA,
   }),
 ]);

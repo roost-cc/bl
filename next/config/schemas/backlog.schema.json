@@ -4,8 +4,12 @@
   "description": "The layered result of one scope of `backlog.yaml` and `~/.config/bl/config.yaml` (core.md, \"Configuration\", D-87; F-136 D5). Each scope's result holds the keys of its layers and the merged `repos` map. `additionalProperties` is false, so each later feature adds its keys here and a typo is a fault. The loader adds no defaults (tenet 6).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["repos"],
+  "required": ["repos", "color_scheme"],
   "properties": {
+    "color_scheme": {
+      "type": "string",
+      "description": "The name of the color scheme: `bl` uses `config/color-schemes/<color_scheme>.yaml` (views.md, D-473; F-138 D2)."
+    },
     "repos": {
       "type": "object",
       "description": "Repo name to the repo's own entry, which the layers apply over the top level for work in that repo.",

@@ -37,6 +37,10 @@ const CEL_INPUTS = Object.freeze({ predicates: Object.freeze({}) });
  * @property {(kind: string, name?: string) => any} file  the result of a `who`
  *   or `none` kind; for a directory kind, of its file `name` (`en.yaml`), and
  *   `undefined` for a name that neither directory holds
+ * @property {(kind: string, name?: string|null) => readonly Layer[]|undefined} layers
+ *   the layers of that same result, lowest first, so that a check after the
+ *   load names a fault's file by `attribute` (F-138 D3); for the `both` kind,
+ *   of the scope of the repo `name`, the top level with none or `null`
  * @property {(name: string) => string|undefined} partial  the text of a partial,
  *   `undefined` for a name that neither directory holds; `render` takes it (D7)
  * @property {import('./cel.js').CelInputs} celInputs  the inputs of `bindCel`
@@ -175,7 +179,7 @@ export function loadConfiguration({ backlogDir, operatorDir, kinds }) {
   const env = celEnvironment(CEL_INPUTS);
   /** @type {Fault[]} */
   const faults = [];
-  /** @type {Map<string, Map<string|null, unknown>>} */
+  /** @type {Map<string, Map<string|null, { result: unknown, layers: readonly Layer[] }>>} */
   const results = new Map();
   for (const kind of kinds) {
     const check = checker.compile(kind.schema);
@@ -185,7 +189,7 @@ export function loadConfiguration({ backlogDir, operatorDir, kinds }) {
       const checked = check(result, layers);
       // The cross-check runs after the shape check, and only on a result whose shape holds (D-622).
       faults.push(...(checked.faults.length > 0 ? checked.faults : compileCel(checked.cel, env)));
-      kindResults.set(key, deepFreeze(result));
+      kindResults.set(key, { result: deepFreeze(result), layers: deepFreeze(layers) });
     }
     results.set(kind.name, kindResults);
   }
@@ -194,13 +198,17 @@ export function loadConfiguration({ backlogDir, operatorDir, kinds }) {
   if (faults.length > 0) throw new ConfigurationFaults(faults, backlogDir);
 
   const bothKind = kinds.find((kind) => kind.order === 'both');
+  /** The loaded unit of a `who` or `none` kind, as `file` and `layers` take it. */
+  const unitOf = (kind, name) => {
+    const found = kinds.find((k) => k.name === kind && k.order !== 'both');
+    if (found === undefined) throw new Error(`no who or none configuration kind: ${kind}`);
+    return results.get(kind)?.get(name ?? null);
+  };
   return Object.freeze({
-    scope: (repo) => (bothKind === undefined ? undefined : results.get(bothKind.name)?.get(repo)),
-    file(kind, name) {
-      const found = kinds.find((k) => k.name === kind && k.order !== 'both');
-      if (found === undefined) throw new Error(`no who or none configuration kind: ${kind}`);
-      return results.get(kind)?.get(name ?? null);
-    },
+    scope: (repo) => (bothKind === undefined ? undefined : results.get(bothKind.name)?.get(repo)?.result),
+    file: (kind, name) => unitOf(kind, name)?.result,
+    layers: (kind, name) =>
+      kind === bothKind?.name ? results.get(kind)?.get(name ?? null)?.layers : unitOf(kind, name)?.layers,
     partial: (name) => partials.get(name),
     celInputs: CEL_INPUTS,
   });
