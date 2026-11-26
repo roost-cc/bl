@@ -57,6 +57,16 @@ test("bl-next exits 1 on a bad key under repos.utop of the operator's config.yam
   assert.equal(status, 1);
 });
 
+test('bl-next exits 1 on a partial with an unclosed section, with one line that names the partial file', async () => {
+  const { status, stdout, stderr } = await runBlNext({
+    'backlog/backlog.yaml': 'repos: {}\n',
+    'backlog/config/partials/head.mustache': '{{#items}}- {{title}}\n',
+  });
+  assert.equal(stderr, 'config/partials/head.mustache: : mustache: Unclosed section "items" at 22\n');
+  assert.equal(status, 1);
+  assert.equal(stdout, '');
+});
+
 test('bl-next with a valid backlog exits 2: no commands yet', async () => {
   const { status, stdout, stderr } = await runBlNext({
     'backlog/backlog.yaml': 'repos:\n  utop: {}\n',

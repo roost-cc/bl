@@ -3,14 +3,16 @@
  *
  * `loadConfiguration` reads every file of every kind, layers it per scope
  * (D4), checks each layered result against its kind's schema, compiles each
- * CEL string the schemas mark (D5), and runs the CEL self-test (D6). It then
+ * CEL string the schemas mark (D5), runs the CEL self-test (D6), and reads and
+ * parses the partials (D7). It then
  * throws `ConfigurationFaults` with every fault, or returns the frozen
  * configuration. Nothing reads a configuration file after it returns
  * (architecture.md, "Configuration loads once").
  */
 
-import { readdirSync, statSync } from 'fs';
+import { readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
+import Mustache from 'mustache';
 import { celEnvironment, celSelfTest } from './cel.js';
 import { ConfigurationFaults, compileCel, shapeChecker } from './check.js';
 import { readYaml } from './files.js';
@@ -36,6 +38,8 @@ const CEL_INPUTS = Object.freeze({ predicates: Object.freeze({}) });
  * @property {(kind: string, name?: string) => any} file  the result of a `who`
  *   or `none` kind; for a directory kind, of its file `name` (`en.yaml`), and
  *   `undefined` for a name that neither directory holds
+ * @property {(name: string) => string|undefined} partial  the text of a partial,
+ *   `undefined` for a name that neither directory holds; `render` takes it (D7)
  * @property {import('./cel.js').CelInputs} celInputs  the inputs of `bindCel`
  */
 
@@ -107,6 +111,39 @@ function unitsOf(kind, backlogDir, operatorDir, faults) {
   return [[null, orEmpty(whoAxis(shop, operator))]];
 }
 
+/** The suffix of a partial's file. */
+const PARTIAL = '.mustache';
+
+/**
+ * The partials (D7): `config/partials/<name>.mustache`, which the operator's
+ * `<operatorDir>/partials/<name>.mustache` replaces by name (D-441). Each file
+ * is parsed with `Mustache.parse`, and a parse error is a fault with the file.
+ * @param {string} backlogDir
+ * @param {string} operatorDir
+ * @param {Fault[]} faults
+ * @returns {Map<string, string>} name → text
+ */
+function readPartials(backlogDir, operatorDir, faults) {
+  const partials = new Map();
+  for (const dir of [join(backlogDir, 'config', 'partials'), join(operatorDir, 'partials')]) {
+    if (!isDirectory(dir)) continue;
+    for (const name of readdirSync(dir)
+      .filter((n) => n.endsWith(PARTIAL))
+      .sort()) {
+      const file = join(dir, name);
+      if (!isFile(file)) continue;
+      const text = readFileSync(file, 'utf8');
+      try {
+        Mustache.parse(text);
+      } catch (error) {
+        faults.push({ file, path: '', rule: 'mustache', message: error.message });
+      }
+      partials.set(name.slice(0, -PARTIAL.length), text);
+    }
+  }
+  return partials;
+}
+
 /** `value` frozen all the way down. */
 function deepFreeze(value) {
   if (value !== null && typeof value === 'object') {
@@ -151,6 +188,7 @@ export function loadConfiguration({ backlogDir, operatorDir, kinds }) {
     results.set(kind.name, kindResults);
   }
   celSelfTest(CEL_INPUTS);
+  const partials = readPartials(backlogDir, operatorDir, faults);
   if (faults.length > 0) throw new ConfigurationFaults(faults, backlogDir);
 
   const bothKind = kinds.find((kind) => kind.order === 'both');
@@ -161,6 +199,7 @@ export function loadConfiguration({ backlogDir, operatorDir, kinds }) {
       if (found === undefined) throw new Error(`no who or none configuration kind: ${kind}`);
       return results.get(kind)?.get(name ?? null);
     },
+    partial: (name) => partials.get(name),
     celInputs: CEL_INPUTS,
   });
 }

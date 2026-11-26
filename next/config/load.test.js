@@ -10,6 +10,7 @@ import { dirname, join } from 'path';
 import { ConfigurationFaults } from './check.js';
 import { KINDS } from './kinds.js';
 import { loadConfiguration } from './load.js';
+import { render } from './template.js';
 import { withEnv } from '../test/helpers/env.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 
@@ -212,6 +213,37 @@ test('the CEL strings of a kind with a shape fault are not compiled', () => {
   assert.deepEqual(faultLines(dirs, [...KINDS, FLOW]), [
     'config/flow.yaml: /extra: additionalProperties: must NOT have additional properties',
   ]);
+});
+
+test("partial(name): the operator's partial replaces the shop's; a shop-only partial is the shop's; render reads it", () => {
+  const dirs = fixture({
+    ...SHOP_ONLY,
+    'backlog/config/partials/p.mustache': 'shop {{a}}',
+    'backlog/config/partials/q.mustache': 'shop q',
+    'backlog/config/partials/notes.txt': 'not a partial',
+    '.config/bl/partials/p.mustache': 'operator {{a}}',
+    '.config/bl/partials/r.mustache': 'operator r',
+  });
+  const config = load(dirs);
+  assert.equal(config.partial('p'), 'operator {{a}}');
+  assert.equal(config.partial('q'), 'shop q');
+  assert.equal(config.partial('r'), 'operator r');
+  assert.equal(config.partial('notes'), undefined);
+  assert.equal(render('{{> p}}/{{> q}}', { a: 'A' }, { partial: config.partial }), 'operator A/shop q');
+  assert.throws(() => render('{{> missing}}', {}, { partial: config.partial }), /no partial: missing/);
+});
+
+test('with no partials directory, partial(name) is undefined', () => {
+  assert.equal(load(fixture(SHOP_ONLY)).partial('p'), undefined);
+});
+
+test('a partial with an unclosed section is a fault that names its file', () => {
+  const dirs = fixture({
+    ...SHOP_ONLY,
+    'backlog/config/partials/ok.mustache': '{{#a}}x{{/a}}',
+    '.config/bl/partials/broken.mustache': '{{#a}}x',
+  });
+  assert.deepEqual(faultLines(dirs), ['~/.config/bl/partials/broken.mustache: : mustache: Unclosed section "a" at 7']);
 });
 
 test('a none kind with no file: the result is {}, and a required key names the shop file', () => {
