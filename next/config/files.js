@@ -5,12 +5,12 @@
  *     `findBacklogRoot` (`src/config.js`), with `backlog.yaml` as the marker
  *     (D-755 moves `backlog.json` to YAML).
  *   - `operatorDir()`: the operator's directory, as XDG gives it.
- *   - `readYaml(path)`: one YAML file as a mapping, or a configuration fault.
+ *   - `readYaml(path)`: one YAML file as a mapping, or its configuration faults.
  */
 
 import { readdirSync, readFileSync, statSync } from 'fs';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'path';
-import { YAMLParseError, parse } from 'yaml';
+import { parse, parseDocument } from 'yaml';
 import { realOrResolved } from '../lib/real-path.js';
 
 /** The file that marks a directory as a backlog. */
@@ -126,35 +126,45 @@ export function operatorDir() {
  */
 
 /**
- * One YAML file as a mapping. A YAML error is a fault with the error's line;
- * a top level that is not a mapping is a fault too, because a layer must be
- * an object to merge (D3), and so are a cycle of aliases and a key that the
- * merge cannot hold (`RESERVED_KEYS`). A file that cannot be read throws: the
- * caller reads only files it found.
+ * One YAML file as a mapping, or every fault of it. Each YAML error is a
+ * fault with the error's line; a top level that is not a mapping is a fault
+ * too, because a layer must be an object to merge (D3), and so are a cycle
+ * of aliases and each key that the merge cannot hold (`RESERVED_KEYS`). A
+ * file that cannot be read throws: the caller reads only files it found.
  *
  * @param {string} path
- * @returns {{ value: Record<string, unknown> } | { fault: Fault }}
+ * @returns {{ value: Record<string, unknown> } | { faults: Fault[] }}
  */
 export function readYaml(path) {
-  const fault = (message, at = '') => ({ fault: { file: path, path: at, rule: 'yaml', message } });
-  const text = readFileSync(path, 'utf8');
-  let value;
-  try {
-    value = parse(text);
-  } catch (error) {
-    // Each error of `parse` rejects the text: a YAMLParseError, and an error
-    // that the library throws as it builds the value (a ReferenceError for an
-    // alias with no anchor before it, or for aliases that expand too far).
-    if (!(error instanceof YAMLParseError)) return fault(String(error.message).split('\n')[0]);
+  /** @param {{ message: string, path?: string }[]} found */
+  const faults = (found) => ({
+    faults: found.map((f) => ({ file: path, path: f.path ?? '', rule: 'yaml', message: f.message })),
+  });
+  // `parseDocument` keeps every error of the text, where `parse` throws the first.
+  const doc = parseDocument(readFileSync(path, 'utf8'));
+  for (const warning of doc.warnings) process.emitWarning(warning);
+  if (doc.errors.length > 0) {
     // The library's message ends in " at line N, column M:" and a code frame;
     // a fault is one line (D5), so it keeps the first line without that tail.
-    const first = error.message.split('\n')[0].replace(/ at line \d+, column \d+:$/, '');
-    const line = error.linePos?.[0]?.line;
-    return fault(line === undefined ? first : `line ${line}: ${first}`);
+    return faults(
+      doc.errors.map((error) => {
+        const first = error.message.split('\n')[0].replace(/ at line \d+, column \d+:$/, '');
+        const line = error.linePos?.[0]?.line;
+        return { message: line === undefined ? first : `line ${line}: ${first}` };
+      }),
+    );
   }
-  if (!isMapping(value)) return fault('the top level must be a mapping');
+  let value;
+  try {
+    value = doc.toJS();
+  } catch (error) {
+    // The library throws as it builds the value: a ReferenceError for an
+    // alias with no anchor before it, or for aliases that expand too far.
+    return faults([{ message: String(error.message).split('\n')[0] }]);
+  }
+  if (!isMapping(value)) return faults([{ message: 'the top level must be a mapping' }]);
   const found = unmergeable(value);
-  return found === undefined ? { value } : fault(found.message, found.path);
+  return found.length === 0 ? { value } : faults(found);
 }
 
 /**
@@ -167,7 +177,7 @@ export function readYaml(path) {
 const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'hasOwnProperty']);
 
 /**
- * The first part of `value` that no merge or check can take, or `undefined`:
+ * Each part of `value` that no merge or check can take:
  *
  *   - a cycle, at path `''`: a YAML alias inside the node that it names
  *     (`a: &x { b: *x }`). An alias used twice side by side is no cycle.
@@ -176,21 +186,18 @@ const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'hasOwnP
  * @param {unknown} value
  * @param {string} [path]  the JSON pointer of `value`
  * @param {Set<object>} [ancestors]
- * @returns {{ path: string, message: string } | undefined}
+ * @returns {{ path: string, message: string }[]}
  */
 function unmergeable(value, path = '', ancestors = new Set()) {
-  if (value === null || typeof value !== 'object') return undefined;
-  if (ancestors.has(value)) return { path: '', message: 'an alias refers to a node that holds it' };
+  if (value === null || typeof value !== 'object') return [];
+  if (ancestors.has(value)) return [{ path: '', message: 'an alias refers to a node that holds it' }];
   ancestors.add(value);
-  let found;
-  for (const [key, child] of Object.entries(value)) {
+  const found = Object.entries(value).flatMap(([key, child]) => {
     const at = `${path}/${pointerToken(key)}`;
-    found =
-      isMapping(value) && RESERVED_KEYS.has(key)
-        ? { path: at, message: `the key ${key} is reserved: the merge cannot hold it` }
-        : unmergeable(child, at, ancestors);
-    if (found !== undefined) break;
-  }
+    return isMapping(value) && RESERVED_KEYS.has(key)
+      ? [{ path: at, message: `the key ${key} is reserved: the merge cannot hold it` }]
+      : unmergeable(child, at, ancestors);
+  });
   ancestors.delete(value);
   return found;
 }

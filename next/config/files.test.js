@@ -38,8 +38,10 @@ test('readYaml gives the mapping of a valid file', () => {
 
 test('readYaml turns a YAML syntax error into a fault with the file and the line', () => {
   const file = yamlFile('a: 1\nb: [1, 2\nc: 3\n');
-  const { fault, value } = /** @type {any} */ (readYaml(file));
+  const { faults, value } = /** @type {any} */ (readYaml(file));
   assert.equal(value, undefined);
+  assert.equal(faults.length, 1);
+  const [fault] = faults;
   assert.equal(fault.file, file);
   assert.equal(fault.path, '');
   assert.equal(fault.rule, 'yaml');
@@ -55,7 +57,9 @@ test('readYaml turns a second document, and a repeated key, into a fault with th
     ['a: 1\n---\nb: 2\n', /^line 2: Source contains multiple documents/],
     ['a: 1\na: 2\n', /^line 2: Map keys must be unique$/],
   ]) {
-    const { fault } = /** @type {any} */ (readYaml(yamlFile(text)));
+    const {
+      faults: [fault],
+    } = /** @type {any} */ (readYaml(yamlFile(text)));
     assert.equal(fault.rule, 'yaml');
     assert.match(fault.message, message);
   }
@@ -65,7 +69,7 @@ test('readYaml turns a cycle of aliases into a fault with the file; an alias use
   for (const text of ['repos: &x { x: *x }\n', 'a: &x [1, *x]\n', 'a: &x { b: { c: [*x] } }\n']) {
     const file = yamlFile(text);
     assert.deepEqual(readYaml(file), {
-      fault: { file, path: '', rule: 'yaml', message: 'an alias refers to a node that holds it' },
+      faults: [{ file, path: '', rule: 'yaml', message: 'an alias refers to a node that holds it' }],
     });
   }
   assert.deepEqual(readYaml(yamlFile('a: &x { v: 1 }\nb: *x\nc: [*x, *x]\n')), {
@@ -83,7 +87,7 @@ test('readYaml turns an error the library throws as it builds the value into a f
     ['repos: *nope\n', 'Unresolved alias (the anchor must be set before the alias): nope'],
   ]) {
     const file = yamlFile(text);
-    assert.deepEqual(readYaml(file), { fault: { file, path: '', rule: 'yaml', message } });
+    assert.deepEqual(readYaml(file), { faults: [{ file, path: '', rule: 'yaml', message }] });
   }
 });
 
@@ -96,7 +100,7 @@ test('readYaml turns a key that the merge cannot hold into a fault at its path; 
     ]) {
       const file = yamlFile(text);
       assert.deepEqual(readYaml(file), {
-        fault: { file, path, rule: 'yaml', message: `the key ${key} is reserved: the merge cannot hold it` },
+        faults: [{ file, path, rule: 'yaml', message: `the key ${key} is reserved: the merge cannot hold it` }],
       });
     }
     // The name as a value, not a key, is no fault.
@@ -111,7 +115,51 @@ test('readYaml turns a top level that is not a mapping into a fault with the fil
   for (const text of ['- a\n- b\n', 'just text\n', '']) {
     const file = yamlFile(text);
     assert.deepEqual(readYaml(file), {
-      fault: { file, path: '', rule: 'yaml', message: 'the top level must be a mapping' },
+      faults: [{ file, path: '', rule: 'yaml', message: 'the top level must be a mapping' }],
+    });
+  }
+});
+
+test('readYaml reports every fault of a file: each reserved key and each YAML error, not only the first', () => {
+  const RESERVED = (key) => `the key ${key} is reserved: the merge cannot hold it`;
+  for (const [text, expected] of [
+    // Two reserved keys in one mapping, beside an ordinary key.
+    [
+      "'constructor': 1\nok: 1\n'prototype': 2\n",
+      [
+        ['/constructor', RESERVED('constructor')],
+        ['/prototype', RESERVED('prototype')],
+      ],
+    ],
+    // One in each of two sibling mappings.
+    [
+      "a:\n  'hasOwnProperty': 1\nb:\n  '__proto__': 1\n",
+      [
+        ['/a/hasOwnProperty', RESERVED('hasOwnProperty')],
+        ['/b/__proto__', RESERVED('__proto__')],
+      ],
+    ],
+    // In mappings inside a list, and in a mapping beside that list.
+    [
+      'a:\n  constructor: x\nb:\n  - __proto__: x\n  - ok: 1\n  - prototype: x\n',
+      [
+        ['/a/constructor', RESERVED('constructor')],
+        ['/b/0/__proto__', RESERVED('__proto__')],
+        ['/b/2/prototype', RESERVED('prototype')],
+      ],
+    ],
+    // Two repeated keys: two YAML errors, each with its line.
+    [
+      'a: 1\na: 2\nb: 1\nb: 2\n',
+      [
+        ['', 'line 2: Map keys must be unique'],
+        ['', 'line 4: Map keys must be unique'],
+      ],
+    ],
+  ]) {
+    const file = yamlFile(text);
+    assert.deepEqual(readYaml(file), {
+      faults: expected.map(([path, message]) => ({ file, path, rule: 'yaml', message })),
     });
   }
 });

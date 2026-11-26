@@ -47,7 +47,7 @@ const isDirectory = (path) => statSync(path, { throwIfNoEntry: false })?.isDirec
 
 /**
  * One file as a source: `null` when it is not there (no layer, D3) or does
- * not read, its fault then added to `faults`.
+ * not read, its faults then added to `faults`.
  * @param {string} path
  * @param {Fault[]} faults
  * @returns {Source}
@@ -55,8 +55,8 @@ const isDirectory = (path) => statSync(path, { throwIfNoEntry: false })?.isDirec
 function readSource(path, faults) {
   if (!isFile(path)) return null;
   const read = readYaml(path);
-  if ('fault' in read) {
-    faults.push(read.fault);
+  if ('faults' in read) {
+    faults.push(...read.faults);
     return null;
   }
   return { file: path, value: read.value };

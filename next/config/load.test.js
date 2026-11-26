@@ -230,6 +230,29 @@ test('every repo name keeps its entry and its scope, or is a fault that names it
   }
 });
 
+test('every reserved key and every YAML error of one file reaches the load faults', () => {
+  const MESSAGE = (key) => `yaml: the key ${key} is reserved: the merge cannot hold it`;
+  for (const [files, lines] of [
+    [
+      { 'backlog/backlog.yaml': "repos:\n  'constructor': {}\n  'prototype': {}\nb:\n  - '__proto__': 1\n" },
+      [
+        `backlog.yaml: /b/0/__proto__: ${MESSAGE('__proto__')}`,
+        `backlog.yaml: /repos/constructor: ${MESSAGE('constructor')}`,
+        `backlog.yaml: /repos/prototype: ${MESSAGE('prototype')}`,
+      ],
+    ],
+    [
+      { ...SHOP_ONLY, '.config/bl/views.yaml': 'a: x\na: y\nb: x\nb: y\n' },
+      [
+        '~/.config/bl/views.yaml: : yaml: line 2: Map keys must be unique',
+        '~/.config/bl/views.yaml: : yaml: line 4: Map keys must be unique',
+      ],
+    ],
+  ]) {
+    assert.deepEqual(faultLines(fixture(files), [...KINDS, VIEWS]), lines);
+  }
+});
+
 test('a who file kind: the shop file, then the operator file of the same name', () => {
   const dirs = fixture({
     ...SHOP_ONLY,
