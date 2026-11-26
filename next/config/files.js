@@ -125,8 +125,8 @@ export function operatorDir() {
 /**
  * One YAML file as a mapping. A YAML error is a fault with the error's line;
  * a top level that is not a mapping is a fault too, because a layer must be
- * an object to merge (D3), and so is a cycle of aliases. A file that cannot be read throws: the caller
- * reads only files it found.
+ * an object to merge (D3), and so is a cycle of aliases. A file that cannot
+ * be read throws: the caller reads only files it found.
  *
  * @param {string} path
  * @returns {{ value: Record<string, unknown> } | { fault: Fault }}
