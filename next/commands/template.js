@@ -57,9 +57,11 @@ async function renderWithBl(template, data, { config, bl }) {
  * @returns {Promise<string>}
  */
 export async function renderTemplate(view, records, options) {
-  if (view.records_template !== undefined) return renderWithBl(view.records_template, { records }, options);
+  // With `bl`, every render reads one copy: a command that `bl` runs can change `records`.
+  const snapshot = options.bl === undefined ? records : structuredClone(records);
+  if (view.records_template !== undefined) return renderWithBl(view.records_template, { records: snapshot }, options);
   let out = '';
-  for (const record of records) {
+  for (const record of snapshot) {
     const text = await renderWithBl(/** @type {string} */ (view.template), /** @type {any} */ (record), options);
     out += text.replace(/\n*$/, '\n');
   }

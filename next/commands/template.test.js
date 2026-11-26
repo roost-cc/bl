@@ -81,6 +81,31 @@ test('repeated_bl_occurrences_run_separately: each {{#bl}} occurrence runs once,
   assert.equal(await renderTemplate({ template: '{{#bl}}x{{/bl}}' }, RECORDS, { config, bl }), '1\n2\n');
 });
 
+test('template_bl_keeps_results_with_executed_lines_after_record_change: each result stays with its line', async () => {
+  const config = configWith({ show: '{{id}}:{{#bl}}show {{id}}{{/bl}};' });
+  for (const [label, view, wrap] of [
+    ['records_template', { records_template: '{{#records}}{{id}}:{{#bl}}show {{id}}{{/bl}};{{/records}}' }, (s) => s],
+    ['partial', { records_template: '{{#records}}{{> show}}{{/records}}' }, (s) => s],
+    ['per-record template', { template: '{{id}}:{{#bl}}show {{id}}{{/bl}};' }, (s) => s.replaceAll(';', ';\n')],
+  ]) {
+    const records = [
+      { id: 'A', tags: ['x'] },
+      { id: 'B', tags: ['y'] },
+    ];
+    const lines = [];
+    // Each command reverses the records and renames a record in place.
+    const bl = async (line) => {
+      lines.push(line);
+      records.reverse();
+      for (const record of records) record.id = `${record.id}!`;
+      return `<${line}>`;
+    };
+    const out = await renderTemplate(view, records, { config, bl });
+    assert.deepEqual(lines, ['show A', 'show B'], label);
+    assert.equal(out, wrap('A:<show A>;B:<show B>;'), label);
+  }
+});
+
 test('an error in bl fails the render with its message', async () => {
   const bl = async () => {
     throw new Error('inner failed');
