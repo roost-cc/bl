@@ -50,6 +50,17 @@ test('readYaml turns a YAML syntax error into a fault with the file and the line
   assert.doesNotMatch(fault.message, /\n| at line \d+/);
 });
 
+test('readYaml turns a second document, and a repeated key, into a fault with the line', () => {
+  for (const [text, message] of [
+    ['a: 1\n---\nb: 2\n', /^line 2: Source contains multiple documents/],
+    ['a: 1\na: 2\n', /^line 2: Map keys must be unique$/],
+  ]) {
+    const { fault } = /** @type {any} */ (readYaml(yamlFile(text)));
+    assert.equal(fault.rule, 'yaml');
+    assert.match(fault.message, message);
+  }
+});
+
 test('readYaml turns a top level that is not a mapping into a fault with the file', () => {
   for (const text of ['- a\n- b\n', 'just text\n', '']) {
     const file = yamlFile(text);
