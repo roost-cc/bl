@@ -84,7 +84,11 @@ function errorPath(error) {
  */
 const TRIAL = 'x-bl-trial';
 
-/** The keywords whose value is one subschema, a list of them, or a map of them (JSON Schema 2020-12). */
+/**
+ * The keywords whose value is one subschema, a list of them, or a map of them:
+ * every such keyword that ajv's 2020-12 draft knows, with its draft-07
+ * `definitions` and `dependencies` (a map of subschemas and lists of names).
+ */
 const ONE = [
   'additionalProperties',
   'items',
@@ -98,7 +102,9 @@ const ONE = [
   'unevaluatedProperties',
 ];
 const LIST = ['allOf', 'anyOf', 'oneOf', 'prefixItems'];
-const MAP = ['properties', 'patternProperties', 'dependentSchemas', '$defs'];
+const MAP = ['properties', 'patternProperties', 'dependentSchemas', 'dependencies', '$defs', 'definitions'];
+/** Every keyword that `withTrials` walks into. */
+export const SUBSCHEMA_KEYWORDS = [...ONE, ...LIST, ...MAP];
 
 /**
  * The keywords whose subschemas are trials: a subschema that fails there does

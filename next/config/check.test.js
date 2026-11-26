@@ -6,7 +6,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { celEnvironment } from './cel.js';
-import { ConfigurationFaults, attribute, compileCel, shapeChecker } from './check.js';
+import Ajv2020 from 'ajv/dist/2020.js';
+import { ConfigurationFaults, SUBSCHEMA_KEYWORDS, attribute, compileCel, shapeChecker } from './check.js';
 import { applyLayers, bothAxes, reposLayers } from './layers.js';
 import BACKLOG_SCHEMA from './schemas/backlog.schema.json' with { type: 'json' };
 import { withEnv } from '../test/helpers/env.js';
@@ -250,6 +251,65 @@ test('the cel keyword counts a string only in a branch that accepts the value', 
       { file: '/b/config/x.yaml', path: '/x', rule: 'cel', message: 'the type is string, not bool' },
     ]);
   }
+});
+
+test('a rejected branch leaves no cel string under any subschema keyword, $ref to definitions included', () => {
+  const MARKED = { type: 'string', maxLength: 1, cel: 'bool' };
+  const PLAIN = { type: 'string' };
+  const REJECTED = { anyOf: [MARKED, PLAIN] };
+  const ACCEPTED = { anyOf: [{ type: 'string', cel: 'bool' }, PLAIN] };
+  const at = (t) => ({ type: 'object', properties: { x: t } });
+  // [the keyword, the schema around the branch t, the value, the count of strings when t accepts]
+  const rows = [
+    ['properties', (t) => at(t), { x: 'title' }, 1],
+    ['patternProperties', (t) => ({ patternProperties: { '^x$': t } }), { x: 'title' }, 1],
+    ['additionalProperties', (t) => ({ additionalProperties: t }), { x: 'title' }, 1],
+    ['unevaluatedProperties', (t) => ({ unevaluatedProperties: t }), { x: 'title' }, 1],
+    ['propertyNames', (t) => ({ propertyNames: t }), { title: 1 }, 1],
+    ['dependentSchemas', (t) => ({ dependentSchemas: { x: at(t) } }), { x: 'title' }, 1],
+    ['dependencies', (t) => ({ dependencies: { x: at(t), y: ['x'] } }), { x: 'title' }, 1],
+    ['$defs', (t) => ({ properties: { x: { $ref: '#/properties/v/$defs/d' } }, $defs: { d: t } }), { x: 'title' }, 1],
+    [
+      'definitions',
+      (t) => ({ properties: { x: { $ref: '#/properties/v/definitions/d' } }, definitions: { d: at(t) } }),
+      { x: { x: 'title' } },
+      1,
+    ],
+    ['allOf', (t) => ({ allOf: [at(t)] }), { x: 'title' }, 1],
+    ['anyOf', (t) => ({ anyOf: [at(t)] }), { x: 'title' }, 1],
+    ['oneOf', (t) => ({ oneOf: [at(t)] }), { x: 'title' }, 1],
+    ['if', (t) => ({ if: at(t), then: { minProperties: 1 } }), { x: 'title' }, 1],
+    ['then', (t) => ({ if: { type: 'object' }, then: at(t) }), { x: 'title' }, 1],
+    ['else', (t) => ({ if: { maxProperties: 0 }, else: at(t) }), { x: 'title' }, 1],
+    ['not', (t) => ({ not: { allOf: [at(t), { maxProperties: 0 }] } }), { x: 'title' }, 0],
+    ['items', (t) => ({ items: t }), ['title'], 1],
+    ['prefixItems', (t) => ({ prefixItems: [t], minItems: 1, items: false }), ['title'], 1],
+    ['unevaluatedItems', (t) => ({ unevaluatedItems: t }), ['title'], 1],
+    ['contains', (t) => ({ contains: t }), ['title'], 1],
+  ];
+  assert.deepEqual(rows.map(([keyword]) => keyword).sort(), [...SUBSCHEMA_KEYWORDS].sort());
+  for (const [keyword, around, value, count] of rows) {
+    const layers = [{ file: '/b/config/x.yaml', pointer: '', patch: { v: value } }];
+    const strings = (t) => {
+      const v = { type: Array.isArray(value) ? 'array' : 'object', ...around(t) };
+      const schema = { type: 'object', properties: { v } };
+      const { faults, cel } = shapeChecker().compile(schema)(applyLayers(layers), layers);
+      assert.deepEqual(faults, [], keyword);
+      return cel.length;
+    };
+    assert.equal(strings(REJECTED), 0, `${keyword}: a rejected branch`);
+    assert.equal(strings(ACCEPTED), count, `${keyword}: an accepting branch`);
+  }
+  // Each other keyword that ajv knows holds no subschema; a new one fails here until it is sorted.
+  const NO_SUBSCHEMA = [
+    ...['$comment', '$dynamicAnchor', '$dynamicRef', '$recursiveAnchor', '$recursiveRef', '$ref', 'id'],
+    ...['const', 'enum', 'format', 'nullable', 'type'],
+    ...['exclusiveMaximum', 'exclusiveMinimum', 'maximum', 'minimum', 'multipleOf'],
+    ...['maxLength', 'minLength', 'pattern', 'maxItems', 'minItems', 'uniqueItems', 'maxContains', 'minContains'],
+    ...['dependentRequired', 'maxProperties', 'minProperties', 'required'],
+  ];
+  const known = [...Object.keys(new Ajv2020().RULES.all), '$defs', 'definitions'];
+  assert.deepEqual(known.filter((k) => !SUBSCHEMA_KEYWORDS.includes(k)).sort(), NO_SUBSCHEMA.sort());
 });
 
 test('a schema whose cel keyword is neither bool nor dyn does not compile', () => {
