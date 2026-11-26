@@ -72,11 +72,19 @@ export async function main(argv, { ops = OPS } = {}) {
   if ('status' in outcome) return exit(outcome);
   const { name, op, args, result } = outcome;
   try {
-    await writeOutput({ command: name, op, args, result, config, stdout: process.stdout, bl: blIn(context, [name]) });
+    // A pager that started and failed fails the command with its status.
+    return await writeOutput({
+      command: name,
+      op,
+      args,
+      result,
+      config,
+      stdout: process.stdout,
+      bl: blIn(context, [name]),
+    });
   } catch (error) {
     // A `{{#bl}}` command that failed fails this one, with its message (D7).
     if (error instanceof CommandFailed) return exit(error.exit);
     throw error;
   }
-  return 0;
 }

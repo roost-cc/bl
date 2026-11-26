@@ -62,19 +62,16 @@ export function matchOf(op, args) {
  * scheme; a `template` or `records_template` view through `renderTemplate`
  * (D7).
  * @param {{ op: Op, args: Record<string, unknown>, view: Record<string, any>, result: unknown, config: Configuration, stdout: NodeJS.WritableStream, bl?: Bl }} options
- * @returns {Promise<void>}
+ * @returns {Promise<number>}  the status of `page`
  */
 async function renderView({ op, args, view, result, config, stdout, bl }) {
   const records = await Array.fromAsync(recordsOf(result));
-  if (view.columns === undefined) {
-    page(await renderTemplate(view, records, { config, bl }), stdout);
-    return;
-  }
+  if (view.columns === undefined) return page(await renderTemplate(view, records, { config, bl }), stdout);
   const tty = /** @type {import('tty').WriteStream} */ (stdout);
   const width = tty.isTTY ? tty.columns : null;
   // The start check has found the scheme (D8).
   const styling = { scheme: colorScheme(config).scheme, stream: stdout, match: matchOf(op, args) };
-  page(renderTable(view, records, { env: viewEnvironment(op.schema), width, styling }), stdout);
+  return page(renderTable(view, records, { env: viewEnvironment(op.schema), width, styling }), stdout);
 }
 
 /**
@@ -115,15 +112,16 @@ export async function markdownForm({ command, op, args, result, config, bl }) {
 /**
  * Print an op's result to `stdout`.
  * @param {OutputOptions & { stdout: NodeJS.WritableStream }} options
- * @returns {Promise<void>}
+ * @returns {Promise<number>}  the command's exit status: 0, or that of a pager that failed
  */
 export async function writeOutput({ command, op, args, result, config, stdout, bl }) {
   const view = viewOf(command, args, config);
   if (view !== undefined) return renderView({ op, args, view, result, config, stdout, bl });
   for await (const record of recordsOf(result)) {
     // Wait for a full stream to drain, so a long stream is not held in memory.
-    if (!stdout.write(jsonLine(record)) && (await drainOrClose(stdout)) === 'close') return;
+    if (!stdout.write(jsonLine(record)) && (await drainOrClose(stdout)) === 'close') return 0;
   }
+  return 0;
 }
 
 /**

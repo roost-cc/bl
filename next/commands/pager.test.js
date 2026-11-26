@@ -6,7 +6,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { delimiter } from 'path';
+import { writeFileSync } from 'fs';
+import { delimiter, join } from 'path';
 import { withEnv } from '../test/helpers/env.js';
 import { fakePager } from '../test/helpers/fake-pager.js';
 import { recorder } from '../test/helpers/streams.js';
@@ -99,35 +100,49 @@ test('with PAGER unset and less on PATH, less gets the text, and more does not r
   assert.equal(more.input(), null);
 });
 
-test('page_reports_pager_failure_without_losing_text: a pager that cannot start or exits nonzero leaves the text on stdout', () => {
+/** `page` of `TALL` on a 5-row terminal under `env`; give what it wrote to stdout and its status. */
+function pageTall(env) {
+  const { stream, chunks } = recorder({ terminal: { rows: 5, columns: 80 } });
+  const status = withEnv(env, () => page(TALL, stream));
+  return { written: chunks.join(''), status };
+}
+
+test('page_reports_pager_failure_without_losing_text: a pager that cannot start leaves the text on stdout', () => {
   const empty = mkTempDir('bl-pager-none-');
+  const notExecutable = join(mkTempDir('bl-pager-noexec-'), 'pager');
+  writeFileSync(notExecutable, '#!/bin/sh\n');
+  for (const [label, env] of [
+    ['$PAGER is missing (shell status 127)', { PAGER: 'definitely_missing_f138_pager', PATH: empty }],
+    ['$PAGER is not executable (shell status 126)', { PAGER: notExecutable }],
+    ['neither less nor more is on PATH', { PAGER: undefined, PATH: empty }],
+  ]) {
+    assert.deepEqual(pageTall(env), { written: TALL, status: 0 }, label);
+  }
+});
+
+test('pager_does_not_repeat_partial_output_on_failure: a pager that ran and failed gives its status and no text', () => {
   const failing = (name) => fakePager(name, { status: 3 });
   for (const [label, setup] of [
-    ['$PAGER exits nonzero', () => ({ env: { PAGER: failing('pager').script } })],
-    ['$PAGER is missing', () => ({ env: { PAGER: 'definitely_missing_f138_pager', PATH: empty } })],
-    ['less exits nonzero', () => ({ env: { PAGER: undefined, PATH: failing('less').dir } })],
-    ['less is missing and more exits nonzero', () => ({ env: { PAGER: undefined, PATH: failing('more').dir } })],
+    ['$PAGER exits nonzero', () => failing('pager')],
+    ['less exits nonzero', () => failing('less')],
+    ['less is missing and more exits nonzero', () => failing('more')],
+    ['$PAGER exits 0', () => fakePager('pager')],
   ]) {
-    const { env } = setup();
-    assert.equal(
-      withEnv(env, () => pageOn(TALL, 5)),
-      TALL,
-      label,
-    );
+    const pager = setup();
+    const env = pager.script.endsWith('pager') ? { PAGER: pager.script } : { PAGER: undefined, PATH: pager.dir };
+    const status = label.endsWith('exits 0') ? 0 : 3;
+    assert.deepEqual(pageTall(env), { written: '', status }, label);
+    // The pager read the whole text, and may have shown part of it.
+    assert.equal(pager.input(), TALL, label);
   }
-  // A pager that exits 0 keeps the text off stdout; less that exits nonzero does not fall through to more.
+  // less that exits nonzero does not fall through to more.
   const less = failing('less');
   const more = fakePager('more');
-  assert.equal(
-    withEnv({ PAGER: undefined, PATH: `${less.dir}${delimiter}${more.dir}` }, () => pageOn(TALL, 5)),
-    TALL,
-  );
-  assert.equal(less.input(), TALL);
+  assert.deepEqual(pageTall({ PAGER: undefined, PATH: `${less.dir}${delimiter}${more.dir}` }), {
+    written: '',
+    status: 3,
+  });
   assert.equal(more.input(), null);
-  assert.equal(
-    withEnv({ PAGER: fakePager('pager').script }, () => pageOn(TALL, 5)),
-    '',
-  );
 });
 
 test('with PAGER unset and neither less nor more on PATH, the text goes to stdout with no message', () => {

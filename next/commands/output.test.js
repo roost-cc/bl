@@ -154,6 +154,22 @@ test('a 10-line template view on a 5-row terminal goes to $PAGER too', async () 
   assert.equal(input.split('\n').length - 1, 10);
 });
 
+test('writeOutput gives 0, or the status of a pager that ran and failed, for a table and a template view', async () => {
+  for (const views of [TABLE_VIEW, { list: { template: '{{id}}' } }]) {
+    const failing = fakePager('pager', { status: 3 });
+    const { stream, chunks } = recorder({ terminal: { rows: 5, columns: 80 } });
+    const status = await withEnv({ PAGER: failing.script }, () =>
+      writeOutput({ command: 'list', op, args: {}, result: recordsFor(10), config: configWith(views), stdout: stream }),
+    );
+    assert.deepEqual([status, chunks], [3, []]);
+  }
+  const { stream } = recorder();
+  assert.equal(
+    await writeOutput({ command: 'list', op, args: { json: true }, result: [], config: configWith(), stdout: stream }),
+    0,
+  );
+});
+
 test('a 3-line table, or --json, on a 5-row terminal runs no pager', async () => {
   const short = await paged(recordsFor(3));
   assert.equal(short.written, 'ID\nS-1\nS-2\n');
