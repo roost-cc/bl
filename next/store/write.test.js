@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, symlinkSync
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { fixture, load } from '../test/helpers/config-fixture.js';
+import { _hooks } from '../lib/atomic-write.js';
 import { git, initRepo } from '../test/helpers/git.js';
 import { StoreCheckError, storeWrite } from './write.js';
 
@@ -513,6 +514,104 @@ test('a w.create whose next number is above the safe range throws and changes no
   assert.equal(await storeWrite(ctx, { message: 'm' }, create), `S-${max}`);
   await assert.rejects(storeWrite(ctx, { message: 'm' }, create), over);
   assert.deepEqual(status(ctx), []);
+});
+
+test('storeWrite_serializes_same_process_callers_and_rejects_changed_source', async (t) => {
+  await t.test('a second write of the process waits for the first, and reads what it left', async () => {
+    const ctx = backlog();
+    let entered;
+    const inFirst = new Promise((resolve) => (entered = resolve));
+    let release;
+    const gate = new Promise((resolve) => (release = resolve));
+    const first = storeWrite(ctx, { message: 'first' }, async (w) => {
+      w.set('S-1', 'Summary', 'Alice.');
+      entered();
+      await gate;
+    });
+    await inFirst;
+    let secondRan = false;
+    const second = storeWrite(ctx, { message: 'second' }, (w) => {
+      secondRan = true;
+      w.append('S-1', 'Summary', 'Bob.');
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(secondRan, false);
+    release();
+    await Promise.all([first, second]);
+    assert.match(read(ctx, S1), /## Summary\n\nAlice\.\nBob\.\n/);
+    assert.equal(git(ctx.backlogDir, 'log', '-2', '--format=%s'), 'second\nfirst');
+    assert.deepEqual(status(ctx), []);
+  });
+
+  await t.test('a write that fails does not stop the next one', async () => {
+    const ctx = backlog();
+    const bad = storeWrite(ctx, { message: 'm' }, () => {
+      throw new Error('bad fn');
+    });
+    const good = storeWrite(ctx, { message: 'good' }, (w) => w.set('S-1', 'Summary', 'Good.'));
+    await assert.rejects(bad, { message: 'bad fn' });
+    await good;
+    assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%s'), 'good');
+  });
+
+  await t.test('a write that starts inside another to the same backlog is an error', async () => {
+    const ctx = backlog();
+    const before = head(ctx);
+    await assert.rejects(
+      storeWrite(ctx, { message: 'outer' }, async (w) => {
+        w.set('S-1', 'Summary', 'Outer.');
+        await storeWrite(ctx, { message: 'inner' }, (inner) => inner.set('S-2', 'Summary', 'Inner.'));
+      }),
+      { message: /cannot start inside another store write/ },
+    );
+    assert.equal(head(ctx), before);
+    assert.deepEqual(status(ctx), []);
+  });
+
+  /**
+   * Each moment another writer can edit a staged file before the store write
+   * renames it: during fn after it staged (rename 0), and just before the
+   * rename of index.md (1) or of state.json (2). An edit of index.md after
+   * its own rename is the put-back's case, below.
+   */
+  const MOMENTS = [
+    ['after staging', 0, [S1, 'stories/S1-one/state.json']],
+    ['at the first rename', 1, [S1, 'stories/S1-one/state.json']],
+    ['at the second rename', 2, ['stories/S1-one/state.json']],
+  ];
+  for (const [moment, rename, victims] of MOMENTS) {
+    for (const victim of victims) {
+      await t.test(`an edit of ${victim} ${moment} fails the write and stays`, async () => {
+        const ctx = backlog();
+        const edit = () => writeFileSync(join(ctx.backlogDir, victim), 'edited by another writer\n');
+        let renames = 0;
+        _hooks.beforeRename = () => {
+          renames += 1;
+          if (renames === rename) edit();
+        };
+        const before = head(ctx);
+        try {
+          await assert.rejects(
+            storeWrite(ctx, { message: 'm' }, (w) => {
+              w.set('S-1', 'Summary', 'Alice.');
+              w.state('S-1', { status: 'draft', run: 'idle', counters: {} });
+              if (rename === 0) edit();
+            }),
+            (error) => {
+              assert.match(error.message, /changed while bl wrote it/);
+              return true;
+            },
+          );
+        } finally {
+          _hooks.beforeRename = null;
+        }
+        assert.equal(read(ctx, victim), 'edited by another writer\n');
+        const other = victim === S1 ? 'stories/S1-one/state.json' : S1;
+        assert.equal(read(ctx, other), victim === S1 ? '{ "status": "draft", "run": "idle" }\n' : doc('One'));
+        assert.equal(head(ctx), before);
+      });
+    }
+  }
 });
 
 /** One store write operation on S-1, with the item file it writes. */

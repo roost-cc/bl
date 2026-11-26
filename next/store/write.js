@@ -22,10 +22,11 @@
  * items.md; today's covering-lock table is not carried.
  */
 
+import { AsyncLocalStorage } from 'async_hooks';
 import { mkdirSync, rmSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { atomicWriteFile } from '../lib/atomic-write.js';
-import { withLock } from '../lib/lock.js';
+import { canonical, withLock } from '../lib/lock.js';
 import { commitPaths } from './commit.js';
 import { DOCUMENT, checkDocument, parseDocument } from './document.js';
 import { dirName, formatId, parseId } from './ids.js';
@@ -86,7 +87,9 @@ import * as sections from './sections.js';
  * @property {Record<string, string>} [items]  the `created` entry's related items,
  *   for example `{ found_by: 'S-1112' }` (D-617)
  *
- * @typedef {{ item: Item, file: string, text: string }} Staged  a file's new text
+ * @typedef {{ item: Item, file: string, base: string|null, text: string }} Staged
+ *   a file's new text, and `base`, its text on disk when the write first read
+ *   it (null when it was not there)
  */
 
 /** A store write whose staged changes break a rule; it lists each finding. */
@@ -147,8 +150,9 @@ function writer(ctx, staged, created) {
     const item = findItem(ctx, created, id);
     if (item === null) throw new Error(`no item ${id} in the backlog`);
     const path = `${item.path}/${file}`;
-    const text = staged.get(path)?.text ?? backlogText(ctx, path);
-    staged.set(path, { item, file, text: edit(text, item) });
+    const earlier = staged.get(path);
+    const base = earlier === undefined ? backlogText(ctx, path) : earlier.base;
+    staged.set(path, { item, file, base, text: edit(earlier === undefined ? base : earlier.text, item) });
   };
   /**
    * Make a new item of `type` (D6): the next number of the type, after any
@@ -178,7 +182,7 @@ function writer(ctx, staged, created) {
       [ATTRIBUTES, jsonText(attributes)],
       [LOG, appendLine('', entry)],
     ]) {
-      staged.set(`${item.path}/${file}`, { item, file, text });
+      staged.set(`${item.path}/${file}`, { item, file, base: null, text });
     }
     return id;
   };
@@ -356,11 +360,20 @@ function putBack(ctx, written, made) {
  *
  * If a write or the commit fails, each written file is put back as it was,
  * each directory that the write made is removed, and the error is thrown.
- * A staged file whose text equals the file's is not
- * written. When nothing changed, nothing is written or committed. When the
+ * A file that no longer holds what the write first read from it (another
+ * writer changed it) fails its write with code `ECHANGED`, and keeps the
+ * other writer's change. A staged file whose text equals what the write
+ * first read is not written. When nothing changed, nothing is written or
+ * committed. When the
  * written files hold what `HEAD` holds (the write undid uncommitted edits),
  * the files are written and nothing is committed. An error
  * that `fn` throws ends the write before anything is written.
+ *
+ * The backlog lock serialises store writes of different processes. Store
+ * writes of one process to one backlog run one at a time, in call order,
+ * because the lock lets a process that holds it take it again. A store write
+ * that starts inside the `fn` of another one to the same backlog is an
+ * error: it would wait for the outer write forever.
  *
  * @template T
  * @param {StoreContext} ctx
@@ -368,54 +381,80 @@ function putBack(ctx, written, made) {
  * @param {(w: Writer) => T | Promise<T>} fn
  * @returns {Promise<T>}  what `fn` returned
  */
-export async function storeWrite(ctx, { message, trailers = [] }, fn) {
-  return withLock(ctx.backlogDir, async () => {
-    /** @type {Map<string, Staged>} */
-    const staged = new Map();
-    /** @type {Map<string, Item>} */
-    const created = new Map();
-    const result = await fn(writer(ctx, staged, created));
+export async function storeWrite(ctx, commit, fn) {
+  const root = canonical(ctx.backlogDir);
+  const outer = running.getStore() ?? [];
+  if (outer.includes(root)) throw new Error(`a store write to ${root} cannot start inside another store write to it`);
+  const run = (queues.get(root) ?? Promise.resolve()).then(() =>
+    running.run([...outer, root], () => withLock(ctx.backlogDir, () => writeLocked(ctx, commit, fn))),
+  );
+  const done = run.then(
+    () => {},
+    () => {},
+  );
+  queues.set(root, done);
+  done.then(() => queues.get(root) === done && queues.delete(root));
+  return run;
+}
 
-    const changed = [...staged].flatMap(([path, entry]) => {
-      const before = backlogText(ctx, path);
-      return before === entry.text ? [] : [{ path, before, ...entry }];
-    });
-    if (changed.length === 0) return result;
+/** The canonical backlog roots whose store write the current async call runs inside. */
+const running = new AsyncLocalStorage();
 
-    const items = [...new Map(changed.map(({ item }) => [item.id, item])).values()].sort((a, b) =>
-      a.id.localeCompare(b.id, 'en', { numeric: true }),
-    );
-    const read = (/** @type {string} */ path) => staged.get(path)?.text ?? backlogText(ctx, path);
-    const exists = (/** @type {string} */ id) => created.has(id) || itemDir(ctx, id) !== null;
-    const findings = items.flatMap((item) => checkItem(ctx, item, read, exists));
-    if (findings.length > 0) throw new StoreCheckError(findings);
+/** Each backlog root → the end of the last store write of this process queued for it. */
+const queues = new Map();
 
-    /** @type {Array<{ path: string, before: string|null }>} */
-    const written = [];
-    /** @type {string[]} */
-    const made = [];
-    try {
-      for (const item of created.values()) {
-        const first = mkdirSync(join(ctx.backlogDir, item.path), { recursive: true });
-        if (first !== undefined) made.push(first);
-      }
-      for (const { path, before, text } of changed) {
-        atomicWriteFile(ctx.backlogDir, join(ctx.backlogDir, path), text, { preserve: true });
-        written.push({ path, before });
-      }
-      const itemTrailers = items.map((item) => `Bl-Item: ${item.id}`);
-      await commitPaths(
-        ctx.backlogDir,
-        changed.map(({ path }) => path),
-        message,
-        [...trailers, ...itemTrailers],
-      );
-    } catch (e) {
-      const failed = putBack(ctx, written, made);
-      if (failed.length === 0) throw e;
-      const why = `${/** @type {Error} */ (e).message}; these files could not be put back: ${failed.join(', ')}`;
-      throw new Error(why, { cause: e });
+/**
+ * The store write after the lock is taken (`storeWrite`).
+ *
+ * @template T
+ * @param {StoreContext} ctx
+ * @param {{ message: string, trailers?: string[] }} commit
+ * @param {(w: Writer) => T | Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+async function writeLocked(ctx, { message, trailers = [] }, fn) {
+  /** @type {Map<string, Staged>} */
+  const staged = new Map();
+  /** @type {Map<string, Item>} */
+  const created = new Map();
+  const result = await fn(writer(ctx, staged, created));
+
+  const changed = [...staged].flatMap(([path, entry]) => (entry.base === entry.text ? [] : [{ path, ...entry }]));
+  if (changed.length === 0) return result;
+
+  const items = [...new Map(changed.map(({ item }) => [item.id, item])).values()].sort((a, b) =>
+    a.id.localeCompare(b.id, 'en', { numeric: true }),
+  );
+  const read = (/** @type {string} */ path) => staged.get(path)?.text ?? backlogText(ctx, path);
+  const exists = (/** @type {string} */ id) => created.has(id) || itemDir(ctx, id) !== null;
+  const findings = items.flatMap((item) => checkItem(ctx, item, read, exists));
+  if (findings.length > 0) throw new StoreCheckError(findings);
+
+  /** @type {Array<{ path: string, before: string|null }>} */
+  const written = [];
+  /** @type {string[]} */
+  const made = [];
+  try {
+    for (const item of created.values()) {
+      const first = mkdirSync(join(ctx.backlogDir, item.path), { recursive: true });
+      if (first !== undefined) made.push(first);
     }
-    return result;
-  });
+    for (const { path, base, text } of changed) {
+      atomicWriteFile(ctx.backlogDir, join(ctx.backlogDir, path), text, { preserve: true, unchanged: base });
+      written.push({ path, before: base });
+    }
+    const itemTrailers = items.map((item) => `Bl-Item: ${item.id}`);
+    await commitPaths(
+      ctx.backlogDir,
+      changed.map(({ path }) => path),
+      message,
+      [...trailers, ...itemTrailers],
+    );
+  } catch (e) {
+    const failed = putBack(ctx, written, made);
+    if (failed.length === 0) throw e;
+    const why = `${/** @type {Error} */ (e).message}; these files could not be put back: ${failed.join(', ')}`;
+    throw new Error(why, { cause: e });
+  }
+  return result;
 }
