@@ -5,6 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { withEnv } from '../test/helpers/env.js';
 import { fakePager } from '../test/helpers/fake-pager.js';
 import { recorder } from '../test/helpers/streams.js';
@@ -83,6 +84,37 @@ test('without --json, a command with no view prints the structured form', async 
       '{"id":"S-1"}\n',
       '{"id":"S-2"}\n',
     ]);
+  }
+});
+
+test('write_output_settles_when_stream_closes_before_drain: a full stream that closes or drains ends the wait', async () => {
+  for (const [label, json, event, writes] of [
+    ['--json, close', true, 'close', 1],
+    ['no view, close', false, 'close', 1],
+    ['--json, drain', true, 'drain', 2],
+    ['no view, drain', false, 'drain', 2],
+  ]) {
+    const sink = new EventEmitter();
+    const chunks = [];
+    sink.write = (chunk) => (chunks.push(chunk), false);
+    const written = writeOutput({
+      command: 'list',
+      op,
+      args: { json },
+      result: [{ n: 1 }, { n: 2 }],
+      config: configWith(undefined),
+      stdout: /** @type {any} */ (sink),
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    sink.emit(event);
+    if (event === 'drain') {
+      await new Promise((resolve) => setImmediate(resolve));
+      sink.emit('drain');
+    }
+    const timeout = new Promise((resolve) => setTimeout(() => resolve('pending'), 200));
+    assert.equal(await Promise.race([written.then(() => 'settled'), timeout]), 'settled', label);
+    assert.equal(chunks.length, writes, label);
+    assert.deepEqual([sink.listenerCount('drain'), sink.listenerCount('close')], [0, 0], label);
   }
 });
 

@@ -122,6 +122,22 @@ export async function writeOutput({ command, op, args, result, config, stdout, b
   if (view !== undefined) return renderView({ op, args, view, result, config, stdout, bl });
   for await (const record of recordsOf(result)) {
     // Wait for a full stream to drain, so a long stream is not held in memory.
-    if (!stdout.write(jsonLine(record))) await once(stdout, 'drain');
+    if (!stdout.write(jsonLine(record)) && (await drainOrClose(stdout)) === 'close') return;
+  }
+}
+
+/**
+ * Wait for `stream` to drain or close, and give the event that came first. A
+ * closed stream never drains, so the output stops there. An `error` rejects.
+ * @param {NodeJS.WritableStream} stream
+ * @returns {Promise<'drain'|'close'>}
+ */
+async function drainOrClose(stream) {
+  const stop = new AbortController();
+  const wait = (event) => once(stream, event, { signal: stop.signal }).then(() => event);
+  try {
+    return await Promise.race([wait('drain'), wait('close')]);
+  } finally {
+    stop.abort();
   }
 }
