@@ -682,6 +682,25 @@ test('putBack_preserves_later_edits_and_unowned_files', async (t) => {
   }
 });
 
+test('a store write whose commit hook changes a written file fails, and the hook change stays uncommitted', async () => {
+  const ctx = backlog();
+  const hook = join(ctx.backlogDir, '.git', 'hooks', 'pre-commit');
+  writeFileSync(hook, `#!/bin/sh\nprintf 'bad content\\n' > ${S1}\n`);
+  chmodSync(hook, 0o755);
+  const before = head(ctx);
+  await assert.rejects(
+    storeWrite(ctx, { message: 'm' }, (w) => {
+      w.set('S-1', 'Summary', 'Changed.');
+      w.state('S-1', { status: 'draft', run: 'idle', counters: {} });
+    }),
+    { message: /a commit hook changed stories\/S1-one\/index\.md after bl wrote it, so bl undid the commit/ },
+  );
+  assert.equal(head(ctx), before);
+  assert.equal(read(ctx, S1), 'bad content\n');
+  assert.equal(read(ctx, 'stories/S1-one/state.json'), '{ "status": "draft", "run": "idle" }\n');
+  assert.deepEqual(status(ctx), [` M ${S1}`]);
+});
+
 /** One store write operation on S-1, with the item file it writes. */
 const OPERATIONS = [
   ['set', 'index.md', (w) => w.set('S-1', 'Summary', 'Changed.')],

@@ -82,6 +82,52 @@ test('a failed commit throws and puts the index entries of its paths back', asyn
   assert.equal(git(root, 'show', ':b.md'), 'b2');
 });
 
+test('commitPaths_detects_hook_changes_to_written_paths', async (t) => {
+  /** [name, the pre-commit hook's script, whether the commit must be undone] */
+  const CASES = [
+    ['the hook edits the first path', "printf 'hook\\n' > a.md", true],
+    ['the hook edits the second path', "printf 'hook\\n' > c.md", true],
+    ['the hook edits a path and stages it', "printf 'hook\\n' > a.md && git add a.md", true],
+    ['the hook deletes a path', 'rm a.md', true],
+    ['the hook edits a path the commit does not take', "printf 'hook\\n' > b.md", false],
+    ['the hook changes nothing', 'true', false],
+  ];
+  for (const [name, script, undone] of CASES) {
+    await t.test(name, async () => {
+      const root = backlog();
+      const hook = join(root, '.git', 'hooks', 'pre-commit');
+      writeFileSync(hook, `#!/bin/sh\n${script}\n`);
+      chmodSync(hook, 0o755);
+      writeFileSync(join(root, 'a.md'), 'a2\n');
+      writeFileSync(join(root, 'c.md'), 'c\n');
+      const head = git(root, 'rev-parse', 'HEAD');
+      const commit = commitPaths(root, ['a.md', 'c.md'], 'm', []);
+      if (!undone) {
+        await commit;
+        assert.deepEqual(git(root, 'show', '--name-only', '--format=', 'HEAD').split('\n'), ['a.md', 'c.md']);
+        return;
+      }
+      await assert.rejects(commit, {
+        message: /^backlog commit failed: a commit hook changed (a|c)\.md after bl wrote it, so bl undid the commit$/,
+      });
+      assert.equal(git(root, 'rev-parse', 'HEAD'), head);
+      assert.equal(git(root, 'show', ':a.md'), 'a');
+      assert.equal(git(root, 'ls-files', 'c.md'), '');
+    });
+  }
+
+  await t.test('paths that hold what HEAD holds run no hook and make no commit', async () => {
+    const root = backlog();
+    const hook = join(root, '.git', 'hooks', 'pre-commit');
+    writeFileSync(hook, "#!/bin/sh\nprintf 'hook\\n' > a.md\n");
+    chmodSync(hook, 0o755);
+    const head = git(root, 'rev-parse', 'HEAD');
+    await commitPaths(root, ['a.md'], 'm', []);
+    assert.equal(git(root, 'rev-parse', 'HEAD'), head);
+    assert.deepEqual(status(root), []);
+  });
+});
+
 test('a backlog that is not a git repo of its own is an error', async () => {
   const root = mkTempDir('bl-commit-');
   writeFileSync(join(root, 'a.md'), 'a\n');
