@@ -2,12 +2,11 @@
 // It reads each JavaScript file of `next/` and `src/` with acorn, collects its
 // imports (`import … from`, `export … from`, `import('<literal>')`), and
 // resolves each one that names a file (a path or a `file:` URL) to its real
-// path, as Node loads it. A bare specifier (`node:fs`, `acorn`) is not checked.
-import { readFileSync } from 'fs';
+// path, as Node loads it (`fileImports`). A bare specifier (`node:fs`,
+// `acorn`) is not checked.
 import { join, relative, sep } from 'path';
-import { simple } from 'acorn-walk';
 import { realOrResolved } from '../../lib/real-path.js';
-import { importTarget, jsFiles, literalOf, parseSource } from './source-ast.js';
+import { fileImports, jsFiles } from './source-ast.js';
 
 /**
  * Each layer of next/ → the other layers it may import. A layer may also
@@ -29,26 +28,6 @@ export const LAYERS = Object.freeze({
 
 /** What a test file (`*.test.js`) of any layer may import beside its layer's own allowance. */
 const TEST_HELPERS = `test${sep}helpers${sep}`;
-
-/**
- * The imports of one source: `[{ line, specifier }]`. `import()` counts only
- * with a string literal or a template with no `${…}`.
- * @param {string} source
- */
-function importsOf(source) {
-  const found = [];
-  const add = (node) => {
-    const specifier = literalOf(node.source);
-    if (specifier !== null) found.push({ line: node.loc.start.line, specifier });
-  };
-  simple(parseSource(source), {
-    ImportDeclaration: add,
-    ExportNamedDeclaration: add,
-    ExportAllDeclaration: add,
-    ImportExpression: add,
-  });
-  return found;
-}
 
 const isInside = (path, dir) => path.startsWith(dir + sep);
 
@@ -77,11 +56,6 @@ export function layerViolations(repoRoot) {
   const violations = [];
   const report = (path, line, specifier, rule) =>
     violations.push({ file: relative(root, path), line, specifier, rule });
-  const fileImports = (path) =>
-    importsOf(readFileSync(path, 'utf8')).flatMap((i) => {
-      const target = importTarget(i.specifier, path);
-      return target === null ? [] : [{ ...i, target }];
-    });
 
   for (const path of jsFiles(next)) {
     const [layer, ...rest] = relative(next, path).split(sep);

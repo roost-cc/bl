@@ -1,11 +1,13 @@
 // What the static guards over next/ share (F-135 D3): parse a module with
-// acorn, list the JavaScript files of a tree, and name a callee or a function.
+// acorn, list the JavaScript files of a tree and the files each imports, and
+// name a callee or a function.
 // Copied from `test/helpers/source-ast.js`; `jsFiles` also lists an entry point
 // with no extension (`bin/bl-next`) by its `node` shebang.
 import { readdirSync, readFileSync, realpathSync, statSync } from 'fs';
 import { extname, join, relative, sep } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { parse } from 'acorn';
+import { simple } from 'acorn-walk';
 import { realOrResolved } from '../../lib/real-path.js';
 
 /**
@@ -94,6 +96,30 @@ export function importTarget(specifier, from) {
   if (specifier.startsWith('file:')) url = new URL(specifier);
   else if (/^(\/|\.\.?(\/|$))/.test(specifier)) url = new URL(specifier, pathToFileURL(realOrResolved(from)));
   return url === null ? null : realOrResolved(fileURLToPath(url));
+}
+
+/**
+ * The imports of the file `path` that name a file: `[{ line, specifier,
+ * target }]`, `target` the real path `importTarget` gives. It reads
+ * `import … from`, `export … from` and an `import()` of a string literal or a
+ * template with no `${…}`; a bare specifier (`node:fs`, `acorn`) is left out.
+ * @param {string} path  an absolute path
+ * @returns {{ line: number, specifier: string, target: string }[]}
+ */
+export function fileImports(path) {
+  const found = [];
+  const add = (node) => {
+    const specifier = literalOf(node.source);
+    const target = specifier === null ? null : importTarget(specifier, path);
+    if (target !== null) found.push({ line: node.loc.start.line, specifier, target });
+  };
+  simple(parseSource(readFileSync(path, 'utf8')), {
+    ImportDeclaration: add,
+    ExportNamedDeclaration: add,
+    ExportAllDeclaration: add,
+    ImportExpression: add,
+  });
+  return found;
 }
 
 /** The name a call's callee ends in: `spawnSync` for `spawnSync(…)` and `cp.spawnSync(…)`. */
