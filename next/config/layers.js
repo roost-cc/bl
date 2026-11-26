@@ -18,7 +18,7 @@
  */
 
 import mergePatch from 'json-merge-patch';
-import { isMapping } from './files.js';
+import { isMapping, pointerToken } from './files.js';
 
 /**
  * @typedef {object} Layer
@@ -41,9 +41,6 @@ import { isMapping } from './files.js';
 export function applyLayers(layers) {
   return layers.reduce((result, layer) => mergePatch.apply(result, structuredClone(layer.patch)), {});
 }
-
-/** One token of a JSON pointer (RFC 6901, section 3). */
-export const pointerToken = (name) => name.replaceAll('~', '~0').replaceAll('/', '~1');
 
 /** A source's top level without its `repos` key, as a layer. */
 function topLayer(source) {

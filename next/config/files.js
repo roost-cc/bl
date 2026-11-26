@@ -19,6 +19,9 @@ const MARKER = 'backlog.yaml';
 /** True when `value` is a mapping: an object that is not a list. */
 export const isMapping = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
+/** One token of a JSON pointer (RFC 6901, section 3). */
+export const pointerToken = (name) => name.replaceAll('~', '~0').replaceAll('/', '~1');
+
 /**
  * True when `dir` holds a `backlog.yaml` that is a regular file and parses to
  * a mapping with a `repos` key. Any error reading or parsing it is "no". The
@@ -125,14 +128,15 @@ export function operatorDir() {
 /**
  * One YAML file as a mapping. A YAML error is a fault with the error's line;
  * a top level that is not a mapping is a fault too, because a layer must be
- * an object to merge (D3), and so is a cycle of aliases. A file that cannot
- * be read throws: the caller reads only files it found.
+ * an object to merge (D3), and so are a cycle of aliases and a key that the
+ * merge cannot hold (`RESERVED_KEYS`). A file that cannot be read throws: the
+ * caller reads only files it found.
  *
  * @param {string} path
  * @returns {{ value: Record<string, unknown> } | { fault: Fault }}
  */
 export function readYaml(path) {
-  const fault = (message) => ({ fault: { file: path, path: '', rule: 'yaml', message } });
+  const fault = (message, at = '') => ({ fault: { file: path, path: at, rule: 'yaml', message } });
   const text = readFileSync(path, 'utf8');
   let value;
   try {
@@ -149,22 +153,44 @@ export function readYaml(path) {
     return fault(line === undefined ? first : `line ${line}: ${first}`);
   }
   if (!isMapping(value)) return fault('the top level must be a mapping');
-  if (holdsItself(value)) return fault('an alias refers to a node that holds it');
-  return { value };
+  const found = unmergeable(value);
+  return found === undefined ? { value } : fault(found.message, found.path);
 }
 
 /**
- * True when `value` holds itself: a YAML alias inside the node that it names
- * (`a: &x { b: *x }`) parses to a cycle, which no merge or check can walk.
- * An alias used twice side by side is no cycle.
- * @param {unknown} value
- * @param {Set<object>} [ancestors]
+ * The keys that the merge cannot hold (D4). `json-merge-patch` stops merging
+ * a mapping at `__proto__`, `constructor` or `prototype`, so the key and each
+ * key after it are lost. It deletes a key after a call to
+ * `target.hasOwnProperty(key)`, which throws a TypeError when the target has
+ * a key `hasOwnProperty`.
  */
-function holdsItself(value, ancestors = new Set()) {
-  if (value === null || typeof value !== 'object') return false;
-  if (ancestors.has(value)) return true;
+const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype', 'hasOwnProperty']);
+
+/**
+ * The first part of `value` that no merge or check can take, or `undefined`:
+ *
+ *   - a cycle, at path `''`: a YAML alias inside the node that it names
+ *     (`a: &x { b: *x }`). An alias used twice side by side is no cycle.
+ *   - a mapping key in `RESERVED_KEYS`, at the key's path.
+ *
+ * @param {unknown} value
+ * @param {string} [path]  the JSON pointer of `value`
+ * @param {Set<object>} [ancestors]
+ * @returns {{ path: string, message: string } | undefined}
+ */
+function unmergeable(value, path = '', ancestors = new Set()) {
+  if (value === null || typeof value !== 'object') return undefined;
+  if (ancestors.has(value)) return { path: '', message: 'an alias refers to a node that holds it' };
   ancestors.add(value);
-  const found = Object.values(value).some((child) => holdsItself(child, ancestors));
+  let found;
+  for (const [key, child] of Object.entries(value)) {
+    const at = `${path}/${pointerToken(key)}`;
+    found =
+      isMapping(value) && RESERVED_KEYS.has(key)
+        ? { path: at, message: `the key ${key} is reserved: the merge cannot hold it` }
+        : unmergeable(child, at, ancestors);
+    if (found !== undefined) break;
+  }
   ancestors.delete(value);
   return found;
 }

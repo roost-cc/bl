@@ -15,8 +15,7 @@
 
 import Ajv2020, { _ } from 'ajv/dist/2020.js';
 import { isAbsolute, relative, sep } from 'path';
-import { isMapping } from './files.js';
-import { pointerToken } from './layers.js';
+import { isMapping, pointerToken } from './files.js';
 
 /** @typedef {import('./files.js').Fault} Fault */
 /** @typedef {import('./layers.js').Layer} Layer */

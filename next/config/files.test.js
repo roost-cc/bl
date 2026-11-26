@@ -87,6 +87,26 @@ test('readYaml turns an error the library throws as it builds the value into a f
   }
 });
 
+test('readYaml turns a key that the merge cannot hold into a fault at its path; other prototype names load', () => {
+  for (const key of ['__proto__', 'constructor', 'prototype', 'hasOwnProperty']) {
+    for (const [text, path] of [
+      [`'${key}': {}\nlater: 1\n`, `/${key}`],
+      [`repos:\n  '${key}': {}\n  later: {}\n`, `/repos/${key}`],
+      [`a:\n  - b: { '${key}': 1 }\n`, `/a/0/b/${key}`],
+    ]) {
+      const file = yamlFile(text);
+      assert.deepEqual(readYaml(file), {
+        fault: { file, path, rule: 'yaml', message: `the key ${key} is reserved: the merge cannot hold it` },
+      });
+    }
+    // The name as a value, not a key, is no fault.
+    assert.deepEqual(readYaml(yamlFile(`a: ['${key}']\n`)), { value: { a: [key] } });
+  }
+  for (const key of ['toString', 'valueOf', 'isPrototypeOf', '__defineGetter__']) {
+    assert.deepEqual(readYaml(yamlFile(`repos:\n  ${key}: {}\n`)), { value: { repos: { [key]: {} } } });
+  }
+});
+
 test('readYaml turns a top level that is not a mapping into a fault with the file', () => {
   for (const text of ['- a\n- b\n', 'just text\n', '']) {
     const file = yamlFile(text);

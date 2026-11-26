@@ -197,6 +197,39 @@ test('each YAML rejection is a fault that names its file, in each file a load re
   }
 });
 
+test('every repo name keeps its entry and its scope, or is a fault that names its file', () => {
+  const MESSAGE = (key) => `yaml: the key ${key} is reserved: the merge cannot hold it`;
+  for (const key of ['__proto__', 'constructor', 'prototype', 'hasOwnProperty']) {
+    const shop = `repos:\n  '${key}': {}\n  later: {}\n`;
+    for (const [files, line] of [
+      [{ 'backlog/backlog.yaml': shop }, `backlog.yaml: /repos/${key}: ${MESSAGE(key)}`],
+      [
+        { 'backlog/backlog.yaml': shop, '.config/bl/config.yaml': 'repos:\n  later: null\n' },
+        `backlog.yaml: /repos/${key}: ${MESSAGE(key)}`,
+      ],
+      [
+        { 'backlog/backlog.yaml': 'repos: { later: {} }\n', '.config/bl/config.yaml': `repos:\n  '${key}': {}\n` },
+        `~/.config/bl/config.yaml: /repos/${key}: ${MESSAGE(key)}`,
+      ],
+      [{ ...SHOP_ONLY, 'backlog/config/views.yaml': `'${key}': x\n` }, `config/views.yaml: /${key}: ${MESSAGE(key)}`],
+    ]) {
+      assert.deepEqual(faultLines(fixture(files), [...KINDS, VIEWS]), [line]);
+    }
+  }
+  // Other names of Object.prototype are ordinary repos, and a null beside them still deletes.
+  for (const key of ['toString', 'valueOf', 'isPrototypeOf', '__defineGetter__']) {
+    const config = load(
+      fixture({
+        'backlog/backlog.yaml': `repos:\n  ${key}: {}\n  later: {}\n`,
+        '.config/bl/config.yaml': 'repos:\n  later: null\n',
+      }),
+    );
+    assert.deepEqual(Object.keys(config.scope(null).repos), [key]);
+    assert.deepEqual(config.scope(key), { repos: { [key]: {} } });
+    assert.equal(config.scope('later'), undefined);
+  }
+});
+
 test('a who file kind: the shop file, then the operator file of the same name', () => {
   const dirs = fixture({
     ...SHOP_ONLY,
