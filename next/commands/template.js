@@ -15,7 +15,7 @@
  */
 
 import { render } from '../config/template.js';
-import { tableCells } from './table.js';
+import { oneLine, tableCells } from './table.js';
 
 /** @typedef {import('../config/load.js').Configuration} Configuration */
 /** @typedef {import('./table.js').Column} Column */
@@ -68,8 +68,8 @@ export async function renderTemplate(view, records, options) {
 /** The alignment row's cell for each `justify`. */
 const ALIGN = Object.freeze({ left: ':--', right: '--:', center: ':-:' });
 
-/** A cell's text that keeps the table one row per record: `|` as `\|`, a newline as a space. */
-const markdownCell = (text) => text.replaceAll('|', '\\|').replace(/\r?\n/g, ' ');
+/** A cell's text that keeps the table one row per record: `|` as `\|`, a line break as a space. */
+const markdownCell = (text) => oneLine(text).replaceAll('|', '\\|');
 
 /** One Markdown table row. */
 const markdownRow = (cells) => `| ${cells.map(markdownCell).join(' | ')} |\n`;

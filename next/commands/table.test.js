@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { withEnv } from '../test/helpers/env.js';
 import { ESCAPE, recorder } from '../test/helpers/streams.js';
 import { formatValue, renderTable } from './table.js';
+import { markdownTable } from './template.js';
 import { viewEnvironment } from './view-cel.js';
 
 const SCHEMA = {
@@ -147,6 +148,40 @@ test('with NO_COLOR=1 on a terminal, a styled and highlighted table has no escap
   );
   assert.doesNotMatch(out, ESCAPE);
   assert.equal(out, 'ID    Title\nS-1   A story\nS-22  Another story\n');
+});
+
+test('table_cells_headers_and_footer_keep_one_line: each line break in a header, cell or footer is a space', () => {
+  const breaks = ['\n', '\r\n', '\r', '\v', '\f', '\u0085', '\u2028', '\u2029'];
+  for (const br of breaks) {
+    const label = JSON.stringify(br);
+    const records = [
+      { id: `a${br}b`, title: ['c', `d${br}e`], points: 1 },
+      { id: 'S-2', title: [], points: 2 },
+    ];
+    const view = {
+      columns: [
+        column('id', `I${br}D`, 'left', { style: '"big"' }),
+        column('title', 'T', 'left', { truncate: true }),
+        column('record.title', 'X'),
+      ],
+      // A JSON string literal is a CEL string literal with the same escapes.
+      footer: JSON.stringify(`f${br}g`),
+    };
+    const expected = 'I D  T       X\na b  c, d e  c, d e\nS-2\nf g\n';
+    // Plain, styled, and shortened on a terminal: each record is one physical line.
+    assert.equal(renderTable(view, records, { env, width: null }), expected, label);
+    const styled = withEnv(COLOR, () => renderTable(view, records, { env, width: null, styling: styling(/ /g) }));
+    assert.match(styled, ESCAPE, label);
+    assert.equal(styled.replace(/\u001b\[\d+m/g, ''), expected, label);
+    const short = renderTable(view, records, { env, width: 18 });
+    assert.equal(short.split('\n').length - 1, 4, label);
+    assert.doesNotMatch(short, /[\v\f\r\x85\p{Zl}\p{Zp}]/u, label);
+    assert.equal(
+      markdownTable(view, records, { env }),
+      '| I D | T | X |\n| :-- | :-- | :-- |\n| a b | c, d e | c, d e |\n| S-2 |  |  |\n',
+      label,
+    );
+  }
 });
 
 test('an indent of depth 2 indents the cell by four spaces', () => {

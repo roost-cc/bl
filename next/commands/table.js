@@ -58,6 +58,17 @@ export function formatValue(value) {
   return json(value);
 }
 
+/** A line break that a terminal shows as a new line. */
+const LINE_BREAK = /\r\n|[\n\v\f\r\x85\p{Zl}\p{Zp}]/gu;
+
+/**
+ * `text` on one physical line: each line break as a space. Every header,
+ * cell and footer of a table and of its Markdown form goes through it.
+ * @param {string} text
+ * @returns {string}
+ */
+export const oneLine = (text) => text.replace(LINE_BREAK, ' ');
+
 /** The indent of a cell: two spaces per level; a level that is not a whole number ≥ 0 is none. */
 function indentOf(level) {
   const n = typeof level === 'bigint' ? Number(level) : level;
@@ -119,7 +130,7 @@ export function tableCells(columns, records, env) {
     const vars = recordVars(record);
     return columns.map((column) => {
       const indent = column.indent === undefined ? '' : indentOf(evaluate(env, column.indent, vars));
-      return indent + formatValue(evaluate(env, column.field, vars));
+      return oneLine(indent + formatValue(evaluate(env, column.field, vars)));
     });
   });
 }
@@ -160,7 +171,7 @@ function recordStyles(view, records, env, scheme) {
  */
 export function renderTable(view, records, { env, width, styling }) {
   const { columns } = view;
-  const rows = [columns.map((column) => column.header), ...tableCells(columns, records, env)];
+  const rows = [columns.map((column) => oneLine(column.header)), ...tableCells(columns, records, env)];
   const widths = columnWidths(columns, rows, width);
   const styles = styling === undefined ? [] : recordStyles(view, records, env, styling.scheme);
   /** A body cell, shortened, then its matches highlighted, then styled; the header is plain. */
@@ -179,7 +190,7 @@ export function renderTable(view, records, { env, width, styling }) {
   );
   if (view.footer !== undefined && records.length !== 1) {
     const footer = evaluate(env, view.footer, recordsVars(records));
-    if (footer !== undefined) lines.push(formatValue(footer));
+    if (footer !== undefined) lines.push(oneLine(formatValue(footer)));
   }
   return lines.map((line) => `${line}\n`).join('');
 }
