@@ -6,8 +6,9 @@
  * backlog's root. The types are the values of `id_prefixes`. An entry of a
  * type's `dir` is an item when it is a directory whose name is a prefix of
  * that type and a number, followed by `-` (`ids.js` reads it). Two such
- * directories for one id are an error that names both. `backlogText` reads
- * one backlog file, for the store's other modules.
+ * directories for one id are an error that names both. `idPrefixes` and
+ * `backlogText` (one backlog file) are the reads that the store's other
+ * modules share.
  */
 
 import { readFileSync, readdirSync } from 'fs';
@@ -27,7 +28,7 @@ import { parseId } from './ids.js';
  * @param {StoreContext} ctx
  * @returns {Record<string, string>}
  */
-function idPrefixes(ctx) {
+export function idPrefixes(ctx) {
   return ctx.config.scope(null).id_prefixes ?? {};
 }
 
