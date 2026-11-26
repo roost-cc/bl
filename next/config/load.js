@@ -4,10 +4,9 @@
  * `loadConfiguration` reads every file of every kind, layers it per scope
  * (D4), checks each layered result against its kind's schema, compiles each
  * CEL string the schemas mark (D5), runs the CEL self-test (D6), and reads and
- * parses the partials (D7). It then
- * throws `ConfigurationFaults` with every fault, or returns the frozen
- * configuration. Nothing reads a configuration file after it returns
- * (architecture.md, "Configuration loads once").
+ * parses the partials (D7). It then throws `ConfigurationFaults` with every
+ * fault, or returns the frozen configuration. Nothing reads a configuration
+ * file after it returns (architecture.md, "Configuration loads once").
  */
 
 import { readFileSync, readdirSync, statSync } from 'fs';
