@@ -219,6 +219,13 @@ test('the cel keyword counts a string only in a branch that accepts the value', 
     [{ if: { type: 'number' }, then: PLAIN, else: { type: 'string', cel: 'bool' } }, 'title', ['/x']],
     [{ not: { type: 'string', cel: 'bool', minLength: 9 } }, 'title', []],
     [{ type: 'array', contains: { type: 'string', maxLength: 1, cel: 'bool' } }, ['title', 't'], ['/x/1']],
+    // A trial still marks what it evaluates, so unevaluatedProperties sees it.
+    [{ type: 'object', anyOf: [OBJ([])], unevaluatedProperties: false }, { when: 'title' }, ['/x/when']],
+    [
+      { type: 'object', oneOf: [OBJ(['other']), OBJ([])], unevaluatedProperties: false },
+      { when: 'title' },
+      ['/x/when'],
+    ],
   ];
   for (const [x, value, paths] of rows) {
     const schema = { type: 'object', properties: { x }, $defs: { marked: MARKED } };

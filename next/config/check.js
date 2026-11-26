@@ -160,9 +160,10 @@ export function shapeChecker() {
       const list = gen.scopeValue('keyword', { ref: recorded });
       const mark = gen.const('celMark', _`${list}.length`);
       const valid = gen.name('valid');
-      cxt.subschema({ keyword: TRIAL }, valid);
+      const sub = cxt.subschema({ keyword: TRIAL }, valid);
       gen.if(_`!${valid}`, () => gen.assign(_`${list}.length`, mark));
       cxt.ok(valid);
+      cxt.mergeEvaluated(sub);
     },
   });
   return {
