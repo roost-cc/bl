@@ -15,6 +15,7 @@
 
 import Ajv2020 from 'ajv/dist/2020.js';
 import { isAbsolute, relative, sep } from 'path';
+import { isMapping } from './files.js';
 import { pointerToken } from './layers.js';
 
 /** @typedef {import('./files.js').Fault} Fault */
@@ -40,42 +41,34 @@ const tokensOf = (pointer) =>
         .split('/')
         .map((t) => t.replaceAll('~1', '/').replaceAll('~0', '~'));
 
-/** How many leading tokens of `tokens` the patch holds. */
-function depthIn(patch, tokens) {
-  let value = patch;
-  let depth = 0;
-  for (const token of tokens) {
-    if (value === null || typeof value !== 'object' || !Object.hasOwn(value, token)) break;
-    value = value[token];
-    depth++;
-  }
-  return depth;
-}
-
 /**
  * The file and the path, as that file writes it, of the value at `path` in
- * the result of `layers` (D5). The layer that holds the most of the path
- * wins, and the highest of those: a lower layer that holds the whole path
- * gave the value, though a higher one holds a prefix and merged beside it.
- * When no layer holds even the first token (a required key that nobody set),
- * the lowest layer's file is named.
+ * the result of `layers` (D5). The layers are followed as JSON Merge Patch
+ * applies them, lowest first: each prefix of the path belongs to the last
+ * layer that wrote it, and the layer of the longest prefix that one owns is
+ * named. A layer that holds a prefix as a mapping merges beside the values
+ * below it, so a lower layer that holds more of the path keeps them. A layer
+ * that holds a prefix as anything else (a list, a scalar, `null`) replaces
+ * all below it, so no lower layer keeps a part of it. When no layer holds
+ * even the first token (a required key that nobody set), the lowest layer's
+ * file is named; the root belongs to the highest layer.
  * @param {string} path  a JSON pointer into the layered result
  * @param {Layer[]} layers  lowest first; at least one
  * @returns {{ file: string, path: string }}
  */
 export function attribute(path, layers) {
   const tokens = tokensOf(path);
-  let best = null;
-  let bestDepth = 0;
+  /** @type {Layer[]} the layer that last wrote each prefix: index 0 for the first token */
+  const owners = [];
   for (const layer of layers) {
-    const depth = depthIn(layer.patch, tokens);
-    // Every layer holds the root; for any other path, a layer must hold the first token.
-    if (depth >= bestDepth && (depth > 0 || tokens.length === 0)) {
-      best = layer;
-      bestDepth = depth;
+    let value = layer.patch;
+    for (let depth = 0; depth < tokens.length && isMapping(value) && Object.hasOwn(value, tokens[depth]); depth++) {
+      value = value[tokens[depth]];
+      owners[depth] = layer;
+      if (!isMapping(value)) owners.length = depth + 1;
     }
   }
-  best ??= layers[0];
+  const best = owners.at(-1) ?? (tokens.length === 0 ? layers.at(-1) : layers[0]);
   return { file: best.file, path: best.pointer + path };
 }
 

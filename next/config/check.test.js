@@ -91,6 +91,49 @@ test('the layer that holds the whole path wins over a higher one that holds only
   assert.deepEqual(attribute('', layers), { file: OPERATOR, path: '' });
 });
 
+test('attribute follows replacement: a list, a scalar or null replaces all below it; a mapping merges', () => {
+  const S = { file: SHOP, pointer: '' };
+  const O = { file: OPERATOR, pointer: '' };
+  const rows = [
+    // [shop patch, operator patch, failing path, the file named]
+    [{ entries: [{ id: 'old' }] }, { entries: [{}] }, '/entries/0/id', OPERATOR], // required in a replaced list
+    [{ entries: [{ id: 'old' }] }, { entries: [{ id: 5 }] }, '/entries/0/id', OPERATOR], // type in a replaced list
+    [{ cols: ['a', 'b', 'c'] }, { cols: ['x', 'y +'] }, '/cols/1', OPERATOR], // a CEL string in a replaced list
+    [{ entries: [{ id: 5 }] }, { other: 1 }, '/entries/0/id', SHOP], // a list no one replaced
+    [{ a: { b: 5 } }, { a: 'x' }, '/a', OPERATOR], // a scalar replaces a mapping
+    [{ a: 5 }, { a: { c: 1 } }, '/a/b', OPERATOR], // a mapping replaces a scalar
+    [{ a: { b: 5 } }, { a: { c: 1 } }, '/a/b', SHOP], // a mapping merges beside the lower value
+    [{ a: { b: 1 } }, { a: { b: 5 } }, '/a/b', OPERATOR], // equal depth: the higher layer
+    [{ a: { b: 1 } }, { a: null }, '/a', OPERATOR], // null deletes
+    [{ a: { b: 1 } }, { a: { b: null } }, '/a/b', OPERATOR], // null deletes below a merge
+    [{ a: 1 }, { b: 1 }, '/z', SHOP], // an absent key: the lowest layer
+    [{ a: 1 }, { b: 1 }, '', OPERATOR], // the root: the highest layer
+  ];
+  for (const [shop, operator, path, file] of rows) {
+    const layers = [
+      { ...S, patch: shop },
+      { ...O, patch: operator },
+    ];
+    assert.deepEqual(attribute(path, layers), { file, path }, JSON.stringify([shop, operator, path]));
+  }
+});
+
+test('a fault inside a list that the operator replaced names the operator file', () => {
+  const layers = [
+    { file: SHOP, pointer: '', patch: { entries: [{ id: 'old' }] } },
+    { file: OPERATOR, pointer: '', patch: { entries: [{}] } },
+  ];
+  const schema = {
+    type: 'object',
+    properties: {
+      entries: { type: 'array', items: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } } },
+    },
+  };
+  assert.deepEqual(shapeChecker().compile(schema)(applyLayers(layers), layers).faults, [
+    { file: OPERATOR, path: '/entries/0/id', rule: 'required', message: "must have required property 'id'" },
+  ]);
+});
+
 test('a repo entry that is not a mapping is a fault at /repos/<name>, in the file that wrote it', () => {
   const shop = { file: SHOP, value: { repos: { utop: {} } } };
   const operator = { file: OPERATOR, value: { repos: { utop: 'x' } } };
@@ -134,6 +177,17 @@ test('the cel keyword: a dyn string takes any type, and still must compile', () 
   assert.deepEqual(celFaultsOf({ columns: ['title', 'id_number + 1', 'record.type'] }), []);
   assert.deepEqual(celFaultsOf({ columns: ['title', 'title +'] }), [
     { file: '/b/config/x.yaml', path: '/columns/1', rule: 'cel', message: 'Unexpected token: EOF' },
+  ]);
+});
+
+test('a CEL string inside a list that the operator replaced names the operator file', () => {
+  const layers = [
+    { file: SHOP, pointer: '', patch: { columns: ['title', 'id'] } },
+    { file: OPERATOR, pointer: '', patch: { columns: ['title', 'title +'] } },
+  ];
+  const { cel } = shapeChecker().compile(CEL_SCHEMA)(applyLayers(layers), layers);
+  assert.deepEqual(compileCel(cel, celEnvironment({ predicates: {} })), [
+    { file: OPERATOR, path: '/columns/1', rule: 'cel', message: 'Unexpected token: EOF' },
   ]);
 });
 
