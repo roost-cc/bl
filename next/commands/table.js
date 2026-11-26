@@ -6,7 +6,8 @@
  * spaces. `justify` aligns the header and the cells. On a terminal narrower
  * than the table, the `truncate: true` columns are shortened, the widest
  * first, one character at a time, each shortened value ending with `…`. The
- * view's `footer` is one line after the table, for more than one record.
+ * view's `footer` is one line after the table, for any number of records
+ * but one.
  * Widths are terminal columns, from `string-width`. With a color scheme, each
  * body cell gets its column's and its row's style, and the matches of the
  * op's search pattern the `match` style, after truncation (D8).
@@ -176,7 +177,7 @@ export function renderTable(view, records, { env, width, styling }) {
       .join(GAP)
       .trimEnd(),
   );
-  if (view.footer !== undefined && records.length > 1) {
+  if (view.footer !== undefined && records.length !== 1) {
     const footer = evaluate(env, view.footer, recordsVars(records));
     if (footer !== undefined) lines.push(formatValue(footer));
   }

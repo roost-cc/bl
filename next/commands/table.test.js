@@ -65,6 +65,7 @@ test('the footer is one line after the table; a failing footer or one record giv
   const view = { columns: [column('id', 'ID')], footer: 'string(size(records)) + " stories"' };
   assert.equal(renderTable(view, RECORDS, { env, width: null }), 'ID\nS-1\nS-22\n2 stories\n');
   assert.equal(renderTable(view, RECORDS.slice(0, 1), { env, width: null }), 'ID\nS-1\n');
+  assert.equal(renderTable(view, [], { env, width: null }), 'ID\n0 stories\n');
   const failing = { ...view, footer: 'records[5].id' };
   assert.equal(renderTable(failing, RECORDS, { env, width: null }), 'ID\nS-1\nS-22\n');
 });
