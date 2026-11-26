@@ -46,15 +46,39 @@ test('{{> name}} uses the partial from the configuration', async () => {
   await assert.rejects(renderTemplate({ template: '{{> nope}}' }, RECORDS, { config }), /no partial: nope/);
 });
 
-test('{{#bl}} runs each rendered command line once through bl, and puts its text in place', async () => {
-  const lines = [];
-  const bl = async (line) => {
-    lines.push(line);
-    return `<${line}>`;
-  };
-  const view = { records_template: '{{#records}}{{#bl}}show {{id}}{{/bl}} {{/records}}{{#bl}}show S-1{{/bl}}' };
-  assert.equal(await renderTemplate(view, RECORDS, { config: configWith(), bl }), '<show S-1> <show S-2> <show S-1>');
-  assert.deepEqual(lines, ['show S-1', 'show S-2']);
+test('repeated_bl_occurrences_run_separately: each {{#bl}} occurrence runs once, in order, and gets its own text', async () => {
+  const config = configWith({ show: '{{#bl}}show S-1{{/bl}} ' });
+  for (const [label, view, records, expected] of [
+    [
+      'distinct lines and records',
+      { records_template: '{{#records}}{{#bl}}show {{id}}{{/bl}} {{/records}}' },
+      RECORDS,
+      ['show S-1', 'show S-2'],
+    ],
+    [
+      'repeated literal lines',
+      { records_template: '{{#bl}}show S-1{{/bl}} {{#bl}}show S-1{{/bl}} ' },
+      [],
+      ['show S-1', 'show S-1'],
+    ],
+    [
+      'repeated lines from records',
+      { records_template: '{{#records}}{{#bl}}show S-1{{/bl}} {{/records}}' },
+      RECORDS,
+      ['show S-1', 'show S-1'],
+    ],
+    ['repeated lines from partials', { records_template: '{{> show}}{{> show}}' }, [], ['show S-1', 'show S-1']],
+  ]) {
+    let calls = 0;
+    const bl = async (line) => `<${line} #${++calls}>`;
+    const out = await renderTemplate(view, records, { config, bl });
+    assert.equal(out, expected.map((line, i) => `<${line} #${i + 1}> `).join(''), label);
+    assert.equal(calls, expected.length, label);
+  }
+  // A template view: each record's occurrence runs on its own.
+  let calls = 0;
+  const bl = async () => String(++calls);
+  assert.equal(await renderTemplate({ template: '{{#bl}}x{{/bl}}' }, RECORDS, { config, bl }), '1\n2\n');
 });
 
 test('an error in bl fails the render with its message', async () => {

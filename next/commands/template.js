@@ -10,8 +10,9 @@
  *
  * The renderer is F-136's `render`, with the partials of the configuration.
  * `{{#bl}}` runs a command, which is async, and Mustache is not. So a template
- * with `bl` renders twice: the first pass collects each rendered command line,
- * `bl` runs each line once, and the second pass puts each text in place.
+ * with `bl` renders twice: the first pass collects the rendered command line of
+ * each occurrence, `bl` runs each occurrence once, in order, and the second
+ * pass puts each text in place.
  */
 
 import { render } from '../config/template.js';
@@ -37,15 +38,15 @@ import { oneLine, tableCells } from './table.js';
 async function renderWithBl(template, data, { config, bl }) {
   const partial = config.partial;
   if (bl === undefined) return render(template, data, { partial });
-  /** @type {Map<string, string>} */
-  const texts = new Map();
-  const collect = (line) => {
-    texts.set(line, '');
-    return '';
-  };
-  render(template, data, { partial, bl: collect });
-  for (const line of texts.keys()) texts.set(line, await bl(line));
-  return render(template, data, { partial, bl: (line) => texts.get(line) ?? '' });
+  /** @type {string[]} */
+  const lines = [];
+  render(template, data, { partial, bl: (line) => (lines.push(line), '') });
+  /** @type {string[]} */
+  const texts = [];
+  for (const line of lines) texts.push(await bl(line));
+  // The second pass meets the occurrences in the same order as the first.
+  let next = 0;
+  return render(template, data, { partial, bl: () => texts[next++] ?? '' });
 }
 
 /**
