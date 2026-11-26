@@ -373,8 +373,9 @@ function putBack(ctx, written, made) {
  * a file or a directory that another writer changed after the write began
  * stays as that writer left it (`putBack`).
  * A file that no longer holds what the write first read from it (another
- * writer changed it) fails its write with code `ECHANGED`, and keeps the
- * other writer's change. A staged file whose text equals what the write
+ * writer changed it), or that another writer changed after the store write
+ * wrote it and before the commit, fails the write with code `ECHANGED`, and
+ * keeps the other writer's change. A staged file whose text equals what the write
  * first read is not written. When nothing changed, nothing is written or
  * committed. When the
  * written files hold what `HEAD` holds (the write undid uncommitted edits),
@@ -455,6 +456,10 @@ async function writeLocked(ctx, { message, trailers = [] }, fn) {
     for (const { path, base, text } of changed) {
       atomicWriteFile(ctx.backlogDir, join(ctx.backlogDir, path), text, { preserve: true, unchanged: base });
       written.push({ path, before: base, text });
+    }
+    const edited = written.filter(({ path, text }) => backlogText(ctx, path) !== text).map(({ path }) => path);
+    if (edited.length > 0) {
+      throw Object.assign(new Error(`${edited.join(', ')} changed while bl wrote it`), { code: 'ECHANGED' });
     }
     const itemTrailers = items.map((item) => `Bl-Item: ${item.id}`);
     await commitPaths(

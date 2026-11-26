@@ -569,15 +569,15 @@ test('storeWrite_serializes_same_process_callers_and_rejects_changed_source', as
   });
 
   /**
-   * Each moment another writer can edit a staged file before the store write
-   * renames it: during fn after it staged (rename 0), and just before the
-   * rename of index.md (1) or of state.json (2). An edit of index.md after
-   * its own rename is the put-back's case, below.
+   * Each moment another writer can edit a staged file before the commit:
+   * during fn after it staged (rename 0), and just before the rename of
+   * index.md (1) or of state.json (2), which for index.md is after its own
+   * rename.
    */
   const MOMENTS = [
     ['after staging', 0, [S1, 'stories/S1-one/state.json']],
     ['at the first rename', 1, [S1, 'stories/S1-one/state.json']],
-    ['at the second rename', 2, ['stories/S1-one/state.json']],
+    ['at the second rename', 2, [S1, 'stories/S1-one/state.json']],
   ];
   for (const [moment, rename, victims] of MOMENTS) {
     for (const victim of victims) {
