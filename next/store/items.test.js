@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { fixture, load } from '../test/helpers/config-fixture.js';
-import { itemDir, listItems, nextNumber } from './items.js';
+import { backlogText, itemDir, listItems, nextNumber } from './items.js';
 
 const BACKLOG = 'repos: {}\nid_prefixes:\n  S: story\n  F: feature\n  T: task\n  TH: theme\n';
 
@@ -81,6 +84,38 @@ test('two directories for one id are an error that names both', () => {
   assert.throws(() => itemDir(ctx, 'S-7'), { message: both });
   assert.throws(() => listItems(ctx), { message: both });
   assert.throws(() => nextNumber(ctx, 'story'), { message: both });
+});
+
+test('item_directory_stays_inside_the_backlog: a dir or an item file that leaves it through a link is an error', () => {
+  const outside = mkdtempSync(join(tmpdir(), 'bl-outside-'));
+  mkdirSync(join(outside, 'S3-outside'));
+  writeFileSync(join(outside, 'secret.md'), 'secret\n');
+  const cases = [
+    ['linked', (root) => symlinkSync(outside, join(root, 'linked')), /linked is not inside the backlog/],
+    [
+      'nested/stories',
+      (root) => symlinkSync(outside, join(root, 'nested')),
+      /nested\/stories is not inside the backlog/,
+    ],
+    ['self', (root) => symlinkSync('.', join(root, 'self')), /self is not inside the backlog/],
+    ['gone', (root) => symlinkSync(join(outside, 'missing'), join(root, 'gone')), /gone is a link to a missing file/],
+  ];
+  for (const [dir, link, message] of cases) {
+    const dirs = fixture({ 'backlog/backlog.yaml': BACKLOG, 'backlog/config/items/story.yaml': `dir: ${dir}\n` });
+    link(dirs.backlogDir);
+    const ctx = { backlogDir: dirs.backlogDir, config: load(dirs) };
+    assert.throws(() => listItems(ctx), { message }, dir);
+    assert.throws(() => itemDir(ctx, 'S-3'), { message }, dir);
+    assert.throws(() => nextNumber(ctx, 'story'), { message }, dir);
+  }
+  const ctx = backlog({ 'stories/S1-one/index.md': '# One\n' });
+  symlinkSync(join(outside, 'secret.md'), join(ctx.backlogDir, 'stories/S1-one/state.json'));
+  symlinkSync(join(outside, 'missing.md'), join(ctx.backlogDir, 'stories/S1-one/log.jsonl'));
+  symlinkSync('index.md', join(ctx.backlogDir, 'stories/S1-one/inner.md'));
+  assert.throws(() => backlogText(ctx, 'stories/S1-one/state.json'), { message: /state\.json is not inside/ });
+  assert.throws(() => backlogText(ctx, 'stories/S1-one/log.jsonl'), { message: /log\.jsonl is a link to a missing/ });
+  assert.equal(backlogText(ctx, 'stories/S1-one/inner.md'), '# One\n');
+  assert.equal(backlogText(ctx, 'stories/S1-one/attributes.json'), null);
 });
 
 test('an id with no known prefix is an error that names it', () => {

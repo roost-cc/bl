@@ -12,7 +12,8 @@
     },
     "dir": {
       "type": "string",
-      "description": "The directory of the type's items, relative to the backlog repo's root, for example `stories` (F-137 D1). bl has no default."
+      "pattern": "^(?!\\.\\.?(?:/|$))(?!.*/\\.\\.?(?:/|$))[^/\\\\]+(?:/[^/\\\\]+)*$",
+      "description": "The directory of the type's items, relative to the backlog repo's root, for example `stories` (F-137 D1): one or more names joined by `/`, none of them `.` or `..`, so it is never empty, absolute or outside the backlog. bl has no default."
     },
     "sections": {
       "type": "array",

@@ -57,6 +57,39 @@ test('an item definition with no dir is a fault that names its file, /dir and re
   assert.deepEqual(faultLines(dirs), ["config/items/story.yaml: /dir: required: must have required property 'dir'"]);
 });
 
+test('item_definition_rejects_invalid_dir_paths', () => {
+  const bad = [
+    '',
+    '.',
+    '..',
+    '../outside',
+    'stories/../../outside',
+    'stories/..',
+    './stories',
+    'a/./b',
+    '/tmp/outside',
+  ];
+  const more = ['stories/', 'a//b', 'a\\\\b'];
+  for (const dir of [...bad, ...more]) {
+    const dirs = fixture({
+      'backlog/backlog.yaml': BACKLOG,
+      'backlog/config/items/story.yaml': `dir: ${JSON.stringify(dir)}\n`,
+    });
+    assert.deepEqual(
+      faultLines(dirs).map((line) => line.split(': must match')[0]),
+      ['config/items/story.yaml: /dir: pattern'],
+      dir,
+    );
+  }
+  for (const dir of ['stories', 'work/items', '.items', 'a..b']) {
+    const dirs = fixture({
+      'backlog/backlog.yaml': BACKLOG,
+      'backlog/config/items/story.yaml': `dir: ${JSON.stringify(dir)}\n`,
+    });
+    assert.equal(load(dirs).file('items', 'story.yaml').dir, dir);
+  }
+});
+
 test('an unknown key in an item, a section or an attribute definition is an additionalProperties fault', () => {
   const dirs = fixture({
     'backlog/backlog.yaml': BACKLOG,

@@ -30,7 +30,7 @@ import { commitPaths } from './commit.js';
 import { DOCUMENT, checkDocument, parseDocument } from './document.js';
 import { dirName, formatId, parseId } from './ids.js';
 import { ATTRIBUTES, STATE, checkAttributes, checkState, jsonText, parseJson } from './item-json.js';
-import { backlogText, idPrefixes, itemDefinition, itemDir, nextNumber } from './items.js';
+import { backlogText, idPrefixes, itemDefinition, itemDir, nextNumber, typeDir } from './items.js';
 import {
   LOG,
   USAGE,
@@ -165,7 +165,7 @@ function writer(ctx, staged, created) {
     const ours = [...created.values()].filter((item) => item.type === type).map((item) => item.number + 1);
     const number = Math.max(nextNumber(ctx, type), ...ours);
     const id = formatId(prefix, number);
-    const item = { id, prefix, number, type, path: `${definition.dir}/${dirName({ prefix, number }, title)}` };
+    const item = { id, prefix, number, type, path: `${typeDir(ctx, type)}/${dirName({ prefix, number }, title)}` };
     created.set(id, item);
     const document = (definition.sections ?? []).reduce(
       (text, { name }) => sections.reset(text, definition, name),

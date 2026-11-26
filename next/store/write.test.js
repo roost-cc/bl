@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { fixture, load } from '../test/helpers/config-fixture.js';
 import { git, initRepo } from '../test/helpers/git.js';
@@ -449,6 +450,18 @@ test('a log line that is not JSON, an entry that fails its schema and an unknown
     },
   );
   assert.deepEqual(status(ctx), []);
+});
+
+test('a store write to an item file that links outside the backlog throws and leaves the target as it was', async () => {
+  const ctx = backlog({ 'stories/S1-one/state.json': null });
+  const outside = join(mkdtempSync(join(tmpdir(), 'bl-outside-')), 'state.json');
+  writeFileSync(outside, 'outside\n');
+  symlinkSync(outside, join(ctx.backlogDir, 'stories/S1-one/state.json'));
+  await assert.rejects(
+    storeWrite(ctx, { message: 'm' }, (w) => w.state('S-1', { status: 'draft', run: 'idle' })),
+    { message: /stories\/S1-one\/state\.json is not inside the backlog/ },
+  );
+  assert.equal(readFileSync(outside, 'utf8'), 'outside\n');
 });
 
 /** One store write operation on S-1, with the item file it writes. */

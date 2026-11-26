@@ -11,8 +11,9 @@
  * modules share.
  */
 
-import { readFileSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { existsSync, lstatSync, readFileSync, readdirSync } from 'fs';
+import { join, sep } from 'path';
+import { canonical } from '../lib/lock.js';
 import { parseId } from './ids.js';
 
 /**
@@ -47,13 +48,39 @@ export function itemDefinition(ctx, type) {
 }
 
 /**
- * The `dir` of a type's item definition.
+ * Throw when the backlog path `path` (relative to its root) leaves the
+ * backlog: when it resolves, through its links, to the root or to a place
+ * outside it, or when it is a link to a missing file, which a write would
+ * create at the link's target. The schema of `dir` already refuses `..` and
+ * absolute paths; this catches the links.
+ *
+ * @param {StoreContext} ctx
+ * @param {string} path
+ */
+function checkInside(ctx, path) {
+  const full = join(ctx.backlogDir, path);
+  const root = canonical(ctx.backlogDir);
+  const abs = canonical(full);
+  if (!abs.startsWith(root + sep)) throw new Error(`${path} is not inside the backlog ${root}: it resolves to ${abs}`);
+  let link = false;
+  try {
+    link = lstatSync(full).isSymbolicLink();
+  } catch {
+    // Not there: nothing to follow.
+  }
+  if (link && !existsSync(full)) throw new Error(`${path} is a link to a missing file, outside what bl may write`);
+}
+
+/**
+ * The `dir` of a type's item definition, checked to be inside the backlog.
  *
  * @param {StoreContext} ctx
  * @param {string} type
  */
-function typeDir(ctx, type) {
-  return /** @type {string} */ (itemDefinition(ctx, type).dir);
+export function typeDir(ctx, type) {
+  const dir = /** @type {string} */ (itemDefinition(ctx, type).dir);
+  checkInside(ctx, dir);
+  return dir;
 }
 
 /**
@@ -132,13 +159,15 @@ export function nextNumber(ctx, type) {
 
 /**
  * The text of the backlog file `path` (relative to the backlog's root), or
- * `null` when it is not there.
+ * `null` when it is not there. A path that leaves the backlog through a link
+ * is an error.
  *
  * @param {StoreContext} ctx
  * @param {string} path
  * @returns {string|null}
  */
 export function backlogText(ctx, path) {
+  checkInside(ctx, path);
   try {
     return readFileSync(join(ctx.backlogDir, path), 'utf8');
   } catch (e) {
