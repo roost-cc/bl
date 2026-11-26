@@ -41,7 +41,9 @@ async function runBlNext(files, { backlog = true } = {}) {
 const ADDITIONAL = 'additionalProperties: must NOT have additional properties';
 
 test('bl-next exits 1 on an unknown top-level key in backlog.yaml, with one line that names it', async () => {
-  const { status, stdout, stderr, error } = await runBlNext({ 'backlog/backlog.yaml': 'repos: {}\nsigning_kye: x\n' });
+  const { status, stdout, stderr, error } = await runBlNext({
+    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: {}\nsigning_kye: x\n',
+  });
   assert.equal(error, null);
   assert.equal(stderr, `backlog.yaml: /signing_kye: ${ADDITIONAL}\n`);
   assert.equal(status, 1);
@@ -50,7 +52,7 @@ test('bl-next exits 1 on an unknown top-level key in backlog.yaml, with one line
 
 test("bl-next exits 1 on a bad key under repos.utop of the operator's config.yaml, and names that file", async () => {
   const { status, stderr } = await runBlNext({
-    'backlog/backlog.yaml': 'repos:\n  utop: {}\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos:\n  utop: {}\n',
     '.config/bl/config.yaml': 'repos:\n  utop:\n    signing_kye: x\n',
   });
   assert.equal(stderr, `~/.config/bl/config.yaml: /repos/utop/signing_kye: ${ADDITIONAL}\n`);
@@ -59,7 +61,7 @@ test("bl-next exits 1 on a bad key under repos.utop of the operator's config.yam
 
 test('bl-next exits 1 on a partial with an unclosed section, with one line that names the partial file', async () => {
   const { status, stdout, stderr } = await runBlNext({
-    'backlog/backlog.yaml': 'repos: {}\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: {}\n',
     'backlog/config/partials/head.mustache': '{{#items}}- {{title}}\n',
   });
   assert.equal(stderr, 'config/partials/head.mustache: : mustache: Unclosed section "items" at 22\n');
@@ -69,10 +71,10 @@ test('bl-next exits 1 on a partial with an unclosed section, with one line that 
 
 test('bl-next exits 1 on a null, false, 0 or empty repos, found by BL_BACKLOG_DIR or the walk, and names backlog.yaml and the rule', async () => {
   const rows = [
-    ['repos: null\n', "backlog.yaml: /repos: required: must have required property 'repos'\n"],
-    ['repos: false\n', 'backlog.yaml: /repos: type: must be object\n'],
-    ['repos: 0\n', 'backlog.yaml: /repos: type: must be object\n'],
-    ["repos: ''\n", 'backlog.yaml: /repos: type: must be object\n'],
+    ['color_scheme: mocha\nrepos: null\n', "backlog.yaml: /repos: required: must have required property 'repos'\n"],
+    ['color_scheme: mocha\nrepos: false\n', 'backlog.yaml: /repos: type: must be object\n'],
+    ['color_scheme: mocha\nrepos: 0\n', 'backlog.yaml: /repos: type: must be object\n'],
+    ["color_scheme: mocha\nrepos: ''\n", 'backlog.yaml: /repos: type: must be object\n'],
   ];
   for (const [yaml, line] of rows) {
     for (const backlog of [true, false]) {
@@ -85,7 +87,7 @@ test('bl-next exits 1 on a null, false, 0 or empty repos, found by BL_BACKLOG_DI
 
 test('bl-next with a valid backlog exits 2: no commands yet', async () => {
   const { status, stdout, stderr } = await runBlNext({
-    'backlog/backlog.yaml': 'repos:\n  utop: {}\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos:\n  utop: {}\n',
     '.config/bl/config.yaml': 'repos:\n  utop: {}\n',
   });
   assert.equal(stderr, 'bl-next: no commands yet\n');
