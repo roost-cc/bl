@@ -66,6 +66,21 @@ test('pager_counts_final_line_without_newline: a last line with no newline is a 
   }
 });
 
+test('pager_counts_template_control_line_breaks: every line break of a table is a line', () => {
+  for (const brk of ['\n', '\r\n', '\v', '\f', '\r', '\x85', ' ', ' ']) {
+    for (const [text, rows, paged] of [
+      [`a${brk}b`, 1, true],
+      [`a${brk}b`, 2, false],
+      [`a${brk}b${brk}`, 1, true],
+      [`a${brk}b${brk}`, 2, false],
+    ]) {
+      const pager = fakePager('pager');
+      const written = withEnv({ PAGER: pager.script }, () => pageOn(text, rows));
+      assert.deepEqual([written, pager.input()], paged ? ['', text] : [text, null], JSON.stringify([text, rows]));
+    }
+  }
+});
+
 test('with PAGER unset or empty and only more on PATH, more gets the text on its stdin', () => {
   for (const PAGER of [undefined, '', '  ']) {
     const more = fakePager('more');

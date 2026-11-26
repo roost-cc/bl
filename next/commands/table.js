@@ -58,8 +58,8 @@ export function formatValue(value) {
   return json(value);
 }
 
-/** A line break that a terminal shows as a new line. */
-const LINE_BREAK = /\r\n|[\n\v\f\r\x85\p{Zl}\p{Zp}]/gu;
+/** A line break that a terminal shows as a new line. The pager counts lines by it. */
+export const LINE_BREAK = /\r\n|[\n\v\f\r\x85\p{Zl}\p{Zp}]/gu;
 
 /**
  * `text` on one physical line: each line break as a space. Every header,

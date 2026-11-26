@@ -14,6 +14,7 @@
  */
 
 import { exitStatus, runChild, runCommandLine } from '../lib/child.js';
+import { LINE_BREAK } from './table.js';
 
 /** The pagers to try, in order, when `$PAGER` is unset or empty. */
 const FALLBACKS = ['less', 'more'];
@@ -21,8 +22,11 @@ const FALLBACKS = ['less', 'more'];
 /** The `LESS` of a pager when the operator has none. */
 const LESS = 'FRX';
 
-/** The lines of `text`, a last line with no newline included. */
-const lineCount = (text) => text.split('\n').length - (text === '' || text.endsWith('\n') ? 1 : 0);
+/** The lines of `text`, split at each line break of a table (`LINE_BREAK`), a last line with no break included. */
+const lineCount = (text) => {
+  const parts = text.split(LINE_BREAK);
+  return parts.length - (parts.at(-1) === '' ? 1 : 0);
+};
 
 /**
  * Write `text` to `stdout`, through the pager when `stdout` is a terminal
