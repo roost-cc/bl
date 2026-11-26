@@ -5,44 +5,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { ConfigurationFaults } from './check.js';
 import { KINDS } from './kinds.js';
-import { loadConfiguration } from './load.js';
 import { render } from './template.js';
-import { withEnv } from '../test/helpers/env.js';
-import { mkTempDir } from '../test/helpers/tempdir.js';
-
-/**
- * A home directory with a backlog in `<home>/backlog` and the operator's
- * directory in `<home>/.config/bl`, and `files` written under the home.
- * @param {Record<string, string>} files  path under the home → text
- */
-function fixture(files) {
-  const home = mkTempDir('bl-load-');
-  for (const [path, text] of Object.entries(files)) {
-    mkdirSync(dirname(join(home, path)), { recursive: true });
-    writeFileSync(join(home, path), text);
-  }
-  return { home, backlogDir: join(home, 'backlog'), operatorDir: join(home, '.config', 'bl') };
-}
-
-/** `loadConfiguration` on the fixture, with `$HOME` its home. */
-function load({ home, backlogDir, operatorDir }, kinds = KINDS) {
-  return withEnv({ HOME: home }, () => loadConfiguration({ backlogDir, operatorDir, kinds }));
-}
-
-/** The fault lines of a load that must fail. */
-function faultLines(dirs, kinds) {
-  try {
-    load(dirs, kinds);
-  } catch (error) {
-    if (error instanceof ConfigurationFaults) return error.message.split('\n');
-    throw error;
-  }
-  assert.fail('the load gave no fault');
-}
+import { faultLines, fixture, load } from '../test/helpers/config-fixture.js';
 
 /** A `both` kind whose schema has `who` beside `repos`. */
 const BOTH = {
