@@ -49,6 +49,23 @@ test('a 3-line text, a text that fits, or stdout off a terminal runs no pager', 
   assert.equal(pager.input(), null);
 });
 
+test('pager_counts_final_line_without_newline: a last line with no newline is a line', () => {
+  for (const [text, rows, paged] of [
+    ['first\nsecond', 1, true],
+    ['first\nsecond', 2, false],
+    ['first\nsecond\n', 1, true],
+    ['first\nsecond\n', 2, false],
+    ['only', 1, false],
+    ['', 0, false],
+    [`${linesOf(4)}last`, 4, true],
+    [`${linesOf(4)}last`, 5, false],
+  ]) {
+    const pager = fakePager('pager');
+    const written = withEnv({ PAGER: pager.script }, () => pageOn(text, rows));
+    assert.deepEqual([written, pager.input()], paged ? ['', text] : [text, null], JSON.stringify([text, rows]));
+  }
+});
+
 test('with PAGER unset or empty and only more on PATH, more gets the text on its stdin', () => {
   for (const PAGER of [undefined, '', '  ']) {
     const more = fakePager('more');

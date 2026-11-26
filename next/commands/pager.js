@@ -19,17 +19,19 @@ const FALLBACKS = ['less', 'more'];
 /** The `LESS` of a pager when the operator has none. */
 const LESS = 'FRX';
 
+/** The lines of `text`, a last line with no newline included. */
+const lineCount = (text) => text.split('\n').length - (text === '' || text.endsWith('\n') ? 1 : 0);
+
 /**
  * Write `text` to `stdout`, through the pager when `stdout` is a terminal
  * with fewer rows than `text` has lines.
- * @param {string} text  each line ending with a newline
+ * @param {string} text
  * @param {NodeJS.WritableStream} stdout
  * @returns {void}
  */
 export function page(text, stdout) {
   const tty = /** @type {import('tty').WriteStream} */ (stdout);
-  const lines = text.split('\n').length - 1;
-  if (!tty.isTTY || lines <= tty.rows) {
+  if (!tty.isTTY || lineCount(text) <= tty.rows) {
     stdout.write(text);
     return;
   }
