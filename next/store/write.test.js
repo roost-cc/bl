@@ -28,21 +28,41 @@ const S1 = 'stories/S1-one/index.md';
 const S2 = 'stories/S2-two/index.md';
 
 /**
+ * The four files of a story in `dir` that passes every check: its document
+ * titled `title`, a draft `state.json`, a category, and a `created` entry.
+ * @param {string} dir  backlog-relative
+ * @param {string} title
+ */
+const storyFiles = (dir, title) => ({
+  [`${dir}/index.md`]: doc(title),
+  [`${dir}/state.json`]: '{ "status": "draft", "run": "idle" }\n',
+  [`${dir}/attributes.json`]: '{ "category": "feature" }\n',
+  [`${dir}/log.jsonl`]: '{"at":"2026-11-14T13:08:57Z","event":"created","by":"operator"}\n',
+});
+
+/**
  * A backlog git repo with the type story, the items S-1 and S-2, and `files`,
  * all committed.
- * @param {Record<string, string>} [files]  path under the backlog → text
+ * @param {Record<string, string|null>} [files]  path under the backlog → text; null leaves the file out
  */
 function backlog(files = {}) {
-  const dirs = fixture({
-    'backlog/backlog.yaml': 'repos: {}\nid_prefixes:\n  S: story\n  T: task\n',
-    'backlog/config/items/story.yaml': STORY,
-    'backlog/config/items/task.yaml': 'dir: tasks\n',
-    'backlog/.gitignore': '.bl/\n',
-    [`backlog/${S1}`]: doc('One'),
-    [`backlog/${S2}`]: doc('Two'),
-    'backlog/notes.md': 'notes\n',
-    ...Object.fromEntries(Object.entries(files).map(([path, text]) => [`backlog/${path}`, text])),
-  });
+  const all = {
+    'backlog.yaml': 'repos: {}\nid_prefixes:\n  S: story\n  T: task\n',
+    'config/items/story.yaml': STORY,
+    'config/items/task.yaml': 'dir: tasks\n',
+    '.gitignore': '.bl/\n',
+    ...storyFiles('stories/S1-one', 'One'),
+    ...storyFiles('stories/S2-two', 'Two'),
+    'notes.md': 'notes\n',
+    ...files,
+  };
+  const dirs = fixture(
+    Object.fromEntries(
+      Object.entries(all)
+        .filter(([, text]) => text !== null)
+        .map(([path, text]) => [`backlog/${path}`, text]),
+    ),
+  );
   initRepo(dirs.backlogDir);
   git(dirs.backlogDir, 'add', '.');
   git(dirs.backlogDir, 'commit', '-q', '-m', 'init');
@@ -88,7 +108,7 @@ test("a section write commits only the item's index.md, with the caller's messag
 });
 
 test('the Bl-Item trailers name each changed item once, in id order', async () => {
-  const ctx = backlog({ 'stories/S10-ten/index.md': doc('Ten') });
+  const ctx = backlog(storyFiles('stories/S10-ten', 'Ten'));
   await storeWrite(ctx, { message: 'm' }, (w) => {
     w.append('S-10', 'Notes', 'a');
     w.append('S-2', 'Notes', 'b');
@@ -420,7 +440,7 @@ test('a log line that is not JSON, an entry that fails its schema and an unknown
       assert.deepEqual(findingsOf(error), [
         ['S-1', 'log.jsonl', 2, 'json', ''],
         ['S-1', 'log.jsonl', 3, 'item', '/items/found_by'],
-        ['S-2', 'log.jsonl', 1, 'required', '/by'],
+        ['S-2', 'log.jsonl', 2, 'required', '/by'],
         ['S-2', 'usage.jsonl', 1, 'minimum', '/input'],
       ]);
       assert.match(error.message, /S-1 log\.jsonl line 2: json: /);
@@ -429,4 +449,46 @@ test('a log line that is not JSON, an entry that fails its schema and an unknown
     },
   );
   assert.deepEqual(status(ctx), []);
+});
+
+/** One store write operation on S-1, with the item file it writes. */
+const OPERATIONS = [
+  ['set', 'index.md', (w) => w.set('S-1', 'Summary', 'Changed.')],
+  ['append', 'index.md', (w) => w.append('S-1', 'Notes', 'More.')],
+  ['reset', 'index.md', (w) => w.reset('S-1', 'Summary')],
+  ['check', 'index.md', (w) => w.check('S-1', 'Acceptance Criteria', 1)],
+  [
+    'uncheck',
+    'index.md',
+    (w) => {
+      w.check('S-1', 'Acceptance Criteria', 1);
+      w.check('S-1', 'Acceptance Criteria', 2);
+      w.uncheck('S-1', 'Acceptance Criteria', 1);
+    },
+  ],
+  ['state', 'state.json', (w) => w.state('S-1', { status: 'draft', run: 'idle', counters: {} })],
+  ['attributes', 'attributes.json', (w) => w.attributes('S-1', { category: 'bug' })],
+  ['log', 'log.jsonl', (w) => w.log('S-1', CREATED)],
+  ['usage', 'usage.jsonl', (w) => w.usage('S-1', USAGE)],
+];
+
+test('storeWrite_rejects_missing_required_item_files', async () => {
+  for (const missing of ['index.md', 'state.json', 'attributes.json', 'log.jsonl']) {
+    const ctx = backlog({ [`stories/S1-one/${missing}`]: null });
+    const before = head(ctx);
+    for (const [name, , operation] of OPERATIONS.filter(([, file]) => file !== missing)) {
+      await assert.rejects(
+        storeWrite(ctx, { message: 'm' }, operation),
+        (error) => {
+          assert.deepEqual(findingsOf(error), [['S-1', missing, undefined, 'missing-file', undefined]], name);
+          assert.ok(error.message.includes(`S-1 ${missing}: missing-file`), error.message);
+          return true;
+        },
+        `${name} with no ${missing}`,
+      );
+    }
+    assert.equal(existsSync(join(ctx.backlogDir, 'stories/S1-one', missing)), false);
+    assert.equal(head(ctx), before);
+    assert.deepEqual(status(ctx), []);
+  }
 });

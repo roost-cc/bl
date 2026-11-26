@@ -203,12 +203,20 @@ function writer(ctx, staged, created) {
 }
 
 /**
+ * The files every item directory holds (D3): a missing one is a
+ * `missing-file` finding. `usage.jsonl` is there only after its first entry.
+ */
+const REQUIRED_FILES = [DOCUMENT, STATE, ATTRIBUTES, LOG];
+
+/**
  * The findings of every check of one item, its files read as the write
- * leaves them (`read`): the document check of `index.md`; the schema check of
- * `state.json` and of `attributes.json`; the check of each line of
- * `log.jsonl`, with its `items` (`exists`), and of `usage.jsonl`; and the
- * status and log rule, when `state.json` and `log.jsonl` pass their checks.
- * A JSON file that the item does not have is not checked.
+ * leaves them (`read`): a `missing-file` finding for each of
+ * `REQUIRED_FILES` that the item does not have; the document check of
+ * `index.md`; the schema check of `state.json` and of `attributes.json`; the
+ * check of each line of `log.jsonl`, with its `items` (`exists`), and of
+ * `usage.jsonl`; and the status and log rule, when `state.json` and
+ * `log.jsonl` pass their checks. A file that the item does not have gets no
+ * other check.
  *
  * @param {StoreContext} ctx
  * @param {Item} item
@@ -218,13 +226,21 @@ function writer(ctx, staged, created) {
  */
 function checkItem(ctx, item, read, exists) {
   const definition = itemDefinition(ctx, item.type);
-  const text = read(`${item.path}/${DOCUMENT}`) ?? '';
-  const documentFindings = checkDocument(parseDocument(text), definition).map(({ rule, section }) => ({
+  const missing = REQUIRED_FILES.filter((file) => read(`${item.path}/${file}`) === null).map((file) => ({
     item: item.id,
-    file: DOCUMENT,
-    rule,
-    section,
+    file,
+    rule: 'missing-file',
   }));
+  const text = read(`${item.path}/${DOCUMENT}`);
+  const documentFindings =
+    text === null
+      ? []
+      : checkDocument(parseDocument(text), definition).map(({ rule, section }) => ({
+          item: item.id,
+          file: DOCUMENT,
+          rule,
+          section,
+        }));
   /**
    * The findings of faults in the item's file `file`, at `line` of a JSON
    * Lines file.
@@ -284,6 +300,7 @@ function checkItem(ctx, item, read, exists) {
       ? []
       : findingsOf(STATE, checkStatusAndLog(state.value, log.entries.at(-1)));
   return [
+    ...missing,
     ...documentFindings,
     ...state.findings,
     ...json(ATTRIBUTES, (value) => checkAttributes(value, definition)).findings,
