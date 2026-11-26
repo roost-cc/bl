@@ -71,6 +71,17 @@ test('scope(utop) has the four layers applied, scope(null) the two top levels, a
     config.scope('utop').who = 'x';
   }, TypeError);
   assert.deepEqual(config.celInputs, { predicates: {} });
+  // layers() of the both kind gives a scope's layers, the repos maps first: the
+  // top level with no name or null.
+  const files = (layers) => layers.map((layer) => `${layer.file.slice(dirs.home.length)} ${layer.pointer}`);
+  assert.deepEqual(files(config.layers('backlog')), [
+    '/backlog/backlog.yaml ',
+    '/.config/bl/config.yaml ',
+    '/backlog/backlog.yaml ',
+    '/.config/bl/config.yaml ',
+  ]);
+  assert.deepEqual(config.layers('backlog', null), config.layers('backlog'));
+  assert.deepEqual(files(config.layers('backlog', 'utop')).slice(-1), ['/.config/bl/config.yaml /repos/utop']);
 });
 
 test('each layer of scope(utop) shows when the layers above it are left out', () => {

@@ -15,6 +15,8 @@ import { mkTempDir } from '../test/helpers/tempdir.js';
 import { TMUX_TIMEOUT_MS } from './tab-title.js';
 
 const BL_NEXT = fileURLToPath(new URL('../bin/bl-next', import.meta.url));
+const MOCHA_FILE = 'backlog/config/color-schemes/mocha.yaml';
+const MOCHA = 'match: [bold]\n';
 
 /**
  * Run `bl-next` in a fresh home with `files` written under it; the backlog is
@@ -28,7 +30,8 @@ const BL_NEXT = fileURLToPath(new URL('../bin/bl-next', import.meta.url));
  */
 async function runBlNext(files, { backlog = true, argv = [], env: extra = {}, bin = BL_NEXT } = {}) {
   const home = mkTempDir('bl-main-');
-  for (const [path, text] of Object.entries(files)) {
+  // Every fixture backlog names the color scheme `mocha`, which the start check needs (D8).
+  for (const [path, text] of Object.entries({ [MOCHA_FILE]: MOCHA, ...files })) {
     mkdirSync(dirname(join(home, path)), { recursive: true });
     writeFileSync(join(home, path), text);
   }

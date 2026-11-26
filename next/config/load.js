@@ -37,9 +37,10 @@ const CEL_INPUTS = Object.freeze({ predicates: Object.freeze({}) });
  * @property {(kind: string, name?: string) => any} file  the result of a `who`
  *   or `none` kind; for a directory kind, of its file `name` (`en.yaml`), and
  *   `undefined` for a name that neither directory holds
- * @property {(kind: string, name?: string) => readonly Layer[]|undefined} layers
+ * @property {(kind: string, name?: string|null) => readonly Layer[]|undefined} layers
  *   the layers of that same result, lowest first, so that a check after the
- *   load names a fault's file by `attribute` (F-138 D3)
+ *   load names a fault's file by `attribute` (F-138 D3); for the `both` kind,
+ *   of the scope of the repo `name`, the top level with none or `null`
  * @property {(name: string) => string|undefined} partial  the text of a partial,
  *   `undefined` for a name that neither directory holds; `render` takes it (D7)
  * @property {import('./cel.js').CelInputs} celInputs  the inputs of `bindCel`
@@ -206,7 +207,8 @@ export function loadConfiguration({ backlogDir, operatorDir, kinds }) {
   return Object.freeze({
     scope: (repo) => (bothKind === undefined ? undefined : results.get(bothKind.name)?.get(repo)?.result),
     file: (kind, name) => unitOf(kind, name)?.result,
-    layers: (kind, name) => unitOf(kind, name)?.layers,
+    layers: (kind, name) =>
+      kind === bothKind?.name ? results.get(kind)?.get(name ?? null)?.layers : unitOf(kind, name)?.layers,
     partial: (name) => partials.get(name),
     celInputs: CEL_INPUTS,
   });

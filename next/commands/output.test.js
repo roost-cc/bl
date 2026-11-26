@@ -5,32 +5,27 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Writable } from 'stream';
+import { withEnv } from '../test/helpers/env.js';
+import { fakePager } from '../test/helpers/fake-pager.js';
+import { recorder } from '../test/helpers/streams.js';
 import { writeOutput } from './output.js';
 
-/** A writable stream whose `chunks` holds each write as text. */
-function recorder() {
-  const chunks = [];
-  const stream = new Writable({
-    write(chunk, _encoding, done) {
-      chunks.push(chunk.toString());
-      done();
-    },
-  });
-  return { stream, chunks };
-}
+/** The color scheme `mocha` of every fake configuration. */
+const MOCHA = Object.freeze({ match: ['bold'] });
 
 /**
- * A configuration with `views` as its views.yaml; `kinds` records each kind
- * that `file` is asked for.
+ * A configuration with `views` as its views.yaml and the color scheme
+ * `mocha`; `kinds` records each kind that `file` is asked for.
  * @param {Record<string, unknown>|undefined} views
  */
 function configWith(views) {
   const kinds = [];
   return {
     kinds,
-    file: (kind) => {
+    scope: () => ({ color_scheme: 'mocha', repos: {} }),
+    file: (kind, name) => {
       kinds.push(kind);
+      if (kind === 'color-schemes') return name === 'mocha.yaml' ? MOCHA : undefined;
       return kind === 'views' ? views : undefined;
     },
   };
@@ -89,6 +84,51 @@ test('without --json, a command with no view prints the structured form', async 
       '{"id":"S-2"}\n',
     ]);
   }
+});
+
+// ---------------------------------------------------------------------------
+// the pager (D8)
+// ---------------------------------------------------------------------------
+
+const TABLE_VIEW = { list: { columns: [{ field: 'record.id', header: 'ID', justify: 'left', truncate: false }] } };
+/** Records whose table is `n` lines: a header and `n - 1` rows. */
+const recordsFor = (n) => Array.from({ length: n - 1 }, (_v, i) => ({ id: `S-${i + 1}` }));
+
+/** `writeOutput` of `records` through `TABLE_VIEW` to a 5-row terminal, under a fake `PAGER`. */
+async function paged(records, { json = false, views = TABLE_VIEW } = {}) {
+  const pager = fakePager('pager');
+  const { stream, chunks } = recorder({ terminal: { rows: 5, columns: 80 } });
+  await withEnv({ PAGER: pager.script, LESS: undefined }, () =>
+    writeOutput({ command: 'list', op, args: { json }, result: records, config: configWith(views), stdout: stream }),
+  );
+  return { written: chunks.join(''), input: pager.input(), less: pager.less() };
+}
+
+test('a 10-line table on a 5-row terminal goes to $PAGER on its stdin, with LESS=FRX', async () => {
+  const { written, input, less } = await paged(recordsFor(10));
+  assert.equal(written, '');
+  assert.equal(
+    input,
+    `ID\n${recordsFor(10)
+      .map((r) => `${r.id}\n`)
+      .join('')}`,
+  );
+  assert.equal(less, 'FRX');
+});
+
+test('a 10-line template view on a 5-row terminal goes to $PAGER too', async () => {
+  const { written, input } = await paged(recordsFor(11), { views: { list: { template: '{{id}}' } } });
+  assert.equal(written, '');
+  assert.equal(input.split('\n').length - 1, 10);
+});
+
+test('a 3-line table, or --json, on a 5-row terminal runs no pager', async () => {
+  const short = await paged(recordsFor(3));
+  assert.equal(short.written, 'ID\nS-1\nS-2\n');
+  assert.equal(short.input, null);
+  const json = await paged(recordsFor(10), { json: true });
+  assert.equal(json.written.split('\n').length - 1, 9);
+  assert.equal(json.input, null);
 });
 
 test('--json reads no view: a view that would fail to render does not change the output', async () => {

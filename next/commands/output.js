@@ -10,6 +10,8 @@
  */
 
 import { once } from 'events';
+import { page } from './pager.js';
+import { colorScheme } from './style.js';
 import { renderTable } from './table.js';
 import { markdownTable, renderTemplate } from './template.js';
 import { viewEnvironment } from './view-cel.js';
@@ -40,21 +42,37 @@ const jsonLine = (record) => `${JSON.stringify(record)}\n`;
  */
 
 /**
- * Render the records through the command's view (D6 to D8): a `columns` view
- * as a table, shortened to the terminal's width when stdout is a terminal; a
- * `template` or `records_template` view through `renderTemplate` (D7).
- * @param {{ op: Op, view: Record<string, any>, result: unknown, config: Configuration, stdout: NodeJS.WritableStream, bl?: Bl }} options
+ * The search pattern of a run as a global RegExp, when the op names a
+ * `pattern` argument and the run gave it a value (D-469).
+ * @param {Op} op
+ * @param {Record<string, unknown>} args
+ * @returns {RegExp|undefined}
+ */
+function matchOf(op, args) {
+  const value = op.pattern === undefined ? undefined : args[op.pattern];
+  return typeof value === 'string' && value !== '' ? new RegExp(value, 'g') : undefined;
+}
+
+/**
+ * Render the records through the command's view (D6 to D8), and write the
+ * text through the pager (`page`): a `columns` view as a table, shortened to
+ * the terminal's width when stdout is a terminal, and styled by the color
+ * scheme; a `template` or `records_template` view through `renderTemplate`
+ * (D7).
+ * @param {{ op: Op, args: Record<string, unknown>, view: Record<string, any>, result: unknown, config: Configuration, stdout: NodeJS.WritableStream, bl?: Bl }} options
  * @returns {Promise<void>}
  */
-async function renderView({ op, view, result, config, stdout, bl }) {
+async function renderView({ op, args, view, result, config, stdout, bl }) {
   const records = await Array.fromAsync(recordsOf(result));
   if (view.columns === undefined) {
-    stdout.write(await renderTemplate(view, records, { config, bl }));
+    page(await renderTemplate(view, records, { config, bl }), stdout);
     return;
   }
   const tty = /** @type {import('tty').WriteStream} */ (stdout);
   const width = tty.isTTY ? tty.columns : null;
-  stdout.write(renderTable(view, records, { env: viewEnvironment(op.schema), width }));
+  // The start check has found the scheme (D8).
+  const styling = { scheme: colorScheme(config).scheme, stream: stdout, match: matchOf(op, args) };
+  page(renderTable(view, records, { env: viewEnvironment(op.schema), width, styling }), stdout);
 }
 
 /**
@@ -99,7 +117,7 @@ export async function markdownForm({ command, op, args, result, config, bl }) {
  */
 export async function writeOutput({ command, op, args, result, config, stdout, bl }) {
   const view = viewOf(command, args, config);
-  if (view !== undefined) return renderView({ op, view, result, config, stdout, bl });
+  if (view !== undefined) return renderView({ op, args, view, result, config, stdout, bl });
   for await (const record of recordsOf(result)) {
     // Wait for a full stream to drain, so a long stream is not held in memory.
     if (!stdout.write(jsonLine(record))) await once(stdout, 'drain');

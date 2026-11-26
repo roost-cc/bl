@@ -10,8 +10,11 @@ import { join } from 'path';
 import { ConfigurationFaults } from '../config/check.js';
 import { KINDS } from '../config/kinds.js';
 import { loadConfiguration } from '../config/load.js';
+import { withEnv } from '../test/helpers/env.js';
+import { ESCAPE, recorder } from '../test/helpers/streams.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 import { CommandFailed, dispatch, runInProcess, startFaults } from './dispatch.js';
+import { writeOutput } from './output.js';
 
 /** The fixture op: it gives back its arguments and its context. */
 const echo = {
@@ -39,17 +42,28 @@ start:
   help: start an item
 `;
 
+/** The shop's `mocha` color scheme of every fixture. */
+const MOCHA = 'match: [bold, "#f9e2af"]\n';
+
 /**
  * A loaded configuration of a fixture backlog with `commands` as its
  * commands.yaml, and with `views` and `operatorViews` as the shop's and the
- * operator's views.yaml when given.
+ * operator's views.yaml when given. The backlog names the color scheme
+ * `mocha`; `schemes` are the shop's color-scheme files, name → text, and
+ * `operatorSchemes` the operator's.
  */
-function fixture(commands = COMMANDS, { views, operatorViews } = {}) {
+function fixture(commands = COMMANDS, { views, operatorViews, schemes = { mocha: MOCHA }, operatorSchemes = {} } = {}) {
   const backlogDir = mkTempDir('bl-dispatch-');
   const operatorDir = join(backlogDir, 'operator');
   writeFileSync(join(backlogDir, 'backlog.yaml'), 'color_scheme: mocha\nrepos: {}\n');
-  mkdirSync(join(backlogDir, 'config'));
-  mkdirSync(operatorDir);
+  mkdirSync(join(backlogDir, 'config', 'color-schemes'), { recursive: true });
+  mkdirSync(join(operatorDir, 'color-schemes'), { recursive: true });
+  for (const [name, text] of Object.entries(schemes)) {
+    writeFileSync(join(backlogDir, 'config', 'color-schemes', `${name}.yaml`), text);
+  }
+  for (const [name, text] of Object.entries(operatorSchemes)) {
+    writeFileSync(join(operatorDir, 'color-schemes', `${name}.yaml`), text);
+  }
   writeFileSync(join(backlogDir, 'config', 'commands.yaml'), commands);
   if (views !== undefined) writeFileSync(join(backlogDir, 'config', 'views.yaml'), views);
   if (operatorViews !== undefined) writeFileSync(join(operatorDir, 'views.yaml'), operatorViews);
@@ -230,6 +244,40 @@ stories:
 });
 
 // ---------------------------------------------------------------------------
+// the start check of the color scheme (D8)
+// ---------------------------------------------------------------------------
+
+/** The fault lines of the start check on a fixture with these color schemes. */
+function schemeFaults(options) {
+  const at = fixture(COMMANDS, options);
+  const faults = startFaults(at.config, OPS);
+  return faults.length === 0 ? '' : new ConfigurationFaults(faults, at.backlogDir).message;
+}
+
+test('a color_scheme that no layer has is a fault in backlog.yaml at /color_scheme', () => {
+  assert.equal(
+    schemeFaults({ schemes: { latte: MOCHA } }),
+    "backlog.yaml: /color_scheme: color_scheme: no color scheme named 'mocha'",
+  );
+  // The operator's directory alone may hold it.
+  assert.equal(schemeFaults({ schemes: {}, operatorSchemes: { mocha: MOCHA } }), '');
+});
+
+test('a format that util.styleText refuses is a fault in the scheme file that writes it, at its path', () => {
+  assert.equal(
+    schemeFaults({ schemes: { mocha: 'match: [blod]\ndone: [green, "#zzz"]\n' } }),
+    [
+      "config/color-schemes/mocha.yaml: /done/1: format: '#zzz' is not a util.styleText format",
+      "config/color-schemes/mocha.yaml: /match/0: format: 'blod' is not a util.styleText format",
+    ].join('\n'),
+  );
+  assert.equal(
+    schemeFaults({ operatorSchemes: { mocha: 'done: [blod]\n' } }),
+    "operator/color-schemes/mocha.yaml: /done/0: format: 'blod' is not a util.styleText format",
+  );
+});
+
+// ---------------------------------------------------------------------------
 // runInProcess: the {{#bl}} lambda (D7)
 // ---------------------------------------------------------------------------
 
@@ -277,6 +325,29 @@ test('runInProcess with --json, or with no view, gives the structured form', asy
   assert.equal(await inProcess('rows --flag x --json'), lines);
   const at = fixture(BL_COMMANDS);
   assert.equal(await runInProcess('rows --flag x', { ...at, ops: BL_OPS }), lines);
+});
+
+test('with FORCE_COLOR=1, the Markdown form of {{#bl}} has no escape codes, where the table has them', async () => {
+  // The op names `--flag` as its search pattern, and the view styles the cells and the rows.
+  const styledOps = Object.freeze({ ...BL_OPS, rows: { ...rows, pattern: 'flag' } });
+  const views = BL_VIEWS.replace('truncate: true }', 'truncate: true, style: \'"hit"\' }').replace(
+    'rows:\n  columns:',
+    'rows:\n  style: \'"hit"\'\n  columns:',
+  );
+  const at = fixture(BL_COMMANDS, { views, schemes: { mocha: `${MOCHA}hit: [red]\n` } });
+  const context = { ...at, ops: styledOps };
+  assert.deepEqual(startFaults(at.config, styledOps), []);
+  const { stream, chunks } = recorder();
+  const color = { FORCE_COLOR: '1', NO_COLOR: undefined };
+  const [markdown, page] = await withEnv(color, async () => {
+    const outcome = await dispatch(['rows', '--flag', 'S'], context);
+    await writeOutput({ command: 'rows', ...outcome, config: at.config, stdout: stream });
+    return [await runInProcess('rows --flag S', context), await runInProcess('page --flag S', context)];
+  });
+  assert.match(chunks.join(''), ESCAPE);
+  assert.doesNotMatch(markdown, ESCAPE);
+  assert.doesNotMatch(page, ESCAPE);
+  assert.equal(markdown, '| ID | Title |\n| :-- | --: |\n| S-1 | S |\n| S-2 | a\\|b c |\n');
 });
 
 test('runInProcess refuses a shell operator outside quotes, and takes one inside quotes', async () => {

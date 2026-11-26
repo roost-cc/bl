@@ -7,13 +7,17 @@
  * than the table, the `truncate: true` columns are shortened, the widest
  * first, one character at a time, each shortened value ending with `…`. The
  * view's `footer` is one line after the table, for more than one record.
- * Widths are terminal columns, from `string-width`.
+ * Widths are terminal columns, from `string-width`. With a color scheme, each
+ * body cell gets its column's and its row's style, and the matches of the
+ * op's search pattern the `match` style, after truncation (D8).
  */
 
 import stringWidth from 'string-width';
+import { highlight, styleCell, styleFormats } from './style.js';
 import { evaluate, recordsVars, recordVars } from './view-cel.js';
 
 /** @typedef {import('@marcbachmann/cel-js').Environment} Environment */
+/** @typedef {import('./style.js').ColorScheme} ColorScheme */
 
 /**
  * @typedef {object} Column
@@ -22,6 +26,7 @@ import { evaluate, recordsVars, recordVars } from './view-cel.js';
  * @property {'left'|'right'|'center'} justify
  * @property {boolean} truncate
  * @property {string} [indent]  CEL over the record: the cell's indent level
+ * @property {string} [style]  CEL over the record: the cell's style name
  */
 
 /** The columns between two cells. */
@@ -119,22 +124,55 @@ export function tableCells(columns, records, env) {
 }
 
 /**
+ * The styles of a record set's cells (D8): for each record, each column's
+ * formats from its `style`, and the row's from the view's `style`.
+ * @param {{ columns: Column[], style?: string }} view
+ * @param {unknown[]} records
+ * @param {Environment} env
+ * @param {ColorScheme} scheme
+ * @returns {{ cells: (readonly string[])[], row: readonly string[] }[]}
+ */
+function recordStyles(view, records, env, scheme) {
+  const formatsOf = (expr, vars) => (expr === undefined ? [] : styleFormats(scheme, evaluate(env, expr, vars)));
+  return records.map((record) => {
+    const vars = recordVars(record);
+    return { cells: view.columns.map((column) => formatsOf(column.style, vars)), row: formatsOf(view.style, vars) };
+  });
+}
+
+/**
+ * @typedef {object} Styling  how the cells are styled (D8)
+ * @property {ColorScheme} scheme  the active color scheme
+ * @property {NodeJS.WritableStream} stream  the stream the table goes to
+ * @property {RegExp} [match]  the op's search pattern, a global RegExp
+ */
+
+/**
  * The text of a record set through a `columns` view, each line ending with a
  * newline.
- * @param {{ columns: Column[], footer?: string }} view
+ * @param {{ columns: Column[], style?: string, footer?: string }} view
  * @param {unknown[]} records
- * @param {{ env: Environment, width: number|null }} options
+ * @param {{ env: Environment, width: number|null, styling?: Styling }} options
  *   `env` is the view environment of the command's op; `width` the terminal's
- *   columns, or `null` off a terminal
+ *   columns, or `null` off a terminal; with no `styling`, no cell is styled
  * @returns {string}
  */
-export function renderTable(view, records, { env, width }) {
+export function renderTable(view, records, { env, width, styling }) {
   const { columns } = view;
   const rows = [columns.map((column) => column.header), ...tableCells(columns, records, env)];
   const widths = columnWidths(columns, rows, width);
-  const lines = rows.map((row) =>
+  const styles = styling === undefined ? [] : recordStyles(view, records, env, styling.scheme);
+  /** A body cell, shortened, then its matches highlighted, then styled; the header is plain. */
+  const styled = (text, r, i) => {
+    const style = styles[r - 1];
+    if (style === undefined) return text;
+    const { scheme, stream, match } = /** @type {Styling} */ (styling);
+    const marked = match === undefined ? text : highlight(text, match, scheme, stream);
+    return styleCell(marked, style.cells[i], style.row, stream);
+  };
+  const lines = rows.map((row, r) =>
     row
-      .map((cell, i) => pad(shorten(cell, widths[i]), widths[i], columns[i].justify))
+      .map((cell, i) => pad(styled(shorten(cell, widths[i]), r, i), widths[i], columns[i].justify))
       .join(GAP)
       .trimEnd(),
   );

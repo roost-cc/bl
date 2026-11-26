@@ -1,0 +1,50 @@
+/**
+ * pager.js — long output on a terminal goes to the pager (F-138 D8, D-440,
+ * Decision A9).
+ *
+ * When stdout is a terminal and the text has more lines than it has rows,
+ * `page` runs `$PAGER` (when set and not blank) through a shell. Else it runs
+ * `less`, and when `less` cannot start, `more`, each with no shell; when
+ * neither can start, it writes the text to stdout with no message. The pager
+ * gets the text on its stdin, and stdout and stderr on the terminal. Its
+ * environment has `LESS=FRX` when `LESS` is not set, as git does, so `less`
+ * passes the colors through and quits on a text that fits.
+ */
+
+import { runChild, runCommandLine } from '../lib/child.js';
+
+/** The pagers to try, in order, when `$PAGER` is unset or empty. */
+const FALLBACKS = ['less', 'more'];
+
+/** The `LESS` of a pager when the operator has none. */
+const LESS = 'FRX';
+
+/**
+ * Write `text` to `stdout`, through the pager when `stdout` is a terminal
+ * with fewer rows than `text` has lines.
+ * @param {string} text  each line ending with a newline
+ * @param {NodeJS.WritableStream} stdout
+ * @returns {void}
+ */
+export function page(text, stdout) {
+  const tty = /** @type {import('tty').WriteStream} */ (stdout);
+  const lines = text.split('\n').length - 1;
+  if (!tty.isTTY || lines <= tty.rows) {
+    stdout.write(text);
+    return;
+  }
+  const opts = {
+    input: text,
+    stdio: /** @type {import('child_process').StdioOptions} */ (['pipe', 'inherit', 'inherit']),
+    env: { ...process.env, LESS: process.env.LESS ?? LESS },
+  };
+  const pager = process.env.PAGER?.trim();
+  if (pager) {
+    runCommandLine(pager, opts);
+    return;
+  }
+  for (const fallback of FALLBACKS) {
+    if (runChild(fallback, [], opts).error?.code !== 'ENOENT') return;
+  }
+  stdout.write(text);
+}

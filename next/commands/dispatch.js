@@ -17,6 +17,7 @@ import { attribute, compileCel } from '../config/check.js';
 import { pointerToken } from '../config/files.js';
 import { addArgs } from './args.js';
 import { markdownForm } from './output.js';
+import { colorScheme, refusedFormats } from './style.js';
 import { suggest } from './suggest.js';
 import { viewEnvironment } from './view-cel.js';
 
@@ -99,7 +100,8 @@ function viewExpressions(at, view) {
  *   - each view key of `views.yaml` that names no command, at `/<name>`;
  *   - each view expression that does not compile in the view environment of
  *     its command's op (D5, Decision A5), at its path. A view of an entry
- *     command has no op schema, and F-139 checks it.
+ *     command has no op schema, and F-139 checks it;
+ *   - the color scheme and its formats (`colorSchemeFaults`).
  * @param {Configuration} config
  * @param {Readonly<Record<string, Op>>} ops
  * @returns {Fault[]}
@@ -127,7 +129,33 @@ export function startFaults(config, ops) {
     }));
     return compileCel(recorded, viewEnvironment(op.schema));
   });
-  return [...opFaults, ...viewFaults];
+  return [...opFaults, ...viewFaults, ...colorSchemeFaults(config)];
+}
+
+/**
+ * The start checks of the color scheme (D8): the scheme that `color_scheme`
+ * names must be in a layer (D-473), at `/color_scheme`; each of its formats
+ * must be one that `util.styleText` takes, at its path in the scheme.
+ * @param {Configuration} config
+ * @returns {Fault[]}
+ */
+function colorSchemeFaults(config) {
+  const { name, file, scheme } = colorScheme(config);
+  if (scheme === undefined) {
+    return [
+      {
+        ...attribute('/color_scheme', config.layers('backlog')),
+        rule: 'color_scheme',
+        message: `no color scheme named '${name}'`,
+      },
+    ];
+  }
+  const schemeLayers = config.layers('color-schemes', file);
+  return refusedFormats(scheme).map(({ path, format }) => ({
+    ...attribute(path, schemeLayers),
+    rule: 'format',
+    message: `'${format}' is not a util.styleText format`,
+  }));
 }
 
 /** ` Did you mean 'a' or 'b'?`, or nothing with no names. */

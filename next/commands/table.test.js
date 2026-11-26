@@ -1,9 +1,12 @@
 /**
- * Tables (F-138 D6): values, layout, justify, indent, truncate and footer.
+ * Tables (F-138 D6, D8): values, layout, justify, indent, truncate, footer,
+ * styles and match highlighting.
  */
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { withEnv } from '../test/helpers/env.js';
+import { ESCAPE, recorder } from '../test/helpers/streams.js';
 import { formatValue, renderTable } from './table.js';
 import { viewEnvironment } from './view-cel.js';
 
@@ -91,6 +94,58 @@ test('on a terminal of 40 columns, only the truncate: true columns shorten, each
   // Title shortens from 30 to 20, then the two take turns: Title 16, Other 17.
   assert.equal(out, `ID   ${'Title'.padEnd(16)}  Other\nS-1  ${'x'.repeat(15)}…  ${'y'.repeat(16)}…\n`);
   assert.ok(out.split('\n').every((line) => line.length <= 40));
+});
+
+// ---------------------------------------------------------------------------
+// styles and match highlighting (D8)
+// ---------------------------------------------------------------------------
+
+const SCHEME = Object.freeze({ match: ['bold'], big: ['green'], mine: ['red'] });
+const COLOR = { FORCE_COLOR: '1', NO_COLOR: undefined };
+const styling = (match) => ({
+  scheme: SCHEME,
+  stream: recorder({ terminal: { rows: 24, columns: 80 } }).stream,
+  match,
+});
+const STYLED = {
+  columns: [column('id', 'ID', 'left', { style: 'points > 5 ? "big" : ""' }), column('title', 'Title')],
+  style: 'id == "S-22" ? "mine" : "nope"',
+};
+
+test("with FORCE_COLOR=1, a body cell gets its column style's codes, then its row style's; the header none", () => {
+  const out = withEnv(COLOR, () => renderTable(STYLED, RECORDS, { env, width: null, styling: styling() }));
+  assert.equal(
+    out,
+    [
+      'ID    Title',
+      // S-1: the column style is "", the row style "nope": no codes.
+      'S-1   A story',
+      // S-22: green from the column, then red from the row; the padding stays outside the codes.
+      '\u001b[32m\u001b[31mS-22\u001b[39m\u001b[39m  \u001b[31mAnother story\u001b[39m',
+      '',
+    ].join('\n'),
+  );
+});
+
+test('a style that fails to evaluate, or names no style of the scheme, gives no codes', () => {
+  const view = { columns: [column('id', 'ID', 'left', { style: 'title.nested' })], style: 'points' };
+  const out = withEnv(COLOR, () => renderTable(view, RECORDS, { env, width: null, styling: styling() }));
+  assert.equal(out, 'ID\nS-1\nS-22\n');
+});
+
+test('with FORCE_COLOR=1, each match in a cell gets the match style, after truncation', () => {
+  const view = { columns: [column('id', 'ID'), column('title', 'Title', 'left', { truncate: true })] };
+  const out = withEnv(COLOR, () => renderTable(view, RECORDS, { env, width: 14, styling: styling(/o/g) }));
+  // Title is shortened to 8 columns: "Another…" keeps one o, "A story" its one.
+  assert.equal(out, 'ID    Title\nS-1   A st\u001b[1mo\u001b[22mry\nS-22  An\u001b[1mo\u001b[22mther…\n');
+});
+
+test('with NO_COLOR=1 on a terminal, a styled and highlighted table has no escape codes', () => {
+  const out = withEnv({ FORCE_COLOR: undefined, NO_COLOR: '1' }, () =>
+    renderTable(STYLED, RECORDS, { env, width: 80, styling: styling(/S/g) }),
+  );
+  assert.doesNotMatch(out, ESCAPE);
+  assert.equal(out, 'ID    Title\nS-1   A story\nS-22  Another story\n');
 });
 
 test('an indent of depth 2 indents the cell by four spaces', () => {
