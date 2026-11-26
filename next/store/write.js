@@ -159,7 +159,6 @@ function writer(ctx, staged, created) {
     const number = Math.max(nextNumber(ctx, type), ...ours);
     const id = formatId(prefix, number);
     const item = { id, prefix, number, type, path: `${typeDir(ctx, type)}/${dirName({ prefix, number }, title)}` };
-    created.set(id, item);
     const document = (definition.sections ?? []).reduce(
       (text, { name }) => sections.reset(text, definition, name),
       `# ${title}\n`,
@@ -173,6 +172,7 @@ function writer(ctx, staged, created) {
     ]) {
       staged.set(`${item.path}/${file}`, { item, file, base: null, text });
     }
+    created.set(id, item);
     return id;
   };
   /**
