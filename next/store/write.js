@@ -311,8 +311,8 @@ function checkItem(ctx, item, read, exists) {
 }
 
 /**
- * Put each written file back to the text it had before the write, the last
- * written first; a file that did not exist is deleted. Then remove each
+ * Put each written file back to the text it had before the write, with its
+ * mode, the last written first; a file that did not exist is deleted. Then remove each
  * directory that the write made, with what is left in it. Returns the paths
  * it could not put back or remove, each with its error.
  *
@@ -327,7 +327,7 @@ function putBack(ctx, written, made) {
     const abs = join(ctx.backlogDir, path);
     try {
       if (before === null) unlinkSync(abs);
-      else atomicWriteFile(ctx.backlogDir, abs, before);
+      else atomicWriteFile(ctx.backlogDir, abs, before, { preserve: true });
     } catch (e) {
       failed.push(`${path} (${/** @type {Error} */ (e).message})`);
     }
@@ -349,7 +349,7 @@ function putBack(ctx, written, made) {
  * 2. check every item whose files changed, and throw a `StoreCheckError` when
  *    a check fails;
  * 3. make the directory of each new item, and write each changed file
- *    atomically;
+ *    atomically, keeping an existing file's mode;
  * 4. commit exactly those paths in one commit: `message`, then `trailers`,
  *    then one `Bl-Item: <id>` trailer for each item whose files changed, in
  *    id order.
@@ -400,7 +400,7 @@ export async function storeWrite(ctx, { message, trailers = [] }, fn) {
         if (first !== undefined) made.push(first);
       }
       for (const { path, before, text } of changed) {
-        atomicWriteFile(ctx.backlogDir, join(ctx.backlogDir, path), text);
+        atomicWriteFile(ctx.backlogDir, join(ctx.backlogDir, path), text, { preserve: true });
         written.push({ path, before });
       }
       const itemTrailers = items.map((item) => `Bl-Item: ${item.id}`);

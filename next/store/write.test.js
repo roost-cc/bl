@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { fixture, load } from '../test/helpers/config-fixture.js';
@@ -462,6 +462,42 @@ test('a store write to an item file that links outside the backlog throws and le
     { message: /stories\/S1-one\/state\.json is not inside the backlog/ },
   );
   assert.equal(readFileSync(outside, 'utf8'), 'outside\n');
+});
+
+test('storeWrite_preserves_file_mode_on_commit_and_rollback', async () => {
+  const modeOf = (ctx, path) => statSync(join(ctx.backlogDir, path)).mode & 0o777;
+  const S2_DIR = 'stories/S2-two';
+  /** How the write ends: committed, a failed commit, or a failed write of S-2 after S-1 is written. */
+  const ENDS = [
+    ['commit', () => {}, () => {}],
+    ['failed commit', failCommits, () => {}],
+    [
+      'failed write',
+      (ctx) => chmodSync(join(ctx.backlogDir, S2_DIR), 0o555),
+      (ctx) => chmodSync(join(ctx.backlogDir, S2_DIR), 0o755),
+    ],
+  ];
+  for (const mode of [0o644, 0o600, 0o755]) {
+    for (const [end, before, after] of ENDS) {
+      if (end === 'failed write' && process.getuid?.() === 0) continue;
+      const ctx = backlog();
+      chmodSync(join(ctx.backlogDir, S1), mode);
+      chmodSync(join(ctx.backlogDir, 'stories/S1-one/state.json'), mode);
+      before(ctx);
+      try {
+        await storeWrite(ctx, { message: 'm' }, (w) => {
+          w.set('S-1', 'Summary', 'Changed.');
+          w.state('S-1', { status: 'draft', run: 'idle', counters: {} });
+          w.set('S-2', 'Summary', 'Changed.');
+        }).catch((error) => assert.notEqual(end, 'commit', error.message));
+      } finally {
+        after(ctx);
+      }
+      assert.equal(read(ctx, S1).includes('Changed.'), end === 'commit', end);
+      assert.equal(modeOf(ctx, S1), mode, `${end} ${mode.toString(8)} index.md`);
+      assert.equal(modeOf(ctx, 'stories/S1-one/state.json'), mode, `${end} ${mode.toString(8)} state.json`);
+    }
+  }
 });
 
 /** One store write operation on S-1, with the item file it writes. */
