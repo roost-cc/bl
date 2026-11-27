@@ -17,7 +17,7 @@
  * `commands.yaml` line: git calls it, not the operator.
  */
 
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { git } from '../lib/child.js';
 import { mergeGraph } from '../store/graphs.js';
 
@@ -45,7 +45,15 @@ export function mergeDriver(argv) {
     process.stderr.write(`bl-merge-driver: ${/** @type {Error} */ (e).message}\n`);
   }
   if (merged !== null) {
-    writeFileSync(ours, merged);
+    // A file beside ours, renamed over it, so a write that fails leaves ours as it was.
+    const staged = `${ours}.${process.pid}.bl-merge.tmp`;
+    try {
+      writeFileSync(staged, merged);
+      renameSync(staged, ours);
+    } catch (e) {
+      rmSync(staged, { force: true });
+      throw e;
+    }
     return 0;
   }
   git(undefined, ['merge-file', '-L', 'ours', '-L', 'base', '-L', 'theirs', ours, base, theirs]);
