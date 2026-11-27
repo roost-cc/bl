@@ -465,6 +465,21 @@ test('runFlow is refused, with no commit, while another process holds the item l
   }
 });
 
+test('runFlow refuses a start that is no box of the flow, or a return node, with no commit and no step run', async () => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'implemented', run: 'idle' });
+  const base = head(ctx);
+  const { catalogue, ran } = fakeSteps();
+  for (const start of ['gone', 'deliver/_return_success']) {
+    await assert.rejects(runFlow(ctx, { id, start, by: 'operator', resume: true, catalogue }), {
+      message: `${id}: '${start}' is no box of the story flow`,
+    });
+  }
+  assert.deepEqual(ran, []);
+  assert.equal(head(ctx), base);
+  assert.deepEqual(stateOf(ctx, id), { status: 'implemented', run: 'idle' });
+});
+
 test('a stored state that the flow no longer has is reset first, in its own commit with a reset entry', async (t) => {
   const ctx = backlog();
   const id = await story(ctx, { status: 'implemented', run: 'waiting: gone', counters: { rounds: { value: 2 } } });

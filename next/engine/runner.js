@@ -87,7 +87,8 @@ const subflowBox = (/** @type {string} */ id) => id.slice(0, id.lastIndexOf('/')
 /**
  * Run one flow invocation of the item `id` from the node `start` (D8), and
  * give how it ended. Throws `FlowCrash` on a crash, and an error without a
- * commit when another process holds the item lock.
+ * commit when another process holds the item lock, or with no commit but the
+ * reset's when `start` is no box of the item's flow.
  * @param {EngineContext} ctx  a store context with the flow set (the op context is one)
  * @param {object} invocation
  * @param {string} invocation.id  the item's id
@@ -165,6 +166,9 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
     });
     info(`${id}: reset: ${reset.entry.note}`);
   }
+  // A start that the flow does not have (a box that the reset just found gone,
+  // or a return node, which runs no step) is refused before the flow_start.
+  if (flow.nodes[start]?.kind !== 'step') throw new Error(`${id}: '${start}' is no box of the ${type} flow`);
   let status = /** @type {{ status: string }} */ (readState(ctx, item)).status;
   await flowCommit(resume ? `${id}: resumed at ${start}` : `${id}: ${entry} started`, start, (w) => {
     setState(w, status, `active: ${start}`, { host });
