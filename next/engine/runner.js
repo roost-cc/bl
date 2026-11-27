@@ -147,8 +147,9 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
    * Stage the step's writes `staged`, then `state.json` with `status`, `run`
    * and `extra` (`host` or `held`), and the counters. The runner owns the
    * status and the run state, so a step's `w.state` of the item gives only its
-   * counters; with none, the counters are the ones the last commit left. The
-   * step's writes come first, so the runner's log entry is the last one.
+   * counters, and one without `counters` keeps the counters before it; with
+   * none, the counters are the ones the last commit left. The step's writes
+   * come first, so the runner's log entry is the last one.
    * @param {Writer} w
    * @param {string} status
    * @param {string} run
@@ -161,8 +162,8 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
     const step = {
       ...w,
       state: (other, value) => {
-        if (other === id) ({ counters } = /** @type {import('./run-state.js').State} */ (value));
-        else w.state(other, value);
+        if (other !== id) w.state(other, value);
+        else counters = /** @type {import('./run-state.js').State} */ (value).counters ?? counters;
       },
     };
     for (const fn of staged) fn(step);

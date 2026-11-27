@@ -247,6 +247,66 @@ test('runFlow_preserves_next_box_when_step_stages_state', async () => {
   }
 });
 
+test('runFlow_keeps_counters_when_staged_state_omits_them', async () => {
+  const COMMITTED = { attempts: { value: 3 } };
+  const STAGED = { attempts: { value: 4 } };
+  const OTHER = { status: 'draft', run: 'idle' };
+  const paths = [
+    // [the commit path, flows, status, start, the step plan for the staging step, the state at the end]
+    [
+      'a box the flow goes on from',
+      {},
+      'refined',
+      'prepare',
+      (stage) => ({ prepare: stage, implement: () => Promise.reject(new Error('the agent crashed')) }),
+      { status: 'in_progress', run: 'active: implement', host: hostname() },
+    ],
+    [
+      'a box that ends at stop',
+      {},
+      'implemented',
+      'close',
+      (stage) => ({ close: stage }),
+      { status: 'done', run: 'idle' },
+    ],
+    [
+      'a box whose outcome has no arrow',
+      { 'defined-steps.yaml': definedSteps((steps) => (steps.close.after = ['false'])) },
+      'implemented',
+      'close',
+      (stage) => ({ close: stage }),
+      { status: 'implemented', run: 'active: close', host: hostname() },
+    ],
+  ];
+  const writes = [
+    // [what, the item's staged states in order, the counters at the end]
+    ['one write without counters', [{}], COMMITTED],
+    ['a write with counters, then one without', [{ counters: STAGED }, {}], STAGED],
+    ['a write without counters, then one with', [{}, { counters: STAGED }], STAGED],
+    ['only a write to another item', [], COMMITTED],
+  ];
+  for (const [path, flows, status, start, plan, state] of paths) {
+    for (const [what, staged, counters] of writes) {
+      const ctx = backlog(flows);
+      const [id, other] = await createItems(ctx, [
+        { type: 'story', state: { status, run: 'idle', counters: COMMITTED } },
+        { type: 'story', state: { status: 'refined', run: 'idle' } },
+      ]);
+      const stage = (/** @type {any} */ step) => {
+        for (const extra of staged) {
+          step.stage((/** @type {any} */ w) => w.state(id, { status: 'draft', run: 'idle', ...extra }));
+        }
+        step.stage((/** @type {any} */ w) => w.state(other, OTHER));
+        return 'success';
+      };
+      const { catalogue } = fakeSteps(plan(stage));
+      await runFlow(ctx, { id, start, by: 'operator', resume: true, catalogue }).catch((e) => e);
+      assert.deepEqual(stateOf(ctx, id), { ...state, counters }, `${path}: ${what}`);
+      assert.deepEqual(stateOf(ctx, other), OTHER, `${path}: ${what}: the other item`);
+    }
+  }
+});
+
 test('runFlow_commits_staged_counter_with_box', async () => {
   const ctx = backlog();
   const id = await story(ctx, { status: 'refined', run: 'idle' });
