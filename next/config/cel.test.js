@@ -6,7 +6,7 @@ import { Environment, EvaluationError } from '@marcbachmann/cel-js';
 import Ajv2020 from 'ajv/dist/2020.js';
 import RECORD_SCHEMA from './schemas/record.schema.json' with { type: 'json' };
 import STATE_SCHEMA from './schemas/state.schema.json' with { type: 'json' };
-import { bindCel, celEnvironment, celSelfTest, celTypeOf, toCelValue } from './cel.js';
+import { bindCel, celEnvironment, celSelfTest, celTypeOf, toCelValue, UNBOUND } from './cel.js';
 
 /**
  * A plain-JSON record as the record schema gives it.
@@ -94,11 +94,14 @@ test('record.schema.json holds the fields and $defs of D6, and ajv compiles it i
     Object.keys(record.properties).filter((name) => !record.required.includes(name)),
     ['findings', 'deferred', 'gates', 'depth', 'closed'],
   );
-  // status, run and counters are the state schema's (F-137 D8), so the fields have one list.
+  // status, run and counters are the state schema's (F-137 D8), so the fields have one list; run
+  // also takes the interrupted that bl reads (F-139 Decision A5).
   assert.deepEqual(
-    ['status', 'run', 'counters'].map((name) => record.properties[name]),
-    ['status', 'run', 'counters'].map((name) => ({ $ref: `state.schema.json#/properties/${name}` })),
+    ['status', 'counters'].map((name) => record.properties[name]),
+    ['status', 'counters'].map((name) => ({ $ref: `state.schema.json#/properties/${name}` })),
   );
+  assert.deepEqual(record.properties.run.anyOf[0], { $ref: 'state.schema.json#/properties/run' });
+  assert.equal(celTypeOf(record.properties.run), 'string');
   assert.deepEqual(Object.keys(STATE_SCHEMA.$defs.Counter.properties), ['value', 'threshold']);
   const fields = (name) => Object.keys($defs[name].properties);
   assert.deepEqual(fields('Finding'), ['id', 'round', 'category', 'text', 'file', 'state']);
@@ -116,7 +119,9 @@ test('record.schema.json holds the fields and $defs of D6, and ajv compiles it i
   assert.ok(validate(built), JSON.stringify(validate.errors));
   assert.equal(validate(plainRecord({ parents: { unit: 5 } })), false);
   assert.equal(validate(plainRecord({ statuss: 'x' })), false);
-  assert.equal(validate(plainRecord({ run: 'interrupted: x' })), false);
+  assert.ok(validate(plainRecord({ run: 'interrupted: x' })), JSON.stringify(validate.errors));
+  assert.equal(validate(plainRecord({ run: 'interrupted:' })), false);
+  assert.equal(validate(plainRecord({ run: 'crashed: x' })), false);
 });
 
 test('celTypeOf gives the CEL type of each kind of schema node', () => {
@@ -248,6 +253,13 @@ test('bindCel refuses a missing or an unknown handler name', () => {
   assert.throws(() => bindCel({ predicates: {} }, { ...trueHandlers(), nope: () => true }), {
     message: 'bindCel: unknown handlers: nope',
   });
+});
+
+test('UNBOUND gives bindCel every handler, and each refuses to run with its name', () => {
+  const bound = bindCel({ predicates: { aged: 'test {{args.0}}' } }, UNBOUND);
+  assert.throws(() => bound.evaluate('worktree_clean()', plainRecord()), { message: 'not bound: worktree_clean' });
+  assert.throws(() => bound.evaluate('item(unit).closed', plainRecord()), { message: 'not bound: item' });
+  assert.throws(() => bound.evaluate('predicates.aged(1)', plainRecord()), { message: 'not bound: predicates.aged' });
 });
 
 test('a missing key throws at evaluation; optional access gives the default', () => {
