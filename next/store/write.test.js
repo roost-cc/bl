@@ -822,3 +822,129 @@ test('storeWrite_rejects_missing_required_item_files', async () => {
     assert.deepEqual(status(ctx), []);
   }
 });
+
+/** The files of a backlog with the type feature and one graph of each engine (F-148 D1). */
+const GRAPH_FILES = {
+  'backlog.yaml': [
+    'color_scheme: mocha',
+    'repos: {}',
+    'id_prefixes:',
+    '  S: story',
+    '  T: task',
+    '  F: feature',
+    'graphs:',
+    '  - { name: containment, engine: containment, nodes: [story, feature] }',
+    '  - { name: dependency, engine: dependency, nodes: [story, feature] }',
+    '  - { name: rank, engine: rank, nodes: [story, feature] }',
+    '',
+  ].join('\n'),
+  'config/items/feature.yaml': 'dir: features\n',
+};
+
+const CONTAINMENT = 'graphs/containment.json';
+
+test('w.graph writes the graph file in canonical form and commits it with a Bl-Item for the key', async () => {
+  const ctx = backlog(GRAPH_FILES);
+  await storeWrite(ctx, { message: 'm' }, (w) => w.graph('containment', (g) => ({ ...g, 'S-2': { unit: 'F-1' } })));
+  assert.equal(read(ctx, CONTAINMENT), '{\n  "S-2": {\n    "unit": "F-1"\n  }\n}\n');
+  assert.deepEqual(changedIn(ctx, 'HEAD'), [CONTAINMENT]);
+  assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%B'), 'm\n\nBl-Item: S-2');
+  assert.deepEqual(status(ctx), []);
+
+  await storeWrite(ctx, { message: 'n' }, (w) =>
+    w.graph('containment', (g) => ({ 'S-1': { epics: ['E-2', 'E-1', 'E-2'], empty: [] }, ...g })),
+  );
+  assert.equal(read(ctx, CONTAINMENT), jsonOf({ 'S-1': { epics: ['E-1', 'E-2'] }, 'S-2': { unit: 'F-1' } }));
+  assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%B'), 'n\n\nBl-Item: S-1');
+});
+
+/** `value` as the store writes JSON. */
+const jsonOf = (value) => `${JSON.stringify(value, null, 2)}\n`;
+
+test("two w.graph calls of one write see each other's change, from the engine's empty", async () => {
+  const ctx = backlog(GRAPH_FILES);
+  /** @type {unknown[]} */
+  const seen = [];
+  await storeWrite(ctx, { message: 'm' }, (w) => {
+    w.graph('rank', (g) => {
+      seen.push(structuredClone(g));
+      return [...g, 'S-2'];
+    });
+    w.graph('rank', (g) => {
+      seen.push(structuredClone(g));
+      return [...g, 'S-1'];
+    });
+    w.graph('dependency', (g) => {
+      seen.push(structuredClone(g));
+      return { 'S-10': { in_progress: [{ 'S-2': 'status == "done"' }] } };
+    });
+    w.set('S-1', 'Summary', 'Changed.');
+  });
+  assert.deepEqual(seen, [[], ['S-2'], {}]);
+  assert.equal(read(ctx, 'graphs/rank.json'), jsonOf(['S-2', 'S-1']));
+  assert.deepEqual(changedIn(ctx, 'HEAD').sort(), ['graphs/dependency.json', 'graphs/rank.json', S1]);
+  assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%B'), 'm\n\nBl-Item: S-1\nBl-Item: S-2\nBl-Item: S-10');
+  assert.deepEqual(status(ctx), []);
+});
+
+test('a rank write names each node added, removed or with another predecessor; an unchanged graph makes no commit', async () => {
+  const ctx = backlog({ ...GRAPH_FILES, 'graphs/rank.json': jsonOf(['F-1', 'S-1', 'S-2', 'F-2']) });
+  const before = head(ctx);
+  await storeWrite(ctx, { message: 'm' }, (w) => w.graph('rank', (g) => g));
+  assert.equal(head(ctx), before);
+  await storeWrite(ctx, { message: 'm' }, (w) => w.graph('rank', () => ['F-1', 'S-2', 'F-2', 'S-3']));
+  assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%B'), 'm\n\nBl-Item: S-1\nBl-Item: S-2\nBl-Item: S-3');
+});
+
+test('a graph value that fails the schema throws a StoreCheckError with rule schema, and writes no file', async () => {
+  const ctx = backlog(GRAPH_FILES);
+  const before = head(ctx);
+  await assert.rejects(
+    storeWrite(ctx, { message: 'm' }, (w) => {
+      w.set('S-1', 'Summary', 'Changed.');
+      w.graph('containment', () => ({ 'S-2': { unit: 5 } }));
+      w.graph('rank', () => 'S-1');
+    }),
+    (error) => {
+      assert.ok(error instanceof StoreCheckError);
+      assert.deepEqual(
+        error.findings.map(({ item, file, rule, path }) => ({ item, file, rule, path })),
+        [
+          ...Array(3).fill({ item: 'S-2', file: CONTAINMENT, rule: 'schema', path: '/S-2/unit' }),
+          { item: null, file: 'graphs/rank.json', rule: 'schema', path: '' },
+        ],
+      );
+      assert.match(error.message, /\n {2}S-2 graphs\/containment\.json: schema at \/S-2\/unit: must be string\n/);
+      assert.match(error.message, /\n {2}graphs\/rank\.json: schema: must be array$/);
+      return true;
+    },
+  );
+  assert.equal(existsSync(join(ctx.backlogDir, 'graphs')), false);
+  assert.equal(read(ctx, S1), doc('One'));
+  assert.equal(head(ctx), before);
+  assert.deepEqual(status(ctx), []);
+});
+
+test('when the commit fails, the new graph file and the graphs directory are removed', async () => {
+  const ctx = backlog(GRAPH_FILES);
+  failCommits(ctx);
+  await assert.rejects(
+    storeWrite(ctx, { message: 'm' }, (w) => w.graph('rank', () => ['S-1'])),
+    { message: /backlog commit failed/ },
+  );
+  assert.equal(existsSync(join(ctx.backlogDir, 'graphs')), false);
+  assert.deepEqual(status(ctx), []);
+});
+
+test('a graph file that fails its schema, or a graph that backlog.yaml does not give, ends the write in fn', async () => {
+  const ctx = backlog({ ...GRAPH_FILES, 'graphs/rank.json': '{}\n' });
+  await assert.rejects(
+    storeWrite(ctx, { message: 'm' }, (w) => w.graph('rank', (g) => g)),
+    { message: 'graphs/rank.json: type: must be array' },
+  );
+  await assert.rejects(
+    storeWrite(ctx, { message: 'm' }, (w) => w.graph('blockers', (g) => g)),
+    { message: 'backlog.yaml gives no graph named blockers' },
+  );
+  assert.deepEqual(status(ctx), []);
+});

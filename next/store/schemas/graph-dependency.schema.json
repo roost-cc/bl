@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "graph-dependency.schema.json",
+  "title": "A dependency graph file, graphs/<name>.json",
+  "description": "The dependency graph, keyed by gated item, then by the status it is blocked from entering (graphs.md, \"Dependency asset\" and \"Predicate entries\", D-606; F-148 D2). Each status holds a list of entries, each an object of one item id to one CEL expression over that item's record. Whether the expression compiles is the engine's check, not the schema's.",
+  "type": "object",
+  "additionalProperties": {
+    "type": "object",
+    "description": "One gated item: status to its list of entries.",
+    "additionalProperties": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "One entry: one item id to one CEL expression.",
+        "minProperties": 1,
+        "maxProperties": 1,
+        "propertyNames": { "type": "string", "minLength": 1 },
+        "additionalProperties": { "type": "string" }
+      }
+    }
+  }
+}
