@@ -1,0 +1,238 @@
+# uTop's defined steps and step gates (flow-config.md, "Defined steps", "Where gates are
+# written"; agents.md, "Defined steps in the default configuration").
+#
+# A box's name is the name of what it runs ("Boxes"). Each name below is a defined step: `use:`
+# names a code step, `with:` passes its arguments, `after:` lists its post-conditions.
+#
+# defined_steps: and step_gates: both live here, as in the seed ("Flow files", bl refactor, 2026-11-19).
+
+defined_steps:
+  # ---- refine and implement ----
+  refine:
+    use: agent
+    with:
+      agents: [replay, claude, codex]
+      # "The `agent` step": prompt and schema MAY be a map from item type to file.
+      prompt: { story: refine-story.md, feature: refine-feature.md }
+      schema: refine.json
+      mode: interactive
+    after: ['item_valid()']
+
+  implement:
+    use: agent
+    with:
+      # Priority order; an entry without capacity passes to the next ("Agents and capacity").
+      # claude-opus is a profile in config/agents.yaml; codex runs with the account's model.
+      agents: [replay, claude-opus, codex]
+      prompt: implement.md
+      schema: implement.json
+      mode: headless
+    after: ['checkboxes["Acceptance Criteria"].all(c, c.checked)', 'worktree_clean()']
+
+  # ---- the implement entry (commands.md, "Commands", bl refactor 24684cbcc) ----
+  prepare_live: { use: prepare }
+  implement_live: # implement with mode: interactive; the operator is in the session
+    use: agent
+    with:
+      agents: [replay, claude, codex]
+      prompt: implement.md
+      schema: implement.json
+      mode: interactive
+    after: ['checkboxes["Acceptance Criteria"].all(c, c.checked)', 'worktree_clean()']
+
+  # ---- self_review passes: the implementing side's agents ----
+  self_correctness:
+    use: agent
+    with:
+      agents: [replay, claude, codex]
+      prompt: review-correctness.md
+      # Files are named after the step, or after the common job of the steps that share them
+      # ("Defined steps in the default configuration", bl refactor 15d968351).
+      schema: review-findings.json
+      mode: headless
+    after: ['worktree_unchanged()']
+  self_failure_paths:
+    use: agent
+    with:
+      agents: [replay, claude, codex]
+      prompt: review-failure-paths.md
+      schema: review-findings.json
+      mode: headless
+    after: ['worktree_unchanged()']
+  self_verify:
+    use: agent
+    with:
+      agents: [replay, claude, codex]
+      prompt: review-verify.md
+      schema: review-verify.json
+      mode: headless
+    after: ['worktree_unchanged()'] # the findings check is in the findings_closed box after it
+
+  # ---- peer_review passes: a different model's agents ----
+  peer_correctness:
+    use: agent
+    with:
+      agents: [replay, codex, claude]
+      prompt: review-correctness.md
+      schema: review-findings.json
+      mode: headless
+    after: ['worktree_unchanged()']
+  peer_failure_paths:
+    use: agent
+    with:
+      agents: [replay, codex, claude]
+      prompt: review-failure-paths.md
+      schema: review-findings.json
+      mode: headless
+    after: ['worktree_unchanged()']
+  peer_verify:
+    use: agent
+    with:
+      agents: [replay, codex, claude]
+      prompt: review-verify.md
+      schema: review-verify.json
+      mode: headless
+    after: ['worktree_unchanged()'] # the findings check is in the findings_closed box after it
+
+  # ---- resolution_review passes ----
+  resolution_correctness:
+    use: agent
+    with:
+      # The peer agents, so a different model reviews what resolve_conflict wrote (operator, 2026-11-20).
+      agents: [replay, codex, claude]
+      prompt: resolution-correctness.md # its own prompt: a review of a merge resolution
+      schema: review-findings.json
+      mode: headless
+    after: ['worktree_unchanged()']
+  resolution_verify:
+    use: agent
+    with:
+      agents: [replay, codex, claude]
+      prompt: review-verify.md
+      schema: review-verify.json
+      mode: headless
+    after: ['worktree_unchanged()'] # the findings check is in the findings_closed box after it
+
+  # ---- after a verify pass: are findings open? (flows.md, "Step outcomes", operator 2026-11-20) ----
+  # A verify pass succeeds when it judged every finding. This assert box, in self_review, peer_review
+  # and resolution_review, decides whether open findings send the item to fix.
+  findings_closed:
+    { use: assert, with: ['!findings.exists(f, f.state == "open" && f.category in ["Must fix", "Should fix"])'] }
+
+  # ---- review rounds ("Counting") ----
+  self_round: { use: increment, with: { counter: self_rounds, threshold: 3 } }
+  peer_round: { use: increment, with: { counter: peer_rounds, threshold: 3 } }
+  self_closing_round: { use: assert, with: ['counters.self_rounds.value == counters.self_rounds.threshold'] }
+  peer_closing_round: { use: assert, with: ['counters.peer_rounds.value == counters.peer_rounds.threshold'] }
+  self_round_cap: { use: assert, with: ['counters.self_rounds.value < counters.self_rounds.threshold'] }
+  peer_round_cap: { use: assert, with: ['counters.peer_rounds.value < counters.peer_rounds.threshold'] }
+
+  fix:
+    use: agent
+    with:
+      agents: [replay, claude, codex]
+      prompt: fix.md
+      schema: fix.json
+      mode: headless
+    after:
+      - '!findings.exists(f, f.state == "open" && f.category in ["Must fix", "Should fix"])'
+      - 'worktree_clean()'
+
+  # ---- tests ("The `test` step") ----
+  test_unit: { use: test, with: { scope: unit } }
+  test_merge: { use: test, with: { scope: merge } } # as the seed ships it; the repo's bl.test says what merge runs
+  count_test_fix: { use: increment, with: { counter: test_fixes, threshold: 3 } }
+  test_cap: { use: assert, with: ['counters.test_fixes.value < counters.test_fixes.threshold'] }
+  fix_test_failure:
+    use: agent
+    with:
+      agents: [replay, claude, codex]
+      prompt: fix-test-failure.md
+      schema: fix-test-failure.json
+      mode: headless
+    after: ['worktree_clean()']
+
+  # ---- conflicts ----
+  resolve_conflict:
+    use: agent
+    with:
+      { agents: [replay, claude, codex], prompt: resolve-conflict.md, schema: resolve-conflict.json, mode: headless }
+    after: ['conflict_free()', 'worktree_clean()']
+
+  # ---- triage ("Triage", "Triage in two steps") ----
+  triage:
+    use: agent
+    with:
+      agents: [replay, claude, codex] # the implementing side: triage plans, it does not judge the code (operator, 2026-11-19)
+      prompt: triage.md
+      schema: triage.json
+      mode: headless
+      choices: [drop, 'carry:Acceptance Criteria', 'create:story', 'create:task']
+  triage_resolution:
+    use: agent
+    with:
+      agents: [replay, claude, codex]
+      prompt: triage-resolution.md
+      schema: triage-resolution.json
+      mode: interactive
+    after: ['!deferred.exists(d, !d.marked)']
+  # After triage: is a Deferred bullet still open? ("Triage in two steps", operator 2026-11-20)
+  deferred_closed: { use: assert, with: ['!deferred.exists(d, !d.marked)'] }
+
+  # ---- the batch's run entry starts here (commands.md, "Commands", bl refactor e620ed798) ----
+  cross_story_pass:
+    use: agent
+    with:
+      { agents: [replay, claude, codex], prompt: cross-story-pass.md, schema: cross-story-pass.json, mode: headless }
+    after: ['graph_valid()']
+  # ---- in the catalogue, but no uTop flow uses them ----
+  rank_first: { use: rank, with: { at: first } }
+  rank_last: { use: rank, with: { at: last } }
+
+  # ---- children ("Running children", "When a child becomes done", "When a parent is superseded") ----
+  deliver_stories:
+    use: run_children
+    with: { type: story, entry: run, until: implemented, parallel: 2, pick: critical_path }
+  close_stories:
+    use: run_children
+    with: { type: story, entry: close, until: done, parallel: 8, pick: id }
+  # run_children succeeds when every child reached `until` or is closed (bl refactor e2b434b55).
+  supersede_stories:
+    use: run_children
+    with: { type: story, entry: supersede, until: superseded, parallel: 8, pick: id }
+  supersede_tasks:
+    use: run_children
+    with: { type: task, entry: supersede, until: superseded, parallel: 8, pick: id }
+
+  # "A story on its own or in a feature" (bl refactor 83746ce07): one `run` entry; this box sends
+  # a story in a feature to deliver_child and a story on its own to deliver. parents is a field of the item's record.
+  in_unit: { use: assert, with: ['has(parents.unit)'] }
+
+  # Boxes that only carry a transition (resolved 2026-11-18, 2b4002311).
+  close: { use: succeed }
+  supersede: { use: succeed }
+
+  # "The `run_task_list` step" (bl refactor, 2026-11-20): the task flow's box keeps the name
+  # run_task; the code step runs the items of the task's Task List section.
+  run_task: { use: run_task_list, with: { section: Task List } }
+
+  # Notify boxes are inline in the flows ("Who sends notifications", bl refactor c60ba84be).
+
+step_gates:
+  # "Agents and capacity": a gate on the code step agent holds for every box whose step
+  # uses agent ("Where gates are written").
+  # A gate entry is a CEL string or { condition, class }; the class routes the gated alert
+  # (config/alerts.yaml; "Alerts", 2026-11-20).
+  agent: [{ condition: 'has_capacity()', class: expected }]
+  # "Where gates are written" example.
+  implement: [{ condition: 'sections["Escalation"] == "None."', class: needs_operator_action }]
+  # tasks.md, "After-merge tasks in the refactor": a task runs once its unit is merged.
+  # attributes.owner keeps bl run off operator tasks ("Operator tasks in the refactor", 2f8318124).
+  # item(unit): the task runs once its work unit merges (bl refactor e66a736b6).
+  run_task:
+    - { condition: 'item(unit).status == "merged"', class: expected }
+    - { condition: 'attributes.owner == "bl"', class: should_always_be_true }
+  # A batch runs only stories that are refined. "In no other work unit" needs no gate: a story's
+  # `unit` slot holds one parent (config/items/story.yaml max: 1), and attach refuses a full slot.
+  # Refining a child is the operator's work, so a failure asks for it.
+  cross_story_pass: [{ condition: 'children("story").all(c, c.status == "refined")', class: needs_operator_action }]

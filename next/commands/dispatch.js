@@ -2,7 +2,7 @@
  * dispatch.js — the parser and the run of one command (F-138 D3).
  *
  *   - `startFaults(config, ops)`: the start checks of the ops and the views.
- *   - `dispatch(argv, { config, backlogDir, ops })`: one `argparse` parser with
+ *   - `dispatch(argv, { ops, ...ctx })`: one `argparse` parser with
  *     a subparser per `commands.yaml` line, typo suggestions, help, and the
  *     run of the command's op.
  *   - `runInProcess(line, context)`: a `{{#bl}}` command line, run through
@@ -24,6 +24,10 @@ import { viewEnvironment } from './view-cel.js';
 /** @typedef {import('../config/files.js').Fault} Fault */
 /** @typedef {import('../config/load.js').Configuration} Configuration */
 /** @typedef {import('./ops/index.js').Op} Op */
+/**
+ * @typedef {import('./ops/index.js').OpContext & { ops: Readonly<Record<string, Op>> }} Context
+ *   what a command runs with: the op's context and the op registry
+ */
 
 /** The program name in every message and in the help. */
 export const PROG = 'bl-next';
@@ -191,11 +195,12 @@ function buildParser(commands, ops) {
  * before the caller's arguments, as a git alias does. A search pattern that
  * is not a valid RegExp (`matchOf`) is a usage error, before the op runs.
  * @param {string[]} argv  the arguments after the program name
- * @param {{ config: Configuration, backlogDir: string, ops: Readonly<Record<string, Op>> }} options
+ * @param {Context} options
  *   `config` has passed `startFaults` with `ops`
  * @returns {Promise<Exit|Run>}
  */
-export async function dispatch(argv, { config, backlogDir, ops }) {
+export async function dispatch(argv, { ops, ...ctx }) {
+  const { config } = ctx;
   const commands = commandsOf(config);
   const [name, ...rest] = argv;
   const named = name !== undefined && !name.startsWith('-');
@@ -234,7 +239,7 @@ export async function dispatch(argv, { config, backlogDir, ops }) {
     if (!(error instanceof SyntaxError)) throw error;
     return usageError(`${PROG} ${name}: error: ${error.message}\n`);
   }
-  return { name, op, args, result: await op.run(args, { config, backlogDir }) };
+  return { name, op, args, result: await op.run(args, ctx) };
 }
 
 /** A command inside a `{{#bl}}` lambda that ended with an error: the outer command ends with its exit. */
@@ -267,7 +272,7 @@ const END_TEXT = 'ABCDE';
  * that is in `chain`, the commands whose views run this line, is an error
  * before its op runs, so a view cannot run itself.
  * @param {string} line
- * @param {{ config: Configuration, backlogDir: string, ops: Readonly<Record<string, Op>> }} context
+ * @param {Context} context
  * @param {string[]} [chain]  the commands whose views run this line, outermost first
  * @returns {Promise<string>}
  * @throws {CommandFailed} when the line has an operator, runs a command of `chain`, or the command ends with an error
@@ -301,7 +306,7 @@ export async function runInProcess(line, context, chain = []) {
 /**
  * The `bl` of a template view: it runs each `{{#bl}}` line through
  * `runInProcess` with `context`.
- * @param {{ config: Configuration, backlogDir: string, ops: Readonly<Record<string, Op>> }} context
+ * @param {Context} context
  * @param {string[]} [chain]  the commands whose views run the lines, outermost first
  * @returns {(line: string) => Promise<string>}
  */

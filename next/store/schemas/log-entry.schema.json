@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "log-entry.schema.json",
   "title": "One line of an item's log.jsonl",
-  "description": "A log entry: one of the five events of history.md, \"Log entry shapes\" (D-617), with its fields; `event` selects the shape (F-137 D8). Whether each id in `items` names an existing item is the store's check (history.md, \"References in the log\"), not the schema's.",
+  "description": "A log entry: one of the six events of history.md, \"Log entry shapes\" (D-617; `reset`, F-139 Decision A3), with its fields; `event` selects the shape (F-137 D8). Whether each id in `items` names an existing item is the store's check (history.md, \"References in the log\"), not the schema's.",
   "type": "object",
   "required": ["event"],
   "properties": {
-    "event": { "enum": ["created", "flow_start", "flow_end", "force", "outcome"] }
+    "event": { "enum": ["created", "flow_start", "flow_end", "force", "outcome", "reset"] }
   },
   "allOf": [
     {
@@ -28,6 +28,10 @@
     {
       "if": { "required": ["event"], "properties": { "event": { "const": "outcome" } } },
       "then": { "$ref": "#/$defs/Outcome" }
+    },
+    {
+      "if": { "required": ["event"], "properties": { "event": { "const": "reset" } } },
+      "then": { "$ref": "#/$defs/Reset" }
     }
   ],
   "$defs": {
@@ -150,6 +154,22 @@
         "outcome": { "type": "string", "minLength": 1, "description": "The outcome name, for example `success`." },
         "note": { "$ref": "#/$defs/Note" },
         "by": { "$ref": "#/$defs/By" }
+      }
+    },
+    "Reset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "event", "run", "status", "note"],
+      "properties": {
+        "at": { "$ref": "#/$defs/At" },
+        "event": { "const": "reset" },
+        "run": { "$ref": "state.schema.json#/properties/run", "description": "The run state before the reset." },
+        "status": { "$ref": "#/$defs/Status", "description": "The status after the reset." },
+        "from_status": {
+          "$ref": "#/$defs/Status",
+          "description": "The status before the reset; present only when the reset changed it."
+        },
+        "note": { "$ref": "#/$defs/Note", "description": "What no longer exists in the flow." }
       }
     }
   }

@@ -1,0 +1,172 @@
+# The feature flow (statuses.md, "Statuses in the default configuration", "When a child becomes
+# done", "When a parent is superseded", "Between merged and done"; children.md, "Running
+# children", "Choosing among ready children"; steps.md, "The simple step").
+#
+#   draft → refined → approved → in_progress → ready_for_review → in_review → ready_for_merge → merged → done
+#   review entry: ready_for_review/in_review/ready_for_merge → ready_for_merge or changes_requested
+#   fix entry:    changes_requested → ready_for_review
+#   any status that is not closed → superseded
+
+flows:
+  feature:
+    initial: draft
+    statuses:
+      draft: {}
+      refined: {}
+      approved: {}
+      in_progress: {}
+      ready_for_review: {} # the code passed tests and self-review; a PR may be open
+      in_review: {}
+      changes_requested: {}
+      ready_for_merge: {}
+      merged: {}
+      done: { gate: [{ condition: 'children("task").all(c, c.closed)', class: expected }] } # "Where gates are written" example
+      superseded: {}
+
+    properties:
+      in_scope: 'status != "superseded"'
+      ready: 'status in ["refined", "approved"]'
+      approved: 'status in ["approved"]'
+      started: 'status in ["in_progress", "ready_for_review", "in_review", "changes_requested", "ready_for_merge", "merged"]'
+
+    entries:
+      refine: { from: [draft, refined], start: refine }
+      # "The simple step": entry approve, from [refined], start box succeed.
+      # The approve entry runs succeed and sets approved (flows.md, "Every transition
+      # follows a step").
+      approve: { from: [refined], start: succeed }
+      run: { from: [approved], start: prepare }
+      merge: { from: [ready_for_merge], start: merge_unit }
+      # No implement entry: a feature's children do its work (commands.md, "Commands").
+      review:
+        from: [ready_for_review, in_review, ready_for_merge]
+        start: open_pr
+        args: # the same declarations as the story's review entry (bl-validate checks they match)
+          --agent:
+            metavar: profile
+            nargs: 1
+            help: the agent profile for the review passes
+            sets: agents
+            steps: [peer_correctness, peer_failure_paths, peer_verify]
+      fix:
+        from: [changes_requested]
+        start: fix_round
+        args:
+          --agent: { metavar: profile, nargs: 1, help: the agent profile for the fix, sets: agents, steps: [fix] }
+      supersede:
+        from:
+          [
+            draft,
+            refined,
+            approved,
+            in_progress,
+            ready_for_review,
+            in_review,
+            changes_requested,
+            ready_for_merge,
+            merged,
+          ]
+        start: supersede_stories
+
+    steps:
+      refine:
+        success: { status: refined, next: stop }
+        failure: { status: draft, next: stop } # not ready (bl refactor 757289b27)
+      succeed:
+        success: { status: approved, next: stop }
+
+      prepare:
+        success: { status: in_progress, next: deliver_stories }
+      deliver_stories:
+        success: deliver # "The feature after its stories" (bl refactor 33ad68e30)
+        failure: notify_children # no child is running and none is ready
+      notify_children:
+        use: notify
+        with: { template: children_stuck, topic: children }
+        success: wait_deliver_stories
+        failure: wait_deliver_stories
+      wait_deliver_stories: # "The `wait` step" (2026-11-19)
+        use: wait
+        success: deliver_stories # the operator resolved it: run deliver_stories again
+        failure: stop # the operator chose another route
+      deliver:
+        success: stop # sets in_review, then ready_for_merge
+        failure: { status: changes_requested, next: stop } # a wait inside deliver ended with failure: bl fix
+      # "Between merged and done" writes this box as `merge`; in the default configuration it is
+      # the merge_unit subflow. Triage runs after the merge ("Triage"); then the stories close.
+      merge_unit:
+        success: { status: merged, next: triage }
+        failure: stop # a wait inside merge_unit ended with failure: it stays ready_for_merge
+      triage:
+        success: deferred_closed
+        failure: at_terminal # the agent could not propose a choice for every open bullet
+      deferred_closed: # a defined step: assert no open Deferred bullet (defined-steps.yaml)
+        success: close_stories
+        failure: at_terminal # proposals are open: the operator settles them
+      at_terminal: # "Triage in two steps" (bl refactor 08fceb771)
+        use: assert
+        with: ['has_terminal()']
+        success: triage_resolution # the operator is here
+        failure: notify_triage # nobody is here: tell them
+      notify_triage:
+        use: notify
+        with: { template: triage_waiting, topic: triage }
+        success: triage_resolution # with no terminal, it leaves the item idle, next box triage_resolution
+        failure: triage_resolution
+      triage_resolution:
+        success: close_stories
+        failure: wait_triage_resolution # the post-condition failed; the operator was in the session
+      wait_triage_resolution:
+        use: wait
+        success: triage_resolution
+        failure: stop
+      close_stories:
+        success: { status: done, next: stop } # gated until the feature's tasks close
+        # close_stories can end with failure (a story cannot close, for example because its
+        # own tasks are open). A notify box comes first, as for every run_children wait (operator,
+        # 2026-11-19).
+        failure: notify_close_stories
+      notify_close_stories: # a stuck child may have sent nothing
+        use: notify
+        with: { template: children_stuck, topic: children }
+        success: wait_close_stories
+        failure: wait_close_stories
+      wait_close_stories:
+        use: wait
+        success: close_stories
+        failure: stop # the feature stays merged
+
+      open_pr: # the review entry: open the PR, or find it and push
+        success: { status: in_review, next: peer_review }
+        failure: { status: changes_requested, next: stop } # the repo's git pre-push hook refused the push: bl fix
+      peer_review: # the review entry: the peer_review subflow, then stop (no fix loop)
+        success: { status: ready_for_merge, next: stop }
+        failure: { status: changes_requested, next: stop }
+      fix_round:
+        success: { status: ready_for_review, next: stop } # the fixed code waits for a review
+        failure: stop # a wait inside fix_round ended with failure: it stays changes_requested
+
+      supersede_stories:
+        success: supersede_tasks
+        failure: notify_supersede_stories
+      notify_supersede_stories: # a stuck child may have sent nothing
+        use: notify
+        with: { template: children_stuck, topic: children }
+        success: wait_supersede_stories
+        failure: wait_supersede_stories
+      wait_supersede_stories:
+        use: wait
+        success: supersede_stories
+        failure: stop
+      supersede_tasks:
+        success: { status: superseded, next: stop }
+        failure: notify_supersede_tasks
+      notify_supersede_tasks: # a stuck child may have sent nothing
+        use: notify
+        with: { template: children_stuck, topic: children }
+        success: wait_supersede_tasks
+        failure: wait_supersede_tasks
+      wait_supersede_tasks:
+        use: wait
+        success: supersede_tasks
+        failure: stop

@@ -1,0 +1,43 @@
+# The task flow (statuses.md, "Statuses in the default configuration"; tasks.md, "The
+# `run_task_list` step", "After-merge tasks in the refactor").
+#
+#   draft → done
+#   draft → superseded
+
+flows:
+  task:
+    initial: draft
+    statuses:
+      draft: {}
+      done: {}
+      superseded: {}
+
+    properties:
+      in_scope: 'status != "superseded"'
+      ready: 'status in ["draft"]' # a task runs from draft (bl refactor, 2026-11-18)
+
+    entries:
+      # bl run T-<n>: a bl-owned task, once its unit is merged (run_task is a defined step on
+      # run_task_list; its step gates are in defined-steps.yaml).
+      run: { from: [draft], start: run_task }
+      # "Operator tasks in the refactor" (bl refactor 2f8318124): bl close T-<n>.
+      close: { from: [draft], run_states: [idle, waiting], start: close } # also from wait_run_task
+      supersede: { from: [draft], run_states: [idle, waiting, gated, interrupted], start: supersede }
+
+    steps:
+      run_task:
+        success: { status: done, next: stop }
+        failure: notify_task_failed # a task list item exited with a non-zero code
+      notify_task_failed:
+        use: notify
+        with: { template: task_item_failed, topic: tasks }
+        success: wait_run_task
+        failure: wait_run_task
+      wait_run_task: # "The `wait` step" (2026-11-19)
+        use: wait
+        success: run_task # the operator fixed the cause: run the unchecked items again
+        failure: stop # the operator recorded failure; bl close T-<n> also works while it waits
+      close:
+        success: { status: done, next: stop }
+      supersede:
+        success: { status: superseded, next: stop }

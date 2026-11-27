@@ -37,6 +37,9 @@ const CEL_INPUTS = Object.freeze({ predicates: Object.freeze({}) });
  * @property {(kind: string, name?: string) => any} file  the result of a `who`
  *   or `none` kind; for a directory kind, of its file `name` (`en.yaml`), and
  *   `undefined` for a name that neither directory holds
+ * @property {(kind: string) => string[]} names  the file names of a directory
+ *   kind, sorted: each name that `file` takes (the flow set reads every file
+ *   of `config/flows/`, F-139 D4)
  * @property {(kind: string, name?: string|null) => readonly Layer[]|undefined} layers
  *   the layers of that same result, lowest first, so that a check after the
  *   load names a fault's file by `attribute` (F-138 D3); for the `both` kind,
@@ -207,6 +210,12 @@ export function loadConfiguration({ backlogDir, operatorDir, kinds }) {
   return Object.freeze({
     scope: (repo) => (bothKind === undefined ? undefined : results.get(bothKind.name)?.get(repo)?.result),
     file: (kind, name) => unitOf(kind, name)?.result,
+    names: (kind) => {
+      if (!kinds.some((k) => k.name === kind && k.shop.endsWith('/'))) {
+        throw new Error(`no directory configuration kind: ${kind}`);
+      }
+      return [.../** @type {Map<string, unknown>} */ (results.get(kind)).keys()].sort();
+    },
     layers: (kind, name) =>
       kind === bothKind?.name ? results.get(kind)?.get(name ?? null)?.layers : unitOf(kind, name)?.layers,
     partial: (name) => partials.get(name),

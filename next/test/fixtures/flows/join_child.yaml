@@ -1,0 +1,46 @@
+# The join_child subflow: merge the parent's branch in, test, move the parent's branch
+# (children.md, "Branches for children", "Regenerated files in join").
+# Notify and wait boxes as in deliver.yaml.
+
+subflows:
+  join_child:
+    start: join
+    steps:
+      join:
+        success: test_unit # clean, or every conflict regenerated (bl.regenerate: go mod tidy for go.sum)
+        failure: resolve_conflict
+      resolve_conflict:
+        success: test_unit
+        failure: notify_resolve_conflict # the agent could not resolve it
+      notify_resolve_conflict:
+        use: notify
+        with: { template: conflict_unresolved, topic: conflict }
+        success: wait_resolve_conflict
+        failure: wait_resolve_conflict
+      wait_resolve_conflict:
+        use: wait
+        success: resolve_conflict
+        failure: { return: failure }
+      test_unit:
+        success: fast_forward
+        failure: count_test_fix
+      count_test_fix:
+        success: test_cap
+      test_cap:
+        success: fix_test_failure
+        failure: notify_fix_test_failure
+      fix_test_failure:
+        success: test_unit
+        failure: notify_fix_test_failure # unrelated to the change, or a post-condition failed
+      notify_fix_test_failure:
+        use: notify
+        with: { template: tests_failing, topic: tests }
+        success: wait_fix_test_failure
+        failure: wait_fix_test_failure
+      wait_fix_test_failure:
+        use: wait
+        success: fix_test_failure
+        failure: { return: failure }
+      fast_forward:
+        success: { return: success }
+        failure: join # the parent's branch moved: join again

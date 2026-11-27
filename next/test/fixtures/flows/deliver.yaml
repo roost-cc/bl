@@ -1,0 +1,59 @@
+# The deliver subflow: a loose story (or a feature, a batch) from written code to ready_for_merge
+# (flow-config.md, "Subflows are flattened"; commands.md, "Commands": `implement`, `review`).
+#
+#   self_check ─► ready_for_review ─► open_pr ─► in_review ─► peer_review ─► ready_for_merge
+#                       ▲                                          │ failure
+#                       └──────── fix ◄── peer_round_cap ◄─────────┘
+#
+# ready_for_review is a fact about the code: the current code passed the tests and the
+# self-review and waits for a peer review; a PR may be open (operator, 2026-11-19). So the second
+# pass after a fix sets it again, and open_pr then finds the PR and pushes the fixes.
+#
+# Each wait box's failure (the operator chose another route) returns failure; the caller's
+# failure arrow decides ("The `wait` step", 2026-11-19).
+
+subflows:
+  deliver:
+    start: self_check
+    steps:
+      self_check:
+        success: { status: ready_for_review, next: open_pr }
+        failure: { return: failure } # a wait inside self_check ended with failure
+      open_pr:
+        success: { status: in_review, next: peer_review }
+        failure: count_test_fix # the repo's git pre-push hook refused the push (bl refactor 757289b27)
+      count_test_fix:
+        success: test_cap
+      test_cap:
+        success: fix_test_failure
+        failure: notify_fix_test_failure
+      fix_test_failure:
+        success: open_pr # push again
+        failure: notify_fix_test_failure # it could not fix it, or a post-condition failed
+      notify_fix_test_failure:
+        use: notify
+        with: { template: tests_failing, topic: tests }
+        success: wait_fix_test_failure
+        failure: wait_fix_test_failure
+      wait_fix_test_failure:
+        use: wait
+        success: fix_test_failure
+        failure: { return: failure }
+      peer_review:
+        success: { status: ready_for_merge, return: success }
+        failure: peer_round_cap
+      peer_round_cap:
+        success: fix
+        failure: notify_fix # cap reached
+      fix:
+        success: self_check # the fixed code is tested and self-reviewed, then ready for review again
+        failure: notify_fix # an item needs a decision, or a post-condition failed
+      notify_fix:
+        use: notify
+        with: { template: escalation_waiting, topic: escalation }
+        success: wait_fix
+        failure: wait_fix
+      wait_fix:
+        use: wait
+        success: fix
+        failure: { return: failure }

@@ -1,0 +1,39 @@
+# The self_review subflow (review-and-triage.md, "The review subflows"; steps.md, "Counting").
+# Its passes use the implementing side's agents; peer_review.yaml has the same boxes.
+#
+# Rounds are counted by the self_round increment box ("Counting", operator 2026-11-18).
+# bl-validate requires an arrow for each outcome a step can return ("Arrows", 2026-11-19): a
+# review pass's failure (a post-condition failed) ends the subflow with failure, as open findings do.
+# self_verify succeeds when it judged every finding; the assert box findings_closed then decides
+# whether open findings end the subflow with failure (operator, 2026-11-20).
+
+subflows:
+  self_review:
+    start: self_round
+    steps:
+      self_round:
+        success: self_closing_round
+      self_closing_round:
+        success: self_verify # the final round: verify only
+        failure: self_correctness
+      self_correctness:
+        success: self_failure_paths
+        failure: { return: failure } # worktree_unchanged failed
+      self_failure_paths:
+        success: self_verify
+        failure: { return: failure } # worktree_unchanged failed
+      self_verify:
+        success: findings_closed # every finding is judged
+        failure: notify_self_verify # the reviewer could not judge, or a post-condition failed
+      notify_self_verify:
+        use: notify
+        with: { template: escalation_waiting, topic: escalation }
+        success: wait_self_verify
+        failure: wait_self_verify
+      wait_self_verify: # "The `wait` step" (2026-11-19)
+        use: wait
+        success: self_verify # the operator resolved it: run self_verify again
+        failure: { return: failure } # the operator chose another route: the caller decides
+      findings_closed: # a defined step: assert no open Must or Should finding (defined-steps.yaml)
+        success: { return: success }
+        failure: { return: failure } # open findings: the caller's fix loop

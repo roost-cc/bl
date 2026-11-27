@@ -246,16 +246,28 @@ const notBound = (name) => () => {
 };
 
 /**
+ * One handler per name that `bindCel` takes, each throwing
+ * `not bound: <name>`; `predicate` throws `not bound: predicates.<name>`. A
+ * caller of `bindCel` spreads it under the handlers it binds, so each function
+ * that no feature binds yet refuses to run (F-139 D7).
+ * @type {Readonly<Record<string, Function>>}
+ */
+export const UNBOUND = Object.freeze({
+  ...Object.fromEntries(FUNCTIONS.map((fn) => [fn.name, notBound(fn.name)])),
+  predicate: (/** @type {string} */ name) => notBound(`predicates.${name}`)(),
+});
+
+/**
  * The environment that type-checks: every declaration, and handlers that
- * throw `not bound: <name>`.
+ * throw `not bound: <name>` (`UNBOUND`).
  * @param {CelInputs} inputs
  * @returns {Environment}
  */
 export function celEnvironment(inputs) {
   return environment(
     inputs,
-    (fn) => notBound(fn.name),
-    (name) => notBound(`predicates.${name}`),
+    (fn) => UNBOUND[fn.name],
+    (name) => () => UNBOUND.predicate(name),
   );
 }
 

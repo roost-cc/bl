@@ -17,6 +17,8 @@ import { TMUX_TIMEOUT_MS } from './tab-title.js';
 const BL_NEXT = fileURLToPath(new URL('../bin/bl-next', import.meta.url));
 const MOCHA_FILE = 'backlog/config/color-schemes/mocha.yaml';
 const MOCHA = 'match: [bold]\n';
+const FLOW_SET_FILE = 'backlog/config/flows/flow-set.yaml';
+const FLOW_SET = 'max_box_visits: 20\ngate_recheck_minutes: 15\n';
 
 /**
  * Run `bl-next` in a fresh home with `files` written under it; the backlog is
@@ -30,8 +32,9 @@ const MOCHA = 'match: [bold]\n';
  */
 async function runBlNext(files, { backlog = true, argv = [], env: extra = {}, bin = BL_NEXT } = {}) {
   const home = mkTempDir('bl-main-');
-  // Every fixture backlog names the color scheme `mocha`, which the start check needs (D8).
-  for (const [path, text] of Object.entries({ [MOCHA_FILE]: MOCHA, ...files })) {
+  // Every fixture backlog names the color scheme `mocha`, which the start check needs (D8), and
+  // has a flow set with its two settings, which the flow set needs (F-139 D4).
+  for (const [path, text] of Object.entries({ [MOCHA_FILE]: MOCHA, [FLOW_SET_FILE]: FLOW_SET, ...files })) {
     mkdirSync(dirname(join(home, path)), { recursive: true });
     writeFileSync(join(home, path), text);
   }
@@ -242,6 +245,43 @@ test('bl-next fails with the inner message when a {{#bl}} command fails', async 
   assert.equal(stderr, "bl-next: 'stroies' is not a command. Did you mean 'stories'?\n");
   assert.equal(status, 2);
   assert.equal(stdout, '');
+});
+
+test('bl-next exits 1 on a flow set with a missing arrow, with the fault on stderr, and runs no command', async () => {
+  const files = {
+    'backlog/backlog.yaml': BACKLOG,
+    'backlog/config/commands.yaml': FIXTURE_COMMANDS,
+    'backlog/config/flows/story.yaml': [
+      'flows:',
+      '  story:',
+      '    initial: draft',
+      '    statuses: { draft: {} }',
+      '    steps:',
+      '      work: { success: stop }',
+      '',
+    ].join('\n'),
+  };
+  const { status, stdout, stderr } = await runBlNext(files, { bin: WITH_FIXTURE_OPS, argv: ['story', 'S-1'] });
+  assert.equal(
+    stderr,
+    `config/flows/story.yaml: /flows/story/steps/work: arrow: no failure arrow: the step 'work' can end with failure\n${DOES_NOT_LOAD}`,
+  );
+  assert.equal(status, 1);
+  assert.equal(stdout, '');
+  // With the arrow, the same command runs.
+  const fixed = await runBlNext(
+    {
+      ...files,
+      'backlog/config/flows/story.yaml': files['backlog/config/flows/story.yaml'].replace(
+        '{ success: stop }',
+        '{ success: stop, failure: stop }',
+      ),
+    },
+    { bin: WITH_FIXTURE_OPS, argv: ['story', 'S-1', '--json'] },
+  );
+  assert.equal(fixed.stderr, '');
+  assert.equal(fixed.status, 0);
+  assert.equal(fixed.stdout, '{"id":"S-1","title":"Story S-1"}\n');
 });
 
 test('bl-next with no backlog to find exits 1 with bl-next: and the error', async () => {

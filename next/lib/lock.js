@@ -12,7 +12,8 @@
  * Every lock file bl keeps in a backlog lives under `.bl/` (S-1495), which
  * the backlog's `.gitignore` ignores, so git never sees one: the backlog
  * lock, the session locks, the work unit locks and the report locks in `.bl/lock/` (`LOCK_DIR`,
- * `dirLockPath`), and the run locks in `.bl/run/` (`run-lock.js`).
+ * `dirLockPath`), the item locks of the flow engine there too (`itemLockPath`), and the run
+ * locks in `.bl/run/` (`run-lock.js`).
  *
  * It is a kernel lock (`kernel-lock.js`, F-104 K1): the kernel frees it when
  * the holder closes the descriptor or ends, even by SIGKILL. The file stays
@@ -76,6 +77,17 @@ export function dirLockPath(backlogRoot, kind, dir) {
   const hash = createHash('sha256').update(abs).digest('hex').slice(0, 12);
   return join(backlogRoot, LOCK_DIR, `${kind}-${basename(abs)}-${hash}.lock`);
 }
+
+/**
+ * The item lock of the item `id` (its printed form, `S-123`):
+ * `<backlogRoot>/.bl/lock/item-<id>.lock` (F-139 D6). A flow invocation
+ * holds it from start to end (`tryLockOnce`); while no process holds it, a
+ * stored `active: <box>` of this host reads as `interrupted: <box>` (D-50).
+ *
+ * @param {string} backlogRoot
+ * @param {string} id
+ */
+export const itemLockPath = (backlogRoot, id) => join(backlogRoot, LOCK_DIR, `item-${id}.lock`);
 
 /**
  * Create `<backlogRoot>/.bl/lock/` when it is missing, before a take opens

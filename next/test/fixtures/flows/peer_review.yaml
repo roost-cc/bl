@@ -1,0 +1,33 @@
+# The peer_review subflow (review-and-triage.md, "The review subflows"; steps.md, "Counting").
+# The same boxes as self_review; its passes use a different model's agents.
+
+subflows:
+  peer_review:
+    start: peer_round
+    steps:
+      peer_round:
+        success: peer_closing_round
+      peer_closing_round:
+        success: peer_verify
+        failure: peer_correctness
+      peer_correctness:
+        success: peer_failure_paths
+        failure: { return: failure } # worktree_unchanged failed
+      peer_failure_paths:
+        success: peer_verify
+        failure: { return: failure } # worktree_unchanged failed
+      peer_verify:
+        success: findings_closed # every finding is judged
+        failure: notify_peer_verify # the reviewer could not judge, or a post-condition failed
+      notify_peer_verify:
+        use: notify
+        with: { template: escalation_waiting, topic: escalation }
+        success: wait_peer_verify
+        failure: wait_peer_verify
+      wait_peer_verify:
+        use: wait
+        success: peer_verify
+        failure: { return: failure }
+      findings_closed: # a defined step: assert no open Must or Should finding (defined-steps.yaml)
+        success: { return: success }
+        failure: { return: failure } # open findings: the caller's fix loop

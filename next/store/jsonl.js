@@ -3,7 +3,7 @@
  * (F-137 D8).
  *
  * Both files hold one JSON object per line. A log entry is checked against
- * `schemas/log-entry.schema.json` (the five events of D-617), and each id in
+ * `schemas/log-entry.schema.json` (the six events of D-617), and each id in
  * its `items` must name an existing item (history.md, "References in the
  * log"). A usage entry is checked against `schemas/usage-entry.schema.json`.
  * The status and log rule (D-612) compares `state.json` with the last log
@@ -154,11 +154,13 @@ export function checkLogItems(entry, idPrefixes, exists) {
  * The faults of the status and log rule (D-612, F-137 D8): `state.json` must
  * agree with the item's last log entry.
  *
- * - After a `flow_end` or a `force`, `status` equals the entry's `status`.
+ * - After a `flow_end`, a `force` or a `reset`, `status` equals the entry's
+ *   `status`.
  * - After a `flow_end`, `run` is `idle` for `ended: stop`, and equals `ended`
  *   otherwise.
  * - After a `flow_start`, `run` is an `active` state.
  * - After an `outcome`, `run` is `active` or `waiting` at the entry's `box`.
+ * - After a `reset`, `run` is `idle` (F-139 Decision A3).
  *
  * A `created` entry, or no entry, sets no rule. Each fault has the rule
  * `status-and-log` and the path of the `state.json` value it names.
@@ -172,13 +174,16 @@ export function checkStatusAndLog(state, last) {
   const fault = (/** @type {string} */ path, /** @type {string} */ message) =>
     faults.push({ file: '', path, rule: 'status-and-log', message });
   const after = `after the last log entry, a ${last?.event}`;
-  if ((last?.event === 'flow_end' || last?.event === 'force') && state.status !== last.status) {
-    fault('/status', `${after}, status must be "${last.status}", not "${state.status}"`);
+  if (['flow_end', 'force', 'reset'].includes(last?.event) && state.status !== last?.status) {
+    fault('/status', `${after}, status must be "${last?.status}", not "${state.status}"`);
   }
   if (last?.event === 'flow_end') {
     const run = last.ended === 'stop' ? 'idle' : last.ended;
     if (state.run !== run)
       fault('/run', `${after} with ended "${last.ended}", run must be "${run}", not "${state.run}"`);
+  }
+  if (last?.event === 'reset' && state.run !== 'idle') {
+    fault('/run', `${after}, run must be "idle", not "${state.run}"`);
   }
   if (last?.event === 'flow_start' && !state.run.startsWith('active: ')) {
     fault('/run', `${after}, run must be an active state, not "${state.run}"`);

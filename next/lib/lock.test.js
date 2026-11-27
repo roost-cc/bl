@@ -6,9 +6,18 @@ import fs, { existsSync, openSync, closeSync, readdirSync, readFileSync, rmSync,
 import { syncBuiltinESMExports } from 'module';
 import { dirname, join } from 'path';
 import { spawnSyncFiles } from './child-stdio.js';
-import { holderOf } from './kernel-lock.js';
-import { acquireLock, LOCK_FD_ENV, LOCK_FILE, releaseLock, withLock } from './lock.js';
-import { holdLock } from '../test/helpers/hold-lock.js';
+import { holderOf, release, tryLockOnce } from './kernel-lock.js';
+import {
+  acquireLock,
+  ensureLockDir,
+  itemLockPath,
+  LOCK_DIR,
+  LOCK_FD_ENV,
+  LOCK_FILE,
+  releaseLock,
+  withLock,
+} from './lock.js';
+import { holdLock, holdLockInChild } from '../test/helpers/hold-lock.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 
 function mkBacklogRoot() {
@@ -243,6 +252,29 @@ test('acquireLock throws the open error for a missing backlog root and holds no 
     assert.equal(holderOf(lockPath), process.pid, 'the next acquire takes the lock');
   } finally {
     releaseLock(dir);
+    cleanup();
+  }
+});
+
+test('the item lock is .bl/lock/item-<id>.lock, and a take with tryLockOnce is refused while another process holds it', async () => {
+  const { dir, cleanup } = mkBacklogRoot();
+  const path = itemLockPath(dir, 'S-12');
+  assert.equal(path, join(dir, LOCK_DIR, 'item-S-12.lock'));
+  ensureLockDir(dir);
+  const child = await holdLockInChild(path);
+  try {
+    assert.deepEqual(tryLockOnce(path, 'S-12'), { holder: child.pid });
+    await child.kill();
+    const got = tryLockOnce(path, 'S-12');
+    assert.ok('taken' in got, JSON.stringify(got));
+    try {
+      assert.equal(holderOf(path), process.pid);
+      assert.deepEqual(tryLockOnce(path, 'S-12'), { holder: process.pid }, 'not re-entrant');
+    } finally {
+      release(got.taken);
+    }
+  } finally {
+    await child.kill();
     cleanup();
   }
 });

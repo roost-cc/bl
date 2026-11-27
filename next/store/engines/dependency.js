@@ -61,6 +61,21 @@ export const names = (value, id) =>
   Object.hasOwn(value, id) ? [id, ...Object.values(value[id]).flat().flatMap(Object.keys)] : [];
 
 /**
+ * The entries of the gated item `id` under `status` (graphs.md, "Dependency
+ * rule"), each `{ item, expression }`, in the file's order; none when the
+ * file holds none.
+ * @param {Dependency} value  a value that passes `schema`
+ * @param {string} id
+ * @param {string} status
+ * @returns {Array<{ item: string, expression: string }>}
+ */
+export const entriesOf = (value, id, status) =>
+  (Object.hasOwn(value, id) && Object.hasOwn(value[id], status) ? value[id][status] : []).map((entry) => {
+    const [[item, expression]] = Object.entries(entry);
+    return { item, expression };
+  });
+
+/**
  * The faults of the whole file by the kind rule (D5): the dependency graph
  * has no cycle (`cycles`, from gated item to the item of each entry). A
  * self-entry, an entry of the gated item itself (graphs.md, "Self-entries"),

@@ -64,6 +64,15 @@ const listOf = (parents) => (typeof parents === 'string' ? [parents] : parents);
 const parentsOf = (value, id) => Object.values(entryOf(value, id)).flatMap(listOf);
 
 /**
+ * The children of the item `parent`: each child whose entry names it in any
+ * slot, in the order of the file's keys.
+ * @param {Containment} value
+ * @param {string} parent
+ */
+export const childrenOf = (value, parent) =>
+  Object.keys(value).filter((child) => parentsOf(value, child).includes(parent));
+
+/**
  * The ids that the entry of `id` names (D5, "Per item"): the child and each
  * of its parents, or none when the file holds no entry for it.
  * @param {Containment} value  a value that passes `schema`
@@ -222,9 +231,7 @@ export function check(value, ids, ctx) {
       return limits
         .filter((limit) => limit.types.includes(type))
         .flatMap(({ types, max }) => {
-          const children = Object.keys(value).filter(
-            (other) => types.includes(typeOf(other) ?? '') && parentsOf(value, other).includes(parent),
-          ).length;
+          const children = childrenOf(value, parent).filter((other) => types.includes(typeOf(other) ?? '')).length;
           if (children <= max) return [];
           const slot = /** @type {string} */ (Object.keys(entry).find((name) => listOf(entry[name]).includes(parent)));
           return [

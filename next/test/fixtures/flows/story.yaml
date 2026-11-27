@@ -1,0 +1,206 @@
+# The story flow: one flow for a loose story and for a story in a feature
+# (statuses.md, "Statuses in the default configuration", "When a child becomes done",
+# "When a parent is superseded"; flows.md, "Entries"; flow-config.md, "Subflows are flattened";
+# review-and-triage.md, "Triage in two steps").
+#
+#   loose story:      draft → refined → in_progress → ready_for_review → in_review → ready_for_merge → merged → done
+#                     review entry: ready_for_review/in_review/ready_for_merge → ready_for_merge or changes_requested
+#                     fix entry:    changes_requested → ready_for_review
+#   story in feature: draft → refined → in_progress → implemented → done
+#   any:              → superseded, through the supersede entry
+
+flows:
+  story:
+    initial: draft
+    statuses:
+      draft: {}
+      refined: {}
+      in_progress: {}
+      implemented: {}
+      ready_for_review: {} # the code passed tests and self-review; a PR may be open
+      in_review: {}
+      changes_requested: {} # the review entry found work to fix (bl refactor 0634625f9)
+      ready_for_merge: {}
+      merged: {}
+      # "Work after the merge": done waits for the unit's tasks. A loose story can hold tasks
+      # (config/items/task.yaml: parent types feature, story).
+      done: { gate: [{ condition: 'children("task").all(c, c.closed)', class: expected }] }
+      superseded: {}
+
+    # The properties table in "Statuses in the default configuration". `closed` is derived.
+    # The story has no `approved` status, so it has no `approved` property (it matches no status).
+    # started: work has begun and is not over, so done does not have it (operator, 2026-11-18).
+    properties:
+      in_scope: 'status != "superseded"'
+      ready: 'status in ["refined"]'
+      started: 'status in ["in_progress", "implemented", "ready_for_review", "in_review", "changes_requested", "ready_for_merge", "merged"]'
+
+    entries:
+      refine: { from: [draft, refined], start: refine } # the "Entries" example
+      run: { from: [refined], start: prepare } # bl run, and run_children's `entry: run`
+      # The seed's one-step commands (commands.md, "Commands"): implement, review, fix and merge
+      # each do one step; run is the whole path.
+      implement:
+        from: [refined]
+        start: prepare_live
+        args:
+          # argparse's add_argument options, plus sets and steps (commands.md, "Commands").
+          --agent:
+            metavar: profile
+            nargs: 1
+            help: the agent profile for the implement session
+            sets: agents
+            steps: [implement_live]
+      review:
+        from: [ready_for_review, in_review, ready_for_merge] # loose stories only: a child never has these
+        start: open_pr
+        args:
+          --agent:
+            metavar: profile
+            nargs: 1
+            help: the agent profile for the review passes
+            sets: agents
+            steps: [peer_correctness, peer_failure_paths, peer_verify]
+      fix:
+        from: [changes_requested]
+        start: fix_round
+        args:
+          --agent: { metavar: profile, nargs: 1, help: the agent profile for the fix, sets: agents, steps: [fix] }
+      # Side stories (children.md, "Side stories"): bl new, then start, then deliver.
+      start: { from: [draft], start: prepare_only }
+      deliver: { from: [in_progress], start: in_unit }
+      merge: { from: [ready_for_merge], start: merge_unit } # loose stories only
+      close: { from: [implemented], start: close } # run by the feature's close_stories
+      # "every status that is not closed"
+      supersede:
+        from:
+          [
+            draft,
+            refined,
+            in_progress,
+            implemented,
+            ready_for_review,
+            ready_for_review,
+            in_review,
+            changes_requested,
+            ready_for_merge,
+            merged,
+          ]
+        run_states: [idle, waiting, gated, interrupted] # a busy story is superseded too
+        start: supersede_tasks
+
+    steps:
+      refine:
+        success: { status: refined, next: stop }
+        failure: { status: draft, next: stop } # not ready (bl refactor 757289b27)
+
+      prepare:
+        success: { status: in_progress, next: implement } # branch and worktree ("Entries" example)
+      implement:
+        success: in_unit
+        failure: notify_implement # the agent escalated, or a post-condition failed
+      notify_implement:
+        use: notify
+        with: { template: escalation_waiting, topic: escalation }
+        success: wait_implement
+        failure: wait_implement
+      wait_implement: # "The `wait` step" (2026-11-19)
+        use: wait
+        success: implement # the operator resolved it: run implement again
+        failure: stop # the operator chose another route, for example the change by hand, then bl deliver
+      prepare_live: # the implement entry (defined-steps.yaml)
+        success: { status: in_progress, next: implement_live }
+      implement_live: # implement with the operator in the session
+        success: self_check # then tests and self-review, as a developer does before review
+        failure: notify_implement_live # the session ended blocked, or a post-condition failed
+      notify_implement_live:
+        use: notify
+        with: { template: escalation_waiting, topic: escalation }
+        success: wait_implement_live
+        failure: wait_implement_live
+      wait_implement_live:
+        use: wait
+        success: implement_live
+        failure: stop
+      self_check: # the implement entry's tests and self-review (self_check.yaml)
+        success: child_check
+        failure: stop # a wait inside self_check ended with failure: the operator chose another route
+      child_check: # a story in a unit joins the unit's branch; a loose story waits for review
+        use: assert
+        with: ['has(parents.unit)']
+        success: join_child
+        failure: { status: ready_for_review, next: stop }
+      join_child:
+        success: { status: implemented, next: stop }
+        failure: stop # a wait inside join_child ended with failure
+      prepare_only: # the start entry: a branch and a worktree, then the operator works
+        use: prepare
+        success: { status: in_progress, next: stop }
+
+      in_unit: # assert has(parents.unit) (defined-steps.yaml)
+        success: deliver_child # a story in a feature: its branch joins the feature's
+        failure: deliver # a loose story: its own pull request
+
+      deliver:
+        success: stop # deliver sets in_review and ready_for_merge
+        failure: { status: changes_requested, next: stop } # a wait inside deliver ended with failure: bl fix
+      deliver_child:
+        success: stop # deliver_child sets implemented
+        failure: stop # a wait inside deliver_child ended with failure; a child has no changes_requested
+
+      # merge_unit → merged → triage → done ("Merging a work unit", "Triage in two steps").
+      merge_unit:
+        success: { status: merged, next: triage }
+        failure: stop # a wait inside merge_unit ended with failure: the story stays ready_for_merge
+      triage:
+        success: deferred_closed
+        failure: at_terminal # the agent could not propose a choice for every open bullet
+      deferred_closed: # a defined step: assert no open Deferred bullet (defined-steps.yaml)
+        success: { status: done, next: stop } # gated until the story's tasks close
+        failure: at_terminal # proposals are open: the operator settles them
+      at_terminal: # "Triage in two steps" (bl refactor 08fceb771)
+        use: assert
+        with: ['has_terminal()']
+        success: triage_resolution # the operator is here
+        failure: notify_triage # nobody is here: tell them
+      notify_triage:
+        use: notify
+        with: { template: triage_waiting, topic: triage }
+        success: triage_resolution # with no terminal, it leaves the item idle, next box triage_resolution
+        failure: triage_resolution
+      triage_resolution:
+        success: { status: done, next: stop }
+        failure: notify_triage_resolution # the post-condition failed; the operator was in the session
+      notify_triage_resolution:
+        use: notify
+        with: { template: triage_resolution_failed, topic: escalation }
+        success: wait_triage_resolution
+        failure: wait_triage_resolution
+      wait_triage_resolution:
+        use: wait
+        success: triage_resolution
+        failure: stop
+      open_pr: # the review entry: open the PR, or find it and push
+        success: { status: in_review, next: peer_review }
+        failure: { status: changes_requested, next: stop } # the repo's git pre-push hook refused the push: bl fix
+      peer_review: # the review entry: the peer_review subflow, then stop (no fix loop)
+        success: { status: ready_for_merge, next: stop }
+        failure: { status: changes_requested, next: stop }
+      fix_round: # the fix entry (fix_round.yaml)
+        success: { status: ready_for_review, next: stop } # the fixed code waits for a review
+        failure: stop # a wait inside fix_round ended with failure: the story stays changes_requested
+
+      close:
+        success: { status: done, next: stop }
+      supersede_tasks:
+        success: { status: superseded, next: stop }
+        failure: notify_supersede_tasks
+      notify_supersede_tasks: # a stuck child may have sent nothing
+        use: notify
+        with: { template: children_stuck, topic: children }
+        success: wait_supersede_tasks
+        failure: wait_supersede_tasks
+      wait_supersede_tasks:
+        use: wait
+        success: supersede_tasks
+        failure: stop

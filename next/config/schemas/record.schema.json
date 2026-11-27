@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "record.schema.json",
   "title": "The record of an item",
-  "description": "The record that `bl list` gives for an item and that CEL runs over (commands.md D-437, core.md \"Records and CEL\"). `next/config/cel.js` derives the CEL types from it (F-136 D6). `status`, `run` and `counters` refer to `state.schema.json`, so the fields have one list (F-136 A2, D-483). F-148's record builder (`next/store/record.js`) builds the fields of its Decision A1. `findings` and `deferred` (F-142) and `gates` (F-150) are not required until the story that builds each one; `depth` (F-150) and `closed` (F-139) are set only where they apply.",
+  "description": "The record that `bl list` gives for an item and that CEL runs over (commands.md D-437, core.md \"Records and CEL\"). `next/config/cel.js` derives the CEL types from it (F-136 D6). `status`, `run` and `counters` refer to `state.schema.json`, so the fields have one list (F-136 A2, D-483). F-148's record builder (`next/store/record.js`) builds the fields of its Decision A1. `findings` and `deferred` (F-142) and `gates` (F-150) are not required until the story that builds each one; `depth` (F-150) and `closed` (F-139) are set only where they apply. `run` also takes the `interrupted: <box>` that bl reads (F-139).",
   "$ref": "#/$defs/Record",
   "$defs": {
     "Record": {
@@ -18,7 +18,11 @@
         "id_prefix": { "type": "string" },
         "id_number": { "type": "integer" },
         "status": { "$ref": "state.schema.json#/properties/status" },
-        "run": { "$ref": "state.schema.json#/properties/run" },
+        "run": {
+          "type": "string",
+          "anyOf": [{ "$ref": "state.schema.json#/properties/run" }, { "pattern": "^interrupted: \\S.*$" }],
+          "description": "The run state as bl reads it: the stored run state, or `interrupted: <box>` for a stored `active: <box>` of this host whose item lock no process holds (D-50; F-139 Decision A5, `engineRecord`)."
+        },
         "attributes": { "type": "object", "additionalProperties": {} },
         "attribute_list": {
           "type": "array",
@@ -58,7 +62,10 @@
           "description": "The text of the change.md of the item's work unit; empty when the item has no work unit or the file is not there."
         },
         "depth": { "type": "integer", "description": "The depth in the tree, with --tree." },
-        "closed": { "type": "boolean", "description": "Set on a child record from children()." }
+        "closed": {
+          "type": "boolean",
+          "description": "True when the status is terminal for the item's type (statuses.md D-65); the engine sets it on each record that conditions read (F-139 Decision A5, `engineRecord`)."
+        }
       },
       "required": [
         "item_id",
