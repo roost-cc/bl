@@ -21,6 +21,11 @@
       "additionalProperties": { "$ref": "#/$defs/Counter" },
       "description": "Counter name to its counter (steps.md, \"Counting\")."
     },
+    "changes": {
+      "type": "object",
+      "additionalProperties": { "type": "object" },
+      "description": "Repo name to its change on the forge, as `change.open` records it, for example `{ number, url }`; a stage's command reads its repo's entry as `{{change.*}}` (steps.md, \"Command variables\", D-84; F-140 D4)."
+    },
     "host": {
       "type": "string",
       "minLength": 1,

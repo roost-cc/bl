@@ -11,7 +11,6 @@ const FILES = {
   'backlog.yaml': [
     'color_scheme: mocha',
     'language: en',
-    'repos: {}',
     'id_prefixes: { F: feature, S: story, T: task }',
     'work_types: [feature, story]',
     'graphs:',
@@ -28,13 +27,16 @@ const FILES = {
 /**
  * A committed backlog repo whose `config/flows/` holds the uTop flow set with
  * `flows` added or replaced, and its context: the store context and the flow
- * set built with the uTop test catalogue.
+ * set built with the uTop test catalogue. `backlogYaml` ends `backlog.yaml`:
+ * its `repos`, and for example a `plugin_registry`.
  * @param {Record<string, string>} [flows]  flow file name → YAML text
+ * @param {string} [backlogYaml]
  * @returns {{ backlogDir: string, config: any, flowSet: import('../../engine/flow-set.js').FlowSet }}
  */
-export function engineBacklog(flows = {}) {
+export function engineBacklog(flows = {}, backlogYaml = 'repos: {}\n') {
   const all = {
     ...FILES,
+    'backlog.yaml': FILES['backlog.yaml'] + backlogYaml,
     ...Object.fromEntries(Object.entries({ ...UTOP, ...flows }).map(([name, text]) => [`config/flows/${name}`, text])),
   };
   const dirs = fixture(Object.fromEntries(Object.entries(all).map(([path, text]) => [`backlog/${path}`, text])));
