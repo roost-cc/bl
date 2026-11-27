@@ -335,7 +335,7 @@ export function checkGraphs(ctx, files, items, exists) {
     .flatMap((g) => {
       const ofNodes = [...touched].filter((id) => g.nodes.includes(typeOf(id) ?? ''));
       const changedKeys = keys.get(g.path) ?? [];
-      if (ofNodes.length === 0 && changedKeys.length === 0) return [];
+      if (ofNodes.length === 0 && !keys.has(g.path)) return [];
       const value = valueOf(g.engine);
       const nodeFindings = [...new Set([...ofNodes, ...changedKeys])].flatMap((key) =>
         [...new Set(g.module.names(value, key))].flatMap((id) => {

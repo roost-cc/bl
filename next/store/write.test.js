@@ -1158,6 +1158,34 @@ test('a cycle that a changed containment file already held refuses the write: it
 const DEPENDENCY = 'graphs/dependency.json';
 const RANK = 'graphs/rank.json';
 
+test('graph_reformat_checks_kind_without_changed_keys', async () => {
+  /** [graph, its file, a value on disk that breaks the kind rule, the expected finding] */
+  const CASES = [
+    ['rank', RANK, ['F-1', 'F-1'], ['F-1', 'repeat', RANK]],
+    ['containment', CONTAINMENT, { 'E-1': { within: 'F-1' }, 'F-1': { epic: 'E-1' } }, ['E-1', 'cycle']],
+    [
+      'dependency',
+      DEPENDENCY,
+      { 'S-1': { done: [{ 'S-2': 'true' }] }, 'S-2': { done: [{ 'S-1': 'true' }] } },
+      ['S-1', 'cycle', DEPENDENCY],
+    ],
+  ];
+  for (const [name, file, value, finding] of CASES) {
+    // One line of JSON, so the write's canonical text differs and no key changes.
+    const onDisk = { [file]: `${JSON.stringify(value)}\n` };
+    await refused(onDisk, (w) => w.graph(name, (g) => g), [finding]);
+    // A write that does not change the graph file leaves its kind rule to bl-validate.
+    const ctx = backlog({ ...RULE_FILES, ...onDisk });
+    await storeWrite(ctx, { message: 'm' }, (w) => w.set('S-1', 'Summary', 'Changed.'));
+    assert.equal(read(ctx, file), onDisk[file]);
+  }
+  // A reformat of a file that keeps the kind rule is committed.
+  const ctx = backlog({ ...RULE_FILES, [RANK]: '["F-1","F-2"]\n' });
+  await storeWrite(ctx, { message: 'm' }, (w) => w.graph('rank', (g) => g));
+  assert.equal(read(ctx, RANK), jsonOf(['F-1', 'F-2']));
+  assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%B'), 'm');
+});
+
 test('a dependency write is refused for an expression that is not bool CEL, and for a cycle', async () => {
   const depend = (value) => (w) => w.graph('dependency', () => value);
   await refused({}, depend({ 'S-1': { in_progress: [{ 'S-2': 'status ==' }] } }), [['S-1', 'cel', DEPENDENCY]]);
