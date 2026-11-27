@@ -69,19 +69,31 @@ export function cycles(value, next) {
   const seen = new Map();
   /** @type {Array<{ item: string, rule: string, path: string, message: string }>} */
   const faults = [];
-  /** @param {string[]} path  the walk from its start to the id it visits */
-  const visit = (path) => {
-    const id = /** @type {string} */ (path.at(-1));
-    seen.set(id, 'open');
-    for (const to of next(id)) {
+  // The walk keeps its own stack, not the call stack, so a long chain cannot overflow it.
+  for (const start of Object.keys(value).sort(byText)) {
+    if (seen.has(start)) continue;
+    /** the walk from `start` to the id it visits, and for each id the edges it has still to follow */
+    const path = [start];
+    const edges = [next(start)[Symbol.iterator]()];
+    seen.set(start, 'open');
+    while (edges.length > 0) {
+      const step = /** @type {Iterator<string>} */ (edges.at(-1)).next();
+      if (step.done) {
+        seen.set(/** @type {string} */ (path.pop()), 'done');
+        edges.pop();
+        continue;
+      }
+      const to = step.value;
       if (seen.get(to) === 'open') {
         const cycle = [...path.slice(path.indexOf(to)), to].join(' → ');
         faults.push({ item: to, rule: 'cycle', path: `/${to}`, message: `${cycle} is a cycle` });
-      } else if (!seen.has(to)) visit([...path, to]);
+      } else if (!seen.has(to)) {
+        seen.set(to, 'open');
+        path.push(to);
+        edges.push(next(to)[Symbol.iterator]());
+      }
     }
-    seen.set(id, 'done');
-  };
-  for (const id of Object.keys(value).sort(byText)) if (!seen.has(id)) visit([id]);
+  }
   return faults;
 }
 

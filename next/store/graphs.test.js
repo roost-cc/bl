@@ -387,6 +387,32 @@ test('mergeGraph gives null for a merged value that breaks the kind rule', () =>
   );
 });
 
+test('cycle checks accept long acyclic chains in both keyed engines', () => {
+  const ids = Array.from({ length: 12000 }, (_, i) => `S-${i + 1}`);
+  /** each keyed engine → the entry of an edge to `to` */
+  const EDGES = {
+    containment: (/** @type {string} */ to) => ({ unit: to }),
+    dependency: (/** @type {string} */ to) => ({ done: [{ [to]: 'true' }] }),
+  };
+  const ctx = context();
+  for (const [engine, edge] of Object.entries(EDGES)) {
+    const g = graph(ctx, engine);
+    // S-1 → S-2 → … → S-12000, then the same chain closed by S-12000 → S-1.
+    const open = Object.fromEntries(ids.slice(0, -1).map((id, i) => [id, edge(ids[i + 1])]));
+    const closed = { ...open, [/** @type {string} */ (ids.at(-1))]: edge(ids[0]) };
+    const cycles = (/** @type {Array<{ rule: string, item: string|null }>} */ faults) =>
+      faults.filter(({ rule }) => rule === 'cycle').map(({ item }) => item);
+    assert.deepEqual(g.module.kind(open), [], engine);
+    assert.deepEqual(cycles(g.module.kind(closed)), ['S-1'], engine);
+    assert.equal(mergeGraph(engine, '', text(open), text(open)), graphText(g, open), engine);
+    assert.equal(mergeGraph(engine, '', text(open), text(closed)), null, engine);
+    const write = (/** @type {object} */ after) => [{ graph: g, base: text(open), text: text(after) }];
+    const { [ids[0]]: _, ...rest } = open;
+    assert.deepEqual(cycles(checkGraphs(ctx, write(rest), [], exists).findings), [], engine);
+    assert.deepEqual(cycles(checkGraphs(ctx, write(closed), [], exists).findings), ['S-1'], engine);
+  }
+});
+
 test('mergeGraph refuses an engine name that no engine has', () => {
   assert.throws(() => mergeGraph('blockers', '', '[]', '[]'), { message: 'there is no graph engine named blockers' });
 });
