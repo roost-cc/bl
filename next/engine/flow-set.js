@@ -45,12 +45,15 @@ export { STEPS } from '../steps/index.js';
 
 /** The configuration kind of the flow set. */
 const KIND = 'flows';
+const FLOWS_KIND = /** @type {import('../config/kinds.js').Kind} */ (KINDS.find((k) => k.name === KIND));
 
 /** The arrow target that ends a flow invocation (D-26); no name may be it. */
 export const STOP = 'stop';
 
-/** The outcomes a box has arrows for (D-26). */
-const OUTCOMES = /** @type {const} */ (['success', 'failure']);
+/** The outcomes a box has arrows for (D-26): the ones the schema lets `return:` name. */
+const OUTCOMES = /** @type {readonly ('success'|'failure')[]} */ (
+  /** @type {any} */ (FLOWS_KIND.schema).$defs.Arrow.properties.return.enum
+);
 
 /** The flow set's settings: each is set in exactly one file (D4 step 1). */
 const SETTINGS = Object.freeze(['max_box_visits', 'gate_recheck_minutes']);
@@ -241,10 +244,7 @@ export function buildFlowSet(config, catalogue, backlogDir) {
   for (const key of SETTINGS) {
     const setIn = files.filter((file) => file.value[key] !== undefined);
     if (setIn.length === 0) {
-      const dir = join(
-        backlogDir,
-        /** @type {import('../config/kinds.js').Kind} */ (KINDS.find((k) => k.name === KIND)).shop,
-      );
+      const dir = join(backlogDir, FLOWS_KIND.shop);
       faults.push({ file: dir, path: `/${key}`, rule: 'setting', message: `no file of the flow set sets ${key}` });
     } else {
       settings[key] = setIn[0].value[key];
