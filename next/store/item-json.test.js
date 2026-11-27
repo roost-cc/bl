@@ -59,6 +59,33 @@ test('state.schema.json rejects a missing status or run, interrupted, a counter 
   ]);
 });
 
+test('state.schema.json accepts host with active, next with idle and held with gated (Decision A2)', () => {
+  assert.deepEqual(checkState({ status: 'in_progress', run: 'active: deliver/open_pr', host: 'running-man' }), []);
+  assert.deepEqual(checkState({ status: 'refined', run: 'idle', next: 'implement' }), []);
+  const held = { box: 'deliver/open_pr', outcome: 'success' };
+  assert.deepEqual(checkState({ status: 'ready_for_review', run: 'gated: in_review', held }), []);
+});
+
+test('state.schema.json rejects host, next and held with any other run state, and held with another key', () => {
+  const RUNS = ['idle', 'active: x', 'waiting: x', 'gated: done', 'gated before: x'];
+  const FIELDS = {
+    host: ['running-man', 'active: x'],
+    next: ['implement', 'idle'],
+    held: [{ box: 'x', outcome: 'success' }, 'gated: done'],
+  };
+  for (const [name, [value, allowed]] of Object.entries(FIELDS)) {
+    for (const run of RUNS.filter((r) => r !== allowed)) {
+      const rule = name === 'next' ? 'const' : 'pattern';
+      assert.deepEqual(rules(checkState({ status: 'review', run, [name]: value })), [`${rule} /run`], `${name} ${run}`);
+    }
+  }
+  const run = 'gated: done';
+  assert.deepEqual(rules(checkState({ status: 'review', run, held: { box: 'x', outcome: 'success', to: 'y' } })), [
+    'additionalProperties /held/to',
+  ]);
+  assert.deepEqual(rules(checkState({ status: 'review', run, held: { box: 'x' } })), ['required /held/outcome']);
+});
+
 test('attributes.json: an undeclared key, a value that fails its schema and a missing required attribute are one finding each', () => {
   const ctx = backlog();
   const definition = itemDefinition(ctx, 'story');
