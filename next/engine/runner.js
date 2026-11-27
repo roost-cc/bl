@@ -155,8 +155,12 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
     const { counters } = /** @type {import('./run-state.js').State} */ (readState(ctx, item));
     w.state(id, { status, run, ...extra, ...(counters === undefined ? {} : { counters }) });
   };
-  /** The item's committed record, as conditions read it. */
-  const current = () => engineRecord(ctx, ctx.flowSet, readRecord(ctx, id));
+  /**
+   * The item's committed record, as conditions read it, with the status the
+   * invocation has reached: a status gate after a return node sees the status
+   * that the arrow into the return node set.
+   */
+  const current = () => engineRecord(ctx, ctx.flowSet, { ...readRecord(ctx, id), status });
 
   const reset = checkAgainstFlow(ctx.flowSet, type, /** @type {any} */ (readState(ctx, item)));
   if (reset !== null) {

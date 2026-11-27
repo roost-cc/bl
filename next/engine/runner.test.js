@@ -438,6 +438,37 @@ test("a failing gate on the caller's arrow out of a return node holds the transi
   assert.equal(logOf(ctx, id).at(-1).note, `the status gate of merged failed: ${id}: false`);
 });
 
+test('runFlow_second_return_transition_gate_sees_first_transition', async () => {
+  // The arrow into deliver/_return_success sets ready_for_merge from in_review; the caller's
+  // arrow then sets merged. Each status gate reads the status that the arrow before it reached.
+  const gated = (gates) =>
+    backlog({
+      'story.yaml': storyFlow((flow) => {
+        flow.steps.deliver.success = { status: 'merged', next: 'stop' };
+        for (const [to, condition] of Object.entries(gates)) flow.statuses[to] = { gate: [condition] };
+      }),
+    });
+  const cases = [
+    // [gates, the result]
+    [
+      { ready_for_merge: 'status == "in_review"', merged: 'status == "ready_for_merge"' },
+      { ended: 'stop', status: 'merged', outcome: 'success' },
+    ],
+    [{ merged: 'status == "in_review"' }, { ended: 'gated: merged', status: 'ready_for_merge', outcome: 'success' }],
+    [
+      { ready_for_merge: 'status == "ready_for_merge"' },
+      { ended: 'gated: ready_for_merge', status: 'in_review', outcome: 'success' },
+    ],
+  ];
+  for (const [gates, expected] of cases) {
+    const ctx = gated(gates);
+    const id = await story(ctx, { status: 'in_progress', run: 'idle' });
+    const { catalogue } = fakeSteps({ in_unit: 'failure' });
+    const result = await runFlow(ctx, { id, start: 'in_unit', by: 'operator', entry: 'deliver', catalogue });
+    assert.deepEqual(result, expected, JSON.stringify(gates));
+  }
+});
+
 test('an arrow whose derived from does not hold the status stops the invocation with a note, and keeps the status', async () => {
   const ctx = backlog();
   const id = await story(ctx, { status: 'draft', run: 'idle' });
