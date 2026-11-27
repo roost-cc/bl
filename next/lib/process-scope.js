@@ -13,7 +13,13 @@
  * `systemctl --user stop <unit>.scope` kills what is left (verified at
  * refine, 2026-10-29, systemd 259).
  *
- * - The probe, `systemd-run --user --scope --quiet --collect true`, runs once
+ * - Both the probe and the scoped command pass `--expand-environment=no`
+ *   (`SCOPE_FLAGS`): from systemd 254 on, `systemd-run` otherwise expands
+ *   `$NAME` and `${NAME}` in the command's arguments, so a scoped command would
+ *   get other arguments than its caller gave. A systemd without the option
+ *   fails the probe, so its steps run unscoped and never get that option.
+ * - The probe, `systemd-run --user --scope --quiet --collect
+ *   --expand-environment=no true`, runs once
  *   per bl process (Linux only) and is cached. Without user systemd (macOS, a
  *   host or guest without a user manager, bl inside a sandbox) steps run
  *   unscoped and nothing is killed (decision D4-a): there is no cwd-snapshot
@@ -27,6 +33,9 @@
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { SIGKILL_AFTER_MS, describeExit, runChild, runLongChild } from './child.js';
+
+/** The `systemd-run` flags of the probe and of every scoped command. */
+const SCOPE_FLAGS = ['--user', '--scope', '--quiet', '--collect', '--expand-environment=no'];
 
 /**
  * How long `systemctl stop` lets a scope's processes exit on SIGTERM before
@@ -86,7 +95,7 @@ export function scopeAvailable() {
     probed = { ok: false, why: `user systemd scopes need Linux; this is ${process.platform}` };
     return probed;
   }
-  const r = runChild('systemd-run', ['--user', '--scope', '--quiet', '--collect', 'true'], {
+  const r = runChild('systemd-run', [...SCOPE_FLAGS, 'true'], {
     encoding: 'utf8',
     stdio: ['ignore', 'ignore', 'pipe'],
     timeout: 30_000,
@@ -96,7 +105,7 @@ export function scopeAvailable() {
       ? { ok: true }
       : {
           ok: false,
-          why: `\`systemd-run --user --scope --quiet --collect true\` failed: ${failureText(r, 'systemd-run')}`,
+          why: `\`systemd-run ${SCOPE_FLAGS.join(' ')} true\` failed: ${failureText(r, 'systemd-run')}`,
         };
   return probed;
 }
@@ -126,7 +135,7 @@ export function scopeUnitName(unitId, n, pid = process.pid) {
 export function scopedCommand(unit, command, args = []) {
   return {
     command: 'systemd-run',
-    args: ['--user', '--scope', '--quiet', '--collect', `--unit=${unit}`, '-p', STOP_TIMEOUT, '--', command, ...args],
+    args: [...SCOPE_FLAGS, `--unit=${unit}`, '-p', STOP_TIMEOUT, '--', command, ...args],
   };
 }
 
