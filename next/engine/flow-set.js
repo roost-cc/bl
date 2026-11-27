@@ -206,14 +206,15 @@ export function buildFlowSet(config, catalogue, backlogDir) {
   const stepGates = section('step_gates', 'step_gates for');
   const isCode = (name) => Object.hasOwn(catalogue, name);
 
-  for (const name of new Set([...defined.keys(), ...subflows.keys()])) {
+  for (const name of new Set([...flows.keys(), ...defined.keys(), ...subflows.keys()])) {
     const kinds = [
       ...(isCode(name) ? ['a code step'] : []),
+      ...(flows.has(name) ? ['a flow'] : []),
       ...(defined.has(name) ? ['a defined step'] : []),
       ...(subflows.has(name) ? ['a subflow'] : []),
     ];
-    // One fault per name, at the subflow when there is one (D-33).
-    const def = /** @type {Definition} */ (subflows.get(name) ?? defined.get(name));
+    // One fault per name, at the subflow when there is one, then the defined step (D-33).
+    const def = /** @type {Definition} */ (subflows.get(name) ?? defined.get(name) ?? flows.get(name));
     if (kinds.length > 1)
       fault(def.file, def.path, 'name', `'${name}' names ${kinds.join(' and ')}: a name names one of them`);
   }
@@ -228,6 +229,10 @@ export function buildFlowSet(config, catalogue, backlogDir) {
     if (name === STOP) fault(file, path, 'name', `'${STOP}' is reserved: an arrow to it ends the flow invocation`);
   };
   for (const map of [flows, subflows, defined]) for (const [name, def] of map) notStop(def.file, def.path, name);
+  if (isCode(STOP)) {
+    const dir = join(backlogDir, FLOWS_KIND.shop);
+    faults.push({ file: dir, path: '', rule: 'name', message: `the step catalogue has a code step '${STOP}'` });
+  }
   for (const [, def] of flows) {
     for (const key of ['statuses', 'entries']) {
       for (const name of Object.keys(def.value[key] ?? {}))

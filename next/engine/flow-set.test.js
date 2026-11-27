@@ -567,6 +567,56 @@ test('each fault of names, settings, boxes, with: and subflow calls is one fault
   }
 });
 
+test('buildFlowSet_rejects_cross_kind_duplicates_and_reserved_code_step', () => {
+  const flow = { initial: 'draft', statuses: { draft: {} } };
+  const sub = { start: 'work', steps: { work: { success: { return: 'success' }, failure: { return: 'failure' } } } };
+  const cases = [
+    // [what, files, catalogue, the `<file>: <path>: <rule>` of the fault]
+    [
+      'a flow and a subflow, in two files',
+      withSteps((s) => s, { 'a.yaml': { flows: { review: flow } }, 'b.yaml': { subflows: { review: sub } } }),
+      BASE_STEPS,
+      'config/flows/b.yaml: /subflows/review: name',
+    ],
+    [
+      'a flow and a defined step, in two files',
+      withSteps((s) => s, {
+        'a.yaml': { flows: { review: flow } },
+        'b.yaml': { defined_steps: { review: { use: 'work' } } },
+      }),
+      BASE_STEPS,
+      'config/flows/b.yaml: /defined_steps/review: name',
+    ],
+    [
+      'a flow and a code step',
+      withSteps((s) => s, { 'a.yaml': { flows: { work: flow } } }),
+      BASE_STEPS,
+      'config/flows/a.yaml: /flows/work: name',
+    ],
+    [
+      'a subflow and a defined step, in two files',
+      withSteps((s) => s, {
+        'a.yaml': { subflows: { review: sub } },
+        'b.yaml': { defined_steps: { review: { use: 'work' } } },
+      }),
+      BASE_STEPS,
+      'config/flows/a.yaml: /subflows/review: name',
+    ],
+    [
+      'a subflow and a code step',
+      withSteps((s) => s, { 'a.yaml': { subflows: { work: sub } } }),
+      BASE_STEPS,
+      'config/flows/a.yaml: /subflows/work: name',
+    ],
+    ['a code step named stop', BASE, { ...BASE_STEPS, stop: step() }, 'config/flows: : name'],
+  ];
+  for (const [what, files, catalogue, where] of cases) {
+    const lines = faultLines(files, catalogue);
+    assert.equal(lines.length, 1, `${what}:\n${lines.join('\n')}`);
+    assert.ok(lines[0].startsWith(`${where}: `), `${what}: ${lines[0]}`);
+  }
+});
+
 test('faults in two files are both reported, in one ConfigurationFaults', () => {
   const files = withSteps((s) => ({ ...s, work: { success: 'nothing', failure: 'stop' } }), {
     'more.yaml': { max_box_visits: 3 },
