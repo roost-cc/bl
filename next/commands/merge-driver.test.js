@@ -6,7 +6,17 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs, { readFileSync, readdirSync, writeFileSync } from 'fs';
+import fs, {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'fs';
 import { syncBuiltinESMExports } from 'module';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
@@ -89,30 +99,39 @@ test('a call with the wrong number of arguments prints the usage, exits 2 and ch
 });
 
 /**
- * Run `mergeDriver` in this process on the three texts, with `fs[name]`
- * replaced by `replacement` and `env` set while it runs, and give its exit
- * code or the code of the error it throws, what ours holds after it, and the
- * files of its directory.
+ * Run `mergeDriver` in this process on the three texts, and give its exit
+ * code or the code of the error it throws, what ours holds after it, the mode
+ * of ours, what it wrote on stderr, and the files (not directories) under its
+ * directory. While it runs, each `fs[name]` of `fail` throws an error with
+ * that code, `env` is set, and `Math.random` gives the values of `draws`
+ * first. `before(dir)` runs before the call.
  * @param {[string, string, string]} texts  base, ours, theirs
- * @param {{ engine?: string, argv?: (paths: string[]) => string[], fail?: 'writeFileSync'|'renameSync', env?: Record<string, string> }} how
+ * @param {{ engine?: string, argv?: (paths: string[]) => string[], fail?: Record<string, string>, env?: Record<string, string>, draws?: number[], before?: (dir: string) => void }} how
  */
-function driveHere(texts, { engine = 'rank', argv = (paths) => paths, fail, env = {} }) {
+function driveHere(texts, { engine = 'rank', argv = (paths) => paths, fail = {}, env = {}, draws = [], before }) {
   const dir = mkTempDir('bl-merge-driver-');
   const paths = ['base', 'ours', 'theirs'].map((name) => join(dir, name));
   texts.forEach((text, i) => writeFileSync(paths[i], text));
+  before?.(dir);
   const saved = {
-    fs: fail === undefined ? undefined : fs[fail],
+    fs: Object.keys(fail).map((name) => [name, fs[name]]),
     env: Object.keys(env).map((key) => [key, process.env[key]]),
+    random: Math.random,
+    write: process.stderr.write,
   };
-  if (fail !== undefined) {
-    const original = fs[fail];
-    fs[fail] = (path, ...rest) => {
+  for (const [name, code] of Object.entries(fail)) {
+    const original = fs[name];
+    fs[name] = (path, ...rest) => {
       // A disk that fails mid-write: the first bytes land, then the error.
-      if (fail === 'writeFileSync') original(path, String(rest[0]).slice(0, 3));
-      throw Object.assign(new Error(`injected ${fail} failure`), { code: 'EIO' });
+      if (name === 'writeFileSync') original(path, String(rest[0]).slice(0, 3));
+      throw Object.assign(new Error(`injected ${name} failure`), { code });
     };
-    syncBuiltinESMExports();
   }
+  syncBuiltinESMExports();
+  const queued = [...draws];
+  Math.random = () => (queued.length > 0 ? /** @type {number} */ (queued.shift()) : saved.random());
+  let stderr = '';
+  process.stderr.write = (/** @type {string} */ text) => ((stderr += text), true);
   Object.assign(process.env, env);
   let result;
   try {
@@ -120,16 +139,21 @@ function driveHere(texts, { engine = 'rank', argv = (paths) => paths, fail, env 
   } catch (e) {
     result = /** @type {NodeJS.ErrnoException} */ (e).code;
   } finally {
-    if (fail !== undefined) {
-      fs[fail] = saved.fs;
-      syncBuiltinESMExports();
-    }
+    for (const [name, original] of saved.fs) fs[name] = original;
+    syncBuiltinESMExports();
+    Math.random = saved.random;
+    process.stderr.write = saved.write;
     for (const [key, value] of saved.env) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
   }
-  return { result, ours: readFileSync(paths[1], 'utf8'), files: readdirSync(dir).sort() };
+  const files = readdirSync(dir, { recursive: true })
+    .map(String)
+    .filter((path) => !lstatSync(join(dir, path)).isDirectory())
+    .sort();
+  const mode = statSync(paths[1]).mode & 0o777;
+  return { result, ours: readFileSync(paths[1], 'utf8'), mode, stderr, files, dir };
 }
 
 test('merge_driver_write_failure_preserves_ours', () => {
@@ -137,8 +161,8 @@ test('merge_driver_write_failure_preserves_ours', () => {
   const FILES = ['base', 'ours', 'theirs'];
   /** [case, the texts, how the call runs, its exit code or error code, whether ours holds markers after it] */
   const CASES = [
-    ['the merged text cannot be written', MERGES, { fail: 'writeFileSync' }, 'EIO', false],
-    ['the merged text cannot be renamed over ours', MERGES, { fail: 'renameSync' }, 'EIO', false],
+    ['the merged text cannot be written', MERGES, { fail: { writeFileSync: 'EIO' } }, 'EIO', false],
+    ['the merged text cannot be renamed over ours', MERGES, { fail: { renameSync: 'EIO' } }, 'EIO', false],
     ['the wrong number of arguments', MERGES, { argv: (/** @type {string[]} */ p) => [...p, 'more'] }, 2, false],
     ['the base cannot be read', MERGES, { argv: ([, o, t]) => [join(o, '..', 'missing'), o, t] }, 'ENOENT', false],
     ['git merge-file cannot run', CONFLICT, { engine: 'containment', env: { PATH: '' } }, 1, false],
@@ -152,9 +176,76 @@ test('merge_driver_write_failure_preserves_ours', () => {
     else assert.equal(after.ours, texts[1], label);
   }
   // With nothing broken, the merged text replaces ours and nothing else stays.
-  assert.deepEqual(driveHere(/** @type {[string, string, string]} */ (MERGES), {}), {
-    result: 0,
-    ours: jsonOf(['A', 'Y', 'Z']),
-    files: FILES,
-  });
+  const clean = driveHere(/** @type {[string, string, string]} */ (MERGES), {});
+  assert.deepEqual([clean.result, clean.ours, clean.files], [0, jsonOf(['A', 'Y', 'Z']), FILES]);
+});
+
+/** Base, ours and theirs of a rank chain that merges to `A Y Z`. */
+const RANKS = /** @type {[string, string, string]} */ ([jsonOf(['A']), jsonOf(['A', 'Y']), jsonOf(['A', 'Z'])]);
+/** The driver's first staging file when `Math.random` gives 0.5 first. */
+const DRAWN = join('.bl', 'tmp', `ours.${process.pid}.${(0.5).toString(36).slice(2)}.tmp`);
+/** The staging file of the round 1 driver, beside ours. */
+const BESIDE = `ours.${process.pid}.bl-merge.tmp`;
+
+test('merge_driver_preserves_ours_mode_and_existing_staging_file', () => {
+  for (const mode of [0o600, 0o640, 0o644]) {
+    const label = mode.toString(8);
+    const after = driveHere(RANKS, {
+      draws: [0.5],
+      before: (dir) => {
+        chmodSync(join(dir, 'ours'), mode);
+        mkdirSync(join(dir, '.bl', 'tmp'), { recursive: true });
+        writeFileSync(join(dir, DRAWN), 'another caller\n');
+        writeFileSync(join(dir, BESIDE), 'user data\n');
+      },
+    });
+    assert.deepEqual([after.result, after.ours, after.mode], [0, jsonOf(['A', 'Y', 'Z']), mode], label);
+    assert.deepEqual(after.files, [DRAWN, BESIDE, 'base', 'ours', 'theirs'].sort(), label);
+    assert.equal(readFileSync(join(after.dir, DRAWN), 'utf8'), 'another caller\n', label);
+    assert.equal(readFileSync(join(after.dir, BESIDE), 'utf8'), 'user data\n', label);
+  }
+});
+
+test('merge_driver_staging_collision_and_cleanup_ownership', () => {
+  /** A link at the drawn staging name to `other`, a file that no merge names. */
+  const link = (/** @type {string} */ dir) => {
+    writeFileSync(join(dir, 'other'), 'unrelated\n');
+    mkdirSync(join(dir, '.bl', 'tmp'), { recursive: true });
+    symlinkSync(join(dir, 'other'), join(dir, DRAWN));
+  };
+  const LINKED = ['base', 'ours', 'theirs', 'other', DRAWN].sort();
+  /** [case, how the call runs, its exit code or error code, what ours holds, the files after it, stderr] */
+  const CASES = [
+    ['a link at the drawn name', { draws: [0.5], before: link }, 0, jsonOf(['A', 'Y', 'Z']), LINKED, ''],
+    [
+      'the rename fails after a collision',
+      { draws: [0.5], before: link, fail: { renameSync: 'EIO' } },
+      'EIO',
+      RANKS[1],
+      LINKED,
+      '',
+    ],
+    // The staging file stays, as an orphan in ignored space, and stderr names it.
+    [
+      'the rename fails and so does the cleanup',
+      { draws: [0.5], fail: { renameSync: 'EIO', unlinkSync: 'EACCES' } },
+      'EIO',
+      RANKS[1],
+      ['base', 'ours', 'theirs', DRAWN].sort(),
+      /^warning: could not remove staging file .*\.tmp after a failed write: injected unlinkSync failure\n$/,
+    ],
+  ];
+  for (const [label, how, result, ours, files, stderr] of CASES) {
+    const after = driveHere(RANKS, /** @type {any} */ (how));
+    assert.equal(after.result, result, label);
+    assert.equal(after.ours, ours, label);
+    assert.equal(lstatSync(join(after.dir, 'ours')).isSymbolicLink(), false, label);
+    assert.deepEqual(after.files, files, label);
+    if (typeof stderr === 'string') assert.equal(after.stderr, stderr, label);
+    else assert.match(after.stderr, stderr, label);
+    if (files === LINKED) {
+      assert.equal(readlinkSync(join(after.dir, DRAWN)), join(after.dir, 'other'), label);
+      assert.equal(readFileSync(join(after.dir, 'other'), 'utf8'), 'unrelated\n', label);
+    }
+  }
 });

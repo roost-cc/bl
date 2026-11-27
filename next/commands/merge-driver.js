@@ -17,7 +17,9 @@
  * `commands.yaml` line: git calls it, not the operator.
  */
 
-import { readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { readFileSync } from 'fs';
+import { dirname } from 'path';
+import { atomicWriteFile } from '../lib/atomic-write.js';
 import { git } from '../lib/child.js';
 import { mergeGraph } from '../store/graphs.js';
 
@@ -45,15 +47,10 @@ export function mergeDriver(argv) {
     process.stderr.write(`bl-merge-driver: ${/** @type {Error} */ (e).message}\n`);
   }
   if (merged !== null) {
-    // A file beside ours, renamed over it, so a write that fails leaves ours as it was.
-    const staged = `${ours}.${process.pid}.bl-merge.tmp`;
-    try {
-      writeFileSync(staged, merged);
-      renameSync(staged, ours);
-    } catch (e) {
-      rmSync(staged, { force: true });
-      throw e;
-    }
+    // Staged in `.bl/tmp/` of the directory of ours and renamed over it, with
+    // its mode, so a write that fails leaves ours as it was. Git makes ours at
+    // the top of the work tree, which is the backlog root, where `.bl/` is ignored.
+    atomicWriteFile(dirname(ours), ours, merged, { preserve: true });
     return 0;
   }
   git(undefined, ['merge-file', '-L', 'ours', '-L', 'base', '-L', 'theirs', ours, base, theirs]);

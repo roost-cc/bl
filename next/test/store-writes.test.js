@@ -1,7 +1,10 @@
 // Only the store write writes backlog files (F-137 D6): in the code of next/
 // (`test/` and `*.test.js` left out), no module other than store/write.js
-// imports lib/atomic-write.js. An import counts in every form the layer rule
-// reads (`fileImports`), and a symlink counts as the file it points to.
+// imports lib/atomic-write.js. The one other writer is commands/merge-driver.js
+// (F-148 D6): it replaces git's temporary file of ours, `%A`, not a backlog
+// file, and git then writes the backlog file. An import counts in every form
+// the layer rule reads (`fileImports`), and a symlink counts as the file it
+// points to.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'fs';
@@ -14,16 +17,17 @@ import { mkTempDir } from './helpers/tempdir.js';
 const NEXT = fileURLToPath(new URL('../', import.meta.url));
 const ATOMIC_WRITE = join('lib', 'atomic-write.js');
 const WRITER = join('store', 'write.js');
+const MERGE_DRIVER = join('commands', 'merge-driver.js');
 
 /**
- * The files of the code of `next`, besides store/write.js, that import
- * lib/atomic-write.js: `["<file>:<line>"]`.
+ * The files of the code of `next`, besides store/write.js and
+ * commands/merge-driver.js, that import lib/atomic-write.js: `["<file>:<line>"]`.
  * @param {string} next  a next/ tree
  */
 export function atomicWriteImporters(next) {
   const target = realOrResolved(join(next, ATOMIC_WRITE));
   return codeFiles(next)
-    .filter(({ file }) => file !== WRITER)
+    .filter(({ file }) => file !== WRITER && file !== MERGE_DRIVER)
     .flatMap(({ file }) =>
       fileImports(join(next, file))
         .filter((i) => i.target === target)
@@ -31,15 +35,16 @@ export function atomicWriteImporters(next) {
     );
 }
 
-test('in the code of next/, only store/write.js imports lib/atomic-write.js', () => {
+test('in the code of next/, only store/write.js and commands/merge-driver.js import lib/atomic-write.js', () => {
   assert.deepEqual(atomicWriteImporters(NEXT), []);
 });
 
-test('the guard finds another module that imports lib/atomic-write.js, and passes its tests and store/write.js', () => {
+test('the guard finds another module that imports lib/atomic-write.js, and passes its tests, store/write.js and commands/merge-driver.js', () => {
   const next = mkTempDir('bl-store-writes-');
   const files = {
     [ATOMIC_WRITE]: 'export function atomicWriteFile() {}\n',
     [WRITER]: "import { atomicWriteFile } from '../lib/atomic-write.js';\n",
+    [MERGE_DRIVER]: "import { atomicWriteFile } from '../lib/atomic-write.js';\n",
     [join('store', 'write.test.js')]: "import { atomicWriteFile } from '../lib/atomic-write.js';\n",
     [join('steps', 'save.js')]: "const x = 1;\nimport { atomicWriteFile } from '../lib/atomic-write.js';\n",
     [join('store', 'items.js')]: "export * from '../lib/atomic-write.js';\n",

@@ -26,7 +26,8 @@
  * (`configureMergeDrivers`, F-148 D4).
  *
  * Only this module writes backlog files: `next/test/store-writes.test.js`
- * fails when another module of `next/` imports `lib/atomic-write.js`. The
+ * fails when another module of `next/` imports `lib/atomic-write.js`, except
+ * `commands/merge-driver.js`, which replaces git's temporary file `%A`. The
  * backlog lock covers every store write, so it is the item's file lock of
  * items.md; today's covering-lock table is not carried.
  */
