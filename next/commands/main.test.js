@@ -303,6 +303,78 @@ test('bl-next exits 1 on a flow set with a missing arrow, with the fault on stde
   assert.equal(fixed.stdout, '{"id":"S-1","title":"Story S-1"}\n');
 });
 
+// ---------------------------------------------------------------------------
+// shop steps in the catalogue (F-140 D6)
+// ---------------------------------------------------------------------------
+
+const SHOP = `${BACKLOG}plugin_registry: { steps: { tag_release: { command: 'tag {{with.code}} {{with.code}}', exit_codes: { 1: success } }, plain: 'true' } }\n`;
+
+/** The shop backlog with a story flow whose one box is `box`. */
+const shopFiles = (/** @type {string} */ box) => ({
+  'backlog/backlog.yaml': SHOP,
+  'backlog/config/commands.yaml': `${FIXTURE_COMMANDS}catalogue:\n  op: catalogue\n  help: list the steps\n`,
+  'backlog/config/flows/story.yaml': [
+    'flows:',
+    '  story:',
+    '    initial: draft',
+    '    statuses: { draft: {} }',
+    '    steps:',
+    `      tag: ${box}`,
+    '',
+  ].join('\n'),
+});
+
+const ARROWS = 'success: stop, failure: stop';
+
+test("the op context's catalogue holds the code steps and each shop step as steps.<name>", async () => {
+  const { status, stdout, stderr } = await runBlNext(
+    shopFiles(`{ use: steps.tag_release, with: { code: 1 }, ${ARROWS} }`),
+    { bin: WITH_FIXTURE_OPS, argv: ['catalogue', '--json'] },
+  );
+  assert.equal(stderr, '');
+  assert.equal(status, 0);
+  assert.deepEqual(
+    stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line).id),
+    ['work', 'steps.tag_release', 'steps.plain'],
+  );
+});
+
+test('bl-next exits 1 on a shop step box whose with: lacks or adds a name, or that names no shop step', async () => {
+  const at = 'config/flows/story.yaml: /flows/story/steps/tag';
+  const rows = [
+    [
+      `{ use: steps.tag_release, with: {}, ${ARROWS} }`,
+      `${at}/with/code: required: must have required property 'code'`,
+    ],
+    [
+      `{ use: steps.tag_release, with: { code: 1, extra: 2 }, ${ARROWS} }`,
+      `${at}/with/extra: additionalProperties: must NOT have additional properties`,
+    ],
+    [`{ use: steps.tag_release, ${ARROWS} }`, `${at}: type: the step 'steps.tag_release' needs with: must be object`],
+    [`{ use: steps.plain, with: { code: 1 }, ${ARROWS} }`, `${at}/with: with: the step 'steps.plain' takes no with`],
+    [`{ use: steps.nope, ${ARROWS} }`, `${at}/use: box: 'steps.nope' names no code step, defined step or subflow`],
+  ];
+  for (const [box, line] of rows) {
+    const { status, stdout, stderr } = await runBlNext(shopFiles(box), {
+      bin: WITH_FIXTURE_OPS,
+      argv: ['story', 'S-1'],
+    });
+    assert.equal(stderr, `${line}\n${DOES_NOT_LOAD}`, box);
+    assert.equal(status, 1, box);
+    assert.equal(stdout, '', box);
+  }
+  // A shop step that reads no with. name loads without with:.
+  const plain = await runBlNext(shopFiles(`{ use: steps.plain, ${ARROWS} }`), {
+    bin: WITH_FIXTURE_OPS,
+    argv: ['story', 'S-1', '--json'],
+  });
+  assert.equal(plain.stderr, '');
+  assert.equal(plain.status, 0);
+});
+
 test('bl-next with no backlog to find exits 1 with bl-next: and the error', async () => {
   const { status, stderr } = await runBlNext({}, { backlog: false });
   assert.match(stderr, /^bl-next: no backlog found: .*\n$/);

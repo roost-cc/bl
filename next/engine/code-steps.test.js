@@ -1,9 +1,12 @@
-// The code steps succeed, assert and increment (F-140 D5) on a fixture task flow beside the uTop
+// The code steps succeed, assert and increment (F-140 D5), and shop steps (D6), on a fixture task flow beside the uTop
 // flow set, run by F-139's runner with the real step catalogue. They are here, not in steps/,
 // because only engine/ may import the runner (the layer rule, F-135 D3).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, realpathSync } from 'fs';
+import { join } from 'path';
 import { STEPS } from '../steps/index.js';
+import { shopSteps } from '../steps/shop.js';
 import { itemDir } from '../store/items.js';
 import { createItems, engineBacklog } from '../test/helpers/engine-backlog.js';
 import { UTOP_STEPS } from '../test/helpers/flow-fixture.js';
@@ -107,6 +110,49 @@ test('increment_keeps_stored_threshold_and_other_counters', async () => {
   // A stored counter with no value counts from 0, and keeps the threshold it has.
   const novalue = await task(INCREMENT, { counters: { r: { threshold: 5 } } });
   assert.deepEqual((await committed(novalue.ctx, novalue.id)).state.counters, { r: { value: 1, threshold: 5 } });
+});
+
+// ---- shop steps (F-140 D6) ----
+
+const SHOP = [
+  'repos: {}',
+  'plugin_registry:',
+  '  steps:',
+  `    tag_release: { command: 'exit {{with.code}}', exit_codes: { 1: success } }`,
+  // Where it runs, and what {{repo}} gives, go to .bl/, which git ignores; the last stderr line is the note.
+  `    where: "mkdir -p .bl && pwd >> .bl/where && printf '<%s>\\\\n' {{repo}} >> .bl/where && echo first >&2 && echo 'the last line' >&2"`,
+  '',
+].join('\n');
+
+/** One task of the task flow of `box` on the shop backlog, run once; its result and context. */
+async function runShopTask(/** @type {string} */ box) {
+  const ctx = engineBacklog({ 'task.yaml': taskFlow(box) }, SHOP, (config) => ({ ...CATALOGUE, ...shopSteps(config) }));
+  const [id] = await createItems(ctx, [{ type: 'task', state: { status: 'draft', run: 'idle' } }]);
+  const catalogue = { ...CATALOGUE, ...shopSteps(ctx.config) };
+  const result = await runFlow(ctx, { id, start: 'first', by: 'operator', entry: 'run', catalogue }).catch((e) => e);
+  return { ctx, id, result };
+}
+
+test('a shop step goes to the arrow of its exit status, by its exit_codes', async () => {
+  const cases = [
+    // [code, the status at the end, the outcome]
+    [1, 'done', 'success'],
+    [2, 'superseded', 'failure'],
+  ];
+  for (const [code, status, outcome] of cases) {
+    const { result } = await runShopTask(`{ use: steps.tag_release, with: { code: ${code} }, ${ARROWS} }`);
+    assert.deepEqual(result, { ended: 'stop', status, outcome }, `code ${code}`);
+  }
+});
+
+test('a shop step runs once in the backlog root, {{repo}} renders as nothing, and its last stderr line is the note', async () => {
+  const { ctx, id, result } = await runShopTask(`{ use: steps.where, ${ARROWS} }`);
+  assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.equal(readFileSync(join(ctx.backlogDir, '.bl/where'), 'utf8'), `${realpathSync(ctx.backlogDir)}\n<>\n`);
+  assert.match(
+    git(ctx.backlogDir, 'log', '-1', '--format=%B'),
+    new RegExp(`^${id}: first success\\n\\nthe last line\\n`),
+  );
 });
 
 test('increment_with_needs_counter_and_threshold_of_1_or_more', () => {

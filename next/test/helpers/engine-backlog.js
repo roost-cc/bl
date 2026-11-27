@@ -32,7 +32,9 @@ const FILES = {
  * `plugin_registry`.
  * @param {Record<string, string>} [flows]  flow file name → YAML text
  * @param {string} [backlogYaml]
- * @param {Readonly<Record<string, any>>} [catalogue]  the step catalogue
+ * @param {Readonly<Record<string, any>> | ((config: any) => Readonly<Record<string, any>>)} [catalogue]
+ *   the step catalogue, or a function of the loaded configuration that gives
+ *   it (for the shop's steps)
  * @returns {{ backlogDir: string, config: any, flowSet: import('../../engine/flow-set.js').FlowSet }}
  */
 export function engineBacklog(flows = {}, backlogYaml = 'repos: {}\n', catalogue = UTOP_STEPS) {
@@ -46,7 +48,8 @@ export function engineBacklog(flows = {}, backlogYaml = 'repos: {}\n', catalogue
   git(dirs.backlogDir, 'add', '.');
   git(dirs.backlogDir, 'commit', '-q', '-m', 'init');
   const config = load(dirs);
-  return { backlogDir: dirs.backlogDir, config, flowSet: buildFlowSet(config, catalogue, dirs.backlogDir) };
+  const steps = typeof catalogue === 'function' ? catalogue(config) : catalogue;
+  return { backlogDir: dirs.backlogDir, config, flowSet: buildFlowSet(config, steps, dirs.backlogDir) };
 }
 
 /**

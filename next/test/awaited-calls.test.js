@@ -24,7 +24,11 @@ import { mkTempDir } from './helpers/tempdir.js';
 const NEXT = fileURLToPath(new URL('../', import.meta.url));
 
 /** `"<file under next/> <name>"` → why that file's calls of `name` are not awaited. */
-const EXCEPTIONS = new Map([]);
+const EXCEPTIONS = new Map([
+  // The guard matches calls by name, and a shop step's `run` (steps/shop.js) is async.
+  ['lib/credential-helper.js run', 'a different function named run: the sync git-config reader it is given'],
+  ['store/write.js run', "a different function named run: AsyncLocalStorage's run, inside a then callback"],
+]);
 
 const isFunction = (n) => /Function/.test(n.type);
 

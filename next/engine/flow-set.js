@@ -34,13 +34,14 @@ import { KINDS } from '../config/kinds.js';
 import { checkFlow, deriveStatuses } from './derive.js';
 
 /**
- * The step catalogue that `bl-next` passes to `buildFlowSet` (D2), and the
- * start check of the plugin commands that `startFaults` adds (F-140 D3). The
- * layer rule lets `commands/` import `engine/` but not `steps/`, so the engine
- * hands them on.
+ * The step catalogue that `bl-next` passes to `buildFlowSet` (D2), with the
+ * shop's steps added (F-140 D6), and the start check of the plugin commands
+ * that `startFaults` adds (F-140 D3). The layer rule lets `commands/` import
+ * `engine/` but not `steps/`, so the engine hands them on.
  */
 export { STEPS } from '../steps/index.js';
 export { pluginFaults } from '../steps/plugin.js';
+export { shopSteps } from '../steps/shop.js';
 
 /** @typedef {import('../config/files.js').Fault} Fault */
 /** @typedef {import('../config/load.js').Configuration} Configuration */

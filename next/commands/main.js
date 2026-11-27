@@ -18,7 +18,7 @@ import { ConfigurationFaults } from '../config/check.js';
 import { findBacklogRoot, operatorDir } from '../config/files.js';
 import { KINDS } from '../config/kinds.js';
 import { loadConfiguration } from '../config/load.js';
-import { buildFlowSet, STEPS } from '../engine/flow-set.js';
+import { buildFlowSet, shopSteps, STEPS } from '../engine/flow-set.js';
 import { blIn, CommandFailed, dispatch, PROG, startFaults } from './dispatch.js';
 import { OPS } from './ops/index.js';
 import { writeOutput } from './output.js';
@@ -40,8 +40,8 @@ function startStatus(argv) {
  * Run `bl-next`.
  * @param {string[]} argv  the arguments after the program name
  * @param {{ ops?: Readonly<Record<string, import('./ops/index.js').Op>>, steps?: Readonly<Record<string, import('../engine/flow-set.js').Step>> }} [options]
- *   `ops` is the op registry, `OPS`, and `steps` the step catalogue, `STEPS`;
- *   a test passes fixture ops and steps
+ *   `ops` is the op registry, `OPS`, and `steps` the step catalogue, `STEPS`,
+ *   to which the shop's steps are added; a test passes fixture ops and steps
  * @returns {Promise<number>} the exit code: 1 on a configuration fault, 2 on a usage error, the status of a pager that started and failed
  */
 export async function main(argv, { ops = OPS, steps = STEPS } = {}) {
@@ -55,19 +55,23 @@ export async function main(argv, { ops = OPS, steps = STEPS } = {}) {
   let backlogDir;
   let config;
   let flowSet;
+  let catalogue;
   try {
     backlogDir = findBacklogRoot();
     config = loadConfiguration({ backlogDir, operatorDir: operatorDir(), kinds: KINDS });
     const faults = startFaults(config, ops);
     if (faults.length > 0) throw new ConfigurationFaults(faults, backlogDir);
-    flowSet = buildFlowSet(config, steps, backlogDir);
+    // The shop's steps are ordinary entries of the catalogue (F-140 D6). A
+    // `steps.` name cannot clash with a code step's name.
+    catalogue = Object.freeze({ ...steps, ...shopSteps(config) });
+    flowSet = buildFlowSet(config, catalogue, backlogDir);
   } catch (error) {
     process.stderr.write(
       error instanceof ConfigurationFaults ? `${error.message}\n${DOES_NOT_LOAD}\n` : `${PROG}: ${error.message}\n`,
     );
     return 1;
   }
-  const context = { config, backlogDir, flowSet, ops };
+  const context = { config, backlogDir, flowSet, catalogue, ops };
   const exit = ({ status, stdout, stderr }) => {
     process.stdout.write(stdout);
     process.stderr.write(stderr);
