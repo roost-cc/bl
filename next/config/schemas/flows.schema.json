@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "A file of the flow set, config/flows/<name>.yaml",
+  "description": "One file of the flow set (flow-config.md, \"Flow files\", D-25; F-139 D3). Each file holds flows, subflows, defined steps, step gates and the flow set's settings; `bl` checks the files together as one set after this shape check (F-139 D4, D5). Only the shop writes the flow set (D-85). Each name matches `^[^_/][^/]*$`: a name that starts with `_` is reserved (D-44), and `/` joins box paths (D-37). The `cel` keyword marks each gate condition, each `after` entry and each property, so the load compiles them.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "flows": {
+      "type": "object",
+      "description": "Item type → its flow.",
+      "propertyNames": { "$ref": "#/$defs/Name" },
+      "additionalProperties": { "$ref": "#/$defs/Flow" }
+    },
+    "subflows": {
+      "type": "object",
+      "description": "Subflow name → its subflow (flow-config.md, \"Subflows are flattened\").",
+      "propertyNames": { "$ref": "#/$defs/Name" },
+      "additionalProperties": { "$ref": "#/$defs/Subflow" }
+    },
+    "defined_steps": {
+      "type": "object",
+      "description": "Defined step name → a code step with its arguments and post-conditions (D-33 to D-35).",
+      "propertyNames": { "$ref": "#/$defs/Name" },
+      "additionalProperties": { "$ref": "#/$defs/DefinedStep" }
+    },
+    "step_gates": {
+      "type": "object",
+      "description": "A code step, defined step or subflow name → the gate that holds before it starts (D-38; F-139 Decision A4).",
+      "propertyNames": { "$ref": "#/$defs/Name" },
+      "additionalProperties": { "$ref": "#/$defs/Gate" }
+    },
+    "max_box_visits": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The most starts of one box in one flow invocation (steps.md, \"Box visit limit\", D-115)."
+    },
+    "gate_recheck_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "How often a suspended process checks its gate again (flows.md, \"Waking a suspended process\", D-21)."
+    }
+  },
+  "$defs": {
+    "Name": {
+      "type": "string",
+      "pattern": "^[^_/][^/]*$",
+      "description": "A flow, subflow, status, box, entry or defined step name: no reserved `_` start (D-44), no `/` (D-37)."
+    },
+    "Flow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["initial"],
+      "properties": {
+        "initial": { "type": "string", "description": "The status of a new item." },
+        "statuses": {
+          "type": "object",
+          "description": "Status name → its properties.",
+          "propertyNames": { "$ref": "#/$defs/Name" },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "gate": {
+                "$ref": "#/$defs/Gate",
+                "description": "The status gate: each entry holds before the item enters the status (D-38)."
+              }
+            }
+          }
+        },
+        "properties": {
+          "type": "object",
+          "description": "The status properties as conditions over the record (statuses.md, \"Status properties\", D-64). `closed` is derived from the flow, so no flow writes it.",
+          "additionalProperties": false,
+          "properties": {
+            "in_scope": { "$ref": "#/$defs/Condition" },
+            "ready": { "$ref": "#/$defs/Condition" },
+            "approved": { "$ref": "#/$defs/Condition" },
+            "started": { "$ref": "#/$defs/Condition" }
+          }
+        },
+        "entries": {
+          "type": "object",
+          "description": "Entry name → where an invocation may start (flows.md, \"Entry points\", D-48, D-54).",
+          "propertyNames": { "$ref": "#/$defs/Name" },
+          "additionalProperties": { "$ref": "#/$defs/Entry" }
+        },
+        "steps": { "$ref": "#/$defs/Boxes" }
+      }
+    },
+    "Subflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "steps"],
+      "properties": {
+        "start": { "type": "string", "description": "The box the subflow enters." },
+        "steps": { "$ref": "#/$defs/Boxes" }
+      }
+    },
+    "Entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "start"],
+      "properties": {
+        "from": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "The statuses the item may hold when the entry starts."
+        },
+        "start": { "type": "string", "description": "The box where the invocation starts." },
+        "run_states": {
+          "type": "array",
+          "items": { "enum": ["idle", "waiting", "gated", "interrupted"] },
+          "description": "The run states the entry starts from besides `idle` (D-48)."
+        },
+        "args": {
+          "type": "object",
+          "description": "The option as it is typed → the options of `argparse`'s `add_argument`, with `sets` and `steps` (D-424). F-152 builds their use.",
+          "additionalProperties": { "type": "object" }
+        }
+      }
+    },
+    "Boxes": {
+      "type": "object",
+      "description": "Box name → box (flow-config.md, \"Boxes\", D-36).",
+      "propertyNames": { "$ref": "#/$defs/Name" },
+      "additionalProperties": { "$ref": "#/$defs/Box" }
+    },
+    "Box": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "use": {
+          "type": "string",
+          "description": "A code step, a defined step, a subflow, or a shop step as `steps.<name>`; with none, the box runs what its name names."
+        },
+        "with": { "description": "The arguments of an inline step; the step's own schema checks them." },
+        "after": { "$ref": "#/$defs/After" },
+        "success": { "$ref": "#/$defs/Arrow" },
+        "failure": { "$ref": "#/$defs/Arrow" }
+      }
+    },
+    "DefinedStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["use"],
+      "properties": {
+        "use": { "type": "string", "description": "A code step, or a shop step as `steps.<name>`." },
+        "with": { "description": "The step's arguments; the step's own schema checks them." },
+        "after": { "$ref": "#/$defs/After" }
+      }
+    },
+    "After": {
+      "type": "array",
+      "description": "The post-conditions: each holds after the step returns `success`, or the outcome becomes `failure` (D-35).",
+      "items": { "$ref": "#/$defs/Condition" }
+    },
+    "Arrow": {
+      "type": ["string", "object"],
+      "description": "A box name or `stop`, short for `{ next: <name> }`; or an object with exactly one of `next` and `return`, and an optional `status` (D-26, D-43; F-139 Decision A1).",
+      "additionalProperties": false,
+      "properties": {
+        "next": { "type": "string" },
+        "return": { "enum": ["success", "failure"] },
+        "status": { "type": "string" }
+      },
+      "oneOf": [
+        { "type": "string" },
+        { "type": "object", "properties": { "next": true }, "required": ["next"] },
+        { "type": "object", "properties": { "return": true }, "required": ["return"] }
+      ]
+    },
+    "Gate": {
+      "type": "array",
+      "description": "A gate: each entry must give `true` (core.md, \"Conditions are CEL\").",
+      "items": { "$ref": "#/$defs/GateEntry" }
+    },
+    "GateEntry": {
+      "type": ["string", "object"],
+      "cel": "bool",
+      "description": "A condition, or `{ condition, class }`, where `class` routes the gated alert.",
+      "additionalProperties": false,
+      "required": ["condition", "class"],
+      "properties": {
+        "condition": { "$ref": "#/$defs/Condition" },
+        "class": { "type": "string" }
+      }
+    },
+    "Condition": { "type": "string", "cel": "bool" }
+  }
+}

@@ -1,0 +1,50 @@
+# The self_check subflow: what a developer does before asking for a peer review: the unit tests
+# with their fix loop, then the self-review with its fix rounds (commands.md, "Commands":
+# `implement`, operator 2026-11-19). deliver, deliver_child and the implement entry use it.
+#
+# A planned wait is a `wait` box after a notify box ("The `wait` step", 2026-11-19). `stop` MUST
+# NOT appear inside a subflow, so a wait box's failure (the operator chose another route) returns
+# failure, and the caller's failure arrow decides.
+
+subflows:
+  self_check:
+    start: test_unit
+    steps:
+      test_unit:
+        success: self_review
+        failure: count_test_fix
+      count_test_fix:
+        success: test_cap
+      test_cap:
+        success: fix_test_failure
+        failure: notify_fix_test_failure # cap reached
+      fix_test_failure:
+        success: test_unit # fixed, or the failure did not reproduce
+        failure: notify_fix_test_failure # unrelated to the change, or a post-condition failed
+      notify_fix_test_failure:
+        use: notify
+        with: { template: tests_failing, topic: tests }
+        success: wait_fix_test_failure
+        failure: wait_fix_test_failure
+      wait_fix_test_failure:
+        use: wait
+        success: fix_test_failure # the operator resolved it: run fix_test_failure again
+        failure: { return: failure } # the operator chose another route
+      self_review:
+        success: { return: success }
+        failure: self_round_cap # open findings; also the operator's other route at self_verify
+      self_round_cap:
+        success: fix
+        failure: notify_fix # cap reached
+      fix:
+        success: test_unit # back through the tests and the self-review
+        failure: notify_fix # an item needs a decision, or a post-condition failed
+      notify_fix:
+        use: notify
+        with: { template: escalation_waiting, topic: escalation }
+        success: wait_fix
+        failure: wait_fix
+      wait_fix:
+        use: wait
+        success: fix # the operator resolved it: run fix again
+        failure: { return: failure } # the operator chose another route

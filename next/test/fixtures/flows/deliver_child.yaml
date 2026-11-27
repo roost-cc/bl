@@ -1,0 +1,14 @@
+# The deliver_child subflow: a story in a feature or batch, from written code to implemented
+# (children.md, "Branches for children"). A child has no PR of its own.
+
+subflows:
+  deliver_child:
+    start: self_check
+    steps:
+      self_check:
+        success: join_child
+        failure: { return: failure } # a wait inside self_check ended with failure
+      join_child:
+        # "In the default configuration, the arrow after join_child sets implemented."
+        success: { status: implemented, return: success }
+        failure: { return: failure } # a wait inside join_child ended with failure

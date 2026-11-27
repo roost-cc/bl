@@ -1,0 +1,24 @@
+# The fix_round subflow: the fix entry's one step, one round of answering a review
+# (commands.md, "Commands": `fix`, operator 2026-11-19). It runs fix, then self_check (the
+# tests and the self-review), so the fixed code meets ready_for_review. It does not run the peer
+# review again: `bl review` does that.
+
+subflows:
+  fix_round:
+    start: fix
+    steps:
+      fix:
+        success: self_check
+        failure: notify_fix # an item needs a decision, or a post-condition failed
+      notify_fix:
+        use: notify
+        with: { template: escalation_waiting, topic: escalation }
+        success: wait_fix
+        failure: wait_fix
+      wait_fix: # "The `wait` step" (2026-11-19)
+        use: wait
+        success: fix # the operator resolved it: run fix again
+        failure: { return: failure } # the operator chose another route: the caller decides
+      self_check:
+        success: { return: success }
+        failure: { return: failure } # a wait inside self_check ended with failure

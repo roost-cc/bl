@@ -1,0 +1,4 @@
+# The flow set's own settings (bl refactor "Box visit limit", "Agents and capacity",
+# "Waking a suspended process").
+max_box_visits: 20
+gate_recheck_minutes: 15 # a suspended process checks its gate again this often

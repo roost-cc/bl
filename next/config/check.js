@@ -203,7 +203,9 @@ export function shapeChecker(shipped = []) {
   const recorded = [];
   /** How many `propertyNames` subschemas run now: above 0, the data is a key. */
   const keys = { depth: 0 };
-  const ajv = new Ajv2020({ strict: true, allErrors: true, useDefaults: false });
+  // `allowUnionTypes`: a flow-set arrow or gate entry is a string or an object (F-139 D3), and a
+  // union type gives one fault for a bad object, where `anyOf` adds a fault per branch.
+  const ajv = new Ajv2020({ strict: true, allErrors: true, useDefaults: false, allowUnionTypes: true });
   ajv.addFormat('utc-timestamp', { type: 'string', validate: isUtcTimestamp });
   ajv.addKeyword({
     keyword: 'cel',

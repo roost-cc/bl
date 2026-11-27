@@ -1,0 +1,27 @@
+# The resolution_review subflow: one review pass and its verify pass over an agent's conflict
+# resolution, in merge_unit only (children.md, "Reviewing a resolution").
+
+subflows:
+  resolution_review:
+    start: resolution_correctness
+    steps:
+      resolution_correctness:
+        success: resolution_verify
+        # The outcomes table does not name resolution_correctness; it is taken to return what the
+        # other review passes return (success, failure).
+        failure: { return: failure } # worktree_unchanged failed
+      resolution_verify:
+        success: findings_closed # every finding is judged
+        failure: notify_resolution_verify # the reviewer could not judge, or a post-condition failed
+      notify_resolution_verify:
+        use: notify
+        with: { template: escalation_waiting, topic: escalation }
+        success: wait_resolution_verify
+        failure: wait_resolution_verify
+      wait_resolution_verify:
+        use: wait
+        success: resolution_verify
+        failure: { return: failure }
+      findings_closed: # a defined step: assert no open Must or Should finding (defined-steps.yaml)
+        success: { return: success }
+        failure: { return: failure } # open findings: merge_unit's fix

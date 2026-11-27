@@ -1,0 +1,108 @@
+# The merge_unit subflow: merge a work unit into its recorded base
+# (children.md, "Merging a work unit", "Reviewing a resolution").
+# Notify and wait boxes as in deliver.yaml.
+
+subflows:
+  merge_unit:
+    start: join
+    steps:
+      join:
+        success: test_merge
+        failure: resolve_conflict
+      resolve_conflict:
+        success: test_resolution
+        failure: notify_resolve_conflict
+      notify_resolve_conflict:
+        use: notify
+        with: { template: conflict_unresolved, topic: conflict }
+        success: wait_resolve_conflict
+        failure: wait_resolve_conflict
+      wait_resolve_conflict:
+        use: wait
+        success: resolve_conflict
+        failure: { return: failure }
+      # Cheap mechanical tests before the review ("Reviewing a resolution", 2026-11-20). The boxes
+      # run test_merge and fix_test_failure under other names ("Boxes"); the two test loops share
+      # the counter merge_test_fixes.
+      test_resolution:
+        use: test_merge
+        success: resolution_review
+        failure: count_resolution_fix
+      count_resolution_fix:
+        use: increment
+        with: { counter: merge_test_fixes, threshold: 3 }
+        success: resolution_cap
+      resolution_cap:
+        use: assert
+        with: ['counters.merge_test_fixes.value < counters.merge_test_fixes.threshold']
+        success: fix_resolution_test
+        failure: notify_fix_resolution_test
+      fix_resolution_test:
+        use: fix_test_failure
+        success: test_resolution
+        failure: notify_fix_resolution_test
+      notify_fix_resolution_test:
+        use: notify
+        with: { template: tests_failing, topic: tests }
+        success: wait_fix_resolution_test
+        failure: wait_fix_resolution_test
+      wait_fix_resolution_test:
+        use: wait
+        success: fix_resolution_test
+        failure: { return: failure }
+      resolution_review:
+        success: test_merge
+        failure: fix
+      fix:
+        success: test_merge # one round: no second review
+        failure: notify_fix # an item needs a decision, or a post-condition failed
+      notify_fix:
+        use: notify
+        with: { template: escalation_waiting, topic: escalation }
+        success: wait_fix
+        failure: wait_fix
+      wait_fix:
+        use: wait
+        success: fix
+        failure: { return: failure }
+      test_merge:
+        success: merge
+        failure: count_fix
+      count_fix: # inline: merge_unit counts its own test fixes
+        use: increment
+        with: { counter: merge_test_fixes, threshold: 3 }
+        success: merge_cap
+      merge_cap:
+        use: assert
+        with: ['counters.merge_test_fixes.value < counters.merge_test_fixes.threshold']
+        success: fix_test_failure
+        failure: notify_fix_test_failure
+      fix_test_failure:
+        success: test_merge
+        failure: notify_fix_test_failure # unrelated to the change, or a post-condition failed
+      notify_fix_test_failure:
+        use: notify
+        with: { template: tests_failing, topic: tests }
+        success: wait_fix_test_failure
+        failure: wait_fix_test_failure
+      wait_fix_test_failure:
+        use: wait
+        success: fix_test_failure
+        failure: { return: failure }
+      merge:
+        success: release
+        failure: join # the base moved
+      release: # tags each touched repo, then writes releases/<id>.json (steps.md, "The `release` step")
+        success: cleanup
+        failure: notify_release
+      notify_release:
+        use: notify
+        with: { template: release_failed, topic: merge }
+        success: wait_release
+        failure: wait_release
+      wait_release:
+        use: wait
+        success: release # the operator fixed the push; release completes the tags left
+        failure: cleanup
+      cleanup:
+        success: { return: success }
