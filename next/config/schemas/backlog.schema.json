@@ -19,6 +19,36 @@
       "type": "object",
       "description": "Id prefix to item type name, for example `S: story` (items.md, \"Ids\", D-601). The store reads an id's prefix and type from it (F-137 D3).",
       "additionalProperties": { "type": "string" }
+    },
+    "work_types": {
+      "type": "array",
+      "description": "The item types whose items are work units, or belong to one (items.md, \"Work types and work units\"; graphs.md, \"Graphs\"; F-148 D1).",
+      "items": { "type": "string" }
+    },
+    "graphs": {
+      "type": "array",
+      "description": "The backlog's graphs (graphs.md, \"Graphs\"; F-148 D1). Each graph's edges live in `graphs/<name>.json`, and its engine gives the file's shape and rules.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "engine", "nodes"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "description": "The graph's name, which gives its file `graphs/<name>.json`. Lower-case letters, digits and `-` only, so the file is directly under `graphs/` and its `.gitattributes` line needs no quoting: a `/`, `..`, a space or a line break would put the file elsewhere or break the line."
+          },
+          "engine": {
+            "enum": ["containment", "dependency", "rank"],
+            "description": "The engine that gives the graph's file shape, rules and merge (graphs.md, D-603 to D-606)."
+          },
+          "nodes": {
+            "type": "array",
+            "description": "The item types that may be nodes of the graph.",
+            "items": { "type": "string" }
+          }
+        }
+      }
     }
   }
 }

@@ -1,0 +1,12 @@
+#!/usr/bin/env node
+/**
+ * bl-merge-driver — git's merge driver for the graph files (F-148 Decision A2).
+ *
+ * It calls `mergeDriver` of `commands/merge-driver.js`, so `bin/` imports only
+ * `commands/` (F-135 D3). Git runs it as `bl-merge-driver <engine> %O %A %B`
+ * (`configureMergeDrivers`, `store/graphs.js`).
+ */
+
+import { mergeDriver } from '../commands/merge-driver.js';
+
+process.exitCode = mergeDriver(process.argv.slice(2));

@@ -18,6 +18,7 @@
 import Ajv2020, { _ } from 'ajv/dist/2020.js';
 import { isAbsolute, relative, sep } from 'path';
 import { isMapping, pointerToken } from './files.js';
+import STATE_SCHEMA from './schemas/state.schema.json' with { type: 'json' };
 
 /** @typedef {import('./files.js').Fault} Fault */
 /** @typedef {import('./layers.js').Layer} Layer */
@@ -189,11 +190,15 @@ export function isUtcTimestamp(text) {
 
 /**
  * The shape checker of one load: one ajv instance, with the `cel` keyword
- * and the `utc-timestamp` format (`isUtcTimestamp`).
+ * and the `utc-timestamp` format (`isUtcTimestamp`). Each schema of `shipped`
+ * is added to the instance first, so another schema's `$ref` to its `$id`
+ * resolves whatever order the schemas are compiled in, and `compile` of a
+ * schema with that `$id` gives the added schema's check.
+ * @param {Record<string, unknown>[]} [shipped]  schemas that other schemas refer to by `$id`
  * @returns {{ compile: (schema: Record<string, unknown>) =>
  *   (result: unknown, layers: Layer[]) => { faults: Fault[], cel: CelString[] } }}
  */
-export function shapeChecker() {
+export function shapeChecker(shipped = []) {
   /** @type {{ path: string, expr: string, type: 'bool'|'dyn' }[]} */
   const recorded = [];
   /** How many `propertyNames` subschemas run now: above 0, the data is a key. */
@@ -242,9 +247,13 @@ export function shapeChecker() {
       cxt.mergeEvaluated(sub);
     },
   });
+  const added = new Set(shipped.map((schema) => schema.$id));
+  for (const schema of shipped) ajv.addSchema(/** @type {object} */ (withTrials(schema)));
   return {
     compile(schema) {
-      const validate = ajv.compile(/** @type {object} */ (withTrials(schema)));
+      const validate = added.has(schema.$id)
+        ? /** @type {import('ajv').ValidateFunction} */ (ajv.getSchema(/** @type {string} */ (schema.$id)))
+        : ajv.compile(/** @type {object} */ (withTrials(schema)));
       return (result, layers) => {
         recorded.length = 0;
         validate(result);
@@ -274,12 +283,14 @@ const compiledValues = new WeakMap();
  * JSON Schema, or a `$ref` does not resolve) gives every value one fault with
  * the rule `schema` and ajv's message: an attribute's `schema` comes from the
  * shop's item definition, and the configuration load does not compile it.
+ * The checker knows `state.schema.json` from the start, so the record
+ * schema's `$ref`s to it resolve (F-148 D7).
  * @param {Record<string, unknown>} schema
  * @param {unknown} value
  * @returns {Fault[]}
  */
 export function checkValue(schema, value) {
-  valueChecker ??= shapeChecker();
+  valueChecker ??= shapeChecker([STATE_SCHEMA]);
   let check = compiledValues.get(schema);
   if (check === undefined) {
     try {

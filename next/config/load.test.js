@@ -86,6 +86,50 @@ test('an unknown top-level key in backlog.yaml is a fault that names backlog.yam
   ]);
 });
 
+test('work_types and graphs (F-148 D1) come through scope(null)', () => {
+  const dirs = fixture({
+    'backlog/backlog.yaml': `color_scheme: mocha
+repos: {}
+work_types: [feature, batch, story, task]
+graphs:
+  - { name: containment, engine: containment, nodes: [story, feature, batch, epic, theme, component, task] }
+  - { name: dependency, engine: dependency, nodes: [story, feature, batch, task] }
+  - { name: rank, engine: rank, nodes: [feature, batch, story, task] }
+`,
+  });
+  const top = load(dirs).scope(null);
+  assert.deepEqual(top.work_types, ['feature', 'batch', 'story', 'task']);
+  assert.deepEqual(top.graphs, [
+    {
+      name: 'containment',
+      engine: 'containment',
+      nodes: ['story', 'feature', 'batch', 'epic', 'theme', 'component', 'task'],
+    },
+    { name: 'dependency', engine: 'dependency', nodes: ['story', 'feature', 'batch', 'task'] },
+    { name: 'rank', engine: 'rank', nodes: ['feature', 'batch', 'story', 'task'] },
+  ]);
+});
+
+test('a graph with an unknown engine, no nodes or an unknown key is a fault that names its path', () => {
+  const dirs = fixture({
+    'backlog/backlog.yaml': `color_scheme: mocha
+repos: {}
+graphs:
+  - { name: a, engine: tree, nodes: [story] }
+  - { name: b, engine: rank }
+  - { name: c, engine: dependency, nodes: [story], file: c.json }
+`,
+  });
+  assert.deepEqual(
+    faultLines(dirs).map((line) => line.split(': must')[0]),
+    [
+      'backlog.yaml: /graphs/0/engine: enum',
+      'backlog.yaml: /graphs/1/nodes: required',
+      'backlog.yaml: /graphs/2/file: additionalProperties',
+    ],
+  );
+});
+
 test('two faults in two files are both reported, sorted by file and path, each once', () => {
   const dirs = fixture({
     'backlog/backlog.yaml': 'color_scheme: mocha\nrepos:\n  utop: {}\n  web: {}\nzz: 1\naa: 1\n',

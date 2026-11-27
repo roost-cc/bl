@@ -10,6 +10,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import { ConfigurationFaults, SUBSCHEMA_KEYWORDS, attribute, checkValue, compileCel, shapeChecker } from './check.js';
 import { applyLayers, bothAxes, reposLayers } from './layers.js';
 import BACKLOG_SCHEMA from './schemas/backlog.schema.json' with { type: 'json' };
+import STATE_SCHEMA from './schemas/state.schema.json' with { type: 'json' };
 import { withEnv } from '../test/helpers/env.js';
 
 const SHOP = '/b/backlog.yaml';
@@ -414,6 +415,20 @@ test('checkValue: a value that fits has no fault; one that fails has a fault wit
   ]);
   // A later check of the same schema gives only its own faults.
   assert.deepEqual(checkValue(schema, 'x'), [{ file: '', path: '', rule: 'type', message: 'must be object' }]);
+});
+
+test('checkValue resolves a $ref to the state schema before and after the state schema is checked', () => {
+  const run = { $ref: 'state.schema.json#/properties/run' };
+  assert.deepEqual(checkValue(run, 'idle'), []);
+  assert.deepEqual(
+    checkValue(run, 'busy').map(({ rule }) => rule),
+    ['pattern'],
+  );
+  assert.deepEqual(checkValue(STATE_SCHEMA, { status: 'draft', run: 'idle' }), []);
+  assert.deepEqual(
+    checkValue(STATE_SCHEMA, {}).map(({ rule }) => rule),
+    ['required', 'required'],
+  );
 });
 
 test('a schema whose cel keyword is neither bool nor dyn does not compile', () => {

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "graph-rank.schema.json",
+  "title": "A rank graph file, graphs/<name>.json",
+  "description": "The rank chain (graphs.md, \"Rank\"; F-148 D2): a list of item ids, the first most wanted. That each node is there once and is a work unit is the engine's check, not the schema's.",
+  "type": "array",
+  "items": { "type": "string", "minLength": 1 }
+}

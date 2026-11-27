@@ -89,9 +89,10 @@ test('record.schema.json holds the fields and $defs of D6, and ajv compiles it i
     'depth',
     'closed',
   ]);
+  // F-148 Decision A1: findings, deferred and gates are required again in the story that builds each.
   assert.deepEqual(
     Object.keys(record.properties).filter((name) => !record.required.includes(name)),
-    ['depth', 'closed'],
+    ['findings', 'deferred', 'gates', 'depth', 'closed'],
   );
   // status, run and counters are the state schema's (F-137 D8), so the fields have one list.
   assert.deepEqual(
@@ -111,6 +112,9 @@ test('record.schema.json holds the fields and $defs of D6, and ajv compiles it i
     .compile(RECORD_SCHEMA);
   assert.ok(validate(plainRecord()), JSON.stringify(validate.errors));
   assert.ok(validate(plainRecord({ rank: null, depth: 1, closed: false })), JSON.stringify(validate.errors));
+  const { findings, deferred, gates, ...built } = plainRecord({ unit: null, parents: { unit: 'F-1', epics: ['E-1'] } });
+  assert.ok(validate(built), JSON.stringify(validate.errors));
+  assert.equal(validate(plainRecord({ parents: { unit: 5 } })), false);
   assert.equal(validate(plainRecord({ statuss: 'x' })), false);
   assert.equal(validate(plainRecord({ run: 'interrupted: x' })), false);
 });

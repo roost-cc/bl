@@ -14,7 +14,7 @@
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'fs';
 import { join, sep } from 'path';
 import { canonical } from '../lib/lock.js';
-import { parseId } from './ids.js';
+import { IdError, parseId, printedId } from './ids.js';
 
 /**
  * @typedef {{ backlogDir: string, config: import('../config/load.js').Configuration }} StoreContext
@@ -31,6 +31,18 @@ import { parseId } from './ids.js';
  */
 export function idPrefixes(ctx) {
   return ctx.config.scope(null).id_prefixes ?? {};
+}
+
+/**
+ * The type of the id `text` when it is an id in its printed form
+ * (`printedId`), else undefined. The graph files hold ids only in that form.
+ *
+ * @param {StoreContext} ctx
+ * @param {string} text
+ * @returns {string|undefined}
+ */
+export function printedType(ctx, text) {
+  return printedId(text, idPrefixes(ctx))?.type;
 }
 
 /**
@@ -111,8 +123,9 @@ function itemsOf(ctx, type) {
     let id;
     try {
       id = parseId(entry.name.slice(0, dash), prefixes);
-    } catch {
-      continue;
+    } catch (e) {
+      if (e instanceof IdError) continue;
+      throw e;
     }
     if (id.type !== type) continue;
     const item = { ...id, path: `${dir}/${entry.name}` };

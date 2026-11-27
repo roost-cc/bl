@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "An item definition, config/items/<type>.yaml",
-  "description": "One item type's definition (items.md, \"What a section definition holds\", \"Item attributes\"; F-137 D1 and D9). `additionalProperties` is false at each level, so a typo is a fault; F-148 adds `parents` when it builds the containment graph. The loader adds no defaults (tenet 6).",
+  "description": "One item type's definition (items.md, \"What a section definition holds\", \"Item attributes\"; F-137 D1 and D9). `additionalProperties` is false at each level, so a typo is a fault. `parents` and `child_limits` configure the containment graph (graphs.md, \"Containment\", D-603; F-148 D1). The loader adds no defaults (tenet 6).",
   "type": "object",
   "additionalProperties": false,
   "required": ["dir"],
@@ -56,6 +56,46 @@
             "type": "boolean",
             "description": "Whether every item of the type must have a value."
           }
+        }
+      }
+    },
+    "parents": {
+      "type": "array",
+      "description": "The type's parent slots in the containment graph, declared on the child (graphs.md, \"Containment\", D-603). Each slot holds from `min` to `max` parents.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "types", "min", "max"],
+        "properties": {
+          "name": { "type": "string", "description": "The slot's name, the key of the child's containment entry." },
+          "types": {
+            "type": "array",
+            "description": "The item types a parent in the slot may have.",
+            "items": { "type": "string" }
+          },
+          "min": { "type": "integer", "minimum": 0, "description": "The fewest parents the slot holds." },
+          "max": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The most parents the slot holds; above 1, the slot holds a list of ids (D-604)."
+          }
+        }
+      }
+    },
+    "child_limits": {
+      "type": "array",
+      "description": "The most children of the given types that one item of this type holds in the containment graph (graphs.md, \"Containment\"). A type in no entry has no limit.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["types", "max"],
+        "properties": {
+          "types": {
+            "type": "array",
+            "description": "The child item types the limit counts together.",
+            "items": { "type": "string" }
+          },
+          "max": { "type": "integer", "minimum": 0, "description": "The most children of those types." }
         }
       }
     }

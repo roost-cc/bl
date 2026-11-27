@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "graph-containment.schema.json",
+  "title": "A containment graph file, graphs/<name>.json",
+  "description": "The containment graph, keyed by child (graphs.md, \"Containment file shape\", D-604; F-148 D2): each child id maps slot name to one parent id, or to a list of parent ids for a slot whose `max` is above 1. Whether each id names an item, and each slot a slot of the child's type, is the engine's check, not the schema's.",
+  "type": "object",
+  "additionalProperties": {
+    "type": "object",
+    "description": "One child's parents: slot name to parent id, or to a list of parent ids.",
+    "additionalProperties": {
+      "anyOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      ]
+    }
+  }
+}
