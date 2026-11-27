@@ -2,7 +2,9 @@
  * graphs.js — the graphs of a backlog (F-148 D1, D2, D5, D6, D7): their
  * configuration, their files, the read, the text and the schema check of each
  * file, the check runner of a store write (`checkGraphs`), the three-way
- * merge of a file (`mergeGraph`), and the work unit of an item (`workUnit`).
+ * merge of a file (`mergeGraph`), the work unit of an item (`workUnit`), and
+ * the reads that conditions make: an item's children (`childrenOf`) and its
+ * dependency entries under one status (`dependencyEntries`).
  *
  * `backlog.yaml` lists the graphs, each with its `name`, its `engine` and the
  * item types of its `nodes`. A graph's file is `graphs/<name>.json` at the
@@ -395,3 +397,24 @@ export function graphValues(ctx, staged = () => undefined) {
  * @returns {string|null}
  */
 export const workUnit = (ctx, graphs, id) => containment.workUnit(graphs('containment'), id, ctx);
+
+/**
+ * The children of the item `id` by the containment graph of `graphs`
+ * (`containment.childrenOf`): each item whose containment entry names it, of
+ * any type. The CEL function `children(type)` (F-139 D7) reads them.
+ * @param {GraphValues} graphs
+ * @param {string} id  an id in its printed form
+ * @returns {string[]}
+ */
+export const childrenOf = (graphs, id) => containment.childrenOf(graphs('containment'), id);
+
+/**
+ * The dependency entries of the item `id` under `status` by the dependency
+ * graph of `graphs` (`dependency.entriesOf`), each `{ item, expression }`:
+ * the item may not take `status` while one of them is false (graphs.md,
+ * "Dependency rule"; F-139 D7).
+ * @param {GraphValues} graphs
+ * @param {string} id  an id in its printed form
+ * @param {string} status
+ */
+export const dependencyEntries = (graphs, id, status) => dependency.entriesOf(graphs('dependency'), id, status);
