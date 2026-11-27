@@ -6,73 +6,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { stringify } from 'yaml';
 import { ConfigurationFaults } from '../config/check.js';
-import { fixture, load } from '../test/helpers/config-fixture.js';
-import { buildFlowSet } from './flow-set.js';
-
-const FLOWS = fileURLToPath(new URL('../test/fixtures/flows/', import.meta.url));
-const BACKLOG = 'color_scheme: mocha\nrepos: {}\nid_prefixes:\n  S: story\n';
-
-/** The uTop flow set: file name → text. */
-const UTOP = Object.fromEntries(
-  readdirSync(FLOWS)
-    .filter((name) => name.endsWith('.yaml'))
-    .map((name) => [name, readFileSync(FLOWS + name, 'utf8')]),
-);
-
-/** A fake code step with both outcomes. */
-const step = (schema = null) => ({ outcomes: ['success', 'failure'], with: schema, run: async () => 'success' });
-
-/** The code steps that the uTop flow set names, as fake steps that take any `with:`. */
-const UTOP_STEPS = Object.fromEntries(
-  [
-    'agent',
-    'assert',
-    'cleanup',
-    'fast_forward',
-    'increment',
-    'join',
-    'merge',
-    'notify',
-    'open_pr',
-    'prepare',
-    'rank',
-    'release',
-    'run_children',
-    'run_task_list',
-    'succeed',
-    'test',
-    'wait',
-  ].map((name) => [name, step({})]),
-);
-
-/**
- * The flow set of a fixture backlog whose `config/flows/` holds `files`.
- * @param {Record<string, string|object>} files  file name → YAML text, or a value to write as YAML
- * @param {Record<string, any>} catalogue
- */
-function build(files, catalogue) {
-  const written = { 'backlog/backlog.yaml': BACKLOG };
-  for (const [name, value] of Object.entries(files)) {
-    written[`backlog/config/flows/${name}`] = typeof value === 'string' ? value : stringify(value);
-  }
-  const dirs = fixture(written);
-  return buildFlowSet(load(dirs), catalogue, dirs.backlogDir);
-}
-
-/** The fault lines of a flow set that must fail. */
-function faultLines(files, catalogue) {
-  try {
-    build(files, catalogue);
-  } catch (error) {
-    if (error instanceof ConfigurationFaults) return error.message.split('\n');
-    throw error;
-  }
-  assert.fail('the flow set gave no fault');
-}
+import { build, faultLines, step, UTOP, UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 
 /** A node's arrows without their sources: outcome → `{ status?, next }` or `null`. */
 const arrowsOf = (node) =>
@@ -163,6 +98,7 @@ test('a box under another name runs that defined step with its gate; a code step
         flows: {
           story: {
             initial: 'draft',
+            statuses: { draft: {} },
             steps: {
               fix_again: { use: 'fix_it', success: 'ask', failure: 'stop' },
               ask: { use: 'agent', with: { prompt: 'ask.md' }, success: 'stop', failure: 'stop' },
@@ -213,7 +149,9 @@ test('a step_gates entry for a subflow is an entry gate on its first node only, 
           },
           inner: { start: 'a', steps: { a: { success: 'a', failure: { return: 'failure' } } } },
         },
-        flows: { story: { initial: 'draft', steps: { outer: { success: 'stop', failure: 'stop' } } } },
+        flows: {
+          story: { initial: 'draft', statuses: { draft: {} }, steps: { outer: { success: 'stop', failure: 'stop' } } },
+        },
       },
     },
     { a: step() },
@@ -300,18 +238,20 @@ test('the eight cases of "How a `return` is flattened" give the flat graph or th
     success: { status: 'ready_for_merge', next: 'open_pr' },
   });
 
-  // 5. return; the caller has no arrow: no return node, and compile has no failure arrow.
-  nodes = nodesOf(
+  // 5. return; the caller has no arrow: the arrow counts as missing, and is refused at the arrow.
+  let lines = faultLines(
     returnCase(
       { compile: COMPILE, test: { success: { return: 'success' }, failure: 'compile' } },
       { success: 'open_pr' },
     ),
+    CODE,
   );
-  assert.equal(nodes['build/_return_failure'], undefined);
-  assert.deepEqual(arrowsOf(nodes['build/compile']), { success: { next: 'build/test' } });
+  assert.deepEqual(lines, [
+    "config/flows/build.yaml: /subflows/build/steps/compile/failure: arrow: return: failure goes to the box 'build' that runs 'build', which has no failure arrow",
+  ]);
 
   // 6. as 5, with a status: refused at load, at the arrow that sets the status.
-  const lines = faultLines(
+  lines = faultLines(
     returnCase(
       {
         compile: { success: 'test', failure: { status: 'blocked', return: 'failure' } },
@@ -322,12 +262,14 @@ test('the eight cases of "How a `return` is flattened" give the flat graph or th
     CODE,
   );
   assert.deepEqual(lines, [
-    "config/flows/build.yaml: /subflows/build/steps/compile/failure: arrow: return: failure sets a status, but the box 'build' that runs 'build' has no failure arrow",
+    "config/flows/build.yaml: /subflows/build/steps/compile/failure: arrow: return: failure sets a status, but goes to the box 'build' that runs 'build', which has no failure arrow",
   ]);
 
-  // 7. no arrow inside: test has no failure arrow.
-  nodes = nodesOf(returnCase({ compile: COMPILE, test: { success: { return: 'success' } } }, failureToStop));
-  assert.deepEqual(arrowsOf(nodes['build/test']), { success: { next: 'build/_return_success' } });
+  // 7. no arrow inside: test has no failure arrow, a missing arrow (derive.js).
+  lines = faultLines(returnCase({ compile: COMPILE, test: { success: { return: 'success' } } }, failureToStop), CODE);
+  assert.deepEqual(lines, [
+    "config/flows/build.yaml: /subflows/build/steps/test: arrow: no failure arrow: the step 'test' can end with failure",
+  ]);
 
   // 8. two levels: deliver calls build, and the story calls deliver.
   const two = build(
@@ -350,7 +292,13 @@ test('the eight cases of "How a `return` is flattened" give the flat graph or th
         },
       },
       'story.yaml': {
-        flows: { story: { initial: 'draft', steps: { deliver: { success: 'stop', failure: 'stop' } } } },
+        flows: {
+          story: {
+            initial: 'draft',
+            statuses: { draft: {} },
+            steps: { deliver: { success: 'stop', failure: 'stop' } },
+          },
+        },
       },
     },
     CODE,
@@ -437,7 +385,7 @@ test('each fault of names, settings, boxes, with: and subflow calls is one fault
     ],
     [
       'a flow in two files',
-      withSteps((s) => s, { 'a.yaml': { flows: { story: { initial: 'draft' } } } }),
+      withSteps((s) => s, { 'a.yaml': { flows: { story: { initial: 'draft', statuses: { draft: {} } } } } }),
       BASE_STEPS,
       'config/flows/story.yaml: /flows/story: name',
     ],
@@ -580,7 +528,11 @@ test('each fault of names, settings, boxes, with: and subflow calls is one fault
     [
       'a subflow whose start names no box',
       withSteps(callOne, {
-        'one.yaml': { subflows: { one: sub('nothing', { work: { success: { return: 'success' } } }) } },
+        'one.yaml': {
+          subflows: {
+            one: sub('nothing', { work: { success: { return: 'success' }, failure: { return: 'failure' } } }),
+          },
+        },
       }),
       BASE_STEPS,
       'config/flows/one.yaml: /subflows/one/start: subflow',

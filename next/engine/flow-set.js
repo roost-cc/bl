@@ -15,18 +15,29 @@
  *   6. each flow flattened: each subflow box becomes a copy of the subflow's
  *      boxes, node ids are box paths (D-37), a `return:` becomes a return node
  *      (D-43), and a subflow's step gate becomes an entry gate on its first
- *      node (Decision A4).
+ *      node (Decision A4);
+ *   7. each flat flow checked, and its `from` and terminal statuses derived
+ *      (`derive.js`, D5).
  *
  * Each fault names the file and the JSON pointer, as the load's faults do, and
  * `buildFlowSet` throws `ConfigurationFaults` with every fault. An arrow whose
- * target is a fault (steps 4 and 6) is `null` in the flat graph, so a check of
- * the flat graph does not report it a second time as missing.
+ * target is a fault (steps 4 and 6) is `null` in the flat graph, so the check
+ * of the flat graph does not report it a second time as missing.
  */
 
 import { join } from 'path';
+import { celEnvironment } from '../config/cel.js';
 import { attribute, checkValue, ConfigurationFaults } from '../config/check.js';
 import { pointerToken } from '../config/files.js';
 import { KINDS } from '../config/kinds.js';
+import { checkFlow, deriveStatuses } from './derive.js';
+
+/**
+ * The step catalogue that `bl-next` passes to `buildFlowSet` (D2). The layer
+ * rule lets `commands/` import `engine/` but not `steps/`, so the engine hands
+ * the catalogue on.
+ */
+export { STEPS } from '../steps/index.js';
 
 /** @typedef {import('../config/files.js').Fault} Fault */
 /** @typedef {import('../config/load.js').Configuration} Configuration */
@@ -60,6 +71,8 @@ const SETTINGS = Object.freeze(['max_box_visits', 'gate_recheck_minutes']);
  * @property {string} [status]  the status the arrow sets (D-18)
  * @property {string} next  a node id, or `stop`
  * @property {Source} source  the arrow as the configuration writes it
+ * @property {readonly string[]} from  the statuses the item can hold when it
+ *   follows the arrow (D-45), written by `deriveStatuses`
  */
 
 /**
@@ -92,6 +105,7 @@ const SETTINGS = Object.freeze(['max_box_visits', 'gate_recheck_minutes']);
  *   box enters (the box name itself when the flow has no such box)
  * @property {Record<string, Node>} nodes  node id (the box path) → node
  * @property {Source} source  the flow
+ * @property {readonly string[]} terminal  the terminal statuses (D-65), written by `deriveStatuses`
  */
 
 /**
@@ -439,16 +453,14 @@ export function buildFlowSet(config, catalogue, backlogDir) {
       const outcome = arrow.return;
       const out = caller[outcome];
       if (out === undefined) {
-        // Cases 5 and 7: no arrow; with a status, case 6, refused here.
-        if (arrow.status !== undefined) {
-          faults.push({
-            ...arrow.source,
-            rule: 'arrow',
-            message: `return: ${outcome} sets a status, but the box '${prefix}' that runs '${level.name}' has no ${outcome} arrow`,
-          });
-          return null;
-        }
-        return undefined;
+        // Cases 5 and 6: the arrow counts as missing, and is refused here, at the arrow (D-43).
+        const sets = arrow.status === undefined ? '' : ' sets a status, but';
+        faults.push({
+          ...arrow.source,
+          rule: 'arrow',
+          message: `return: ${outcome}${sets} goes to the box '${prefix}' that runs '${level.name}', which has no ${outcome} arrow`,
+        });
+        return null;
       }
       if (out === null) return null;
       const id = pathOf(prefix, `_return_${outcome}`);
@@ -471,8 +483,7 @@ export function buildFlowSet(config, catalogue, backlogDir) {
       /** @type {Node['arrows']} */
       const arrows = {};
       for (const [outcome, arrow] of Object.entries(box.arrows)) {
-        const out = flat(arrow);
-        if (out !== undefined) arrows[outcome] = out;
+        arrows[outcome] = flat(arrow);
       }
       const entryGates = box.name === level.start ? firstGates : [];
       const sub = expands(box, stack);
@@ -499,6 +510,7 @@ export function buildFlowSet(config, catalogue, backlogDir) {
 
   /** @type {Record<string, Flow>} */
   const flatFlows = {};
+  const env = celEnvironment(config.celInputs);
   for (const [type, level] of flowLevels) {
     const def = /** @type {Definition} */ (flows.get(type));
     /** @type {Record<string, Node>} */
@@ -510,14 +522,18 @@ export function buildFlowSet(config, catalogue, backlogDir) {
         { ...entry, start: level.boxes.has(entry.start) ? enter(level, '', entry.start, []) : entry.start },
       ]),
     );
-    flatFlows[type] = {
+    const flow = /** @type {Flow} */ ({
       initial: def.value.initial,
       statuses: def.value.statuses ?? {},
       properties: def.value.properties ?? {},
       entries,
       nodes,
       source: sourceOf(def.file, def.path),
-    };
+    });
+    // ---- 7. the checks of the flat flow, and its derived statuses ----
+    faults.push(...checkFlow(type, flow, env));
+    deriveStatuses(flow);
+    flatFlows[type] = flow;
   }
 
   if (faults.length > 0) throw new ConfigurationFaults(faults, backlogDir);
