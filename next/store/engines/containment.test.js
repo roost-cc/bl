@@ -108,6 +108,29 @@ test('check gives each per-item rule a fault when the entry breaks it, and none 
   }
 });
 
+test('containment slot shape follows the configured maximum', () => {
+  const ctx = context();
+  /** [slot, its max, the slot's value, whether it has the right shape] */
+  const CASES = [
+    ['unit', 1, 'F-1', true],
+    ['unit', 1, ['F-1'], false],
+    ['epics', 2, ['E-1'], true],
+    ['epics', 2, 'E-1', false],
+  ];
+  for (const [slot, max, parents, right] of CASES) {
+    const value = { 'S-1': { [slot]: parents } };
+    const label = JSON.stringify(value);
+    assert.deepEqual(
+      check(value, ['S-1'], ctx).map((fault) => [fault.rule, fault.path]),
+      right ? [] : [['slot-shape', `/S-1/${slot}`]],
+      label,
+    );
+    assert.deepEqual(canonical(value), value, `canonical keeps the shape of ${label} (max ${max})`);
+    assert.deepEqual(merge(empty, value, empty), value, `merge keeps the shape of ${label}`);
+    assert.deepEqual(merge(value, value, value), value, `merge keeps the shape of ${label}`);
+  }
+});
+
 test('check counts a child with no entry as holding no parent, against each slot min', () => {
   const ctx = context();
   assert.deepEqual(check(empty, ['E-1'], ctx), [

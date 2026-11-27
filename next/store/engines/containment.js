@@ -162,8 +162,9 @@ export function workUnit(value, id, ctx) {
 /**
  * The faults of the entries of `ids`, each an existing item of one of the
  * graph's node types, by the per-item rules (D5): each slot of the entry is a
- * slot of the child's type (`slot`); each parent's type is in its slot's
- * `types` (`parent-type`); each slot of the child's type holds from `min` to
+ * slot of the child's type (`slot`); a slot holds an id when its `max` is at
+ * most 1 and a list when it is above 1 (`slot-shape`, D-604); each parent's
+ * type is in its slot's `types` (`parent-type`); each slot of the child's type holds from `min` to
  * `max` parents (`slot-count`), so a child with no entry holds none; and each
  * parent holds no more children of the types of one of its `child_limits`
  * than its `max` (`child-limit`). A parent that is not an id in its printed
@@ -191,6 +192,18 @@ export function check(value, ids, ctx) {
       .map((name) => fault('slot', name, `the type ${type} has no parent slot ${name}`));
     const bySlot = slots.flatMap(({ name, types, min, max }) => {
       const parents = Object.hasOwn(entry, name) ? listOf(entry[name]) : [];
+      const shape =
+        Object.hasOwn(entry, name) && (typeof entry[name] === 'string') !== max <= 1
+          ? [
+              fault(
+                'slot-shape',
+                name,
+                max <= 1
+                  ? `the slot ${name} takes at most 1 parent, so it holds an id, not a list`
+                  : `the slot ${name} takes up to ${max} parents, so it holds a list, not an id`,
+              ),
+            ]
+          : [];
       const wrongType = parents.flatMap((parent) => {
         const parentType = typeOf(parent);
         return parentType === undefined || types.includes(parentType)
@@ -201,7 +214,7 @@ export function check(value, ids, ctx) {
         parents.length < min || parents.length > max
           ? [fault('slot-count', name, `the slot ${name} holds ${parents.length} parents; it takes ${min} to ${max}`)]
           : [];
-      return [...wrongType, ...count];
+      return [...shape, ...wrongType, ...count];
     });
     const overLimit = [...new Set(parentsOf(value, child))].flatMap((parent) => {
       const parentType = typeOf(parent);

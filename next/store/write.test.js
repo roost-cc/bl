@@ -1099,9 +1099,11 @@ test('a containment write that breaks a per-item rule is refused with that rule'
     [contain({ 'T-1': { unit: 'F-2' } }), [['T-1', 'node-type']]],
     [contain({ 'S-2': { owner: 'F-2' } }), [['S-2', 'slot']]],
     [contain({ 'S-2': { unit: 'E-1' } }), [['S-2', 'parent-type']]],
+    [contain({ 'S-2': { epics: 'E-1' } }), [['S-2', 'slot-shape']]],
     [
       contain({ 'S-2': { unit: ['F-1', 'F-2'] } }),
       [
+        ['S-2', 'slot-shape'],
         ['S-2', 'slot-count'],
         ['S-2', 'child-limit'],
       ],
@@ -1142,15 +1144,15 @@ test('a fault in a containment entry that the write did not touch does not refus
   const broken = { 'S-2': { owner: 'X-9', unit: ['F-1', 'F-2'] }, 'T-1': { unit: 'E-1' } };
   const ctx = backlog({ ...RULE_FILES, [CONTAINMENT]: jsonOf(broken) });
   await storeWrite(ctx, { message: 'm' }, (w) => w.set('S-1', 'Summary', 'Changed.'));
-  await storeWrite(ctx, { message: 'n' }, contain({ 'S-1': { epics: 'E-2' } }));
-  assert.deepEqual(JSON.parse(read(ctx, CONTAINMENT)), { ...broken, 'S-1': { epics: 'E-2' } });
+  await storeWrite(ctx, { message: 'n' }, contain({ 'S-1': { epics: ['E-2'] } }));
+  assert.deepEqual(JSON.parse(read(ctx, CONTAINMENT)), { ...broken, 'S-1': { epics: ['E-2'] } });
   assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%B'), 'n\n\nBl-Item: S-1');
   assert.deepEqual(status(ctx), []);
 });
 
 test('a cycle that a changed containment file already held refuses the write: it is a fault of the whole file', async () => {
   const cycle = { 'E-1': { within: 'F-1' }, 'F-1': { epic: 'E-1' } };
-  await refused({ [CONTAINMENT]: jsonOf(cycle) }, contain({ 'S-1': { epics: 'E-2' } }), [['E-1', 'cycle']]);
+  await refused({ [CONTAINMENT]: jsonOf(cycle) }, contain({ 'S-1': { epics: ['E-2'] } }), [['E-1', 'cycle']]);
 });
 
 const DEPENDENCY = 'graphs/dependency.json';
