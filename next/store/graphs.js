@@ -1,7 +1,8 @@
 /**
- * graphs.js — the graphs of a backlog (F-148 D1, D2, D5): their
+ * graphs.js — the graphs of a backlog (F-148 D1, D2, D5, D7): their
  * configuration, their files, the read, the text and the schema check of each
- * file, and the check runner of a store write (`checkGraphs`).
+ * file, the check runner of a store write (`checkGraphs`), and the work unit
+ * of an item (`workUnit`).
  *
  * `backlog.yaml` lists the graphs, each with its `name`, its `engine` and the
  * item types of its `nodes`. A graph's file is `graphs/<name>.json` at the
@@ -9,10 +10,11 @@
  * (`engines/`) gives the same shape: `schema`, `empty`, `canonical(value)`,
  * `changed(before, after)`, the keys of the value that changed,
  * `names(value, id)`, the ids that the entry of `id` names, `kind(value)`, the
- * faults of the whole file, and `check(value, ids, ctx)`, the faults of the
- * entries of `ids` by the engine's per-item rules. This module is
- * the only place that picks an engine module; it never branches on the engine
- * otherwise. The store write (`write.js`) writes the files.
+ * faults of the whole file, and `check(value, ids, ctx, unitOf)`, the faults
+ * of the entries of `ids` by the engine's per-item rules, `unitOf(id)` the
+ * work unit of an item (`workUnit`). This module is the only place that picks
+ * an engine module; it never branches on the engine otherwise. The store
+ * write (`write.js`) writes the files.
  */
 
 import { checkValue, tokensOf } from '../config/check.js';
@@ -194,12 +196,15 @@ export const changedIds = (graph, before, after) =>
  *    ids that are items (`no-item`: an item directory or an item the write
  *    created, the id in its printed form) of a type in `nodes` (`node-type`).
  * 4. In each graph, each id of `touched` that is an item of a type in
- *    `nodes` gets its engine's per-item rules (`check`).
+ *    `nodes` gets its engine's per-item rules (`check`), with the work unit
+ *    of each item as the write leaves the containment graph (`workUnit`).
  *
  * An entry that the write did not touch gets no rule, so its fault does not
  * refuse the write; `bl-validate` (F-145) reports it. A graph file that the
  * write did not change is read only when an id of `touched` is of one of its
- * `nodes`, and a file that then fails its schema is an error (`parseGraph`).
+ * `nodes`, or, for the containment file, when the rank rule needs the work
+ * unit of a touched node. A file that then fails its schema is an error
+ * (`parseGraph`).
  *
  * @param {StoreContext} ctx
  * @param {Array<{ graph: Graph, base: string|null, text: string }>} files
@@ -211,18 +216,27 @@ export const changedIds = (graph, before, after) =>
 export function checkGraphs(ctx, files, items, exists) {
   const prefixes = idPrefixes(ctx);
   const schemaFindings = files.flatMap(({ graph, text }) => checkGraphText(graph, text));
-  const valid = files.filter(({ graph }) => !schemaFindings.some(({ file }) => file === graph.path));
+  const failed = new Set(schemaFindings.map(({ file }) => file));
+  const valid = files.filter(({ graph }) => !failed.has(graph.path));
   const keys = new Map(valid.map(({ graph, base, text }) => [graph.path, changedIds(graph, base, text)]));
-  const after = new Map(valid.map(({ graph, text }) => [graph.path, parseGraph(graph, text)]));
+  // A changed file that fails its schema reads as its engine's empty: the write is refused for it already.
+  const values = new Map(
+    files.map(({ graph, text }) => [
+      graph.path,
+      failed.has(graph.path) ? structuredClone(graph.module.empty) : parseGraph(graph, text),
+    ]),
+  );
   const touched = new Set([...items, ...[...keys.values()].flat()]);
   const typeOf = (/** @type {string} */ id) => printedId(id, prefixes)?.type;
+  const valueOf = graphValues(ctx, (g) => values.get(g.path));
+  const unitOf = (/** @type {string} */ id) => workUnit(ctx, valueOf, id);
   const findings = graphs(ctx)
-    .filter((g) => !schemaFindings.some(({ file }) => file === g.path))
+    .filter((g) => !failed.has(g.path))
     .flatMap((g) => {
       const ofNodes = [...touched].filter((id) => g.nodes.includes(typeOf(id) ?? ''));
       const changedKeys = keys.get(g.path) ?? [];
       if (ofNodes.length === 0 && changedKeys.length === 0) return [];
-      const value = after.has(g.path) ? after.get(g.path) : parseGraph(g, backlogText(ctx, g.path));
+      const value = valueOf(g.engine);
       const nodeFindings = [...new Set([...ofNodes, ...changedKeys])].flatMap((key) =>
         [...new Set(g.module.names(value, key))].flatMap((id) => {
           const type = typeOf(id);
@@ -235,10 +249,49 @@ export function checkGraphs(ctx, files, items, exists) {
         }),
       );
       return [
-        ...(after.has(g.path) ? g.module.kind(value) : []),
+        ...(keys.has(g.path) ? g.module.kind(value) : []),
         ...nodeFindings,
-        ...g.module.check(value, ofNodes.filter(exists), ctx),
+        ...g.module.check(value, ofNodes.filter(exists), ctx, unitOf),
       ].map((finding) => ({ ...finding, file: g.path }));
     });
   return { findings: [...schemaFindings, ...findings], touched };
 }
+
+/**
+ * @typedef {(engine: string) => any} GraphValues
+ *   the value of the graph of an engine, or a copy of the engine's `empty`
+ *   when no configured graph has that engine
+ */
+
+/**
+ * The graph values of a read or a write (`GraphValues`): each graph's value
+ * is `staged(graph)` when that gives one, else its file's (`parseGraph`). It
+ * reads each file at most once, at the first call for its engine.
+ * @param {StoreContext} ctx
+ * @param {(graph: Graph) => unknown} [staged]  a value that a write holds for the graph, or undefined
+ * @returns {GraphValues}
+ */
+export function graphValues(ctx, staged = () => undefined) {
+  const all = graphs(ctx);
+  /** @type {Map<string, unknown>} */
+  const read = new Map();
+  return (engine) => {
+    const g = all.find((other) => other.engine === engine);
+    if (g === undefined) return structuredClone(ENGINES[/** @type {keyof typeof ENGINES} */ (engine)].empty);
+    if (!read.has(engine)) read.set(engine, staged(g) ?? parseGraph(g, backlogText(ctx, g.path)));
+    return read.get(engine);
+  };
+}
+
+/**
+ * The work unit of the item `id` (D7) by the containment graph of `graphs`
+ * (`containment.workUnit`): `null` for an item whose type is not in
+ * `work_types`, the item's own id for a work unit, else the work unit of its
+ * first parent of a work type. The rank rule (D5) and the record's `unit`
+ * both use it.
+ * @param {StoreContext} ctx
+ * @param {GraphValues} graphs
+ * @param {string} id  an id in its printed form
+ * @returns {string|null}
+ */
+export const workUnit = (ctx, graphs, id) => containment.workUnit(graphs('containment'), id, ctx);

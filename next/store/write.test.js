@@ -826,8 +826,9 @@ test('storeWrite_rejects_missing_required_item_files', async () => {
 /**
  * The files of a backlog with the types feature and epic, the items F-1, F-2,
  * E-1, E-2 and T-1 (each only its document: no write here changes them), and
- * one graph of each engine (F-148 D1). A story has a `unit` slot of one
- * feature and an `epics` slot of up to two epics.
+ * one graph of each engine (F-148 D1). Features and stories are work types. A
+ * story has a `unit` slot of one feature and an `epics` slot of up to two
+ * epics.
  */
 const GRAPH_FILES = {
   'backlog.yaml': [
@@ -838,6 +839,7 @@ const GRAPH_FILES = {
     '  T: task',
     '  F: feature',
     '  E: epic',
+    'work_types: [feature, story]',
     'graphs:',
     '  - { name: containment, engine: containment, nodes: [story, feature, epic] }',
     '  - { name: dependency, engine: dependency, nodes: [story, feature] }',
@@ -995,11 +997,11 @@ const RULE_FILES = {
 /**
  * Run `write` on a backlog of RULE_FILES and `files`, and assert that it
  * throws a StoreCheckError with exactly the `expected` findings (each
- * `[item, rule]`, in the containment file), writes no file and makes no
- * commit.
+ * `[item, rule]` in the containment file, or `[item, rule, file]`), writes no
+ * file and makes no commit.
  * @param {Record<string, string>} files
  * @param {(w: any) => unknown} write
- * @param {Array<[string, string]>} expected
+ * @param {Array<[string, string] | [string, string, string]>} expected
  */
 async function refused(files, write, expected) {
   const ctx = backlog({ ...RULE_FILES, ...files });
@@ -1010,11 +1012,11 @@ async function refused(files, write, expected) {
     assert.ok(error instanceof StoreCheckError);
     assert.deepEqual(
       error.findings.map(({ item, file, rule }) => ({ item, file, rule })),
-      expected.map(([item, rule]) => ({ item, file: CONTAINMENT, rule })),
+      expected.map(([item, rule, file = CONTAINMENT]) => ({ item, file, rule })),
       JSON.stringify(expected),
     );
-    for (const [item, rule] of expected) {
-      assert.ok(error.message.includes(`${item} ${CONTAINMENT}: ${rule}`), error.message);
+    for (const [item, rule, file = CONTAINMENT] of expected) {
+      assert.ok(error.message.includes(`${item} ${file}: ${rule}`), error.message);
     }
     return true;
   });
@@ -1093,6 +1095,55 @@ test('a fault in a containment entry that the write did not touch does not refus
 test('a cycle that a changed containment file already held refuses the write: it is a fault of the whole file', async () => {
   const cycle = { 'E-1': { within: 'F-1' }, 'F-1': { epic: 'E-1' } };
   await refused({ [CONTAINMENT]: jsonOf(cycle) }, contain({ 'S-1': { epics: 'E-2' } }), [['E-1', 'cycle']]);
+});
+
+const DEPENDENCY = 'graphs/dependency.json';
+const RANK = 'graphs/rank.json';
+
+test('a dependency write is refused for an expression that is not bool CEL, and for a cycle', async () => {
+  const depend = (value) => (w) => w.graph('dependency', () => value);
+  await refused({}, depend({ 'S-1': { in_progress: [{ 'S-2': 'status ==' }] } }), [['S-1', 'cel', DEPENDENCY]]);
+  await refused({}, depend({ 'S-1': { in_progress: [{ 'S-2': '"done"' }] } }), [['S-1', 'cel', DEPENDENCY]]);
+  await refused(
+    {},
+    depend({
+      'S-1': { in_progress: [{ 'S-2': 'true' }] },
+      'S-2': { done: [{ 'F-1': 'true' }] },
+      'F-1': { done: [{ 'S-1': 'true' }] },
+    }),
+    [['F-1', 'cycle', DEPENDENCY]],
+  );
+});
+
+test('a dependency write with a self-entry passes: a self-entry is no edge', async () => {
+  const ctx = backlog(RULE_FILES);
+  const value = {
+    'S-2': {
+      in_progress: [{ 'S-1': 'status == "done"' }],
+      refined: [{ 'S-2': 'now > timestamp("2026-12-24T00:00:00Z")' }],
+    },
+  };
+  await storeWrite(ctx, { message: 'm' }, (w) => w.graph('dependency', () => value));
+  assert.deepEqual(JSON.parse(read(ctx, DEPENDENCY)), value);
+  assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%B'), 'm\n\nBl-Item: S-2');
+});
+
+test('a rank write is refused for a repeat, and for a node that is not a work unit', async () => {
+  const IN_F1 = { [CONTAINMENT]: jsonOf({ 'S-1': { unit: 'F-1' } }) };
+  const rank = (chain) => (w) => w.graph('rank', () => chain);
+  await refused({}, rank(['F-1', 'S-2', 'F-1']), [['F-1', 'repeat', RANK]]);
+  await refused(IN_F1, rank(['F-1', 'S-1']), [['S-1', 'not-work-unit', RANK]]);
+  const ctx = backlog({ ...RULE_FILES, ...IN_F1 });
+  await storeWrite(ctx, { message: 'm' }, rank(['F-1', 'S-2']));
+  assert.equal(read(ctx, RANK), jsonOf(['F-1', 'S-2']));
+});
+
+test('a containment write that puts a ranked loose story in a feature is refused with not-work-unit', async () => {
+  const RANKED = { [RANK]: jsonOf(['F-2', 'S-1']) };
+  await refused(RANKED, contain({ 'S-1': { unit: 'F-1' } }), [['S-1', 'not-work-unit', RANK]]);
+  const ctx = backlog({ ...RULE_FILES, ...RANKED });
+  await storeWrite(ctx, { message: 'm' }, contain({ 'S-2': { unit: 'F-2' } }));
+  assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%B'), 'm\n\nBl-Item: S-2');
 });
 
 test('a write that touches no node of an unchanged graph does not read its file', async () => {

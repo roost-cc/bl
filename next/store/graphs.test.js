@@ -3,9 +3,21 @@ import assert from 'node:assert/strict';
 import { fixture, load } from '../test/helpers/config-fixture.js';
 import * as containment from './engines/containment.js';
 import * as rank from './engines/rank.js';
-import { checkGraphText, checkGraphs, changedIds, graph, graphFaults, graphText, graphs, readGraph } from './graphs.js';
+import {
+  checkGraphText,
+  checkGraphs,
+  changedIds,
+  graph,
+  graphFaults,
+  graphText,
+  graphValues,
+  graphs,
+  readGraph,
+  workUnit,
+} from './graphs.js';
 
 const GRAPHS = [
+  'work_types: [feature, story]',
   'graphs:',
   '  - { name: containment, engine: containment, nodes: [story, feature] }',
   '  - { name: dependency, engine: dependency, nodes: [story] }',
@@ -202,6 +214,90 @@ test("checkGraphs runs the engine's kind rule on a changed file, and its per-ite
     checkGraphs(ctx, [], ['S-1'], exists).findings.map(({ item, file, rule }) => [item, file, rule]),
     [['S-1', 'graphs/containment.json', 'slot']],
   );
+});
+
+/**
+ * A store context with the work types batch, feature and story, and the type
+ * epic. A story has a `unit` slot of a feature, then a `batch` slot of a batch
+ * and an `epics` slot; a feature has a `within` slot of a batch or a feature.
+ * @param {Record<string, string>} [files]
+ */
+const unitContext = (files = {}) =>
+  context('', {
+    'backlog.yaml': [
+      'color_scheme: mocha',
+      'repos: {}',
+      'id_prefixes: { S: story, F: feature, B: batch, E: epic }',
+      'work_types: [batch, feature, story]',
+      'graphs:',
+      '  - { name: containment, engine: containment, nodes: [story, feature, batch, epic] }',
+      '  - { name: rank, engine: rank, nodes: [story, feature, batch] }',
+      '',
+    ].join('\n'),
+    'config/items/story.yaml': [
+      'dir: stories',
+      'parents:',
+      '  - { name: unit, types: [feature], min: 0, max: 1 }',
+      '  - { name: batch, types: [batch], min: 0, max: 1 }',
+      '  - { name: epics, types: [epic], min: 0, max: 2 }',
+      '',
+    ].join('\n'),
+    'config/items/feature.yaml':
+      'dir: features\nparents:\n  - { name: within, types: [batch, feature], min: 0, max: 1 }\n',
+    'config/items/batch.yaml': 'dir: batches\n',
+    'config/items/epic.yaml': 'dir: epics\n',
+    ...files,
+  });
+
+test('workUnit gives null for a type not in work_types, the own id for a work unit, else the unit of the first work parent', () => {
+  const value = {
+    'S-2': { epics: ['E-1'] },
+    'S-3': { epics: ['E-1'], unit: 'F-1' },
+    'S-4': { batch: 'B-1', unit: 'F-2' },
+    'F-2': { within: 'B-2' },
+    'F-3': { within: 'F-4' },
+    'F-4': { within: 'F-3' },
+    'S-5': { unit: 'F-3' },
+  };
+  const ctx = unitContext({ 'graphs/containment.json': JSON.stringify(value) });
+  const unit = (/** @type {string} */ id) => workUnit(ctx, graphValues(ctx), id);
+  const CASES = [
+    ['E-1', null],
+    ['X-1', null],
+    ['S-1', 'S-1'],
+    ['B-1', 'B-1'],
+    ['F-1', 'F-1'],
+    ['S-2', 'S-2'],
+    ['S-3', 'F-1'],
+    ['S-4', 'B-2'],
+    ['F-3', null],
+    ['S-5', null],
+  ];
+  for (const [id, expected] of CASES) assert.equal(unit(/** @type {string} */ (id)), expected, id);
+});
+
+test('workUnit reads the containment graph of its graph values, and the staged value before the file', () => {
+  const ctx = unitContext({ 'graphs/containment.json': '{ "S-1": { "unit": "F-1" } }' });
+  assert.equal(workUnit(ctx, graphValues(ctx), 'S-1'), 'F-1');
+  const staged = graphValues(ctx, (g) => (g.engine === 'containment' ? {} : undefined));
+  assert.equal(workUnit(ctx, staged, 'S-1'), 'S-1');
+  assert.equal(workUnit(context(''), graphValues(context('')), 'S-1'), null);
+});
+
+test('checkGraphs gives not-work-unit to a ranked node that a containment change puts in another work unit', () => {
+  const ctx = unitContext({ 'graphs/rank.json': '["S-1", "F-1"]' });
+  const attach = [{ graph: graph(ctx, 'containment'), base: null, text: '{ "S-1": { "unit": "F-1" } }' }];
+  assert.deepEqual(checkGraphs(ctx, attach, [], exists).findings, [
+    {
+      item: 'S-1',
+      file: 'graphs/rank.json',
+      rule: 'not-work-unit',
+      path: '/0',
+      message: 'S-1 is no work unit: it belongs to F-1',
+    },
+  ]);
+  const loose = [{ graph: graph(ctx, 'containment'), base: null, text: '{ "S-2": { "unit": "F-1" } }' }];
+  assert.deepEqual(checkGraphs(ctx, loose, [], exists).findings, []);
 });
 
 test('checkGraphs reads an unchanged graph file only when a touched id is of its nodes', () => {

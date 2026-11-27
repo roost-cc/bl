@@ -1,9 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { celEnvironment } from '../../config/cel.js';
 import { checkValue } from '../../config/check.js';
-import { canonical, changed, empty, names, schema } from './dependency.js';
+import { canonical, changed, check, empty, kind, names, schema } from './dependency.js';
 
 const DONE = 'status == "done"';
+
+/** The part of a store context that the dependency check reads: the CEL inputs of a load. */
+const CTX = { config: { celInputs: { predicates: {} } } };
 
 test('the schema takes gated items, statuses and one-item entries, and refuses other shapes', () => {
   assert.deepEqual(checkValue(schema, { 'S-12': { in_progress: [{ 'S-44': DONE }, { 'S-45': DONE }] } }), []);
@@ -50,4 +54,42 @@ test('names gives the gated item and the item of each of its entries, or none fo
   const value = { 'S-1': { done: [{ 'S-2': DONE }, { 'S-1': 'true' }], refined: [{ 'F-3': DONE }] } };
   assert.deepEqual(names(value, 'S-1'), ['S-1', 'S-2', 'S-1', 'F-3']);
   assert.deepEqual(names(value, 'S-2'), []);
+});
+
+test('kind gives one cycle fault for each cycle, and counts no self-entry as an edge', () => {
+  assert.deepEqual(kind({ 'S-12': { refined: [{ 'S-12': 'now > timestamp("2026-12-24T00:00:00Z")' }] } }), []);
+  assert.deepEqual(kind({ 'S-1': { done: [{ 'S-2': DONE }] }, 'S-2': { refined: [{ 'S-3': DONE }] } }), []);
+  assert.deepEqual(kind(empty), []);
+  assert.deepEqual(
+    kind({
+      'S-1': { in_progress: [{ 'S-2': DONE }, { 'S-1': 'true' }] },
+      'S-2': { done: [{ 'S-3': DONE }], refined: [{ 'S-1': DONE }] },
+      'S-3': { done: [{ 'S-3': DONE }] },
+      'F-1': { done: [{ 'F-2': DONE }] },
+      'F-2': { done: [{ 'F-1': DONE }] },
+    }),
+    [
+      { item: 'F-1', rule: 'cycle', path: '/F-1', message: 'F-1 → F-2 → F-1 is a cycle' },
+      { item: 'S-1', rule: 'cycle', path: '/S-1', message: 'S-1 → S-2 → S-1 is a cycle' },
+    ],
+  );
+});
+
+test("check gives a cel fault with the compiler's message for an expression that does not compile or is not bool", () => {
+  const BROKEN = 'status ==';
+  const compiler = String(celEnvironment(CTX.config.celInputs).check(BROKEN).error?.message).split('\n')[0];
+  assert.ok(compiler.length > 0);
+  const value = {
+    'S-1': { in_progress: [{ 'S-2': DONE }, { 'S-3': BROKEN }], done: [{ 'S-4': 'title' }] },
+    'S-5': { done: [{ 'S-6': BROKEN }] },
+  };
+  assert.deepEqual(check(value, ['S-1'], CTX), [
+    { item: 'S-1', rule: 'cel', path: '/S-1/in_progress/1/S-3', message: compiler },
+    { item: 'S-1', rule: 'cel', path: '/S-1/done/0/S-4', message: 'the type is string, not bool' },
+  ]);
+  assert.deepEqual(check(value, ['S-6', 'S-2'], CTX), []);
+  assert.deepEqual(
+    check({ 'S-1': { done: [{ 'S-2': DONE }, { 'S-1': 'now > timestamp("2026-12-24T00:00:00Z")' }] } }, ['S-1'], CTX),
+    [],
+  );
 });

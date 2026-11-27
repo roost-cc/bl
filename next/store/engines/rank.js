@@ -1,7 +1,7 @@
 /**
- * rank.js — the rank engine (graphs.md, "Rank"; F-148 D2, D3): the schema,
- * the empty value and the canonical form of its file, a list of item ids, the
- * first most wanted.
+ * rank.js — the rank engine (graphs.md, "Rank"; F-148 D2, D3, D5): the
+ * schema, the empty value, the canonical form and the rules of its file, a
+ * list of item ids, the first most wanted.
  */
 
 import SCHEMA from '../schemas/graph-rank.schema.json' with { type: 'json' };
@@ -47,19 +47,46 @@ export function changed(before, after) {
 export const names = (value, id) => (value.includes(id) ? [id] : []);
 
 /**
- * The faults of the whole file by the kind rule (D5). The rank rules are
- * not built yet, so there are none.
- * @param {Rank} _value
- * @returns {Array<{ item: string|null, rule: string, path: string, message: string }>}
- */
-export const kind = (_value) => [];
-
-/**
- * The faults of the entries of `ids` by the per-item rules (D5). The rank
- * rules are not built yet, so there are none.
- * @param {Rank} _value
- * @param {string[]} _ids
- * @param {import('../items.js').StoreContext} _ctx
+ * The faults of the whole file by the kind rule (D5): the chain holds each
+ * node once. Each node that it holds more than once is one `repeat` fault,
+ * at the place of its second entry, and its message gives every place
+ * (1-based, as the record's `rank`).
+ * @param {Rank} value  a value that passes `schema`
  * @returns {Array<{ item: string, rule: string, path: string, message: string }>}
  */
-export const check = (_value, _ids, _ctx) => [];
+export function kind(value) {
+  return [...new Set(value)].flatMap((id) => {
+    const places = value.flatMap((node, i) => (node === id ? [i] : []));
+    if (places.length === 1) return [];
+    const shown = places.map((i) => i + 1).join(', ');
+    return [
+      {
+        item: id,
+        rule: 'repeat',
+        path: `/${places[1]}`,
+        message: `${id} is at the places ${shown}; it may be in the chain once`,
+      },
+    ];
+  });
+}
+
+/**
+ * The faults of the entries of `ids` by the per-item rule (D5): each node of
+ * the chain is a work unit, its own work unit by `unitOf`
+ * (`not-work-unit`). An id that the chain does not hold gets no rule.
+ * @param {Rank} value  a value that passes `schema`
+ * @param {string[]} ids
+ * @param {import('../items.js').StoreContext} _ctx
+ * @param {(id: string) => string|null} unitOf  the work unit of an item as the write leaves the graphs
+ * @returns {Array<{ item: string, rule: string, path: string, message: string }>}
+ */
+export function check(value, ids, _ctx, unitOf) {
+  return ids.flatMap((id) => {
+    const place = value.indexOf(id);
+    const unit = place === -1 ? id : unitOf(id);
+    if (unit === id) return [];
+    const message =
+      unit === null ? `${id} is no work unit and belongs to none` : `${id} is no work unit: it belongs to ${unit}`;
+    return [{ item: id, rule: 'not-work-unit', path: `/${place}`, message }];
+  });
+}

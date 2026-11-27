@@ -10,7 +10,7 @@
 import SCHEMA from '../schemas/graph-containment.schema.json' with { type: 'json' };
 import { printedId } from '../ids.js';
 import { idPrefixes, itemDefinition } from '../items.js';
-import { byText, changedKeys, sortedObject } from './keyed.js';
+import { byText, changedKeys, cycles, sortedObject } from './keyed.js';
 
 /**
  * @typedef {Record<string, Record<string, string|string[]>>} Containment
@@ -74,31 +74,45 @@ export const names = (value, id) => (Object.hasOwn(value, id) ? [id, ...parentsO
 
 /**
  * The faults of the whole file by the kind rule (D5): containment has no
- * cycle, so no item is its own ancestor. Each cycle is one `cycle` fault,
- * keyed by the item where the walk closes it, and its message gives the
- * cycle from that item up to it again.
+ * cycle, so no item is its own ancestor (`cycles`, from child to parent).
  * @param {Containment} value  a value that passes `schema`
  * @returns {Fault[]}
  */
-export function kind(value) {
-  /** @type {Map<string, 'open'|'done'>} */
-  const seen = new Map();
-  /** @type {Fault[]} */
-  const faults = [];
-  /** @param {string[]} path  the walk from its start to the item it visits */
-  const visit = (path) => {
-    const id = /** @type {string} */ (path.at(-1));
-    seen.set(id, 'open');
-    for (const parent of parentsOf(value, id)) {
-      if (seen.get(parent) === 'open') {
-        const cycle = [...path.slice(path.indexOf(parent)), parent].join(' → ');
-        faults.push({ item: parent, rule: 'cycle', path: `/${parent}`, message: `${cycle} is a cycle` });
-      } else if (!seen.has(parent)) visit([...path, parent]);
-    }
-    seen.set(id, 'done');
+export const kind = (value) => cycles(value, (id) => parentsOf(value, id));
+
+/**
+ * The work unit of the item `id` (items.md, "Work types and work units";
+ * F-148 D7): `null` for an item whose type is not in `work_types`; the item's
+ * own id when no parent is of a work type; else the work unit of its first
+ * parent of a work type, in the order of its type's slots and then of the
+ * slot's parents. An item that the walk meets again (a containment cycle,
+ * which the kind rule refuses) has no work unit, `null`.
+ * @param {Containment} value  a value that passes `schema`
+ * @param {string} id  an id in its printed form
+ * @param {StoreContext} ctx
+ * @returns {string|null}
+ */
+export function workUnit(value, id, ctx) {
+  const prefixes = idPrefixes(ctx);
+  /** @type {string[]} */
+  const workTypes = ctx.config.scope(null).work_types ?? [];
+  const isWork = (/** @type {string} */ item) => workTypes.includes(printedId(item, prefixes)?.type ?? '');
+  /** @type {Set<string>} */
+  const seen = new Set();
+  /**
+   * @param {string} item  an item of a work type
+   * @returns {string|null}
+   */
+  const unitOf = (item) => {
+    if (seen.has(item)) return null;
+    seen.add(item);
+    /** @type {Array<{ name: string }>} */
+    const slots = itemDefinition(ctx, /** @type {string} */ (printedId(item, prefixes)?.type)).parents ?? [];
+    const entry = entryOf(value, item);
+    const parent = slots.flatMap(({ name }) => (Object.hasOwn(entry, name) ? listOf(entry[name]) : [])).find(isWork);
+    return parent === undefined ? item : unitOf(parent);
   };
-  for (const id of Object.keys(value).sort(byText)) if (!seen.has(id)) visit([id]);
-  return faults;
+  return isWork(id) ? unitOf(id) : null;
 }
 
 /**
