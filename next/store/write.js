@@ -138,9 +138,9 @@ function findItem(ctx, created, text) {
 
 /**
  * The `at` of a log entry written now: an ISO 8601 timestamp in UTC, in
- * whole seconds.
+ * whole seconds. The flow runner (`engine/runner.js`) stamps its entries with it.
  */
-const now = () => new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+export const now = () => new Date().toISOString().replace(/\.\d+Z$/, 'Z');
 
 /**
  * The writer `w` of one store write, which stages into `staged`: the
