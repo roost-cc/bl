@@ -25,8 +25,8 @@
  */
 
 import { Environment } from '@marcbachmann/cel-js';
-import Mustache from 'mustache';
 import { tokensOf } from './check.js';
+import { templateNames } from './template.js';
 import RECORD_SCHEMA from './schemas/record.schema.json' with { type: 'json' };
 import STATE_SCHEMA from './schemas/state.schema.json' with { type: 'json' };
 
@@ -187,25 +187,12 @@ const FUNCTIONS = [
 /** The handler names `bindCel` takes: one per function, and `predicate` for the shop predicates. */
 const HANDLER_NAMES = [...FUNCTIONS.map((fn) => fn.name), 'predicate'];
 
-/** The Mustache token types that read a name. */
-const NAME_TOKENS = new Set(['name', '&', '#', '^']);
-
 /**
  * The number of parameters of a shop predicate: the number of distinct
  * `{{args.<n>}}` names that its command template reads, in sections too.
  * @param {string} template
  */
-function predicateArity(template) {
-  const names = new Set();
-  const walk = (tokens) => {
-    for (const [type, value, , , children] of tokens) {
-      if (NAME_TOKENS.has(type) && /^args\.\d+$/.test(value)) names.add(value);
-      if (Array.isArray(children)) walk(children);
-    }
-  };
-  walk(Mustache.parse(template));
-  return names.size;
-}
+const predicateArity = (template) => templateNames(template, 'args').filter((key) => /^\d+$/.test(key)).length;
 
 /**
  * An environment with every declaration of D6, its handlers from
