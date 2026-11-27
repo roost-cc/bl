@@ -18,8 +18,7 @@
  */
 
 import { dependencyEntries, graphValues } from '../store/graphs.js';
-import { record as readRecord } from '../store/record.js';
-import { bindConditions, engineRecord } from './conditions.js';
+import { bindConditions, itemRecord } from './conditions.js';
 
 /**
  * @typedef {import('./conditions.js').EngineContext} EngineContext
@@ -48,7 +47,7 @@ const conditionOf = (/** @type {GateEntry} */ entry) => (typeof entry === 'strin
  */
 function failing(ctx, record, entries) {
   if (entries.length === 0) return [];
-  const conditions = bindConditions(ctx, record.item_id);
+  const conditions = bindConditions(ctx, record.item_id, { current: record });
   return entries
     .filter((entry) => conditions.evaluate(conditionOf(entry), record) !== true)
     .map((entry) => ({ entry, text: conditionOf(entry) }));
@@ -67,8 +66,8 @@ export function statusGate(ctx, record, to) {
   const own = failing(ctx, record, flow.statuses[to]?.gate ?? []);
   const dependencies = dependencyEntries(graphValues(ctx), record.item_id, to)
     .filter(({ item, expression }) => {
-      const named = engineRecord(ctx, ctx.flowSet, readRecord(ctx, item));
-      return bindConditions(ctx, named.item_id).evaluate(expression, named) !== true;
+      const named = itemRecord(ctx, item, record);
+      return bindConditions(ctx, named.item_id, { current: record }).evaluate(expression, named) !== true;
     })
     .map((entry) => ({ entry, text: `${entry.item}: ${entry.expression}` }));
   return [...own, ...dependencies];

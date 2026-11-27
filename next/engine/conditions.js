@@ -9,7 +9,8 @@
  *     item reads `interrupted: <box>` (D-50). Every record that a condition
  *     reads comes through it, so the rule is in one place.
  *   - `bindConditions(ctx, id)` evaluates CEL for the item `id`: `item(id)`
- *     and `children(type)` give records through `engineRecord`, and
+ *     and `children(type)` give records through `engineRecord`, `item(id)` of
+ *     the item whose flow runs gives its current record (`itemRecord`), and
  *     `has_terminal()` is true when the process can open `/dev/tty` (D-30).
  *     Every other function and each shop predicate throws `not bound: <name>`
  *     (`UNBOUND`) until the feature that builds it binds it.
@@ -55,6 +56,21 @@ export function engineRecord(ctx, flowSet, record) {
 }
 
 /**
+ * The record of the item `other` as conditions read it: `current` when
+ * `other` is the item of `current`, so that every lookup of the item whose
+ * flow runs sees the status the invocation reached; otherwise
+ * `engineRecord` of its committed record.
+ * @param {EngineContext} ctx
+ * @param {string} other  an item id
+ * @param {ItemRecord} [current]  the record of the item whose flow runs
+ * @returns {ItemRecord}
+ */
+export function itemRecord(ctx, other, current) {
+  if (current !== undefined && itemDir(ctx, other)?.id === current.item_id) return current;
+  return engineRecord(ctx, ctx.flowSet, recordReader(ctx)(other));
+}
+
+/**
  * Whether the process can open `path` for reading.
  * @param {string} path
  */
@@ -73,13 +89,15 @@ function canOpen(path) {
  * records it needs anew.
  * @param {EngineContext} ctx
  * @param {string} id  the item's id in its printed form
- * @param {{ tty?: string }} [options]  `tty`: the file `has_terminal()` opens; a test seam
+ * @param {{ tty?: string, current?: ItemRecord }} [options]  `tty`: the file `has_terminal()`
+ *   opens, a test seam; `current`: the record of the item whose flow runs, which `item()`
+ *   gives for that item (`itemRecord`)
  * @returns {{ evaluate: (expr: string, record: ItemRecord) => unknown }}
  */
-export function bindConditions(ctx, id, { tty = '/dev/tty' } = {}) {
+export function bindConditions(ctx, id, { tty = '/dev/tty', current } = {}) {
   const bound = bindCel(ctx.config.celInputs, {
     ...UNBOUND,
-    item: (other) => engineRecord(ctx, ctx.flowSet, recordReader(ctx)(other)),
+    item: (other) => itemRecord(ctx, other, current),
     children: (type) => {
       const read = recordReader(ctx);
       return childrenOf(graphValues(ctx), id)

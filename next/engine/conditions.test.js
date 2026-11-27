@@ -83,6 +83,25 @@ test('the records of item(id) and children(type) carry closed and the run state 
   assert.deepEqual(bindConditions(ctx, 'S-2').evaluate('children("task")', story), []);
 });
 
+test('item(id) of the item whose flow runs gives its current record, from its own and from another item', async () => {
+  const ctx = await backlog();
+  const read = recordReader(ctx);
+  // S-3's invocation has reached done; its committed status is in_progress.
+  const current = engineRecord(ctx, ctx.flowSet, { ...read('S-3'), status: 'done' });
+  const feature = engineRecord(ctx, ctx.flowSet, read('F-1'));
+  for (const [what, id, record] of [
+    ['its own conditions', 'S-3', current],
+    ['a dependency entry of another item', 'F-1', feature],
+  ]) {
+    const conditions = bindConditions(ctx, id, { current });
+    assert.equal(conditions.evaluate('item("S-3").status', record), 'done', what);
+    assert.equal(conditions.evaluate('item("S-3").closed', record), true, what);
+    assert.equal(conditions.evaluate('item("S-1").status', record), 'done', `${what}: another item`);
+    assert.equal(conditions.evaluate('item("S-2").status', record), 'superseded', `${what}: another item`);
+  }
+  assert.equal(bindConditions(ctx, 'F-1').evaluate('item("S-3").status', feature), 'in_progress', 'no current');
+});
+
 test('has_terminal() is true when the process can open the terminal, and false when it cannot', async () => {
   const ctx = await backlog();
   const story = engineRecord(ctx, ctx.flowSet, recordReader(ctx)('S-1'));

@@ -537,6 +537,39 @@ test('runFlow_second_return_transition_gate_sees_first_transition', async () => 
   }
 });
 
+test('runFlow_second_return_transition_gate_sees_self_item_status', async () => {
+  // As above, but each condition looks the item up by its id: the gate of merged must read
+  // ready_for_merge, the status the arrow into deliver/_return_success reached, not in_progress.
+  const REACHED = (/** @type {string} */ id) => `item("${id}").status == "ready_for_merge" && !item("${id}").closed`;
+  const cases = [
+    // [what, the merged gate, the dependency entries under merged (keys: self, other)]
+    ['the flow gate', REACHED, null],
+    ['a dependency entry that names the item itself', null, (id) => ({ self: REACHED(id) })],
+    ['a dependency entry of another item that looks the item up', null, (id) => ({ other: REACHED(id) })],
+  ];
+  for (const [what, gate, dependency] of cases) {
+    const ctx = backlog({
+      'story.yaml': storyFlow((flow) => {
+        flow.steps.deliver.success = { status: 'merged', next: 'stop' };
+        if (gate !== null) flow.statuses.merged = { gate: [gate('S-1')] };
+      }),
+    });
+    const [id, other] = await createItems(ctx, [
+      { type: 'story', state: { status: 'in_progress', run: 'idle' } },
+      { type: 'story', state: { status: 'draft', run: 'idle' } },
+    ]);
+    assert.equal(id, 'S-1');
+    if (dependency !== null) {
+      const named = { self: id, other };
+      const entries = Object.entries(dependency(id)).map(([key, expr]) => ({ [named[key]]: expr }));
+      await setGraph(ctx, 'dependency', { [id]: { merged: entries } });
+    }
+    const { catalogue } = fakeSteps({ in_unit: 'failure' });
+    const result = await runFlow(ctx, { id, start: 'in_unit', by: 'operator', entry: 'deliver', catalogue });
+    assert.deepEqual(result, { ended: 'stop', status: 'merged', outcome: 'success' }, what);
+  }
+});
+
 test('an arrow whose derived from does not hold the status stops the invocation with a note, and keeps the status', async () => {
   const ctx = backlog();
   const id = await story(ctx, { status: 'draft', run: 'idle' });
