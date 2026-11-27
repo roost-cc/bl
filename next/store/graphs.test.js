@@ -1,12 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import BACKLOG_SCHEMA from '../config/schemas/backlog.schema.json' with { type: 'json' };
 import { fixture, load } from '../test/helpers/config-fixture.js';
+import { git, initRepo } from '../test/helpers/git.js';
 import * as containment from './engines/containment.js';
 import * as rank from './engines/rank.js';
 import {
   checkGraphText,
   checkGraphs,
   changedIds,
+  configureMergeDrivers,
   graph,
   graphFaults,
   graphText,
@@ -386,4 +389,18 @@ test('mergeGraph gives null for a merged value that breaks the kind rule', () =>
 
 test('mergeGraph refuses an engine name that no engine has', () => {
   assert.throws(() => mergeGraph('blockers', '', '[]', '[]'), { message: 'there is no graph engine named blockers' });
+});
+
+test("the engine names of backlog.schema.json are the engines that graphs.js has, in the schema's order", () => {
+  const names = BACKLOG_SCHEMA.properties.graphs.items.properties.engine.enum;
+  for (const name of names) assert.doesNotThrow(() => mergeGraph(name, '', '', ''), name);
+  const ctx = context();
+  initRepo(ctx.backlogDir);
+  configureMergeDrivers(ctx.backlogDir);
+  assert.deepEqual(
+    git(ctx.backlogDir, 'config', '--get-regexp', String.raw`^merge\..*\.driver$`)
+      .split('\n')
+      .map((line) => line.split(' ')[0]),
+    names.map((name) => `merge.bl-graph-${name}.driver`),
+  );
 });
