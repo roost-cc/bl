@@ -51,12 +51,15 @@ const MOCHA = 'match: [bold, "#f9e2af"]\n';
  * commands.yaml, and with `views` and `operatorViews` as the shop's and the
  * operator's views.yaml when given. The backlog names the color scheme
  * `mocha`; `schemes` are the shop's color-scheme files, name → text, and
- * `operatorSchemes` the operator's.
+ * `operatorSchemes` the operator's. `registry` is added to backlog.yaml.
  */
-function fixture(commands = COMMANDS, { views, operatorViews, schemes = { mocha: MOCHA }, operatorSchemes = {} } = {}) {
+function fixture(
+  commands = COMMANDS,
+  { views, operatorViews, schemes = { mocha: MOCHA }, operatorSchemes = {}, registry = '' } = {},
+) {
   const backlogDir = mkTempDir('bl-dispatch-');
   const operatorDir = join(backlogDir, 'operator');
-  writeFileSync(join(backlogDir, 'backlog.yaml'), 'color_scheme: mocha\nlanguage: en\nrepos: {}\n');
+  writeFileSync(join(backlogDir, 'backlog.yaml'), `color_scheme: mocha\nlanguage: en\nrepos: {}\n${registry}`);
   mkdirSync(join(backlogDir, 'config', 'color-schemes'), { recursive: true });
   mkdirSync(join(operatorDir, 'color-schemes'), { recursive: true });
   for (const [name, text] of Object.entries(schemes)) {
@@ -286,6 +289,30 @@ test('a format that util.styleText refuses is a fault in the scheme file that wr
     schemeFaults({ operatorSchemes: { mocha: 'done: [blod]\n' } }),
     "operator/color-schemes/mocha.yaml: /done/0: format: 'blod' is not a util.styleText format",
   );
+});
+
+// ---------------------------------------------------------------------------
+// the start check of the plugin commands (F-140 D3, Decision A5)
+// ---------------------------------------------------------------------------
+
+test('startFaults gives a raw-name fault for {{{with.a}}} in a shop step and {{& message}} in a channel, none for {{with.a}}', () => {
+  const registry = [
+    'plugin_registry:',
+    '  steps: { tag: "tag {{{with.a}}}", fine: "tag {{with.a}}" }',
+    '  stages: { bl.notify: { terminal: "echo {{& message}}" } }',
+    '',
+  ].join('\n');
+  const at = fixture(COMMANDS, { registry });
+  const raw = (name) => `'${name}' is filled raw, which puts its value into the command; write {{${name}}}`;
+  assert.equal(
+    new ConfigurationFaults(startFaults(at.config, OPS), at.backlogDir).message,
+    [
+      `backlog.yaml: /plugin_registry/stages/bl.notify/terminal: raw-name: ${raw('message')}`,
+      `backlog.yaml: /plugin_registry/steps/tag: raw-name: ${raw('with.a')}`,
+    ].join('\n'),
+  );
+  const fine = fixture(COMMANDS, { registry: 'plugin_registry: { steps: { fine: "tag {{with.a}}" } }\n' });
+  assert.deepEqual(startFaults(fine.config, OPS), []);
 });
 
 // ---------------------------------------------------------------------------

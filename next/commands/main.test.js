@@ -148,6 +148,19 @@ test('bl-next exits 1 on an op that the registry does not hold, naming config/co
   assert.equal(stdout, '');
 });
 
+test('bl-next exits 1 on a plugin command that fills a name raw, naming backlog.yaml and its path', async () => {
+  const { status, stdout, stderr } = await runBlNext({
+    'backlog/backlog.yaml': `${BACKLOG}plugin_registry: { steps: { tag: "tag {{{with.a}}}", fine: "tag {{with.a}}" } }\n`,
+  });
+  assert.equal(
+    stderr,
+    "backlog.yaml: /plugin_registry/steps/tag: raw-name: 'with.a' is filled raw, which puts its value into the command; write {{with.a}}\n" +
+      DOES_NOT_LOAD,
+  );
+  assert.equal(status, 1);
+  assert.equal(stdout, '');
+});
+
 /** A commands.yaml of entry lines, which need no op. */
 const ENTRIES = 'list:\n  entry: list\n  help: list the items\nstart:\n  entry: start\n  help: start an item\n';
 
