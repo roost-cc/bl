@@ -42,6 +42,24 @@ export function git(cwd, ...args) {
  */
 export function initRepo(dir) {
   git(dir, 'init', '-q', '-b', 'main');
+  configureRepo(dir);
+}
+
+/**
+ * Clone `url` into `dir` and give the clone the config of `initRepo`.
+ * @param {string} url
+ * @param {string} dir
+ */
+export function cloneRepo(url, dir) {
+  git(process.cwd(), 'clone', '-q', url, dir);
+  configureRepo(dir);
+}
+
+/**
+ * Give the repo `dir` the commit identity and its own hooks (`initRepo`).
+ * @param {string} dir
+ */
+function configureRepo(dir) {
   for (const [key, value] of Object.entries({
     'user.name': GIT_ENV.GIT_AUTHOR_NAME,
     'user.email': GIT_ENV.GIT_AUTHOR_EMAIL,

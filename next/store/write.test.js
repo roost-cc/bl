@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 import { fixture, load } from '../test/helpers/config-fixture.js';
 import { _hooks } from '../lib/atomic-write.js';
 import { git, initRepo } from '../test/helpers/git.js';
@@ -870,7 +871,7 @@ test('w.graph writes the graph file in canonical form and commits it with a Bl-I
   const ctx = backlog(GRAPH_FILES);
   await storeWrite(ctx, { message: 'm' }, (w) => w.graph('containment', (g) => ({ ...g, 'S-2': { unit: 'F-1' } })));
   assert.equal(read(ctx, CONTAINMENT), '{\n  "S-2": {\n    "unit": "F-1"\n  }\n}\n');
-  assert.deepEqual(changedIn(ctx, 'HEAD'), [CONTAINMENT]);
+  assert.deepEqual(changedIn(ctx, 'HEAD'), ['.gitattributes', CONTAINMENT]);
   assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%B'), 'm\n\nBl-Item: S-2');
   assert.deepEqual(status(ctx), []);
 
@@ -905,7 +906,7 @@ test("two w.graph calls of one write see each other's change, from the engine's 
   });
   assert.deepEqual(seen, [[], ['S-2'], {}]);
   assert.equal(read(ctx, 'graphs/rank.json'), jsonOf(['S-2', 'S-1']));
-  assert.deepEqual(changedIn(ctx, 'HEAD').sort(), ['graphs/dependency.json', 'graphs/rank.json', S1]);
+  assert.deepEqual(changedIn(ctx, 'HEAD').sort(), ['.gitattributes', 'graphs/dependency.json', 'graphs/rank.json', S1]);
   assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%B'), 'm\n\nBl-Item: S-1\nBl-Item: S-2\nBl-Item: S-10');
   assert.deepEqual(status(ctx), []);
 });
@@ -961,6 +962,41 @@ test('when the commit fails, the new graph file and the graphs directory are rem
   );
   assert.equal(existsSync(join(ctx.backlogDir, 'graphs')), false);
   assert.deepEqual(status(ctx), []);
+});
+
+test('a graph write adds each missing graph line to .gitattributes in its commit, and keeps every other line', async () => {
+  const ATTRIBUTES = '*.md text\n/graphs/rank.json merge=bl-graph-rank \n# the end';
+  const ctx = backlog({ ...GRAPH_FILES, '.gitattributes': ATTRIBUTES });
+  await storeWrite(ctx, { message: 'm' }, (w) => w.set('S-1', 'Summary', 'Changed.'));
+  assert.equal(read(ctx, '.gitattributes'), ATTRIBUTES);
+  assert.deepEqual(changedIn(ctx, 'HEAD'), [S1]);
+
+  await storeWrite(ctx, { message: 'm' }, (w) => w.graph('containment', () => ({ 'S-1': { unit: 'F-1' } })));
+  assert.equal(
+    read(ctx, '.gitattributes'),
+    `${ATTRIBUTES}\n/graphs/containment.json merge=bl-graph-containment\n/graphs/dependency.json merge=bl-graph-dependency\n`,
+  );
+  assert.deepEqual(changedIn(ctx, 'HEAD'), ['.gitattributes', CONTAINMENT]);
+  assert.deepEqual(status(ctx), []);
+
+  await storeWrite(ctx, { message: 'm' }, (w) => w.graph('rank', () => ['F-1']));
+  assert.deepEqual(changedIn(ctx, 'HEAD'), ['graphs/rank.json']);
+});
+
+test('a graph write names next/bin/bl-merge-driver as the merge driver of each engine in the git config', async () => {
+  const DRIVER = fileURLToPath(new URL('../bin/bl-merge-driver', import.meta.url));
+  const ctx = backlog(GRAPH_FILES);
+  const driver = (engine) => git(ctx.backlogDir, 'config', `merge.bl-graph-${engine}.driver`);
+  await storeWrite(ctx, { message: 'm' }, (w) => w.set('S-1', 'Summary', 'Changed.'));
+  assert.throws(() => driver('rank'), /git config merge\.bl-graph-rank\.driver/);
+
+  await storeWrite(ctx, { message: 'm' }, (w) => w.graph('rank', () => ['F-1']));
+  for (const engine of ['containment', 'dependency', 'rank']) {
+    const line = driver(engine);
+    assert.ok(line.startsWith(process.execPath) && line.includes(DRIVER), line);
+    assert.ok(line.endsWith(`bl-merge-driver ${engine} %O %A %B`), line);
+    assert.match(git(ctx.backlogDir, 'config', `merge.bl-graph-${engine}.name`), /bl-merge-driver/);
+  }
 });
 
 test('a graph file that fails its schema, or a graph that backlog.yaml does not give, ends the write in fn', async () => {

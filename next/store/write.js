@@ -19,7 +19,11 @@
  * `w.graph(name, edit)` changes the file of a graph (F-148 D4, `graphs.js`).
  * A graph file is a backlog file of no item: its staged entry has `item: null`,
  * the item checks skip it, and the graph checks (`checkGraphs`, F-148 D5) run
- * on it and on the entries of every item the write touched.
+ * on it and on the entries of every item the write touched. A write that
+ * changes a graph file also adds the missing graph lines to `.gitattributes`
+ * (`gitattributes`), a backlog file of no item too, in the same commit, and
+ * names the merge driver in the clone's git config before it commits
+ * (`configureMergeDrivers`, F-148 D4).
  *
  * Only this module writes backlog files: `next/test/store-writes.test.js`
  * fails when another module of `next/` imports `lib/atomic-write.js`. The
@@ -34,7 +38,15 @@ import { atomicWriteFile } from '../lib/atomic-write.js';
 import { canonical, withLock } from '../lib/lock.js';
 import { commitPaths } from './commit.js';
 import { DOCUMENT, checkDocument, parseDocument } from './document.js';
-import { checkGraphs, graph, graphText, parseGraph } from './graphs.js';
+import {
+  GITATTRIBUTES,
+  checkGraphs,
+  configureMergeDrivers,
+  gitattributes,
+  graph,
+  graphText,
+  parseGraph,
+} from './graphs.js';
 import { dirName, formatId, parseId } from './ids.js';
 import { ATTRIBUTES, STATE, checkAttributes, checkState, faultText, jsonFile, jsonText } from './item-json.js';
 import { backlogText, idPrefixes, itemDefinition, itemDir, nextNumber, typeDir } from './items.js';
@@ -375,7 +387,10 @@ function putBack(ctx, written, made) {
  * 3. make the directory of each new file (a new item's, the first graph
  *    file's), and write each changed file atomically, keeping an existing
  *    file's mode;
- * 4. commit exactly those paths in one commit: `message`, then `trailers`,
+ * 4. when a graph file changed, add the missing graph lines to
+ *    `.gitattributes` with the other changed files, and name the merge
+ *    driver in the clone's git config before the commit (F-148 D4);
+ * 5. commit exactly those paths in one commit: `message`, then `trailers`,
  *    then one `Bl-Item: <id>` trailer for each item whose files changed and
  *    each graph key that changed (F-148 D4), once each, in id order.
  *
@@ -451,6 +466,11 @@ async function writeLocked(ctx, { message, trailers = [] }, fn) {
 
   const changed = [...staged].flatMap(([path, entry]) => (entry.base === entry.text ? [] : [{ path, ...entry }]));
   if (changed.length === 0) return result;
+  const graphChanged = changed.some(({ graph }) => graph !== undefined);
+  if (graphChanged) {
+    const { base, text } = gitattributes(ctx);
+    if (text !== base) changed.push({ path: GITATTRIBUTES, item: null, file: GITATTRIBUTES, base, text });
+  }
 
   const items = [...new Map(changed.flatMap(({ item }) => (item === null ? [] : [[item.id, item]]))).values()].sort(
     (a, b) => byId(a.id, b.id),
@@ -488,6 +508,7 @@ async function writeLocked(ctx, { message, trailers = [] }, fn) {
       throw Object.assign(new Error(`${edited.join(', ')} changed while bl wrote it`), { code: 'ECHANGED' });
     }
     const itemTrailers = [...touched].sort(byId).map((id) => `Bl-Item: ${id}`);
+    if (graphChanged) configureMergeDrivers(ctx.backlogDir);
     await commitPaths(
       ctx.backlogDir,
       changed.map(({ path }) => path),

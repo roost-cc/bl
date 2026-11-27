@@ -16,9 +16,18 @@
  * three-way merge of three values, or `null` for a conflict. This module is the only place that picks
  * an engine module; it never branches on the engine otherwise. The store
  * write (`write.js`) writes the files.
+ *
+ * Git merges a graph file through the merge driver of its engine (D6):
+ * `.gitattributes` maps the file to the driver `bl-graph-<engine>`
+ * (`gitattributes`), and the clone's git config names `next/bin/bl-merge-driver`
+ * as that driver (`configureMergeDrivers`). The store write sets both when it
+ * changes a graph file (D4).
  */
 
+import { quote } from 'shell-quote';
+import { fileURLToPath } from 'url';
 import { checkValue, tokensOf } from '../config/check.js';
+import { git } from '../lib/child.js';
 import * as containment from './engines/containment.js';
 import * as dependency from './engines/dependency.js';
 import * as rank from './engines/rank.js';
@@ -210,6 +219,63 @@ export function mergeGraph(engine, baseText, oursText, theirsText) {
   const merged = module.merge(base, ours, theirs);
   const valid = merged !== null && checkValue(module.schema, merged).length === 0 && module.kind(merged).length === 0;
   return valid ? jsonText(module.canonical(merged)) : null;
+}
+
+/** The merge driver's entry point (Decision A2), which the clone's git config names. */
+const MERGE_DRIVER = fileURLToPath(new URL('../bin/bl-merge-driver', import.meta.url));
+
+/** The name of an engine's merge driver, in `.gitattributes` and in the git config. */
+const driverName = (/** @type {string} */ engine) => `bl-graph-${engine}`;
+
+/** The path of the backlog's `.gitattributes`, relative to its root. */
+export const GITATTRIBUTES = '.gitattributes';
+
+/**
+ * The backlog's `.gitattributes` as a store write that changes a graph file
+ * leaves it (D4): `base`, its text now (null for no file), and `text`, with
+ * the line `/graphs/<name>.json merge=bl-graph-<engine>` of each configured
+ * graph that it does not hold added at its end, in `backlog.yaml` order. Every
+ * other line stays as it is. A line counts as held when it is there with
+ * other white space at its ends.
+ *
+ * It adds the line of every configured graph, not only of the graph the
+ * write changed. So each clone of one backlog gets the same lines in the same
+ * order, whichever graph it writes first, and git merges the two changes of
+ * `.gitattributes` with no conflict.
+ * @param {StoreContext} ctx
+ * @returns {{ base: string|null, text: string }}
+ */
+export function gitattributes(ctx) {
+  const base = backlogText(ctx, GITATTRIBUTES);
+  const held = new Set((base ?? '').split('\n').map((line) => line.trim()));
+  const missing = graphs(ctx)
+    .map((g) => `/${g.path} merge=${driverName(g.engine)}`)
+    .filter((line) => !held.has(line));
+  const start = base === null || base === '' || base.endsWith('\n') ? (base ?? '') : `${base}\n`;
+  return { base, text: missing.length === 0 ? /** @type {string} */ (base) : `${start}${missing.join('\n')}\n` };
+}
+
+/**
+ * Name `next/bin/bl-merge-driver` as the merge driver of each engine in the
+ * git config of the clone at `backlogDir` (D6): `merge.bl-graph-<engine>.name`
+ * and `merge.bl-graph-<engine>.driver`, which git runs through a shell as
+ * `<node> <driver> <engine> %O %A %B`, the node that runs bl and the driver's
+ * path quoted for the shell (`shell-quote`). It is quiet: a repo whose config git
+ * cannot set merges its graph files by line. The store write calls it before
+ * it commits a graph change (D4), and the backlog pull (F-153) before each
+ * rebase.
+ * @param {string} backlogDir
+ */
+export function configureMergeDrivers(backlogDir) {
+  for (const engine of Object.keys(ENGINES)) {
+    const name = driverName(engine);
+    git(backlogDir, ['config', `merge.${name}.name`, `bl ${engine} graph file, merged by bl-merge-driver`]);
+    git(backlogDir, [
+      'config',
+      `merge.${name}.driver`,
+      `${quote([process.execPath, MERGE_DRIVER])} ${engine} %O %A %B`,
+    ]);
+  }
 }
 
 /**
