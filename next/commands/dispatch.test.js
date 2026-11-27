@@ -10,6 +10,7 @@ import { join } from 'path';
 import { ConfigurationFaults } from '../config/check.js';
 import { KINDS } from '../config/kinds.js';
 import { loadConfiguration } from '../config/load.js';
+import { ALERTS } from '../test/helpers/config-fixture.js';
 import { withEnv } from '../test/helpers/env.js';
 import { ESCAPE, recorder } from '../test/helpers/streams.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
@@ -55,7 +56,7 @@ const MOCHA = 'match: [bold, "#f9e2af"]\n';
 function fixture(commands = COMMANDS, { views, operatorViews, schemes = { mocha: MOCHA }, operatorSchemes = {} } = {}) {
   const backlogDir = mkTempDir('bl-dispatch-');
   const operatorDir = join(backlogDir, 'operator');
-  writeFileSync(join(backlogDir, 'backlog.yaml'), 'color_scheme: mocha\nrepos: {}\n');
+  writeFileSync(join(backlogDir, 'backlog.yaml'), 'color_scheme: mocha\nlanguage: en\nrepos: {}\n');
   mkdirSync(join(backlogDir, 'config', 'color-schemes'), { recursive: true });
   mkdirSync(join(operatorDir, 'color-schemes'), { recursive: true });
   for (const [name, text] of Object.entries(schemes)) {
@@ -65,6 +66,7 @@ function fixture(commands = COMMANDS, { views, operatorViews, schemes = { mocha:
     writeFileSync(join(operatorDir, 'color-schemes', `${name}.yaml`), text);
   }
   writeFileSync(join(backlogDir, 'config', 'commands.yaml'), commands);
+  writeFileSync(join(backlogDir, 'config', 'alerts.yaml'), ALERTS);
   if (views !== undefined) writeFileSync(join(backlogDir, 'config', 'views.yaml'), views);
   if (operatorViews !== undefined) writeFileSync(join(operatorDir, 'views.yaml'), operatorViews);
   const config = loadConfiguration({ backlogDir, operatorDir, kinds: KINDS });

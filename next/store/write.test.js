@@ -50,7 +50,7 @@ const storyFiles = (dir, title) => ({
  */
 function backlog(files = {}) {
   const all = {
-    'backlog.yaml': 'color_scheme: mocha\nrepos: {}\nid_prefixes:\n  S: story\n  T: task\n',
+    'backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos: {}\nid_prefixes:\n  S: story\n  T: task\n',
     'config/items/story.yaml': STORY,
     'config/items/task.yaml': 'dir: tasks\n',
     '.gitignore': '.bl/\n',
@@ -834,6 +834,7 @@ test('storeWrite_rejects_missing_required_item_files', async () => {
 const GRAPH_FILES = {
   'backlog.yaml': [
     'color_scheme: mocha',
+    'language: en',
     'repos: {}',
     'id_prefixes:',
     '  S: story',

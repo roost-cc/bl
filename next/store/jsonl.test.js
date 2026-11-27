@@ -195,7 +195,7 @@ test('readJsonl_rejects_invalid_entry', () => {
   ];
   for (const [file, text, message] of FILES) {
     const dirs = fixture({
-      'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: {}\nid_prefixes:\n  S: story\n',
+      'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos: {}\nid_prefixes:\n  S: story\n',
       'backlog/config/items/story.yaml': 'dir: stories\n',
       'backlog/stories/S1-one/index.md': '# One\n',
       [`backlog/stories/S1-one/${file}`]: text,
@@ -208,7 +208,7 @@ test('readJsonl_rejects_invalid_entry', () => {
 
 test('readJsonl gives the entries in order, [] for a missing file, and an error that names the file and the line', () => {
   const dirs = fixture({
-    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: {}\nid_prefixes:\n  S: story\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos: {}\nid_prefixes:\n  S: story\n',
     'backlog/config/items/story.yaml': 'dir: stories\n',
     'backlog/stories/S1-one/index.md': '# One\n',
     'backlog/stories/S1-one/log.jsonl': `${JSON.stringify(CREATED_S1)}\n${JSON.stringify(EVENTS.flow_start)}\n`,

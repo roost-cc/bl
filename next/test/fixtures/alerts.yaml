@@ -1,0 +1,15 @@
+# uTop's alert routing (alerts.md, "Alerts", "Channels"). A key is an alert kind, or
+# <kind>.<reason>, or notify / notify.<topic>; its value is a list of channels from bl.notify.
+# A gated alert's reason is the failing gate entry's class (config/flows/); an entry with no
+# class, and a dependency entry, route by `gated` alone. bl-validate reports a gated.<class> key
+# that no gate entry uses.
+# The reason key wins over the kind key; [] sends nothing. Every kind key is required.
+# ~/.config/bl/alerts.yaml is patched over this file.
+gated: [terminal]
+gated.expected: [] # normal waits: capacity, merged units, open children
+gated.needs_operator_action: [terminal, bell]
+gated.should_always_be_true: [terminal, bell] # a broken invariant
+ended: [] # a normal end needs no alert
+ended.crash: [terminal, bell]
+notify: [terminal] # notify boxes, by topic
+notify.escalation: [terminal, bell]

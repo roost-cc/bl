@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "config/alerts.yaml and the operator's alerts.yaml",
+  "description": "The alert routing (alerts.md, \"Alerts\", D-97; \"Channels\", D-99; F-140 D2): an alert kind, `<kind>.<reason>`, `notify` or `notify.<topic>` to a list of channel names from `bl.notify`. Each kind's key is required. A `gated` reason is a gate entry's class and a `notify` topic is a box's `topic`, both named by the shop; `ended` has the reasons `normal` and `crash` only. The operator's file is patched over the shop's (views.md, D-471).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["gated", "ended", "notify"],
+  "properties": {
+    "gated": { "$ref": "#/$defs/Channels" },
+    "ended": { "$ref": "#/$defs/Channels" },
+    "ended.normal": { "$ref": "#/$defs/Channels" },
+    "ended.crash": { "$ref": "#/$defs/Channels" },
+    "notify": { "$ref": "#/$defs/Channels" }
+  },
+  "patternProperties": {
+    "^gated\\..+$": { "$ref": "#/$defs/Channels" },
+    "^notify\\..+$": { "$ref": "#/$defs/Channels" }
+  },
+  "$defs": {
+    "Channels": {
+      "type": "array",
+      "description": "The channel names; `[]` sends nothing.",
+      "items": { "type": "string" }
+    }
+  }
+}

@@ -9,11 +9,13 @@
  */
 
 import { MARKER } from './files.js';
+import ALERTS_SCHEMA from './schemas/alerts.schema.json' with { type: 'json' };
 import BACKLOG_SCHEMA from './schemas/backlog.schema.json' with { type: 'json' };
 import COLOR_SCHEME_SCHEMA from './schemas/color-scheme.schema.json' with { type: 'json' };
 import COMMANDS_SCHEMA from './schemas/commands.schema.json' with { type: 'json' };
 import FLOWS_SCHEMA from './schemas/flows.schema.json' with { type: 'json' };
 import ITEMS_SCHEMA from './schemas/items.schema.json' with { type: 'json' };
+import TEMPLATES_SCHEMA from './schemas/templates.schema.json' with { type: 'json' };
 import VIEWS_SCHEMA from './schemas/views.schema.json' with { type: 'json' };
 
 /**
@@ -63,4 +65,19 @@ export const KINDS = Object.freeze([
   }),
   // The flow set, `config/flows/*.yaml`: the shop's alone, not layered (F-139 D3, D-85).
   Object.freeze({ name: 'flows', shop: 'config/flows/', order: 'none', schema: FLOWS_SCHEMA }),
+  // F-140 D2: the alert routing and the notification texts, files for people (views.md, D-471).
+  Object.freeze({
+    name: 'alerts',
+    shop: 'config/alerts.yaml',
+    operator: 'alerts.yaml',
+    order: 'who',
+    schema: ALERTS_SCHEMA,
+  }),
+  Object.freeze({
+    name: 'templates',
+    shop: 'config/templates/',
+    operator: 'templates/',
+    order: 'who',
+    schema: TEMPLATES_SCHEMA,
+  }),
 ]);

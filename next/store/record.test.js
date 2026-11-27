@@ -14,6 +14,7 @@ const IDLE = '{ "status": "draft", "run": "idle" }\n';
 const FILES = {
   'backlog.yaml': [
     'color_scheme: mocha',
+    'language: en',
     'repos: {}',
     'id_prefixes: { F: feature, S: story, E: epic }',
     'work_types: [feature, story]',

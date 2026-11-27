@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, writeFileSync } from 'fs';
 import { delimiter, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { ALERTS, ALERTS_PATH } from '../test/helpers/config-fixture.js';
 import { fakeTmux, renamedTitles } from '../test/helpers/fake-tmux.js';
 import { spawnToFiles } from '../test/helpers/spawn-files.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
@@ -33,8 +34,10 @@ const FLOW_SET = 'max_box_visits: 20\ngate_recheck_minutes: 15\n';
 async function runBlNext(files, { backlog = true, argv = [], env: extra = {}, bin = BL_NEXT } = {}) {
   const home = mkTempDir('bl-main-');
   // Every fixture backlog names the color scheme `mocha`, which the start check needs (D8), and
-  // has a flow set with its two settings, which the flow set needs (F-139 D4).
-  for (const [path, text] of Object.entries({ [MOCHA_FILE]: MOCHA, [FLOW_SET_FILE]: FLOW_SET, ...files })) {
+  // has a flow set with its two settings, which the flow set needs (F-139 D4), and the alert
+  // routing (F-140 D2).
+  const defaults = { [MOCHA_FILE]: MOCHA, [FLOW_SET_FILE]: FLOW_SET, [ALERTS_PATH]: ALERTS };
+  for (const [path, text] of Object.entries({ ...defaults, ...files })) {
     mkdirSync(dirname(join(home, path)), { recursive: true });
     writeFileSync(join(home, path), text);
   }
@@ -75,11 +78,11 @@ async function runUnderFakeTmux(files, { env = {}, ...opts } = {}) {
 const ADDITIONAL = 'additionalProperties: must NOT have additional properties';
 /** The last line of a configuration fault report (D-423). */
 const DOES_NOT_LOAD = 'bl-next: the configuration does not load; bl-validate checks it\n';
-const BACKLOG = 'color_scheme: mocha\nrepos: {}\n';
+const BACKLOG = 'color_scheme: mocha\nlanguage: en\nrepos: {}\n';
 
 test('bl-next exits 1 on an unknown top-level key in backlog.yaml, with one line that names it', async () => {
   const { status, stdout, stderr, error } = await runBlNext({
-    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: {}\nsigning_kye: x\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos: {}\nsigning_kye: x\n',
   });
   assert.equal(error, null);
   assert.equal(stderr, `backlog.yaml: /signing_kye: ${ADDITIONAL}\n${DOES_NOT_LOAD}`);
@@ -89,7 +92,7 @@ test('bl-next exits 1 on an unknown top-level key in backlog.yaml, with one line
 
 test("bl-next exits 1 on a bad key under repos.utop of the operator's config.yaml, and names that file", async () => {
   const { status, stderr } = await runBlNext({
-    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos:\n  utop: {}\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos:\n  utop: {}\n',
     '.config/bl/config.yaml': 'repos:\n  utop:\n    signing_kye: x\n',
   });
   assert.equal(stderr, `~/.config/bl/config.yaml: /repos/utop/signing_kye: ${ADDITIONAL}\n${DOES_NOT_LOAD}`);
@@ -98,7 +101,7 @@ test("bl-next exits 1 on a bad key under repos.utop of the operator's config.yam
 
 test('bl-next exits 1 on a partial with an unclosed section, with one line that names the partial file', async () => {
   const { status, stdout, stderr } = await runBlNext({
-    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: {}\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos: {}\n',
     'backlog/config/partials/head.mustache': '{{#items}}- {{title}}\n',
   });
   assert.equal(stderr, `config/partials/head.mustache: : mustache: Unclosed section "items" at 22\n${DOES_NOT_LOAD}`);
@@ -108,10 +111,13 @@ test('bl-next exits 1 on a partial with an unclosed section, with one line that 
 
 test('bl-next exits 1 on a null, false, 0 or empty repos, found by BL_BACKLOG_DIR or the walk, and names backlog.yaml and the rule', async () => {
   const rows = [
-    ['color_scheme: mocha\nrepos: null\n', "backlog.yaml: /repos: required: must have required property 'repos'\n"],
-    ['color_scheme: mocha\nrepos: false\n', 'backlog.yaml: /repos: type: must be object\n'],
-    ['color_scheme: mocha\nrepos: 0\n', 'backlog.yaml: /repos: type: must be object\n'],
-    ["color_scheme: mocha\nrepos: ''\n", 'backlog.yaml: /repos: type: must be object\n'],
+    [
+      'color_scheme: mocha\nlanguage: en\nrepos: null\n',
+      "backlog.yaml: /repos: required: must have required property 'repos'\n",
+    ],
+    ['color_scheme: mocha\nlanguage: en\nrepos: false\n', 'backlog.yaml: /repos: type: must be object\n'],
+    ['color_scheme: mocha\nlanguage: en\nrepos: 0\n', 'backlog.yaml: /repos: type: must be object\n'],
+    ["color_scheme: mocha\nlanguage: en\nrepos: ''\n", 'backlog.yaml: /repos: type: must be object\n'],
   ];
   for (const [yaml, line] of rows) {
     for (const backlog of [true, false]) {
@@ -124,7 +130,7 @@ test('bl-next exits 1 on a null, false, 0 or empty repos, found by BL_BACKLOG_DI
 
 test('bl-next with a valid backlog and no arguments exits 2: the command is required', async () => {
   const { status, stdout, stderr } = await runBlNext({
-    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos:\n  utop: {}\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos:\n  utop: {}\n',
     '.config/bl/config.yaml': 'repos:\n  utop: {}\n',
   });
   assert.match(stderr, /\nbl-next: error: the following arguments are required: command\n$/);

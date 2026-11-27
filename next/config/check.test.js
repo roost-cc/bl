@@ -34,21 +34,26 @@ function faultsOf(schema, shop, operator, repo) {
 test('a type fault names the layer that set the value: each of the four layers', () => {
   // Each row sets `key: 5` in one layer, and a good value in every layer below it.
   const rows = [
-    { shop: { color_scheme: 'mocha', key: 5, repos: { utop: {} } }, operator: {}, file: SHOP, path: '/key' },
     {
-      shop: { color_scheme: 'mocha', key: 'ok', repos: { utop: { key: 5 } } },
+      shop: { color_scheme: 'mocha', language: 'en', key: 5, repos: { utop: {} } },
+      operator: {},
+      file: SHOP,
+      path: '/key',
+    },
+    {
+      shop: { color_scheme: 'mocha', language: 'en', key: 'ok', repos: { utop: { key: 5 } } },
       operator: {},
       file: SHOP,
       path: '/repos/utop/key',
     },
     {
-      shop: { color_scheme: 'mocha', key: 'ok', repos: { utop: { key: 'ok' } } },
+      shop: { color_scheme: 'mocha', language: 'en', key: 'ok', repos: { utop: { key: 'ok' } } },
       operator: { key: 5 },
       file: OPERATOR,
       path: '/key',
     },
     {
-      shop: { color_scheme: 'mocha', key: 'ok', repos: { utop: { key: 'ok' } } },
+      shop: { color_scheme: 'mocha', language: 'en', key: 'ok', repos: { utop: { key: 'ok' } } },
       operator: { key: 'ok', repos: { utop: { key: 5 } } },
       file: OPERATOR,
       path: '/repos/utop/key',
@@ -66,7 +71,7 @@ test('a type fault names the layer that set the value: each of the four layers',
 });
 
 test('an unknown key in the operator repos.utop: additionalProperties at /repos/utop/<key>', () => {
-  const shop = { file: SHOP, value: { color_scheme: 'mocha', repos: { utop: {} } } };
+  const shop = { file: SHOP, value: { color_scheme: 'mocha', language: 'en', repos: { utop: {} } } };
   const operator = { file: OPERATOR, value: { repos: { utop: { signing_kye: 'x' } } } };
   assert.deepEqual(faultsOf(BACKLOG_SCHEMA, shop, operator, 'utop'), [
     {
@@ -80,7 +85,7 @@ test('an unknown key in the operator repos.utop: additionalProperties at /repos/
 });
 
 test('a required key that nobody set names the lowest layer; one deleted by null names the file that deleted it', () => {
-  const shop = { file: SHOP, value: { color_scheme: 'mocha', other: 1 } };
+  const shop = { file: SHOP, value: { color_scheme: 'mocha', language: 'en', other: 1 } };
   const operator = { file: OPERATOR, value: { key: 'x' } };
   const schema = { ...SCHEMA_WITH_KEY, properties: { ...SCHEMA_WITH_KEY.properties, other: {} } };
   assert.deepEqual(faultsOf(schema, shop, operator, null), [
@@ -88,7 +93,12 @@ test('a required key that nobody set names the lowest layer; one deleted by null
   ]);
   const deleting = { file: OPERATOR, value: { repos: null } };
   assert.deepEqual(
-    faultsOf(BACKLOG_SCHEMA, { file: SHOP, value: { color_scheme: 'mocha', repos: {} } }, deleting, null),
+    faultsOf(
+      BACKLOG_SCHEMA,
+      { file: SHOP, value: { color_scheme: 'mocha', language: 'en', repos: {} } },
+      deleting,
+      null,
+    ),
     [{ file: OPERATOR, path: '/repos', rule: 'required', message: "must have required property 'repos'" }],
   );
 });
@@ -148,7 +158,7 @@ test('a fault inside a list that the operator replaced names the operator file',
 });
 
 test('a repo entry that is not a mapping is a fault at /repos/<name>, in the file that wrote it', () => {
-  const shop = { file: SHOP, value: { color_scheme: 'mocha', repos: { utop: {} } } };
+  const shop = { file: SHOP, value: { color_scheme: 'mocha', language: 'en', repos: { utop: {} } } };
   const operator = { file: OPERATOR, value: { repos: { utop: 'x' } } };
   const fault = { file: OPERATOR, path: '/repos/utop', rule: 'type', message: 'must be object' };
   assert.deepEqual(faultsOf(BACKLOG_SCHEMA, shop, operator, null), [fault]);

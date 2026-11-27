@@ -11,7 +11,7 @@ import { canonical, changed, check, empty, kind, merge, names, schema } from './
  */
 function context() {
   const files = {
-    'backlog.yaml': 'color_scheme: mocha\nrepos: {}\nid_prefixes:\n  S: story\n  F: feature\n  E: epic\n',
+    'backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos: {}\nid_prefixes:\n  S: story\n  F: feature\n  E: epic\n',
     'config/items/story.yaml': [
       'dir: stories',
       'parents:',

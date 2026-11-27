@@ -2,32 +2,31 @@
  * load.js — the one load of the configuration (F-136 D8).
  *
  * `loadConfiguration` reads every file of every kind, layers it per scope
- * (D4), checks each layered result against its kind's schema, compiles each
- * CEL string the schemas mark (D5), runs the CEL self-test (D6), and reads and
- * parses the partials (D7). It then throws `ConfigurationFaults` with every
- * fault, or returns the frozen configuration. Nothing reads a configuration
- * file after it returns (architecture.md, "Configuration loads once").
+ * (D4), and checks each layered result against its kind's schema. Then it
+ * takes the shop predicates from the top-level scope (F-140 D2), compiles each
+ * CEL string the schemas mark in the environment they give (D5), runs the CEL
+ * self-test (D6), and reads and parses the partials (D7). It then throws
+ * `ConfigurationFaults` with every fault, or returns the frozen configuration.
+ * Nothing reads a configuration file after it returns (architecture.md,
+ * "Configuration loads once").
  */
 
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import Mustache from 'mustache';
 import { celEnvironment, celSelfTest } from './cel.js';
-import { ConfigurationFaults, compileCel, shapeChecker } from './check.js';
-import { readYaml } from './files.js';
+import { ConfigurationFaults, attribute, compileCel, shapeChecker } from './check.js';
+import { pointerToken, readYaml } from './files.js';
 import { applyLayers, bothAxes, reposLayers, scopesOf, whoAxis, whoEntries } from './layers.js';
 
 /** @typedef {import('./kinds.js').Kind} Kind */
 /** @typedef {import('./layers.js').Layer} Layer */
 /** @typedef {import('./layers.js').Source} Source */
 /** @typedef {import('./files.js').Fault} Fault */
+/** @typedef {import('./check.js').CelString} CelString */
 
-/**
- * The CEL inputs of every scope. F-140 gives the shop predicates
- * (`plugin_registry.predicates`) when it adds that key's schema; until then
- * there are none (D6).
- */
-const CEL_INPUTS = Object.freeze({ predicates: Object.freeze({}) });
+/** The CEL inputs when the top-level scope gives no predicates. */
+const NO_CEL_INPUTS = Object.freeze({ predicates: Object.freeze({}) });
 
 /**
  * @typedef {object} Configuration
@@ -162,6 +161,38 @@ function readPartials(backlogDir, operatorDir, faults) {
   return partials;
 }
 
+/**
+ * The CEL inputs (F-140 D2, Decision A1): the shop predicates of the
+ * top-level scope's `plugin_registry.predicates`, each the command string
+ * (`command` for the object form). A command that Mustache does not parse is a
+ * fault, because its number of arguments is not known. With no top-level
+ * result whose shape holds, or with such a fault, the inputs are `null`: the
+ * CEL environment is not known.
+ * @param {{ result: any, layers: readonly Layer[], cel: CelString[]|null }|undefined} top
+ * @param {Fault[]} faults
+ * @returns {import('./cel.js').CelInputs|null}
+ */
+function celInputsOf(top, faults) {
+  if (top === undefined || top.cel === null) return null;
+  const before = faults.length;
+  const entries = Object.entries(top.result.plugin_registry?.predicates ?? {}).map(([name, plugin]) => {
+    const command = typeof plugin === 'string' ? plugin : plugin.command;
+    try {
+      Mustache.parse(command);
+    } catch (error) {
+      const path = `/plugin_registry/predicates/${pointerToken(name)}${typeof plugin === 'string' ? '' : '/command'}`;
+      faults.push({
+        ...attribute(path, /** @type {Layer[]} */ (top.layers)),
+        rule: 'mustache',
+        message: error.message,
+      });
+    }
+    return [name, command];
+  });
+  if (faults.length > before) return null;
+  return Object.freeze({ predicates: Object.freeze(Object.fromEntries(entries)) });
+}
+
 /** `value` frozen all the way down. */
 function deepFreeze(value) {
   if (value !== null && typeof value === 'object') {
@@ -179,28 +210,44 @@ function deepFreeze(value) {
  */
 export function loadConfiguration({ backlogDir, operatorDir, kinds }) {
   const checker = shapeChecker();
-  const env = celEnvironment(CEL_INPUTS);
   /** @type {Fault[]} */
   const faults = [];
-  /** @type {Map<string, Map<string|null, { result: unknown, layers: readonly Layer[] }>>} */
+  /**
+   * Each loaded unit; `cel` holds its recorded CEL strings, and is `null`
+   * when its shape does not hold.
+   * @type {Map<string, Map<string|null, { result: any, layers: readonly Layer[], cel: CelString[]|null }>>}
+   */
   const results = new Map();
+  // The first pass checks the shape of every kind, because the CEL environment comes from the
+  // backlog kind's top-level scope (F-140 D2).
   for (const kind of kinds) {
     const check = checker.compile(kind.schema);
     const kindResults = new Map();
     for (const [key, layers] of unitsOf(kind, backlogDir, operatorDir, faults)) {
       const result = applyLayers(layers);
       const checked = check(result, layers);
-      // The cross-check runs after the shape check, and only on a result whose shape holds (D-622).
-      faults.push(...(checked.faults.length > 0 ? checked.faults : compileCel(checked.cel, env)));
-      kindResults.set(key, { result: deepFreeze(result), layers: deepFreeze(layers) });
+      faults.push(...checked.faults);
+      const cel = checked.faults.length > 0 ? null : checked.cel;
+      kindResults.set(key, { result: deepFreeze(result), layers: deepFreeze(layers), cel });
     }
     results.set(kind.name, kindResults);
   }
-  celSelfTest(CEL_INPUTS);
+  const bothKind = kinds.find((kind) => kind.order === 'both');
+  const inputs = bothKind === undefined ? NO_CEL_INPUTS : celInputsOf(results.get(bothKind.name)?.get(null), faults);
+  // The second pass, the cross-check, runs only on a result whose shape holds (D-622), and
+  // only in a known environment: a predicate call cannot compile while the predicates are
+  // not known, and its fault would repeat the backlog's.
+  if (inputs !== null) {
+    const env = celEnvironment(inputs);
+    for (const kindResults of results.values()) {
+      for (const { cel } of kindResults.values()) if (cel !== null) faults.push(...compileCel(cel, env));
+    }
+  }
+  const celInputs = inputs ?? NO_CEL_INPUTS;
+  celSelfTest(celInputs);
   const partials = readPartials(backlogDir, operatorDir, faults);
   if (faults.length > 0) throw new ConfigurationFaults(faults, backlogDir);
 
-  const bothKind = kinds.find((kind) => kind.order === 'both');
   /** The loaded unit of a `who` or `none` kind, as `file` and `layers` take it. */
   const unitOf = (kind, name) => {
     const found = kinds.find((k) => k.name === kind && k.order !== 'both');
@@ -219,6 +266,6 @@ export function loadConfiguration({ backlogDir, operatorDir, kinds }) {
     layers: (kind, name) =>
       kind === bothKind?.name ? results.get(kind)?.get(name ?? null)?.layers : unitOf(kind, name)?.layers,
     partial: (name) => partials.get(name),
-    celInputs: CEL_INPUTS,
+    celInputs,
   });
 }

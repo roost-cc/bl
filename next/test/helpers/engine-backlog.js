@@ -10,6 +10,7 @@ import { storeWrite } from '../../store/write.js';
 const FILES = {
   'backlog.yaml': [
     'color_scheme: mocha',
+    'language: en',
     'repos: {}',
     'id_prefixes: { F: feature, S: story, T: task }',
     'work_types: [feature, story]',

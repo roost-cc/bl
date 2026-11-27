@@ -38,7 +38,7 @@ const GRAPHS = [
  */
 function context(graphsYaml = GRAPHS, files = {}) {
   const all = {
-    'backlog.yaml': `color_scheme: mocha\nrepos: {}\nid_prefixes:\n  S: story\n  F: feature\n${graphsYaml}\n`,
+    'backlog.yaml': `color_scheme: mocha\nlanguage: en\nrepos: {}\nid_prefixes:\n  S: story\n  F: feature\n${graphsYaml}\n`,
     'config/items/story.yaml': 'dir: stories\nparents:\n  - { name: unit, types: [feature], min: 0, max: 1 }\n',
     'config/items/feature.yaml': 'dir: features\n',
     ...files,
@@ -232,6 +232,7 @@ const unitContext = (files = {}) =>
   context('', {
     'backlog.yaml': [
       'color_scheme: mocha',
+      'language: en',
       'repos: {}',
       'id_prefixes: { S: story, F: feature, B: batch, E: epic }',
       'work_types: [batch, feature, story]',
