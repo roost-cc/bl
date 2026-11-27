@@ -983,6 +983,26 @@ test('a graph write adds each missing graph line to .gitattributes in its commit
   assert.deepEqual(changedIn(ctx, 'HEAD'), ['graphs/rank.json']);
 });
 
+test('graph_name_stays_in_graphs_and_has_merge_attribute', async () => {
+  const withRank = (name) => ({
+    ...GRAPH_FILES,
+    'backlog.yaml': GRAPH_FILES['backlog.yaml'].replace('name: rank,', `name: ${JSON.stringify(name)},`),
+  });
+  for (const name of ['../escape', 'nested/rank', '/abs', 'bad\n*.json merge=evil', 'foo bar', 'Rank', '-rank', '']) {
+    assert.throws(() => backlog(withRank(name)), /backlog\.yaml: \/graphs\/2\/name: pattern/, JSON.stringify(name));
+  }
+  for (const name of ['rank', 'rank-2', 'r2']) {
+    const ctx = backlog(withRank(name));
+    await storeWrite(ctx, { message: 'm' }, (w) => w.graph(name, () => ['F-1']));
+    assert.equal(read(ctx, `graphs/${name}.json`), jsonOf(['F-1']));
+    assert.equal(
+      git(ctx.backlogDir, 'check-attr', 'merge', '--', `graphs/${name}.json`),
+      `graphs/${name}.json: merge: bl-graph-rank`,
+    );
+    assert.deepEqual(status(ctx), []);
+  }
+});
+
 test('a graph write names next/bin/bl-merge-driver as the merge driver of each engine in the git config', async () => {
   const DRIVER = fileURLToPath(new URL('../bin/bl-merge-driver', import.meta.url));
   const ctx = backlog(GRAPH_FILES);
