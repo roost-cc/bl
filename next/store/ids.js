@@ -14,10 +14,19 @@
  */
 
 /**
+ * The error of a text that is not an item id (`parseId`). A caller that
+ * reads text that may be no id catches this error only, so any other error,
+ * such as a full call stack, still reaches its caller.
+ */
+export class IdError extends Error {
+  name = 'IdError';
+}
+
+/**
  * Read an id. Text with no known prefix, with anything other than an
  * optional dash and digits after the prefix, or with a number above
  * `Number.MAX_SAFE_INTEGER` (which a JavaScript number cannot hold exactly,
- * so two ids would read as one) is an error that names the text.
+ * so two ids would read as one) is an `IdError` that names the text.
  *
  * @param {string} text
  * @param {Record<string, string>} idPrefixes  prefix → type
@@ -28,12 +37,12 @@ export function parseId(text, idPrefixes) {
   const prefix = Object.keys(idPrefixes)
     .filter((key) => lower.startsWith(key.toLowerCase()))
     .sort((a, b) => b.length - a.length)[0];
-  if (prefix === undefined) throw new Error(`not an item id: "${text}" starts with no known prefix`);
+  if (prefix === undefined) throw new IdError(`not an item id: "${text}" starts with no known prefix`);
   const digits = /^-?(\d+)$/.exec(text.slice(prefix.length));
-  if (digits === null) throw new Error(`not an item id: "${text}" has no number after its prefix ${prefix}`);
+  if (digits === null) throw new IdError(`not an item id: "${text}" has no number after its prefix ${prefix}`);
   const number = Number(digits[1]);
   if (!Number.isSafeInteger(number)) {
-    throw new Error(`not an item id: "${text}" has a number above ${Number.MAX_SAFE_INTEGER}`);
+    throw new IdError(`not an item id: "${text}" has a number above ${Number.MAX_SAFE_INTEGER}`);
   }
   return { id: formatId(prefix, number), prefix, number, type: idPrefixes[prefix] };
 }
@@ -63,8 +72,9 @@ export function printedId(text, idPrefixes) {
   try {
     const id = parseId(text, idPrefixes);
     return id.id === text ? id : null;
-  } catch {
-    return null;
+  } catch (e) {
+    if (e instanceof IdError) return null;
+    throw e;
   }
 }
 

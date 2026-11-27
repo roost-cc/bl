@@ -19,6 +19,8 @@ import {
   readGraph,
   workUnit,
 } from './graphs.js';
+import { printedId } from './ids.js';
+import { record } from './record.js';
 
 const GRAPHS = [
   'work_types: [feature, story]',
@@ -286,6 +288,38 @@ test('workUnit reads the containment graph of its graph values, and the staged v
   const staged = graphValues(ctx, (g) => (g.engine === 'containment' ? {} : undefined));
   assert.equal(workUnit(ctx, staged, 'S-1'), 'S-1');
   assert.equal(workUnit(context(''), graphValues(context('')), 'S-1'), null);
+});
+
+test('workUnit reaches the final parent in a long chain', () => {
+  // F-1 within F-2 within … within F-12000: each feature is of a work type.
+  const ids = Array.from({ length: 12000 }, (_, i) => `F-${i + 1}`);
+  const chain = Object.fromEntries(ids.slice(0, -1).map((id, i) => [id, { within: ids[i + 1] }]));
+  const ctx = unitContext({
+    'graphs/containment.json': JSON.stringify(chain),
+    'graphs/rank.json': '["F-1"]',
+    'features/F1-one/index.md': '# One\n',
+    'features/F1-one/state.json': '{ "status": "draft", "run": "idle" }\n',
+    'features/F1-one/attributes.json': '{}\n',
+  });
+  assert.equal(workUnit(ctx, graphValues(ctx), 'F-1'), 'F-12000');
+  assert.equal(record(ctx, 'F-1').unit, 'F-12000');
+  const { 'F-1': _, ...rest } = chain;
+  const attach = [{ graph: graph(ctx, 'containment'), base: JSON.stringify(rest), text: JSON.stringify(chain) }];
+  assert.deepEqual(
+    checkGraphs(ctx, attach, [], () => true).findings.map(({ item, rule, message }) => [item, rule, message]),
+    [['F-1', 'not-work-unit', 'F-1 is no work unit: it belongs to F-12000']],
+  );
+  // An id read meets only its own errors: any other error, such as a full call stack, reaches the caller.
+  assert.equal(printedId('F1', { F: 'feature' }), null);
+  const failing = new Proxy(
+    {},
+    {
+      ownKeys: () => {
+        throw new RangeError('Maximum call stack size exceeded');
+      },
+    },
+  );
+  assert.throws(() => printedId('F-1', failing), RangeError);
 });
 
 test('checkGraphs gives not-work-unit to a ranked node that a containment change puts in another work unit', () => {

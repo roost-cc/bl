@@ -141,22 +141,20 @@ export function workUnit(value, id, ctx) {
   /** @type {string[]} */
   const workTypes = ctx.config.scope(null).work_types ?? [];
   const isWork = (/** @type {string} */ item) => workTypes.includes(printedType(ctx, item) ?? '');
+  if (!isWork(id)) return null;
   /** @type {Set<string>} */
   const seen = new Set();
-  /**
-   * @param {string} item  an item of a work type
-   * @returns {string|null}
-   */
-  const unitOf = (item) => {
+  // A loop, not a recursion, so a long chain of work parents cannot fill the call stack.
+  for (let item = id; ;) {
     if (seen.has(item)) return null;
     seen.add(item);
     /** @type {Array<{ name: string }>} */
     const slots = itemDefinition(ctx, /** @type {string} */ (printedType(ctx, item))).parents ?? [];
     const entry = entryOf(value, item);
     const parent = slots.flatMap(({ name }) => (Object.hasOwn(entry, name) ? listOf(entry[name]) : [])).find(isWork);
-    return parent === undefined ? item : unitOf(parent);
-  };
-  return isWork(id) ? unitOf(id) : null;
+    if (parent === undefined) return item;
+    item = parent;
+  }
 }
 
 /**

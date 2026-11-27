@@ -14,7 +14,7 @@
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'fs';
 import { join, sep } from 'path';
 import { canonical } from '../lib/lock.js';
-import { parseId, printedId } from './ids.js';
+import { IdError, parseId, printedId } from './ids.js';
 
 /**
  * @typedef {{ backlogDir: string, config: import('../config/load.js').Configuration }} StoreContext
@@ -123,8 +123,9 @@ function itemsOf(ctx, type) {
     let id;
     try {
       id = parseId(entry.name.slice(0, dash), prefixes);
-    } catch {
-      continue;
+    } catch (e) {
+      if (e instanceof IdError) continue;
+      throw e;
     }
     if (id.type !== type) continue;
     const item = { ...id, path: `${dir}/${entry.name}` };
