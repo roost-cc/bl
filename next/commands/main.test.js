@@ -375,6 +375,34 @@ test('bl-next exits 1 on a shop step box whose with: lacks or adds a name, or th
   assert.equal(plain.status, 0);
 });
 
+// ---------------------------------------------------------------------------
+// the rank graph check (F-140 D8, Decision A4)
+// ---------------------------------------------------------------------------
+
+test('bl-next exits 1 on a rank box when backlog.yaml has no graph of the engine rank, at the box', async () => {
+  // bl-next itself, so the catalogue is STEPS with the real rank step.
+  const files = {
+    'backlog/backlog.yaml': BACKLOG,
+    'backlog/config/commands.yaml': ENTRIES,
+    'backlog/config/flows/story.yaml': shopFiles('{ use: rank, with: { at: last }, success: stop }')[
+      'backlog/config/flows/story.yaml'
+    ],
+  };
+  const { status, stdout, stderr } = await runBlNext(files, { argv: ['--help'] });
+  assert.equal(
+    stderr,
+    "config/flows/story.yaml: /flows/story/steps/tag: rank: the step 'rank' needs the graph of the engine rank, and backlog.yaml gives none\n" +
+      DOES_NOT_LOAD,
+  );
+  assert.equal(status, 1);
+  assert.equal(stdout, '');
+  // With a graph of the engine rank, under any name, the same command runs.
+  const graphs = 'id_prefixes: { S: story }\ngraphs:\n  - { name: order, engine: rank, nodes: [story] }\n';
+  const ranked = await runBlNext({ ...files, 'backlog/backlog.yaml': `${BACKLOG}${graphs}` }, { argv: ['--help'] });
+  assert.equal(ranked.stderr, '');
+  assert.equal(ranked.status, 0);
+});
+
 test('bl-next with no backlog to find exits 1 with bl-next: and the error', async () => {
   const { status, stderr } = await runBlNext({}, { backlog: false });
   assert.match(stderr, /^bl-next: no backlog found: .*\n$/);

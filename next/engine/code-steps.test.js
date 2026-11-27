@@ -1,4 +1,4 @@
-// The code steps succeed, assert and increment (F-140 D5), and shop steps (D6), on a fixture task flow beside the uTop
+// The code steps succeed, assert and increment (F-140 D5), shop steps (D6) and rank (D8), on a fixture task flow beside the uTop
 // flow set, run by F-139's runner with the real step catalogue. They are here, not in steps/,
 // because only engine/ may import the runner (the layer rule, F-135 D3).
 import { test } from 'node:test';
@@ -8,18 +8,18 @@ import { join } from 'path';
 import { STEPS } from '../steps/index.js';
 import { shopSteps } from '../steps/shop.js';
 import { itemDir } from '../store/items.js';
-import { createItems, engineBacklog } from '../test/helpers/engine-backlog.js';
+import { createItems, engineBacklog, setGraph } from '../test/helpers/engine-backlog.js';
 import { UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 import { git } from '../test/helpers/git.js';
 import { runFlow } from './runner.js';
 
 const CATALOGUE = { ...UTOP_STEPS, ...STEPS };
 
-/** A task flow whose `run` entry starts at the box `first`, written as `box`. */
-const taskFlow = (/** @type {string} */ box) =>
+/** A flow of `type`, by default the task's, whose `run` entry starts at the box `first`, written as `box`. */
+const taskFlow = (/** @type {string} */ box, type = 'task') =>
   [
     'flows:',
-    '  task:',
+    `  ${type}:`,
     '    initial: draft',
     '    statuses: { draft: {}, done: {}, superseded: {} }',
     '    entries:',
@@ -153,6 +153,87 @@ test('a shop step runs once in the backlog root, {{repo}} renders as nothing, an
     git(ctx.backlogDir, 'log', '-1', '--format=%B'),
     new RegExp(`^${id}: first success\\n\\nthe last line\\n`),
   );
+});
+
+// ---- rank (F-140 D8) ----
+
+/** The rank graph, under a name other than its engine's (Decision A4); it continues the graphs list. */
+const ORDER = '  - { name: order, engine: rank, nodes: [feature, story] }\nrepos: {}\n';
+const RANK_LAST = '{ use: rank, with: { at: last }, success: { status: done, next: stop } }';
+
+/**
+ * A backlog whose feature, story and task flows each run `box`, with the rank
+ * graph `order` holding `chain`, and a feature F, its story S and a task T,
+ * each a draft. `chain` names the items by key: `F`, `S` or `X`, an item outside the flows.
+ */
+async function rankBacklog(/** @type {string} */ box, /** @type {string[]} */ chain = []) {
+  const flows = Object.fromEntries(['feature', 'story', 'task'].map((type) => [`${type}.yaml`, taskFlow(box, type)]));
+  const ctx = engineBacklog(flows, ORDER, CATALOGUE);
+  const draft = { status: 'draft', run: 'idle' };
+  const [F, S, X, T] = await createItems(
+    ctx,
+    ['feature', 'story', 'feature', 'task'].map((type) => ({ type, state: draft })),
+  );
+  const ids = { F, S, X, T };
+  await setGraph(ctx, 'containment', { [S]: { unit: F } });
+  if (chain.length > 0)
+    await setGraph(
+      ctx,
+      'order',
+      chain.map((key) => ids[key]),
+    );
+  return { ctx, ...ids };
+}
+
+/** The rank chain at HEAD. */
+const chainAtHead = (/** @type {any} */ ctx) => JSON.parse(git(ctx.backlogDir, 'show', 'HEAD:graphs/order.json'));
+
+test('rank at: last commits the unit last in the chain, in the box commit, with its Bl-Item trailer and note', async () => {
+  const { ctx, F, X } = await rankBacklog(RANK_LAST, ['X']);
+  assert.deepEqual(await run(ctx, F), { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.deepEqual(chainAtHead(ctx), [X, F]);
+  const message = git(ctx.backlogDir, 'log', '-1', '--format=%B');
+  assert.match(message, new RegExp(`^${F}: first success\\n\\n${F} placed last\\n`));
+  assert.match(message, new RegExp(`^Bl-Item: ${F}$`, 'm'));
+  // The run state of the box's end is in the same commit.
+  assert.equal(JSON.parse(git(ctx.backlogDir, 'show', `HEAD:${itemDir(ctx, F).path}/state.json`)).status, 'done');
+  // at: first puts it before the others.
+  const first = await rankBacklog(RANK_LAST.replace('last', 'first'), ['X']);
+  await run(first.ctx, first.F);
+  assert.deepEqual(chainAtHead(first.ctx), [first.F, first.X]);
+});
+
+test('rank on a unit that the chain holds changes no chain, and its note names the unit and its place', async () => {
+  const { ctx, F, X } = await rankBacklog(RANK_LAST, ['F', 'X']);
+  const before = git(ctx.backlogDir, 'rev-parse', 'HEAD:graphs/order.json');
+  assert.equal((await run(ctx, F)).outcome, 'success');
+  assert.equal(git(ctx.backlogDir, 'rev-parse', 'HEAD:graphs/order.json'), before);
+  assert.deepEqual(chainAtHead(ctx), [F, X]);
+  assert.match(git(ctx.backlogDir, 'log', '-1', '--format=%B'), new RegExp(`\\n\\n${F} kept its place 1\\n`));
+});
+
+test("rank on a story places the story's feature, and its note names the feature", async () => {
+  const { ctx, F, S } = await rankBacklog(RANK_LAST);
+  assert.equal((await run(ctx, S)).outcome, 'success');
+  assert.deepEqual(chainAtHead(ctx), [F]);
+  assert.match(
+    git(ctx.backlogDir, 'log', '-1', '--format=%B'),
+    new RegExp(`^${S}: first success\\n\\n${F} placed last\\n`),
+  );
+});
+
+test('rank on an item with no work unit is a crash that names the item and its type', async () => {
+  const { ctx, T } = await rankBacklog(RANK_LAST);
+  const crash = await run(ctx, T);
+  assert.equal(crash.name, 'FlowCrash');
+  assert.match(crash.message, new RegExp(`^first: ${T} is a task, which is no work type`));
+});
+
+test('a rank box with no at, or an at other than first or last, is a fault of the flow set', () => {
+  for (const args of ['{}', '{ at: middle }']) {
+    const box = RANK_LAST.replace('{ at: last }', args);
+    assert.throws(() => engineBacklog({ 'task.yaml': taskFlow(box) }, ORDER, CATALOGUE), /first\/with/, args);
+  }
 });
 
 test('increment_with_needs_counter_and_threshold_of_1_or_more', () => {

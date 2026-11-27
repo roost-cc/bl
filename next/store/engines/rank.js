@@ -92,6 +92,21 @@ export function check(value, ids, _ctx, unitOf) {
 }
 
 /**
+ * The placement rule of the `rank` step and of `bl rank` (F-140 D8; steps.md,
+ * "The `rank` step", D-92): a chain that holds `id` stays as it is, and
+ * `placed` is false; else `id` goes in at the `first` or the `last` place, and
+ * `placed` is true.
+ * @param {Rank} chain
+ * @param {string} id
+ * @param {'first'|'last'} at
+ * @returns {{ chain: Rank, placed: boolean }}
+ */
+export function placeInRank(chain, id, at) {
+  if (chain.includes(id)) return { chain, placed: false };
+  return { chain: at === 'first' ? [id, ...chain] : [...chain, id], placed: true };
+}
+
+/**
  * The place of each node of a chain, 0-based.
  * @param {Rank} chain
  */

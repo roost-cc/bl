@@ -98,6 +98,16 @@ export function graphs(ctx) {
 }
 
 /**
+ * The configured graph of the engine `engine`, or `null` when no graph has it
+ * (F-140 Decision A4). `backlog.yaml` names each graph, and gives each engine
+ * at most one graph, so a step that needs the rank chain finds it by engine.
+ * @param {StoreContext} ctx
+ * @param {string} engine
+ * @returns {Graph|null}
+ */
+export const graphOfEngine = (ctx, engine) => graphs(ctx).find((g) => g.engine === engine) ?? null;
+
+/**
  * The configured graph `name`. A name that `backlog.yaml` does not give is an
  * error.
  * @param {StoreContext} ctx

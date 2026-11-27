@@ -12,6 +12,7 @@ import {
   configureMergeDrivers,
   graph,
   graphFaults,
+  graphOfEngine,
   graphText,
   graphValues,
   graphs,
@@ -64,6 +65,16 @@ test('the configured graphs come in backlog.yaml order, each with its file and i
 
 test('a backlog.yaml with no graphs has none', () => {
   assert.deepEqual(graphs(context('')), []);
+});
+
+test('graphOfEngine gives the graph of an engine by any name, and null for an engine that no graph has', () => {
+  const ctx = context('graphs:\n  - { name: order, engine: rank, nodes: [feature, story] }');
+  const g = /** @type {any} */ (graphOfEngine(ctx, 'rank'));
+  assert.deepEqual(
+    { name: g.name, path: g.path, module: g.module },
+    { name: 'order', path: 'graphs/order.json', module: rank },
+  );
+  assert.equal(graphOfEngine(ctx, 'containment'), null);
 });
 
 test('two graphs of one engine are an error that names both graphs', () => {

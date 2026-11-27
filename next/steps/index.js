@@ -14,6 +14,7 @@
 
 import { assertStep, succeed } from './simple.js';
 import { increment } from './increment.js';
+import { rank } from './rank.js';
 
 /** @typedef {'success'|'failure'} Outcome */
 
@@ -54,4 +55,5 @@ export const STEPS = Object.freeze({
   succeed,
   assert: assertStep,
   increment,
+  rank,
 });
