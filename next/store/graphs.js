@@ -32,8 +32,7 @@ import * as containment from './engines/containment.js';
 import * as dependency from './engines/dependency.js';
 import * as rank from './engines/rank.js';
 import { jsonFile, jsonText, parseJson, throwFaults } from './item-json.js';
-import { printedId } from './ids.js';
-import { backlogText, idPrefixes } from './items.js';
+import { backlogText, idPrefixes, printedType } from './items.js';
 
 /**
  * @typedef {import('./items.js').StoreContext} StoreContext
@@ -316,7 +315,6 @@ export function configureMergeDrivers(backlogDir) {
  * @returns {{ findings: GraphFinding[], touched: Set<string> }}
  */
 export function checkGraphs(ctx, files, items, exists) {
-  const prefixes = idPrefixes(ctx);
   const schemaFindings = files.flatMap(({ graph, text }) => checkGraphText(graph, text));
   const failed = new Set(schemaFindings.map(({ file }) => file));
   const valid = files.filter(({ graph }) => !failed.has(graph.path));
@@ -329,7 +327,7 @@ export function checkGraphs(ctx, files, items, exists) {
     ]),
   );
   const touched = new Set([...items, ...[...keys.values()].flat()]);
-  const typeOf = (/** @type {string} */ id) => printedId(id, prefixes)?.type;
+  const typeOf = (/** @type {string} */ id) => printedType(ctx, id);
   const valueOf = graphValues(ctx, (g) => values.get(g.path));
   const unitOf = (/** @type {string} */ id) => workUnit(ctx, valueOf, id);
   const findings = graphs(ctx)

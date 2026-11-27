@@ -8,8 +8,7 @@
  */
 
 import SCHEMA from '../schemas/graph-containment.schema.json' with { type: 'json' };
-import { printedId } from '../ids.js';
-import { idPrefixes, itemDefinition } from '../items.js';
+import { itemDefinition, printedType } from '../items.js';
 import { byText, changedKeys, cycles, mergeByKey, sortedObject } from './keyed.js';
 
 /**
@@ -139,10 +138,9 @@ export function merge(base, ours, theirs) {
  * @returns {string|null}
  */
 export function workUnit(value, id, ctx) {
-  const prefixes = idPrefixes(ctx);
   /** @type {string[]} */
   const workTypes = ctx.config.scope(null).work_types ?? [];
-  const isWork = (/** @type {string} */ item) => workTypes.includes(printedId(item, prefixes)?.type ?? '');
+  const isWork = (/** @type {string} */ item) => workTypes.includes(printedType(ctx, item) ?? '');
   /** @type {Set<string>} */
   const seen = new Set();
   /**
@@ -153,7 +151,7 @@ export function workUnit(value, id, ctx) {
     if (seen.has(item)) return null;
     seen.add(item);
     /** @type {Array<{ name: string }>} */
-    const slots = itemDefinition(ctx, /** @type {string} */ (printedId(item, prefixes)?.type)).parents ?? [];
+    const slots = itemDefinition(ctx, /** @type {string} */ (printedType(ctx, item))).parents ?? [];
     const entry = entryOf(value, item);
     const parent = slots.flatMap(({ name }) => (Object.hasOwn(entry, name) ? listOf(entry[name]) : [])).find(isWork);
     return parent === undefined ? item : unitOf(parent);
@@ -176,8 +174,7 @@ export function workUnit(value, id, ctx) {
  * @returns {Fault[]}
  */
 export function check(value, ids, ctx) {
-  const prefixes = idPrefixes(ctx);
-  const typeOf = (/** @type {string} */ id) => printedId(id, prefixes)?.type;
+  const typeOf = (/** @type {string} */ id) => printedType(ctx, id);
   return ids.flatMap((child) => {
     const type = /** @type {string} */ (typeOf(child));
     /** @type {Array<{ name: string, types: string[], min: number, max: number }>} */
