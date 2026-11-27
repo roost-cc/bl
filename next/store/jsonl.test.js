@@ -39,6 +39,14 @@ const EVENTS = {
     note: 'x',
   },
   outcome: { at: AT, event: 'outcome', box: 'deliver/review', outcome: 'success', note: 'fine', by: 'operator' },
+  reset: {
+    at: AT,
+    event: 'reset',
+    run: 'gated: review',
+    status: 'draft',
+    from_status: 'checked',
+    note: "no longer in the story flow: the status 'checked', the status 'review'",
+  },
 };
 
 /** The usage entry of `examples/backlog/features/F131-…/usage.jsonl`. */
@@ -55,7 +63,7 @@ const USAGE = {
 /** The rule and path of each fault. */
 const rules = (faults) => faults.map(({ rule, path }) => `${rule} ${path}`);
 
-test('log-entry.schema.json accepts each of the five events with its fields, and the optional fields left out', () => {
+test('log-entry.schema.json accepts each of the six events with its fields, and the optional fields left out', () => {
   for (const [event, entry] of Object.entries(EVENTS)) assert.deepEqual(checkLogEntry(entry), [], event);
   const minimal = [
     { at: AT, event: 'created', by: 'S-12' },
@@ -63,6 +71,7 @@ test('log-entry.schema.json accepts each of the five events with its fields, and
     { at: AT, event: 'flow_end', ended: 'stop', status: 'done', commits: [] },
     { at: AT, event: 'force', path: '/counters/rounds', to: null, status: 'review', by: 'operator', note: 'x' },
     { at: '2026-11-14T13:08:57.120Z', event: 'outcome', box: 'review', outcome: 'success', by: 'operator' },
+    { at: AT, event: 'reset', run: 'active: gone', status: 'review', note: "the box 'gone'" },
   ];
   for (const entry of minimal) assert.deepEqual(checkLogEntry(entry), [], entry.event);
 });
@@ -76,6 +85,7 @@ test('log-entry.schema.json rejects an unknown event, a missing required field, 
     flow_end: 'commits',
     force: 'note',
     outcome: 'box',
+    reset: 'note',
   };
   for (const [event, field] of Object.entries(missing)) {
     const { [field]: _dropped, ...entry } = EVENTS[/** @type {keyof EVENTS} */ (event)];
@@ -84,6 +94,8 @@ test('log-entry.schema.json rejects an unknown event, a missing required field, 
   assert.ok(rules(checkLogEntry({ ...EVENTS.created, box: 'x' })).includes('additionalProperties /box'));
   assert.ok(rules(checkLogEntry({ ...EVENTS.created, at: '2026-11-14 13:08' })).includes('format /at'));
   assert.ok(rules(checkLogEntry({ ...EVENTS.flow_end, ended: 'done' })).includes('pattern /ended'));
+  assert.deepEqual(rules(checkLogEntry({ ...EVENTS.reset, run: 'interrupted: x' })), ['pattern /run']);
+  assert.deepEqual(rules(checkLogEntry({ ...EVENTS.reset, by: 'operator' })), ['additionalProperties /by']);
   const { entry: _entry, ...neither } = EVENTS.flow_start;
   assert.ok(rules(checkLogEntry(neither)).includes('oneOf '));
   assert.ok(rules(checkLogEntry({ ...EVENTS.flow_start, resume: true })).includes('oneOf '));
@@ -244,6 +256,7 @@ test('the status and log rule passes for a consistent item, and when the last en
     [{ status: 'draft', run: 'active: refine/draft' }, EVENTS.flow_start],
     [{ status: 'review', run: 'active: deliver/review' }, EVENTS.outcome],
     [{ status: 'review', run: 'waiting: deliver/review' }, EVENTS.outcome],
+    [{ status: 'draft', run: 'idle' }, EVENTS.reset],
   ];
   for (const [state, last] of consistent) assert.deepEqual(checkStatusAndLog(state, last), [], JSON.stringify(state));
 });
@@ -265,6 +278,13 @@ test('the status and log rule fails for each case of D8', () => {
   // outcome: active or waiting at its box
   assert.deepEqual(at({ status: 'review', run: 'active: deliver/test' }, EVENTS.outcome), ['status-and-log /run']);
   assert.deepEqual(at({ status: 'review', run: 'gated: done' }, EVENTS.outcome), ['status-and-log /run']);
+  // reset: its status, and idle (Decision A3)
+  assert.deepEqual(at({ status: 'checked', run: 'idle' }, EVENTS.reset), ['status-and-log /status']);
+  assert.deepEqual(at({ status: 'draft', run: 'gated: review' }, EVENTS.reset), ['status-and-log /run']);
+  assert.deepEqual(at({ status: 'checked', run: 'active: x' }, EVENTS.reset), [
+    'status-and-log /status',
+    'status-and-log /run',
+  ]);
   const [fault] = checkStatusAndLog({ status: 'review', run: 'idle' }, stop);
   assert.equal(fault.message, 'after the last log entry, a flow_end, status must be "done", not "review"');
 });
