@@ -378,6 +378,9 @@ test('a who directory kind: each file name is an entry, and an operator file wit
   assert.deepEqual(config.file('templates', 'en.yaml'), { merged: 'Merged', failed: 'It broke' });
   assert.deepEqual(config.file('templates', 'de.yaml'), { merged: 'Zusammengeführt' });
   assert.equal(config.file('templates', 'notes.txt'), undefined);
+  // names() lists each file name that file() takes, sorted; only of a directory kind.
+  assert.deepEqual(config.names('templates'), ['de.yaml', 'en.yaml']);
+  assert.throws(() => config.names('backlog'), /no directory configuration kind: backlog/);
 });
 
 test('a fault in a directory kind names the operator file that set the value', () => {
