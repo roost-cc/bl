@@ -258,12 +258,20 @@ export function buildFlowSet(config, catalogue, backlogDir) {
   }
 
   // ---- 2. defined steps ----
-  /** The faults of a `with:` at `path` by the schema of the code step `name`. */
+  /**
+   * The faults of a `with:` at `path` by the schema of the code step `name`.
+   * An omitted `with:` is checked as `null`, the value the runner passes the step.
+   */
   const checkWith = (file, path, name, value) => {
-    if (value === undefined || !isCode(name)) return;
+    if (!isCode(name)) return;
     const schema = catalogue[name].with;
     if (schema === null) {
-      fault(file, `${path}/with`, 'with', `the step '${name}' takes no with`);
+      if (value !== undefined) fault(file, `${path}/with`, 'with', `the step '${name}' takes no with`);
+      return;
+    }
+    if (value === undefined) {
+      for (const f of checkValue(schema, null))
+        fault(file, path, f.rule, `the step '${name}' needs with: ${f.message}`);
       return;
     }
     for (const f of checkValue(schema, value)) fault(file, `${path}/with${f.path}`, f.rule, f.message);
@@ -307,6 +315,7 @@ export function buildFlowSet(config, catalogue, backlogDir) {
         );
       const run = byName(name);
       if (run === undefined) fault(file, path, 'box', `'${name}' names no code step, defined step or subflow`);
+      if (isCode(name) && !inline) checkWith(file, path, name, undefined);
       return run ?? { kind: 'none' };
     }
     if (byName(name) !== undefined) {

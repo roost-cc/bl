@@ -617,6 +617,44 @@ test('buildFlowSet_rejects_cross_kind_duplicates_and_reserved_code_step', () => 
   }
 });
 
+test('buildFlowSet_rejects_missing_required_with_in_every_box_form', () => {
+  const cases = [
+    // [what, files, the `<file>: <path>: <rule>` of the fault]
+    [
+      'a box that runs the code step of its name',
+      withSteps(() => ({ work: { success: 'count', failure: 'stop' }, count: { success: 'stop', failure: 'stop' } })),
+      'config/flows/story.yaml: /flows/story/steps/count: type',
+    ],
+    [
+      'an inline box with use: and no with:',
+      withSteps((s) => ({ ...s, tally: { use: 'count', success: 'stop', failure: 'stop' } })),
+      'config/flows/story.yaml: /flows/story/steps/tally: type',
+    ],
+    [
+      'a box that runs a defined step of its name',
+      withSteps((s) => ({ ...s, tally: { success: 'stop', failure: 'stop' } }), {
+        'steps.yaml': { defined_steps: { tally: { use: 'count' } } },
+      }),
+      'config/flows/steps.yaml: /defined_steps/tally: type',
+    ],
+    [
+      'a box that runs a defined step under another name',
+      withSteps((s) => ({ ...s, tally: { use: 'again', success: 'stop', failure: 'stop' } }), {
+        'steps.yaml': { defined_steps: { again: { use: 'count' } } },
+      }),
+      'config/flows/steps.yaml: /defined_steps/again: type',
+    ],
+  ];
+  for (const [what, files, where] of cases) {
+    const lines = faultLines(files, BASE_STEPS);
+    assert.equal(lines.length, 1, `${what}:\n${lines.join('\n')}`);
+    assert.ok(lines[0].startsWith(`${where}: `), `${what}: ${lines[0]}`);
+  }
+  // A step whose schema takes the omitted with: (null) passes in every form.
+  const any = { ...BASE_STEPS, count: step({}) };
+  for (const [what, files] of cases) assert.doesNotThrow(() => build(files, any), what);
+});
+
 test('faults in two files are both reported, in one ConfigurationFaults', () => {
   const files = withSteps((s) => ({ ...s, work: { success: 'nothing', failure: 'stop' } }), {
     'more.yaml': { max_box_visits: 3 },
