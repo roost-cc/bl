@@ -46,3 +46,31 @@ export const canonical = (value) => sortedObject(value, (statuses) => sortedObje
  * @param {Dependency} after  a value that passes `schema`
  */
 export const changed = (before, after) => changedKeys(canonical(before), canonical(after));
+
+/**
+ * The ids that the entry of `id` names (D5, "Per item"): the gated item and
+ * the item of each of its entries, or none when the file holds no entry for
+ * it.
+ * @param {Dependency} value  a value that passes `schema`
+ * @param {string} id
+ */
+export const names = (value, id) =>
+  Object.hasOwn(value, id) ? [id, ...Object.values(value[id]).flat().flatMap(Object.keys)] : [];
+
+/**
+ * The faults of the whole file by the kind rule (D5). The dependency rules
+ * are not built yet, so there are none.
+ * @param {Dependency} _value
+ * @returns {Array<{ item: string|null, rule: string, path: string, message: string }>}
+ */
+export const kind = (_value) => [];
+
+/**
+ * The faults of the entries of `ids` by the per-item rules (D5). The
+ * dependency rules are not built yet, so there are none.
+ * @param {Dependency} _value
+ * @param {string[]} _ids
+ * @param {import('../items.js').StoreContext} _ctx
+ * @returns {Array<{ item: string, rule: string, path: string, message: string }>}
+ */
+export const check = (_value, _ids, _ctx) => [];

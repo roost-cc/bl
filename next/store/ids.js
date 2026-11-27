@@ -52,6 +52,23 @@ export function formatId(prefix, number) {
 }
 
 /**
+ * The id that `text` gives when it is an id in its printed form (`S-123`),
+ * the only form a graph file holds (F-148 D2), or `null` for any other text.
+ *
+ * @param {string} text
+ * @param {Record<string, string>} idPrefixes  prefix → type
+ * @returns {ItemId|null}
+ */
+export function printedId(text, idPrefixes) {
+  try {
+    const id = parseId(text, idPrefixes);
+    return id.id === text ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The slug of a title: lower case, each run of characters other than `a-z0-9`
  * one `-`, and no `-` at either end (today's `slugify`, `src/config.js`).
  *

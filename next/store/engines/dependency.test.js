@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkValue } from '../../config/check.js';
-import { canonical, changed, empty, schema } from './dependency.js';
+import { canonical, changed, empty, names, schema } from './dependency.js';
 
 const DONE = 'status == "done"';
 
@@ -44,4 +44,10 @@ test('changed gives each gated item whose entries differ, and none whose entries
   const before = { 'S-1': { done: [{ 'S-2': DONE }, { 'S-3': DONE }] }, 'S-4': { done: [{ 'S-2': DONE }] } };
   const after = { 'S-1': { done: [{ 'S-3': DONE }, { 'S-2': DONE }] }, 'S-4': { done: [{ 'S-2': 'true' }] } };
   assert.deepEqual(changed(before, after), ['S-4']);
+});
+
+test('names gives the gated item and the item of each of its entries, or none for an item with no entry', () => {
+  const value = { 'S-1': { done: [{ 'S-2': DONE }, { 'S-1': 'true' }], refined: [{ 'F-3': DONE }] } };
+  assert.deepEqual(names(value, 'S-1'), ['S-1', 'S-2', 'S-1', 'F-3']);
+  assert.deepEqual(names(value, 'S-2'), []);
 });

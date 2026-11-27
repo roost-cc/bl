@@ -1,12 +1,16 @@
 /**
- * graphs.js — the graphs of a backlog (F-148 D1, D2): their configuration,
- * their files, and the read, the text and the schema check of each file.
+ * graphs.js — the graphs of a backlog (F-148 D1, D2, D5): their
+ * configuration, their files, the read, the text and the schema check of each
+ * file, and the check runner of a store write (`checkGraphs`).
  *
  * `backlog.yaml` lists the graphs, each with its `name`, its `engine` and the
  * item types of its `nodes`. A graph's file is `graphs/<name>.json` at the
  * backlog's root; a missing file is the engine's `empty`. Each engine module
- * (`engines/`) gives the same shape: `schema`, `empty`, `canonical(value)` and
- * `changed(before, after)`, the keys of the value that changed. This module is
+ * (`engines/`) gives the same shape: `schema`, `empty`, `canonical(value)`,
+ * `changed(before, after)`, the keys of the value that changed,
+ * `names(value, id)`, the ids that the entry of `id` names, `kind(value)`, the
+ * faults of the whole file, and `check(value, ids, ctx)`, the faults of the
+ * entries of `ids` by the engine's per-item rules. This module is
  * the only place that picks an engine module; it never branches on the engine
  * otherwise. The store write (`write.js`) writes the files.
  */
@@ -16,6 +20,7 @@ import * as containment from './engines/containment.js';
 import * as dependency from './engines/dependency.js';
 import * as rank from './engines/rank.js';
 import { jsonFile, jsonText, parseJson, throwFaults } from './item-json.js';
+import { printedId } from './ids.js';
 import { backlogText, idPrefixes } from './items.js';
 
 /**
@@ -168,3 +173,72 @@ export function checkGraphText(graph, text) {
  */
 export const changedIds = (graph, before, after) =>
   graph.module.changed(parseGraph(graph, before), parseGraph(graph, after));
+
+/**
+ * @typedef {{ item: string|null, file: string, rule: string, path?: string, message: string }} GraphFinding
+ *   one broken graph rule of a store write
+ */
+
+/**
+ * The graph rules of one store write (D5), and `touched`: the ids of the
+ * items whose files the write changed (`items`, the items it created
+ * included) and of every key it changed in any graph (`changedIds`). The
+ * store write gives the same ids its `Bl-Item` trailers (D4).
+ *
+ * 1. Each changed graph file gets the check of its schema (`checkGraphText`).
+ *    A file that fails it gets no other check.
+ * 2. Each changed graph file gets its engine's kind rule (`kind`) on the
+ *    whole file.
+ * 3. In each graph, the entry of each id of `touched` whose type is one of
+ *    the graph's `nodes`, and of each key the write changed in it, names only
+ *    ids that are items (`no-item`: an item directory or an item the write
+ *    created, the id in its printed form) of a type in `nodes` (`node-type`).
+ * 4. In each graph, each id of `touched` that is an item of a type in
+ *    `nodes` gets its engine's per-item rules (`check`).
+ *
+ * An entry that the write did not touch gets no rule, so its fault does not
+ * refuse the write; `bl-validate` (F-145) reports it. A graph file that the
+ * write did not change is read only when an id of `touched` is of one of its
+ * `nodes`, and a file that then fails its schema is an error (`parseGraph`).
+ *
+ * @param {StoreContext} ctx
+ * @param {Array<{ graph: Graph, base: string|null, text: string }>} files
+ *   each graph file the write changed: its text before (null for no file) and after
+ * @param {string[]} items  the ids of the items whose files the write changed
+ * @param {(id: string) => boolean} exists  whether the item with this printed id exists
+ * @returns {{ findings: GraphFinding[], touched: Set<string> }}
+ */
+export function checkGraphs(ctx, files, items, exists) {
+  const prefixes = idPrefixes(ctx);
+  const schemaFindings = files.flatMap(({ graph, text }) => checkGraphText(graph, text));
+  const valid = files.filter(({ graph }) => !schemaFindings.some(({ file }) => file === graph.path));
+  const keys = new Map(valid.map(({ graph, base, text }) => [graph.path, changedIds(graph, base, text)]));
+  const after = new Map(valid.map(({ graph, text }) => [graph.path, parseGraph(graph, text)]));
+  const touched = new Set([...items, ...[...keys.values()].flat()]);
+  const typeOf = (/** @type {string} */ id) => printedId(id, prefixes)?.type;
+  const findings = graphs(ctx)
+    .filter((g) => !schemaFindings.some(({ file }) => file === g.path))
+    .flatMap((g) => {
+      const ofNodes = [...touched].filter((id) => g.nodes.includes(typeOf(id) ?? ''));
+      const changedKeys = keys.get(g.path) ?? [];
+      if (ofNodes.length === 0 && changedKeys.length === 0) return [];
+      const value = after.has(g.path) ? after.get(g.path) : parseGraph(g, backlogText(ctx, g.path));
+      const nodeFindings = [...new Set([...ofNodes, ...changedKeys])].flatMap((key) =>
+        [...new Set(g.module.names(value, key))].flatMap((id) => {
+          const type = typeOf(id);
+          if (type === undefined || !exists(id)) {
+            return [{ item: key, rule: 'no-item', message: `${id} is no item in the backlog` }];
+          }
+          return g.nodes.includes(type)
+            ? []
+            : [{ item: key, rule: 'node-type', message: `${id} is a ${type}, not a node type of the graph ${g.name}` }];
+        }),
+      );
+      return [
+        ...(after.has(g.path) ? g.module.kind(value) : []),
+        ...nodeFindings,
+        ...g.module.check(value, ofNodes.filter(exists), ctx),
+      ].map((finding) => ({ ...finding, file: g.path }));
+    });
+  return { findings: [...schemaFindings, ...findings], touched };
+}

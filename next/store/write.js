@@ -18,7 +18,8 @@
  *
  * `w.graph(name, edit)` changes the file of a graph (F-148 D4, `graphs.js`).
  * A graph file is a backlog file of no item: its staged entry has `item: null`,
- * the item checks skip it, and the check of its engine's schema runs on it.
+ * the item checks skip it, and the graph checks (`checkGraphs`, F-148 D5) run
+ * on it and on the entries of every item the write touched.
  *
  * Only this module writes backlog files: `next/test/store-writes.test.js`
  * fails when another module of `next/` imports `lib/atomic-write.js`. The
@@ -33,7 +34,7 @@ import { atomicWriteFile } from '../lib/atomic-write.js';
 import { canonical, withLock } from '../lib/lock.js';
 import { commitPaths } from './commit.js';
 import { DOCUMENT, checkDocument, parseDocument } from './document.js';
-import { changedIds, checkGraphText, graph, graphText, parseGraph } from './graphs.js';
+import { checkGraphs, graph, graphText, parseGraph } from './graphs.js';
 import { dirName, formatId, parseId } from './ids.js';
 import { ATTRIBUTES, STATE, checkAttributes, checkState, faultText, jsonFile, jsonText } from './item-json.js';
 import { backlogText, idPrefixes, itemDefinition, itemDir, nextNumber, typeDir } from './items.js';
@@ -53,10 +54,11 @@ import * as sections from './sections.js';
  *   graph file, for example `graphs/rank.json`
  * @property {string} rule  the rule it breaks, for example `missing-section`
  *   in `index.md`, the schema keyword (`required`) or `json` in an item's
- *   JSON file, or `schema` in a graph file
+ *   JSON file, or in a graph file `schema` or a graph rule (`cycle`,
+ *   `no-item`, `slot`, ...; F-148 D5)
  * @property {string|null} [section]  in `index.md`, the section the rule names, or null
  * @property {string} [path]  in a JSON file, the JSON pointer of the failing value
- * @property {string} [message]  in a JSON file, what is wrong
+ * @property {string} [message]  in a JSON file or a graph file, what is wrong
  * @property {number} [line]  in a JSON Lines file, the line, from 1
  *
  * @typedef {object} Writer  the operations of one store write
@@ -367,8 +369,9 @@ function putBack(ctx, written, made) {
  * Change backlog files in one store write, under the backlog lock (D6):
  *
  * 1. call `fn(w)`, whose operations stage changes;
- * 2. check every item whose files changed and the schema of every graph file
- *    that changed, and throw a `StoreCheckError` when a check fails;
+ * 2. check every item whose files changed, and the graph rules of every graph
+ *    file that changed and of every graph entry that the write touched
+ *    (`checkGraphs`), and throw a `StoreCheckError` when a check fails;
  * 3. make the directory of each new file (a new item's, the first graph
  *    file's), and write each changed file atomically, keeping an existing
  *    file's mode;
@@ -454,10 +457,10 @@ async function writeLocked(ctx, { message, trailers = [] }, fn) {
   );
   const read = (/** @type {string} */ path) => staged.get(path)?.text ?? backlogText(ctx, path);
   const exists = (/** @type {string} */ id) => created.has(id) || itemDir(ctx, id) !== null;
-  const findings = [
-    ...items.flatMap((item) => checkItem(ctx, item, read, exists)),
-    ...changed.flatMap(({ graph, text }) => (graph === undefined ? [] : checkGraphText(graph, text))),
-  ];
+  const graphFiles = changed.flatMap(({ graph, base, text }) => (graph === undefined ? [] : [{ graph, base, text }]));
+  const ids = items.map((item) => item.id);
+  const { findings: graphFindings, touched } = checkGraphs(ctx, graphFiles, ids, exists);
+  const findings = [...items.flatMap((item) => checkItem(ctx, item, read, exists)), ...graphFindings];
   if (findings.length > 0) throw new StoreCheckError(findings);
   const links = changed.filter(({ path }) =>
     lstatSync(join(ctx.backlogDir, path), { throwIfNoEntry: false })?.isSymbolicLink(),
@@ -484,11 +487,7 @@ async function writeLocked(ctx, { message, trailers = [] }, fn) {
     if (edited.length > 0) {
       throw Object.assign(new Error(`${edited.join(', ')} changed while bl wrote it`), { code: 'ECHANGED' });
     }
-    const ids = new Set([
-      ...items.map((item) => item.id),
-      ...changed.flatMap(({ graph, base, text }) => (graph === undefined ? [] : changedIds(graph, base, text))),
-    ]);
-    const itemTrailers = [...ids].sort(byId).map((id) => `Bl-Item: ${id}`);
+    const itemTrailers = [...touched].sort(byId).map((id) => `Bl-Item: ${id}`);
     await commitPaths(
       ctx.backlogDir,
       changed.map(({ path }) => path),
