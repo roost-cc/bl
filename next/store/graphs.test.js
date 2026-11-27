@@ -12,6 +12,7 @@ import {
   graphText,
   graphValues,
   graphs,
+  mergeGraph,
   readGraph,
   workUnit,
 } from './graphs.js';
@@ -304,4 +305,85 @@ test('checkGraphs reads an unchanged graph file only when a touched id is of its
   const ctx = context(GRAPHS, { 'graphs/dependency.json': '[]' });
   assert.deepEqual(checkGraphs(ctx, [], ['F-1'], exists).findings, []);
   assert.throws(() => checkGraphs(ctx, [], ['S-1'], exists), /^Error: graphs\/dependency\.json: type: must be object$/);
+});
+
+/**
+ * The JSON text of a value, as a graph file of another tool could hold it.
+ * @param {unknown} value
+ */
+const text = (value) => JSON.stringify(value);
+
+test("mergeGraph('rank') gives the results of Decision A3's examples, as text the store writes", () => {
+  const rank = (/** @type {string} */ base, /** @type {string} */ ours, /** @type {string} */ theirs) => {
+    const merged = mergeGraph('rank', ...[base, ours, theirs].map((chain) => text(chain.split(' '))));
+    return merged === null ? null : JSON.parse(merged).join(' ');
+  };
+  assert.equal(rank('A B C', 'A B C Y', 'A B C Z'), 'A B C Y Z');
+  assert.equal(rank('A B C', 'A Y B C', 'A Z B C'), 'A Y Z B C');
+  assert.equal(rank('A B C', 'A C', 'A B Y C'), 'A Y C');
+  assert.equal(rank('A B C', 'B A C', 'A C B'), null);
+  assert.equal(rank('A B C', 'C A B', 'A B'), null);
+  assert.equal(mergeGraph('rank', text(['A']), text(['A', 'B']), text(['A'])), '[\n  "A",\n  "B"\n]\n');
+});
+
+test('mergeGraph merges containment and dependency by key, in canonical form', () => {
+  const base = text({ 'S-1': { unit: 'F-1' } });
+  assert.equal(
+    mergeGraph(
+      'containment',
+      base,
+      text({ 'S-1': { unit: 'F-1', epics: ['E-2', 'E-1'] } }),
+      text({ 'S-1': { within: 'F-1' } }),
+    ),
+    `${JSON.stringify({ 'S-1': { epics: ['E-1', 'E-2'], within: 'F-1' } }, null, 2)}\n`,
+  );
+  assert.equal(
+    mergeGraph('containment', base, text({ 'S-1': { unit: 'F-2' } }), text({ 'S-1': { unit: 'F-3' } })),
+    null,
+  );
+  const DONE = 'status == "done"';
+  assert.equal(
+    mergeGraph(
+      'dependency',
+      '{}',
+      text({ 'S-1': { done: [{ 'S-3': DONE }] } }),
+      text({ 'S-1': { done: [{ 'S-2': DONE }] } }),
+    ),
+    `${JSON.stringify({ 'S-1': { done: [{ 'S-2': DONE }, { 'S-3': DONE }] } }, null, 2)}\n`,
+  );
+});
+
+test('mergeGraph reads a zero-byte base as the engine empty, and gives null for a damaged side', () => {
+  assert.equal(mergeGraph('rank', '', text(['A']), text(['B'])), '[\n  "A",\n  "B"\n]\n');
+  assert.equal(
+    mergeGraph('containment', '', text({ 'S-1': { unit: 'F-1' } }), text({ 'S-2': { unit: 'F-1' } })),
+    `${JSON.stringify({ 'S-1': { unit: 'F-1' }, 'S-2': { unit: 'F-1' } }, null, 2)}\n`,
+  );
+  for (const damaged of ['', '\n', '{ "S-1": ', '[]']) {
+    assert.equal(mergeGraph('containment', '{}', damaged, '{}'), null, JSON.stringify(damaged));
+    assert.equal(mergeGraph('containment', '{}', '{}', damaged), null, JSON.stringify(damaged));
+  }
+  assert.equal(mergeGraph('containment', '\n', '{}', '{}'), null);
+  assert.equal(mergeGraph('rank', '[1]', '[]', '[]'), null);
+});
+
+test('mergeGraph gives null for a merged value that breaks the kind rule', () => {
+  const base = text({});
+  assert.equal(
+    mergeGraph('containment', base, text({ 'S-1': { unit: 'S-2' } }), text({ 'S-2': { unit: 'S-1' } })),
+    null,
+  );
+  assert.equal(
+    mergeGraph(
+      'dependency',
+      base,
+      text({ 'S-1': { done: [{ 'S-2': 'true' }] } }),
+      text({ 'S-2': { done: [{ 'S-1': 'true' }] } }),
+    ),
+    null,
+  );
+});
+
+test('mergeGraph refuses an engine name that no engine has', () => {
+  assert.throws(() => mergeGraph('blockers', '', '[]', '[]'), { message: 'there is no graph engine named blockers' });
 });

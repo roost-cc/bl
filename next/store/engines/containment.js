@@ -1,7 +1,7 @@
 /**
  * containment.js — the containment engine (graphs.md, "Containment", D-603,
- * D-604; F-148 D2, D3, D5): the schema, the empty value, the canonical form
- * and the rules of its file. The file is keyed by child: each child maps slot
+ * D-604; F-148 D2, D3, D5, D6): the schema, the empty value, the canonical
+ * form, the rules and the merge of its file. The file is keyed by child: each child maps slot
  * name → parent id, or → a list of parent ids for a slot whose `max` is above
  * 1. The child's item definition gives its slots (`parents`), and a parent's
  * gives its `child_limits`.
@@ -10,7 +10,7 @@
 import SCHEMA from '../schemas/graph-containment.schema.json' with { type: 'json' };
 import { printedId } from '../ids.js';
 import { idPrefixes, itemDefinition } from '../items.js';
-import { byText, changedKeys, cycles, sortedObject } from './keyed.js';
+import { byText, changedKeys, cycles, mergeByKey, sortedObject } from './keyed.js';
 
 /**
  * @typedef {Record<string, Record<string, string|string[]>>} Containment
@@ -79,6 +79,52 @@ export const names = (value, id) => (Object.hasOwn(value, id) ? [id, ...parentsO
  * @returns {Fault[]}
  */
 export const kind = (value) => cycles(value, (id) => parentsOf(value, id));
+
+/**
+ * The keys of a value for the merge (D6): (child, slot) → parent for a slot
+ * that holds an id, and (child, slot, parent) → `true` for a slot that holds
+ * a list, so a list slot merges as a set. Each key is the JSON text of its
+ * ids.
+ * @param {Containment} value  a value that passes `schema`
+ * @returns {Map<string, string|true>}
+ */
+const keysOf = (value) =>
+  new Map(
+    Object.entries(value).flatMap(([child, slots]) =>
+      Object.entries(slots).flatMap(([slot, parents]) =>
+        typeof parents === 'string'
+          ? [/** @type {[string, string]} */ ([JSON.stringify([child, slot]), parents])]
+          : parents.map((parent) => /** @type {[string, true]} */ ([JSON.stringify([child, slot, parent]), true])),
+      ),
+    ),
+  );
+
+/**
+ * The three-way merge of the file (D6): the keys of each value (`keysOf`)
+ * merged by `mergeByKey`, then built back in canonical form. The value of the
+ * file tells a list slot from an id slot, so the merge needs no item
+ * definition. A conflict of a key, or a slot that the merge leaves holding an
+ * id and a list, gives `null`.
+ * @param {Containment} base  a value that passes `schema`
+ * @param {Containment} ours  a value that passes `schema`
+ * @param {Containment} theirs  a value that passes `schema`
+ * @returns {Containment|null}
+ */
+export function merge(base, ours, theirs) {
+  const merged = mergeByKey(keysOf(base), keysOf(ours), keysOf(theirs));
+  if (merged === null) return null;
+  /** @type {Containment} */
+  const value = Object.create(null);
+  for (const [key, parent] of merged) {
+    const [child, slot, listed] = JSON.parse(key);
+    const slots = (value[child] ??= Object.create(null));
+    const held = slots[slot];
+    if (listed === undefined ? held !== undefined : typeof held === 'string') return null;
+    slots[slot] =
+      listed === undefined ? /** @type {string} */ (parent) : [.../** @type {string[]} */ (held ?? []), listed];
+  }
+  return canonical(value);
+}
 
 /**
  * The work unit of the item `id` (items.md, "Work types and work units";

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { celEnvironment } from '../../config/cel.js';
 import { checkValue } from '../../config/check.js';
-import { canonical, changed, check, empty, kind, names, schema } from './dependency.js';
+import { canonical, changed, check, empty, kind, merge, names, schema } from './dependency.js';
 
 const DONE = 'status == "done"';
 
@@ -92,4 +92,27 @@ test("check gives a cel fault with the compiler's message for an expression that
     check({ 'S-1': { done: [{ 'S-2': DONE }, { 'S-1': 'now > timestamp("2026-12-24T00:00:00Z")' }] } }, ['S-1'], CTX),
     [],
   );
+});
+
+test('merge keeps each entry as the side that added or removed it left it', () => {
+  const base = { 'S-1': { done: [{ 'S-2': DONE }, { 'S-3': DONE }] }, 'S-4': { done: [{ 'S-2': DONE }] } };
+  const ours = {
+    'S-1': { done: [{ 'S-3': DONE }, { 'S-5': DONE }] },
+    'S-4': { done: [{ 'S-2': DONE }] },
+    'S-6': { refined: [{ 'S-1': DONE }] },
+  };
+  const theirs = {
+    'S-1': { done: [{ 'S-2': DONE }, { 'S-3': DONE }, { 'S-5': 'true' }], refined: [{ 'S-7': DONE }] },
+  };
+  assert.deepEqual(merge(base, ours, theirs), {
+    'S-1': { done: [{ 'S-3': DONE }, { 'S-5': DONE }, { 'S-5': 'true' }], refined: [{ 'S-7': DONE }] },
+    'S-6': { refined: [{ 'S-1': DONE }] },
+  });
+});
+
+test('merge keeps an entry that both sides added once, and drops one that both removed', () => {
+  const base = { 'S-1': { done: [{ 'S-2': DONE }] } };
+  const both = { 'S-1': { done: [{ 'S-3': DONE }] } };
+  assert.deepEqual(merge(base, both, both), both);
+  assert.deepEqual(merge(base, empty, empty), empty);
 });

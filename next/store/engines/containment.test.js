@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkValue } from '../../config/check.js';
 import { fixture, load } from '../../test/helpers/config-fixture.js';
-import { canonical, changed, check, empty, kind, names, schema } from './containment.js';
+import { canonical, changed, check, empty, kind, merge, names, schema } from './containment.js';
 
 /**
  * A store context with the types story, feature and epic. A story has a
@@ -130,4 +130,41 @@ test('check gives the rules only to the entries of ids, and leaves a parent that
     check({ 'S-1': { unit: 'F-1' }, 'S-2': { unit: 'F-1' }, 'S-3': { unit: 'F-1' } }, ['S-1'], ctx)[0].message,
     'F-1 holds 3 children of story; it takes 2',
   );
+});
+
+test('merge keeps the slots that two sides set on one child, and each side adds and removes', () => {
+  const base = { 'S-1': { unit: 'F-1' }, 'S-2': { unit: 'F-1' } };
+  const ours = { 'S-1': { unit: 'F-1', epics: ['E-1'] }, 'S-3': { unit: 'F-2' } };
+  const theirs = { 'S-1': { unit: 'F-1', within: 'F-9' }, 'S-2': { unit: 'F-1' } };
+  const result = merge(base, ours, theirs);
+  assert.deepEqual(result, { 'S-1': { epics: ['E-1'], unit: 'F-1', within: 'F-9' }, 'S-3': { unit: 'F-2' } });
+  assert.deepEqual(result, canonical(/** @type {any} */ (result)));
+});
+
+test('merge keeps one side that sets an id slot, and gives null for two sides that set it to two parents', () => {
+  const base = { 'S-1': { unit: 'F-1' } };
+  assert.deepEqual(merge(base, { 'S-1': { unit: 'F-2' } }, base), { 'S-1': { unit: 'F-2' } });
+  assert.deepEqual(merge(base, { 'S-1': { unit: 'F-2' } }, { 'S-1': { unit: 'F-2' } }), { 'S-1': { unit: 'F-2' } });
+  assert.equal(merge(base, { 'S-1': { unit: 'F-2' } }, { 'S-1': { unit: 'F-3' } }), null);
+  assert.equal(merge(empty, { 'S-1': { unit: 'F-2' } }, { 'S-1': { unit: 'F-3' } }), null);
+  assert.equal(merge(base, { 'S-1': { unit: 'F-2' } }, {}), null);
+});
+
+test('merge merges a list slot as a set', () => {
+  const base = { 'S-1': { epics: ['E-1', 'E-2'] } };
+  assert.deepEqual(
+    merge(base, { 'S-1': { epics: ['E-1', 'E-2', 'E-3'] } }, { 'S-1': { epics: ['E-4', 'E-2', 'E-1'] } }),
+    {
+      'S-1': { epics: ['E-1', 'E-2', 'E-3', 'E-4'] },
+    },
+  );
+  assert.deepEqual(merge(base, { 'S-1': { epics: ['E-2'] } }, { 'S-1': { epics: ['E-1', 'E-2', 'E-3'] } }), {
+    'S-1': { epics: ['E-2', 'E-3'] },
+  });
+  assert.deepEqual(merge(base, { 'S-1': { epics: ['E-2'] } }, { 'S-1': { epics: ['E-1'] } }), empty);
+});
+
+test('merge gives null for a slot that it leaves holding an id and a list', () => {
+  assert.equal(merge(empty, { 'S-1': { epics: 'E-1' } }, { 'S-1': { epics: ['E-2'] } }), null);
+  assert.equal(merge(empty, { 'S-1': { epics: ['E-2'] } }, { 'S-1': { epics: 'E-1' } }), null);
 });

@@ -1,7 +1,7 @@
 /**
  * dependency.js — the dependency engine (graphs.md, "Dependency", D-606;
- * F-148 D2, D3, D5): the schema, the empty value, the canonical form and the
- * rules of its file. The file is keyed by gated item, then by status; each
+ * F-148 D2, D3, D5, D6): the schema, the empty value, the canonical form, the
+ * rules and the merge of its file. The file is keyed by gated item, then by status; each
  * status holds a list of entries, each an object of one item id → one CEL
  * expression.
  */
@@ -9,7 +9,7 @@
 import { celEnvironment } from '../../config/cel.js';
 import { compileCel } from '../../config/check.js';
 import SCHEMA from '../schemas/graph-dependency.schema.json' with { type: 'json' };
-import { byText, changedKeys, cycles, sortedObject } from './keyed.js';
+import { byText, changedKeys, cycles, mergeByKey, sortedObject } from './keyed.js';
 
 /** @typedef {Record<string, Record<string, Array<Record<string, string>>>>} Dependency */
 
@@ -69,6 +69,46 @@ export const names = (value, id) =>
  * @returns {Array<{ item: string, rule: string, path: string, message: string }>}
  */
 export const kind = (value) => cycles(value, (id) => names(value, id).filter((item) => item !== id));
+
+/**
+ * The keys of a value for the merge (D6): (gated item, status, item,
+ * expression) → `true`, each key the JSON text of its four strings.
+ * @param {Dependency} value  a value that passes `schema`
+ * @returns {Map<string, true>}
+ */
+const keysOf = (value) =>
+  new Map(
+    Object.entries(value).flatMap(([gated, statuses]) =>
+      Object.entries(statuses).flatMap(([status, entries]) =>
+        entries.map(
+          (entry) =>
+            /** @type {[string, true]} */ ([JSON.stringify([gated, status, ...Object.entries(entry)[0]]), true]),
+        ),
+      ),
+    ),
+  );
+
+/**
+ * The three-way merge of the file (D6): the keys of each value (`keysOf`)
+ * merged by `mergeByKey`, then built back in canonical form. So an entry that
+ * either side added or removed is kept as that side left it.
+ * @param {Dependency} base  a value that passes `schema`
+ * @param {Dependency} ours  a value that passes `schema`
+ * @param {Dependency} theirs  a value that passes `schema`
+ * @returns {Dependency|null}
+ */
+export function merge(base, ours, theirs) {
+  const merged = mergeByKey(keysOf(base), keysOf(ours), keysOf(theirs));
+  if (merged === null) return null;
+  /** @type {Dependency} */
+  const value = Object.create(null);
+  for (const key of merged.keys()) {
+    const [gated, status, item, expression] = JSON.parse(key);
+    const statuses = (value[gated] ??= Object.create(null));
+    statuses[status] = [...(statuses[status] ?? []), { [item]: expression }];
+  }
+  return canonical(value);
+}
 
 /**
  * The faults of the entries of `ids` by the per-item rule (D5): each

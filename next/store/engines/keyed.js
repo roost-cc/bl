@@ -2,7 +2,8 @@
  * keyed.js — what the two engines whose file is keyed by item share
  * (containment and dependency, F-148 D2, D5): the one text order of the
  * canonical form, the sorted object that drops empty values, the keys that
- * changed between two values, and the cycles of the edges of a value.
+ * changed between two values, the cycles of the edges of a value, and the
+ * three-way merge by key (`mergeByKey`).
  */
 
 /**
@@ -82,4 +83,32 @@ export function cycles(value, next) {
   };
   for (const id of Object.keys(value).sort(byText)) if (!seen.has(id)) visit([id]);
   return faults;
+}
+
+/**
+ * The three-way merge of two maps of key → value that share `base` (D6), by
+ * the rule of today's `mergeEdges` (`src/blockers.js`): each side is compared
+ * with the base. A key that one side added, removed or changed is kept as that
+ * side left it. A key that both sides left alike is kept as they left it. A
+ * key that the two sides left in two other ways is a conflict, and the merge
+ * gives `null`. Values are compared by their JSON text. The containment and
+ * dependency engines flatten their values to such maps for their `merge`.
+ * @template T
+ * @param {Map<string, T>} base
+ * @param {Map<string, T>} ours
+ * @param {Map<string, T>} theirs
+ * @returns {Map<string, T>|null}
+ */
+export function mergeByKey(base, ours, theirs) {
+  const text = (/** @type {Map<string, T>} */ map, /** @type {string} */ key) =>
+    map.has(key) ? JSON.stringify(map.get(key)) : undefined;
+  /** @type {Map<string, T>} */
+  const merged = new Map();
+  for (const key of new Set([...base.keys(), ...ours.keys(), ...theirs.keys()])) {
+    const [b, o, t] = [base, ours, theirs].map((map) => text(map, key));
+    const side = o === t || t === b ? ours : o === b ? theirs : null;
+    if (side === null) return null;
+    if (side.has(key)) merged.set(key, /** @type {T} */ (side.get(key)));
+  }
+  return merged;
 }

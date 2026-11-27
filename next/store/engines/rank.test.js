@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkValue } from '../../config/check.js';
-import { canonical, changed, check, empty, kind, names, schema } from './rank.js';
+import { canonical, changed, check, empty, kind, merge, names, schema } from './rank.js';
 
 test('the schema takes a list of ids, and refuses other shapes', () => {
   assert.deepEqual(checkValue(schema, ['F-1', 'S-2']), []);
@@ -44,4 +44,50 @@ test('check gives not-work-unit to each node of ids that is not its own work uni
     { item: 'T-1', rule: 'not-work-unit', path: '/3', message: 'T-1 is no work unit and belongs to none' },
   ]);
   assert.deepEqual(check(['F-1'], ['S-2'], {}, unitOf), []);
+});
+
+/**
+ * The merge of three chains written as words of one-letter nodes.
+ * @param {string} base
+ * @param {string} ours
+ * @param {string} theirs
+ */
+const merged = (base, ours, theirs) => {
+  const chain = (/** @type {string} */ text) => text.split(' ').filter(Boolean);
+  return merge(chain(base), chain(ours), chain(theirs))?.join(' ') ?? null;
+};
+
+test("merge gives the results of Decision A3's examples", () => {
+  assert.equal(merged('A B C', 'A B C Y', 'A B C Z'), 'A B C Y Z');
+  assert.equal(merged('A B C', 'A Y B C', 'A Z B C'), 'A Y Z B C');
+  assert.equal(merged('A B C', 'A C', 'A B Y C'), 'A Y C');
+  assert.equal(merged('A B C', 'B A C', 'A C B'), null);
+  assert.equal(merged('A B C', 'C A B', 'A B'), null);
+});
+
+test('merge puts a node that both sides moved to one place in once, and keeps the other changes', () => {
+  assert.equal(merged('A B C D', 'D A B C Y', 'D A B C Z'), 'D A B C Y Z');
+  assert.equal(merged('A B C', 'A C B', 'A C B'), 'A C B');
+  assert.equal(merged('A B C', 'A B C X', 'A B C X'), 'A B C X');
+});
+
+test('merge keeps the side that changed when the other left the base as it was', () => {
+  assert.equal(merged('A B C D', 'D B A C', 'A B C D'), 'D B A C');
+  assert.equal(merged('A B C D', 'A B C D', 'C A D'), 'C A D');
+  assert.equal(merged('', 'A B', ''), 'A B');
+});
+
+test('merge keeps a move on one side and a remove on the other of two nodes', () => {
+  assert.equal(merged('A B C D', 'A C B D', 'A B C'), 'A C B');
+  assert.equal(merged('A B C D', 'B C D', 'A C B D'), 'C B D');
+});
+
+test('merge gives null for a node that both sides added or moved after other predecessors', () => {
+  assert.equal(merged('A B', 'A B X', 'X A B'), null);
+  assert.equal(merged('A B C D', 'A D B C', 'A B D C'), null);
+});
+
+test('merge gives null for a chain that holds a node twice', () => {
+  assert.equal(merged('A B A', 'A B A', 'A B A C'), null);
+  assert.equal(merged('A B', 'A B A', 'A B'), null);
 });

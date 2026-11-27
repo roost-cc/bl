@@ -1,8 +1,8 @@
 /**
- * graphs.js — the graphs of a backlog (F-148 D1, D2, D5, D7): their
+ * graphs.js — the graphs of a backlog (F-148 D1, D2, D5, D6, D7): their
  * configuration, their files, the read, the text and the schema check of each
- * file, the check runner of a store write (`checkGraphs`), and the work unit
- * of an item (`workUnit`).
+ * file, the check runner of a store write (`checkGraphs`), the three-way
+ * merge of a file (`mergeGraph`), and the work unit of an item (`workUnit`).
  *
  * `backlog.yaml` lists the graphs, each with its `name`, its `engine` and the
  * item types of its `nodes`. A graph's file is `graphs/<name>.json` at the
@@ -12,7 +12,8 @@
  * `names(value, id)`, the ids that the entry of `id` names, `kind(value)`, the
  * faults of the whole file, and `check(value, ids, ctx, unitOf)`, the faults
  * of the entries of `ids` by the engine's per-item rules, `unitOf(id)` the
- * work unit of an item (`workUnit`). This module is the only place that picks
+ * work unit of an item (`workUnit`), and `merge(base, ours, theirs)`, the
+ * three-way merge of three values, or `null` for a conflict. This module is the only place that picks
  * an engine module; it never branches on the engine otherwise. The store
  * write (`write.js`) writes the files.
  */
@@ -102,10 +103,10 @@ export function graph(ctx, name) {
 /**
  * The faults of a graph file's text by its engine's schema, and its value
  * when it has none (`jsonFile`). A text that is not JSON is one `json` fault.
- * @param {Graph} graph
+ * @param {Engine} module  the graph's engine module
  * @param {string} text
  */
-const graphFile = (graph, text) => jsonFile(text, (value) => checkValue(graph.module.schema, value));
+const graphFile = (module, text) => jsonFile(text, (value) => checkValue(module.schema, value));
 
 /**
  * The value of a graph file's text, or a copy of the engine's `empty` when
@@ -117,7 +118,7 @@ const graphFile = (graph, text) => jsonFile(text, (value) => checkValue(graph.mo
  */
 export function parseGraph(graph, text) {
   if (text === null) return structuredClone(graph.module.empty);
-  const { faults, value } = graphFile(graph, text);
+  const { faults, value } = graphFile(graph.module, text);
   throwFaults(graph.path, faults);
   return value;
 }
@@ -157,7 +158,7 @@ export function graphText(graph, value) {
 export function checkGraphText(graph, text) {
   const parsed = parseJson(text);
   const value = 'value' in parsed ? parsed.value : undefined;
-  return graphFile(graph, text).faults.map(({ path, message }) => {
+  return graphFile(graph.module, text).faults.map(({ path, message }) => {
     const key = tokensOf(path)[0];
     const item = Array.isArray(value) ? value[Number(key)] : key;
     return { item: typeof item === 'string' ? item : null, file: graph.path, rule: 'schema', path, message };
@@ -175,6 +176,41 @@ export function checkGraphText(graph, text) {
  */
 export const changedIds = (graph, before, after) =>
   graph.module.changed(parseGraph(graph, before), parseGraph(graph, after));
+
+/**
+ * The three-way merge of the texts of one graph file (D6), as git's merge
+ * driver makes it: the base (the text at git's merge base), ours and theirs.
+ * It takes the engine's name, not a graph, so it needs no configuration.
+ *
+ * 1. A zero-byte base is the engine's `empty`: git passes one when both sides
+ *    add the file. Any other text that is not JSON or fails the engine's
+ *    schema, a blank ours or theirs included, is a conflict.
+ * 2. The engine's `merge` merges the three values (by key for containment and
+ *    dependency, as a list for the rank chain).
+ * 3. A merged value that fails the schema or the kind rule (`kind`, for
+ *    example a containment cycle that two clean adds close) is a conflict.
+ *
+ * It gives the text of the merged value as the store writes it (`jsonText`
+ * of its canonical form), or `null` for a conflict. An engine name that no
+ * engine has is an error.
+ * @param {string} engine  an engine name of `backlog.schema.json`
+ * @param {string} baseText
+ * @param {string} oursText
+ * @param {string} theirsText
+ * @returns {string|null}
+ */
+export function mergeGraph(engine, baseText, oursText, theirsText) {
+  if (!Object.hasOwn(ENGINES, engine)) throw new Error(`there is no graph engine named ${engine}`);
+  /** @type {any} */
+  const module = ENGINES[/** @type {keyof typeof ENGINES} */ (engine)];
+  const valueOf = (/** @type {string} */ text) => graphFile(module, text).value;
+  const base = baseText === '' ? structuredClone(module.empty) : valueOf(baseText);
+  const [ours, theirs] = [oursText, theirsText].map(valueOf);
+  if (base === undefined || ours === undefined || theirs === undefined) return null;
+  const merged = module.merge(base, ours, theirs);
+  const valid = merged !== null && checkValue(module.schema, merged).length === 0 && module.kind(merged).length === 0;
+  return valid ? jsonText(module.canonical(merged)) : null;
+}
 
 /**
  * @typedef {{ item: string|null, file: string, rule: string, path?: string, message: string }} GraphFinding
