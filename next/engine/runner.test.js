@@ -197,6 +197,74 @@ test("a step's staged write lands in its box's commit, and its recorded commit i
   assert.deepEqual(logOf(ctx, id).at(-1).commits, [{ repo: 'bl', sha: 'abc123' }]);
 });
 
+/** A fake step that stages a state.json of its own: a counter, and a status and run state that are wrong. */
+const stageState = (/** @type {any} */ step) => {
+  step.stage((/** @type {any} */ w) =>
+    w.state(step.id, { status: 'draft', run: 'active: prepare', counters: { attempts: { value: 1 } } }),
+  );
+  return 'success';
+};
+const ATTEMPTS = { attempts: { value: 1 } };
+
+test('runFlow_preserves_next_box_when_step_stages_state', async () => {
+  const cases = [
+    // [what, flows, status, start, the boxes that stage state, the state at the end, the last log event]
+    [
+      'a box the flow goes on from (prepare), then a step that crashes',
+      {},
+      'refined',
+      'prepare',
+      { prepare: stageState, implement: () => Promise.reject(new Error('the agent crashed')) },
+      { status: 'in_progress', run: 'active: implement', host: hostname(), counters: ATTEMPTS },
+      'flow_start',
+    ],
+    [
+      'a box that ends the flow at stop (close)',
+      {},
+      'implemented',
+      'close',
+      { close: stageState },
+      { status: 'done', run: 'idle', counters: ATTEMPTS },
+      'flow_end',
+    ],
+    [
+      'a box whose outcome has no arrow (close, failing its post-condition)',
+      { 'defined-steps.yaml': definedSteps((steps) => (steps.close.after = ['false'])) },
+      'implemented',
+      'close',
+      { close: stageState },
+      { status: 'implemented', run: 'active: close', host: hostname(), counters: ATTEMPTS },
+      'outcome',
+    ],
+  ];
+  for (const [what, flows, status, start, plan, state, event] of cases) {
+    const ctx = backlog(flows);
+    const id = await story(ctx, { status, run: 'idle' });
+    const { catalogue } = fakeSteps(plan);
+    await runFlow(ctx, { id, start, by: 'operator', resume: true, catalogue }).catch((e) => e);
+    assert.deepEqual(stateOf(ctx, id), state, what);
+    assert.equal(logOf(ctx, id).at(-1).event, event, what);
+  }
+});
+
+test('runFlow_commits_staged_counter_with_box', async () => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'refined', run: 'idle' });
+  const base = head(ctx);
+  const { catalogue } = fakeSteps({ prepare: stageState });
+  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue });
+  const path = itemDir(ctx, id).path;
+  const prepare = commitsSince(ctx, base).find(({ subject }) => subject === `${id}: prepare success`);
+  assert.deepEqual(JSON.parse(git(ctx.backlogDir, 'show', `${prepare.sha}:${path}/state.json`)), {
+    status: 'in_progress',
+    run: 'active: implement',
+    host: hostname(),
+    counters: ATTEMPTS,
+  });
+  // The counter stays in each later commit.
+  assert.deepEqual(stateOf(ctx, id), { status: 'implemented', run: 'idle', counters: ATTEMPTS });
+});
+
 test('a failing status gate keeps the status and ends at gated: <to> with held; the failing entries are only in the note', async () => {
   const ctx = backlog();
   const [id] = await createItems(ctx, [

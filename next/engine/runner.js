@@ -144,15 +144,28 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
     );
   };
   /**
-   * Stage `state.json` with `status`, `run` and `extra` (`host` or `held`),
-   * and the counters the last commit left.
+   * Stage the step's writes `staged`, then `state.json` with `status`, `run`
+   * and `extra` (`host` or `held`), and the counters. The runner owns the
+   * status and the run state, so a step's `w.state` of the item gives only its
+   * counters; with none, the counters are the ones the last commit left. The
+   * step's writes come first, so the runner's log entry is the last one.
    * @param {Writer} w
    * @param {string} status
    * @param {string} run
    * @param {Record<string, unknown>} [extra]
+   * @param {Array<(w: Writer) => void>} [staged]
    */
-  const setState = (w, status, run, extra = {}) => {
-    const { counters } = /** @type {import('./run-state.js').State} */ (readState(ctx, item));
+  const setState = (w, status, run, extra = {}, staged = []) => {
+    let { counters } = /** @type {import('./run-state.js').State} */ (readState(ctx, item));
+    /** @type {Writer} */
+    const step = {
+      ...w,
+      state: (other, value) => {
+        if (other === id) ({ counters } = /** @type {import('./run-state.js').State} */ (value));
+        else w.state(other, value);
+      },
+    };
+    for (const fn of staged) fn(step);
     w.state(id, { status, run, ...extra, ...(counters === undefined ? {} : { counters }) });
   };
   /**
@@ -250,8 +263,8 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
         const arrow = flow.nodes[from].arrows[followed];
         if (arrow == null) {
           await flowCommit(`${id}: ${box} ${outcome}`, box, (w) => {
+            setState(w, status, `active: ${box}`, { host }, staged);
             w.log(id, { at: now(), event: 'outcome', box, outcome, note: notes.join('; ') || undefined, by });
-            for (const fn of staged) fn(w);
           });
           const file = relative(ctx.backlogDir, flow.nodes[from].source.file);
           throw new FlowCrash(`${from}: no arrow for the outcome ${followed} in ${file}`);
@@ -285,17 +298,17 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
 
       const note = notes.join('; ') || undefined;
       await flowCommit(`${id}: ${box} ${outcome}${note === undefined ? '' : `\n\n${note}`}`, box, (w) => {
-        if (end === null) setState(w, status, `active: ${next}`, { host });
+        if (end === null) setState(w, status, `active: ${next}`, { host }, staged);
         else {
           setState(
             w,
             status,
             end.ended === STOP ? 'idle' : end.ended,
             end.held === undefined ? {} : { held: end.held },
+            staged,
           );
           w.log(id, flowEnd(end.ended, outcome, note));
         }
-        for (const fn of staged) fn(w);
       });
       if (end !== null) return { ended: end.ended, status, outcome };
       // The arrow out of a return node is its caller's arrow, so the flow
