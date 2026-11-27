@@ -468,6 +468,70 @@ test('a failing post-condition turns success into failure, and the commit messag
   assert.match(implement.message, /the post-conditions of implement failed: status == "implemented"\n/);
 });
 
+test("runFlow_prints_and_logs_step_note: a step's note is printed with its box path, and is the flow_end note when its arrow is stop", async (t) => {
+  const printed = [];
+  t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(text));
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'in_progress', run: 'idle' });
+  const { catalogue } = fakeSteps({ wait_implement: () => ({ outcome: 'failure', note: 'why' }) });
+  const result = await runFlow(ctx, { id, start: 'wait_implement', by: 'operator', resume: true, catalogue });
+  t.mock.restoreAll();
+  assert.deepEqual(result, { ended: 'stop', status: 'in_progress', outcome: 'failure' });
+  assert.deepEqual(printed, ['wait_implement: why\n']);
+  const { at, ...flowEnd } = logOf(ctx, id).at(-1);
+  assert.deepEqual(flowEnd, {
+    event: 'flow_end',
+    ended: 'stop',
+    outcome: 'failure',
+    status: 'in_progress',
+    commits: [],
+    note: 'why',
+  });
+});
+
+test('runFlow_step_note_comes_before_post_condition_notes, and a note of a box the flow goes on from is printed only', async (t) => {
+  const printed = [];
+  t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(text));
+  const ctx = engineBacklog({
+    'defined-steps.yaml': definedSteps((steps) => {
+      steps.implement.after = ['status == "implemented"'];
+    }),
+  });
+  const id = await story(ctx, { status: 'refined', run: 'idle' });
+  const { catalogue } = fakeSteps({
+    prepare: () => ({ outcome: 'success', note: 'prepared' }),
+    implement: () => ({ outcome: 'success', note: 'one' }),
+    wait_implement: () => ({ outcome: 'failure', note: 'gave up' }),
+  });
+  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue });
+  t.mock.restoreAll();
+  assert.deepEqual(printed, ['prepare: prepared\n', 'implement: one\n', 'wait_implement: gave up\n']);
+  // implement's note is in its own commit message, beside its post-condition note.
+  const implement = git(ctx.backlogDir, 'log', '--format=%B', '--grep', `${id}: implement failure`);
+  assert.match(implement, /one; the post-conditions of implement failed: status == "implemented"/);
+  assert.equal(logOf(ctx, id).at(-1).note, 'gave up');
+});
+
+test("runFlow_gives_step_evaluate: ctx.evaluate evaluates over the box's record as the gates do, and names the expression when it throws", async () => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'refined', run: 'idle', counters: { r: { value: 2, threshold: 3 } } });
+  /** @type {unknown[]} */
+  const seen = [];
+  const { catalogue } = fakeSteps({
+    prepare: (/** @type {any} */ step) => {
+      seen.push(step.evaluate('status == "refined" && counters.r.value < counters.r.threshold'));
+      seen.push(step.evaluate(`item("${id}").status`));
+      return 'success';
+    },
+    implement: (/** @type {any} */ step) => step.evaluate('worktree_clean()'),
+  });
+  const crash = await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue }).catch((e) => e);
+  // item() of the running item reads the status the invocation reached, as a gate's does.
+  assert.deepEqual(seen, [true, 'refined']);
+  assert.ok(crash instanceof FlowCrash);
+  assert.equal(crash.message, 'implement: worktree_clean(): not bound: worktree_clean');
+});
+
 test('an outcome with no arrow commits an outcome entry and throws FlowCrash; the item then reads interrupted', async () => {
   // close runs succeed, which has only a success arrow; a failing post-condition makes it fail.
   const ctx = engineBacklog({

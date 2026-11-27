@@ -11,7 +11,9 @@
  *   2. the step gate with the entry gates of the subflows the flow enters
  *      (D-11, Decision A4); a failing entry ends the invocation at
  *      `gated before: <box>` (Decision P1);
- *   3. the step from the catalogue (D2);
+ *   3. the step from the catalogue (D2), with `ctx.evaluate`; a note it
+ *      gives is printed as `<box>: <note>` and goes first in the box's notes,
+ *      so a `flow_end` at this box holds it (F-140 Decision A2);
  *   4. after `success`, the post-conditions: a failing entry makes the outcome
  *      `failure` (D-35);
  *   5. the arrow of the outcome, through any return nodes (D-26, D-43): a
@@ -41,7 +43,7 @@ import { readState } from '../store/item-json.js';
 import { itemDir } from '../store/items.js';
 import { record as readRecord } from '../store/record.js';
 import { now, storeWrite } from '../store/write.js';
-import { engineRecord } from './conditions.js';
+import { bindConditions, engineRecord } from './conditions.js';
 import { STOP } from './flow-set.js';
 import { postConditions, statusGate, stepGate } from './gates.js';
 import { checkAgainstFlow } from './run-state.js';
@@ -229,7 +231,9 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
 
       /** @type {Array<(w: Writer) => void>} */
       const staged = [];
-      let outcome = await catalogue[/** @type {string} */ (node.step)].run(
+      /** @type {ReturnType<typeof bindConditions>|undefined} */
+      let conditions;
+      const result = await catalogue[/** @type {string} */ (node.step)].run(
         {
           id,
           type,
@@ -239,11 +243,19 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
           backlogDir: ctx.backlogDir,
           stage: (fn) => staged.push(/** @type {(w: Writer) => void} */ (fn)),
           recordCommit: ({ repo, sha }) => commits.push({ repo, sha }),
+          // The call that the gates make (gates.js), so assert and the gates evaluate in one place.
+          evaluate: (expr) => (conditions ??= bindConditions(ctx, id, { current: record })).evaluate(expr, record),
         },
         node.with,
       );
+      // A step gives a bare outcome or { outcome, note } (F-140 Decision A2).
+      let outcome = typeof result === 'string' ? result : result.outcome;
       /** @type {string[]} */
       const notes = [];
+      if (typeof result !== 'string' && result.note !== undefined) {
+        info(`${box}: ${result.note}`);
+        notes.push(result.note);
+      }
       if (outcome === 'success') {
         const failed = postConditions(ctx, current(), node);
         if (failed.length > 0) {
