@@ -9,8 +9,8 @@
  *     item reads `interrupted: <box>` (D-50). Every record that a condition
  *     reads comes through it, so the rule is in one place.
  *   - `bindConditions(ctx, id)` evaluates CEL for the item `id`: `item(id)`
- *     and `children(type)` give records through `engineRecord`, `item(id)` of
- *     the item whose flow runs gives its current record (`itemRecord`), and
+ *     and `children(type)` give records through `engineRecord`, the item
+ *     whose flow runs as its current record (`itemRecord`), and
  *     `has_terminal()` is true when the process can open `/dev/tty` (D-30).
  *     Every other function and each shop predicate throws `not bound: <name>`
  *     (`UNBOUND`) until the feature that builds it binds it.
@@ -91,19 +91,17 @@ function canOpen(path) {
  * @param {string} id  the item's id in its printed form
  * @param {{ tty?: string, current?: ItemRecord }} [options]  `tty`: the file `has_terminal()`
  *   opens, a test seam; `current`: the record of the item whose flow runs, which `item()`
- *   gives for that item (`itemRecord`)
+ *   and `children()` give for that item (`itemRecord`)
  * @returns {{ evaluate: (expr: string, record: ItemRecord) => unknown }}
  */
 export function bindConditions(ctx, id, { tty = '/dev/tty', current } = {}) {
   const bound = bindCel(ctx.config.celInputs, {
     ...UNBOUND,
     item: (other) => itemRecord(ctx, other, current),
-    children: (type) => {
-      const read = recordReader(ctx);
-      return childrenOf(graphValues(ctx), id)
+    children: (type) =>
+      childrenOf(graphValues(ctx), id)
         .filter((child) => printedType(ctx, child) === type)
-        .map((child) => engineRecord(ctx, ctx.flowSet, read(child)));
-    },
+        .map((child) => itemRecord(ctx, child, current)),
     has_terminal: () => canOpen(tty),
   });
   return {

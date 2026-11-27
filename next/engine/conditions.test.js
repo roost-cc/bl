@@ -99,7 +99,11 @@ test('item(id) of the item whose flow runs gives its current record, from its ow
     assert.equal(conditions.evaluate('item("S-1").status', record), 'done', `${what}: another item`);
     assert.equal(conditions.evaluate('item("S-2").status', record), 'superseded', `${what}: another item`);
   }
+  const statuses = 'children("story").map(c, c.status)';
+  assert.deepEqual(bindConditions(ctx, 'F-1', { current }).evaluate(statuses, feature), ['done', 'superseded', 'done']);
+  assert.equal(bindConditions(ctx, 'F-1', { current }).evaluate('children("story").all(c, c.closed)', feature), true);
   assert.equal(bindConditions(ctx, 'F-1').evaluate('item("S-3").status', feature), 'in_progress', 'no current');
+  assert.deepEqual(bindConditions(ctx, 'F-1').evaluate(statuses, feature), ['done', 'superseded', 'in_progress']);
 });
 
 test('has_terminal() is true when the process can open the terminal, and false when it cannot', async () => {
