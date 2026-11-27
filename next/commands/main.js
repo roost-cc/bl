@@ -2,7 +2,8 @@
  * main.js — the process start of `bl-next` (F-136 D8, F-138 D3).
  *
  * It finds the backlog and loads the configuration once, before any work,
- * then runs the start checks. A configuration fault stops it with one line per
+ * then runs the start checks and builds the flow set (F-139 D5 step 6). A
+ * configuration fault, or a fault of the flow set, stops it with one line per
  * fault and a line that names `bl-validate` (D-423). It then parses the
  * arguments and runs the command through `dispatch.js`, and prints the op's
  * records through `output.js`.
@@ -17,6 +18,7 @@ import { ConfigurationFaults } from '../config/check.js';
 import { findBacklogRoot, operatorDir } from '../config/files.js';
 import { KINDS } from '../config/kinds.js';
 import { loadConfiguration } from '../config/load.js';
+import { buildFlowSet, STEPS } from '../engine/flow-set.js';
 import { blIn, CommandFailed, dispatch, PROG, startFaults } from './dispatch.js';
 import { OPS } from './ops/index.js';
 import { writeOutput } from './output.js';
@@ -37,11 +39,12 @@ function startStatus(argv) {
 /**
  * Run `bl-next`.
  * @param {string[]} argv  the arguments after the program name
- * @param {{ ops?: Readonly<Record<string, import('./ops/index.js').Op>> }} [options]
- *   `ops` is the op registry, `OPS`; a test passes fixture ops
+ * @param {{ ops?: Readonly<Record<string, import('./ops/index.js').Op>>, steps?: Readonly<Record<string, import('../engine/flow-set.js').Step>> }} [options]
+ *   `ops` is the op registry, `OPS`, and `steps` the step catalogue, `STEPS`;
+ *   a test passes fixture ops and steps
  * @returns {Promise<number>} the exit code: 1 on a configuration fault, 2 on a usage error, the status of a pager that started and failed
  */
-export async function main(argv, { ops = OPS } = {}) {
+export async function main(argv, { ops = OPS, steps = STEPS } = {}) {
   // The window id first, before any async work, so every title targets the
   // window bl-next started in even if the operator has switched since.
   captureTmuxWindowId();
@@ -51,18 +54,20 @@ export async function main(argv, { ops = OPS } = {}) {
   exitOnSignal();
   let backlogDir;
   let config;
+  let flowSet;
   try {
     backlogDir = findBacklogRoot();
     config = loadConfiguration({ backlogDir, operatorDir: operatorDir(), kinds: KINDS });
     const faults = startFaults(config, ops);
     if (faults.length > 0) throw new ConfigurationFaults(faults, backlogDir);
+    flowSet = buildFlowSet(config, steps, backlogDir);
   } catch (error) {
     process.stderr.write(
       error instanceof ConfigurationFaults ? `${error.message}\n${DOES_NOT_LOAD}\n` : `${PROG}: ${error.message}\n`,
     );
     return 1;
   }
-  const context = { config, backlogDir, ops };
+  const context = { config, backlogDir, flowSet, ops };
   const exit = ({ status, stdout, stderr }) => {
     process.stdout.write(stdout);
     process.stderr.write(stderr);
