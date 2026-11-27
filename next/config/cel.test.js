@@ -6,7 +6,7 @@ import { Environment, EvaluationError } from '@marcbachmann/cel-js';
 import Ajv2020 from 'ajv/dist/2020.js';
 import RECORD_SCHEMA from './schemas/record.schema.json' with { type: 'json' };
 import STATE_SCHEMA from './schemas/state.schema.json' with { type: 'json' };
-import { bindCel, celEnvironment, celSelfTest, celTypeOf, toCelValue, UNBOUND } from './cel.js';
+import { bindCel, celEnvironment, celSelfTest, celTypeOf, fromCelValue, toCelValue, UNBOUND } from './cel.js';
 
 /**
  * A plain-JSON record as the record schema gives it.
@@ -245,6 +245,22 @@ test('bindCel evaluates with the given handlers on a plain-JSON record', async (
     bound.evaluate('record.type == "story" && now - timestamp("2026-03-01T00:00:00Z") > duration("1h")', record),
     true,
   );
+});
+
+test('fromCelValue gives plain JSON for the CEL arguments of a predicate, also inside lists and maps', () => {
+  let got;
+  const bound = bindCel(
+    { predicates: { p: '{{args.0}} {{args.1}} {{args.2}} {{args.3}} {{args.4}}' } },
+    { ...trueHandlers(), predicate: (_name, args) => ((got = args), true) },
+  );
+  const expr = 'predicates.p(180, [1, 2], {"k": 9223372036854775807}, timestamp("2026-01-01T00:00:00Z"), "S-99")';
+  assert.equal(bound.evaluate(expr, plainRecord()), true);
+  assert.equal(
+    JSON.stringify(got.map(fromCelValue)),
+    '[180,[1,2],{"k":9223372036854775807},"2026-01-01T00:00:00.000Z","S-99"]',
+  );
+  assert.equal(fromCelValue(null), null);
+  assert.equal(fromCelValue(true), true);
 });
 
 test('bindCel refuses a missing or an unknown handler name', () => {

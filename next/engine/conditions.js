@@ -12,15 +12,20 @@
  *     and `children(type)` give records through `engineRecord`, the item
  *     whose flow runs as its current record (`itemRecord`), and
  *     `has_terminal()` is true when the process can open `/dev/tty` (D-30).
- *     Every other function and each shop predicate throws `not bound: <name>`
- *     (`UNBOUND`) until the feature that builds it binds it.
+ *     A shop predicate runs its top-level plugin with `runPredicate`, in the
+ *     backlog root, with the item's command view plus `args`: `0`, `1`, … to
+ *     the call's arguments as plain JSON (`fromCelValue`; F-140 D7, Decision
+ *     A6). Every other function throws `not bound: <name>` (`UNBOUND`) until
+ *     the feature that builds it binds it.
  *
  * An evaluation that throws is an error whose message names the expression
  * (D-496): an absent key or an unbound function never counts as false.
  */
 
 import { closeSync, openSync } from 'fs';
-import { bindCel, UNBOUND } from '../config/cel.js';
+import { bindCel, fromCelValue, UNBOUND } from '../config/cel.js';
+import { runPredicate } from '../steps/plugin.js';
+import { commandView } from '../steps/view.js';
 import { childrenOf, graphValues } from '../store/graphs.js';
 import { readState } from '../store/item-json.js';
 import { itemDir, printedType } from '../store/items.js';
@@ -103,6 +108,12 @@ export function bindConditions(ctx, id, { tty = '/dev/tty', current } = {}) {
         .filter((child) => printedType(ctx, child) === type)
         .map((child) => itemRecord(ctx, child, current)),
     has_terminal: () => canOpen(tty),
+    predicate: (name, args) =>
+      runPredicate(
+        ctx,
+        ctx.config.scope(null).plugin_registry.predicates[name],
+        commandView({ ...ctx, id, record: itemRecord(ctx, id, current) }, { args: { ...args.map(fromCelValue) } }),
+      ),
   });
   return {
     evaluate(expr, record) {

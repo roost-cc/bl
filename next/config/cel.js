@@ -166,6 +166,22 @@ export function toCelValue(node, value) {
 }
 
 /**
+ * A CEL value as plain JSON, the inverse of `toCelValue` (F-140 Decision
+ * A6): an int becomes a JSON number with its exact digits (`JSON.rawJSON`),
+ * a timestamp its `toISOString()` text, a list or map value by value, and
+ * any other value stays as it is.
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+export function fromCelValue(value) {
+  if (typeof value === 'bigint') return JSON.rawJSON(String(value));
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(fromCelValue);
+  if (value !== null && typeof value === 'object') return mapValues(value, fromCelValue);
+  return value;
+}
+
+/**
  * The functions of core.md's table ("Records and CEL"). `returns` is a
  * schema node, because `bindCel` converts each result by it.
  */

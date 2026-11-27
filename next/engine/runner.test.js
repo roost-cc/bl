@@ -2,7 +2,7 @@
 // gate, with fake steps, on a committed backlog repo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { hostname } from 'os';
 import { join } from 'path';
 import { parse, stringify } from 'yaml';
@@ -530,6 +530,39 @@ test("runFlow_gives_step_evaluate: ctx.evaluate evaluates over the box's record 
   assert.deepEqual(seen, [true, 'refined']);
   assert.ok(crash instanceof FlowCrash);
   assert.equal(crash.message, 'implement: worktree_clean(): not bound: worktree_clean');
+});
+
+test('a shop predicate in a status gate passes or fails the gate by its exit status, and exit 127 is a FlowCrash that names the expression', async () => {
+  const shop = [
+    'repos: {}',
+    'plugin_registry:',
+    '  predicates:',
+    `    readme_mentions: 'grep -q {{args.0}} README.md'`,
+    `    missing: 'exit 127'`,
+    '',
+  ].join('\n');
+  /** The result of closing an implemented story whose gate of done is `gate`. */
+  const close = async (gate) => {
+    const flows = { 'story.yaml': storyFlow((flow) => (flow.statuses.done = { gate: [gate] })) };
+    const ctx = engineBacklog({ 'defined-steps.yaml': definedSteps(), ...flows }, shop);
+    writeFileSync(join(ctx.backlogDir, 'README.md'), 'a widget\n');
+    const id = await story(ctx, { status: 'implemented', run: 'idle' });
+    const { catalogue } = fakeSteps();
+    return runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue }).catch((e) => e);
+  };
+  assert.deepEqual(await close('predicates.readme_mentions("widget")'), {
+    ended: 'stop',
+    status: 'done',
+    outcome: 'success',
+  });
+  assert.deepEqual(await close('predicates.readme_mentions("gadget")'), {
+    ended: 'gated: done',
+    status: 'implemented',
+    outcome: 'success',
+  });
+  const crash = await close('predicates.missing()');
+  assert.ok(crash instanceof FlowCrash);
+  assert.match(crash.message, /predicates\.missing\(\): plugin `exit 127` exited 127 \(exit 127\)/);
 });
 
 test('an outcome with no arrow commits an outcome entry and throws FlowCrash; the item then reads interrupted', async () => {
