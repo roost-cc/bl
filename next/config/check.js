@@ -11,7 +11,8 @@
  *     (graphs.md, D-622): each recorded string type-checks in the CEL
  *     environment, to the marked type.
  *   - `checkValue(schema, value)`: the same check of one value, for the files
- *     that the store writes (F-137 D9 item 3).
+ *     that the store writes (F-137 D9 item 3); `checkMarked` also gives the
+ *     recorded CEL strings, for a step's `with:` (F-140 D5).
  *   - `ConfigurationFaults`: every fault of a load, sorted, one line each.
  */
 
@@ -291,7 +292,17 @@ const compiledValues = new WeakMap();
  * @param {unknown} value
  * @returns {Fault[]}
  */
-export function checkValue(schema, value) {
+export const checkValue = (schema, value) => checkMarked(schema, value).faults;
+
+/**
+ * `checkValue`, with the strings of `value` that `schema` marks `cel`, for
+ * `compileCel`: a step's `with:` (F-140 D5). Each has `file` empty and its
+ * path in `value`, as each fault has.
+ * @param {Record<string, unknown>} schema
+ * @param {unknown} value
+ * @returns {{ faults: Fault[], cel: CelString[] }}
+ */
+export function checkMarked(schema, value) {
   valueChecker ??= shapeChecker([STATE_SCHEMA]);
   let check = compiledValues.get(schema);
   if (check === undefined) {
@@ -303,7 +314,7 @@ export function checkValue(schema, value) {
     }
     compiledValues.set(schema, check);
   }
-  return check(value, [{ file: '', pointer: '', patch: value }]).faults;
+  return check(value, [{ file: '', pointer: '', patch: value }]);
 }
 
 /**

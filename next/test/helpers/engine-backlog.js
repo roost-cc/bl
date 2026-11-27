@@ -27,13 +27,15 @@ const FILES = {
 /**
  * A committed backlog repo whose `config/flows/` holds the uTop flow set with
  * `flows` added or replaced, and its context: the store context and the flow
- * set built with the uTop test catalogue. `backlogYaml` ends `backlog.yaml`:
- * its `repos`, and for example a `plugin_registry`.
+ * set built with `catalogue`, by default the uTop test catalogue.
+ * `backlogYaml` ends `backlog.yaml`: its `repos`, and for example a
+ * `plugin_registry`.
  * @param {Record<string, string>} [flows]  flow file name → YAML text
  * @param {string} [backlogYaml]
+ * @param {Readonly<Record<string, any>>} [catalogue]  the step catalogue
  * @returns {{ backlogDir: string, config: any, flowSet: import('../../engine/flow-set.js').FlowSet }}
  */
-export function engineBacklog(flows = {}, backlogYaml = 'repos: {}\n') {
+export function engineBacklog(flows = {}, backlogYaml = 'repos: {}\n', catalogue = UTOP_STEPS) {
   const all = {
     ...FILES,
     'backlog.yaml': FILES['backlog.yaml'] + backlogYaml,
@@ -44,7 +46,7 @@ export function engineBacklog(flows = {}, backlogYaml = 'repos: {}\n') {
   git(dirs.backlogDir, 'add', '.');
   git(dirs.backlogDir, 'commit', '-q', '-m', 'init');
   const config = load(dirs);
-  return { backlogDir: dirs.backlogDir, config, flowSet: buildFlowSet(config, UTOP_STEPS, dirs.backlogDir) };
+  return { backlogDir: dirs.backlogDir, config, flowSet: buildFlowSet(config, catalogue, dirs.backlogDir) };
 }
 
 /**
