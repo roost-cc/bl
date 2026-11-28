@@ -32,7 +32,8 @@
  *
  * After the commit of a gated end the runner sends the `gated` alert, after
  * a `flow_end` at `stop` the `ended.normal` alert, and before it throws
- * `FlowCrash` the `ended.crash` alert (F-140 D10, Decision A3).
+ * `FlowCrash` the `ended.crash` alert (F-140 D10, Decision A3). An alert that
+ * fails prints one line and changes neither the result nor the crash.
  *
  * Gates and post-conditions read the committed record (`gates.js`), so they do
  * not see the staged writes of the box that runs.
@@ -108,6 +109,22 @@ async function gatedAlert(step, failing, box) {
     condition: failing[0].text,
     class: classOf(failing[0]) ?? '',
   });
+}
+
+/**
+ * Send an alert with `send`. An alert that fails (a missing text, a template
+ * that does not render) prints one line that names it, and changes nothing
+ * else: the end it is about is committed, and a crash is still thrown.
+ * @param {string} id
+ * @param {string} name  the alert, for example `ended.crash`
+ * @param {() => Promise<void>} send
+ */
+async function alertOrReport(id, name, send) {
+  try {
+    await send();
+  } catch (error) {
+    info(`${id}: the ${name} alert failed: ${/** @type {Error} */ (error).message}`);
+  }
 }
 
 /** The node id a return node `<subflow box>/_return_<outcome>` stands for: its subflow box. */
@@ -285,7 +302,7 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
           w.log(id, flowEnd(ended, last, `the step gate of ${box} failed: ${texts(gated)}`));
         });
         // The interim end of F-139 Decision P1 sends no ended alert (F-140 Decision A3).
-        await gatedAlert(step, gated, box);
+        await alertOrReport(id, 'gated', () => gatedAlert(step, gated, box));
         return { ended, status, ...(last === undefined ? {} : { outcome: last }) };
       }
 
@@ -367,8 +384,9 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
       });
       if (end !== null) {
         // A status gate has no box (D-97); a stop is the normal end (F-140 Decision A3).
-        if (end.gated !== undefined) await gatedAlert(step, end.gated);
-        else await sendAlert(step, 'ended', ['normal'], { box });
+        const { gated } = end;
+        if (gated !== undefined) await alertOrReport(id, 'gated', () => gatedAlert(step, gated));
+        else await alertOrReport(id, 'ended.normal', () => sendAlert(step, 'ended', ['normal'], { box }));
         return { ended: end.ended, status, outcome };
       }
       // The arrow out of a return node is its caller's arrow, so the flow
@@ -383,12 +401,10 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
         error instanceof FlowCrash
           ? error
           : new FlowCrash(`${box}: ${/** @type {Error} */ (error).message}`, { cause: error });
-      try {
-        await sendAlert(step ?? stepContext(box, current(), []), 'ended', ['crash'], { box, error: crash.message });
-      } catch (alertError) {
-        // An alert that cannot be sent does not hide the crash it is about.
-        info(`${id}: the ended.crash alert failed: ${/** @type {Error} */ (alertError).message}`);
-      }
+      // An alert that cannot be sent does not hide the crash it is about.
+      await alertOrReport(id, 'ended.crash', () =>
+        sendAlert(step ?? stepContext(box, current(), []), 'ended', ['crash'], { box, error: crash.message }),
+      );
       throw crash;
     }
   }

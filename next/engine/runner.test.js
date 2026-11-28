@@ -762,6 +762,70 @@ test('an ended.crash alert that throws prints one line, and runFlow throws the F
   ]);
 });
 
+test('runFlow_alert_failure_keeps_committed_result', async (t) => {
+  // Each end commits first; then its alert's text is missing, and the result stands with no ended.crash alert.
+  const texts = 'ended.crash: "{{item_id}} crash: {{error}}"\n';
+  const alerts = 'gated: [terminal]\nended: [terminal]\nended.crash: [bell]\nnotify: []\n';
+  const cases = [
+    // [what, gates.yaml, the result, the alert, the missing names, the run state]
+    [
+      'step gate',
+      "step_gates:\n  close: ['false']\n",
+      { ended: 'gated before: close', status: 'implemented' },
+      'gated',
+      "'gated'",
+      'gated before: close',
+    ],
+    [
+      'status gate',
+      undefined,
+      { ended: 'gated: done', status: 'implemented', outcome: 'success' },
+      'gated',
+      "'gated.expected' or 'gated'",
+      'gated: done',
+    ],
+    [
+      'normal end',
+      undefined,
+      { ended: 'stop', status: 'done', outcome: 'success' },
+      'ended.normal',
+      "'ended.normal' or 'ended'",
+      'idle',
+    ],
+  ];
+  for (const [what, gates, want, alert, names, run] of cases) {
+    const flows = { 'defined-steps.yaml': definedSteps(), ...(gates === undefined ? {} : { 'gates.yaml': gates }) };
+    const ctx = notifyBacklog({
+      flows,
+      channels: { terminal: channel('terminal'), bell: channel('bell') },
+      alerts,
+      texts,
+    });
+    const [id] = await createItems(ctx, [{ type: 'story', state: { status: 'implemented', run: 'idle' } }]);
+    // The status gate of done needs the story's task closed.
+    if (what === 'status gate') {
+      await createItems(ctx, [{ type: 'task', state: { status: 'draft', run: 'idle' } }]);
+      await setGraph(ctx, 'containment', { 'T-1': { parent: id } });
+    }
+    const { catalogue } = fakeSteps();
+    const printed = [];
+    t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(text));
+    const result = await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue }).catch(
+      (e) => e,
+    );
+    t.mock.restoreAll();
+    assert.deepEqual(result, want, what);
+    assert.equal(stateOf(ctx, id).run, run, what);
+    assert.equal(logOf(ctx, id).filter(({ event }) => event === 'flow_end').length, 1, what);
+    assert.equal(delivered(ctx, 'bell'), null, `${what}: no ended.crash alert`);
+    assert.deepEqual(
+      printed.filter((line) => line.includes('alert failed')),
+      [`${id}: the ${alert} alert failed: templates/en.yaml has no template named ${names}\n`],
+      what,
+    );
+  }
+});
+
 test("the visit limit's ended.crash text holds started 21 times (max_box_visits) when the limit is 20", async () => {
   const ctx = alerting({ 'flow-set.yaml': 'max_box_visits: 20\ngate_recheck_minutes: 15\n' });
   const id = await story(ctx, { status: 'in_progress', run: 'idle' });
