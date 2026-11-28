@@ -43,6 +43,37 @@ function isBusy(e) {
   return e?.code === 'EAGAIN' || e?.code === 'EWOULDBLOCK';
 }
 
+/** How long a take tries again while only checks (`holderFileOf`) hold shared locks. */
+const CHECK_WAIT_MS = 1000;
+
+/**
+ * `flock(fd, 'exnb')`, and false when a holder refuses it. A holder takes the
+ * lock exclusive; a check holds it shared for an instant. So a refused take
+ * that can then take a shared lock met only checks, and it tries again, for up
+ * to CHECK_WAIT_MS. A failed conversion leaves `fd` with no lock (flock(2)).
+ *
+ * @param {number} fd
+ * @returns {boolean}
+ */
+function takeExclusive(fd) {
+  const end = Date.now() + CHECK_WAIT_MS;
+  for (;;) {
+    try {
+      flockSync(fd, 'exnb');
+      return true;
+    } catch (e) {
+      if (!isBusy(e)) throw e;
+    }
+    try {
+      flockSync(fd, 'shnb');
+    } catch (e) {
+      if (isBusy(e)) return false;
+      throw e;
+    }
+    if (Date.now() >= end) return false;
+  }
+}
+
 /**
  * The PID on the first line of `path`, or 'unknown' when the file holds none
  * yet (D4), and its info line (the third line, `tryLock`'s `info`), or null.
@@ -81,12 +112,16 @@ export function tryLock(path, info) {
     return { taken: mine.handle };
   }
   const fd = openSync(key, constants.O_RDWR | constants.O_CREAT, 0o644);
+  let taken;
   try {
-    flockSync(fd, 'exnb');
+    taken = takeExclusive(fd);
   } catch (e) {
     closeSync(fd);
-    if (isBusy(e)) return { holder: fileOf(key).pid };
     throw e;
+  }
+  if (!taken) {
+    closeSync(fd);
+    return { holder: fileOf(key).pid };
   }
   try {
     ftruncateSync(fd, 0);
@@ -146,8 +181,9 @@ export function release(handle) {
 /**
  * Who holds the lock on `path` (D6): null when it is free or the file is
  * missing (nothing is created); `process.pid` when this process holds it; else
- * the PID in the file, or 'unknown'. A free lock is found with a try-lock on a
- * descriptor of its own, closed at once.
+ * the PID in the file, or 'unknown'. A free lock is found with a shared
+ * try-lock on a descriptor of its own, closed at once: a take in that instant
+ * tries again (`takeExclusive`), and two checks do not refuse each other.
  *
  * @param {string} path
  * @returns {number | 'unknown' | null}
@@ -176,7 +212,7 @@ export function holderFileOf(path) {
     throw e;
   }
   try {
-    flockSync(fd, 'exnb');
+    flockSync(fd, 'shnb');
     return null;
   } catch (e) {
     if (isBusy(e)) return fileOf(key);
