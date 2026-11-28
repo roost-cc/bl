@@ -31,6 +31,11 @@ const EXCEPTIONS = new Map([
   // bindConditions' evaluate is async, because has_capacity() calls an adapter (F-141 D7).
   ['commands/table.js evaluate', "a different function named evaluate: view-cel.js's sync evaluate of a view"],
   ['config/cel.js evaluate', "the self-test's bindCel evaluate, whose stub handlers are all sync"],
+  // An entry command streams the records while its flow runs (F-152 D6, D-462).
+  [
+    'commands/entry.js run',
+    "flowRecords' run: the flow runs while the reader reads its records, and its then callbacks end the stream or give it the error",
+  ],
 ]);
 
 const isFunction = (n) => /Function/.test(n.type);

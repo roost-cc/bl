@@ -17,6 +17,7 @@ import { attribute, compileCel } from '../config/check.js';
 import { pointerToken } from '../config/files.js';
 import { checkNotifications, pluginFaults, stageFaults } from '../engine/flow-set.js';
 import { addArgs } from './args.js';
+import { ENTRY_RECORD_SCHEMA, entryOp } from './entry.js';
 import { markdownForm, matchOf } from './output.js';
 import { colorScheme, refusedFormats } from './style.js';
 import { suggest } from './suggest.js';
@@ -25,6 +26,7 @@ import { viewEnvironment } from './view-cel.js';
 /** @typedef {import('../config/files.js').Fault} Fault */
 /** @typedef {import('../config/load.js').Configuration} Configuration */
 /** @typedef {import('./ops/index.js').Op} Op */
+/** @typedef {import('../engine/flow-set.js').FlowSet} FlowSet */
 /**
  * @typedef {import('./ops/index.js').OpContext & { ops: Readonly<Record<string, Op>> }} Context
  *   what a command runs with: the op's context and the op registry
@@ -34,7 +36,7 @@ import { viewEnvironment } from './view-cel.js';
 export const PROG = 'bl-next';
 
 /**
- * @typedef {object} Exit  a command that ends without a run: help, an error, an entry
+ * @typedef {object} Exit  a command that ends without a run: help, or an error
  * @property {number} status  the exit code
  * @property {string} stdout  the text for stdout
  * @property {string} stderr  the text for stderr
@@ -104,8 +106,8 @@ function viewExpressions(at, view) {
  *   - each `op` of `commands.yaml` that `ops` does not hold, at `/<name>/op`;
  *   - each view key of `views.yaml` that names no command, at `/<name>`;
  *   - each view expression that does not compile in the view environment of
- *     its command's op (D5, Decision A5), at its path. A view of an entry
- *     command has no op schema, and F-139 checks it;
+ *     its command's op (D5, Decision A5), at its path; for an entry command,
+ *     in the environment of the entry record schema (F-152 D6);
  *   - the color scheme and its formats (`colorSchemeFaults`);
  *   - each plugin command that fills a name raw (`pluginFaults`, F-140
  *     Decision A5);
@@ -131,14 +133,15 @@ export function startFaults(config, ops) {
     if (!Object.hasOwn(commands, name)) {
       return [{ ...attribute(at, viewLayers), rule: 'view', message: `no command named '${name}'` }];
     }
-    const op = ops[commands[name].op];
-    if (op === undefined) return [];
+    const line = commands[name];
+    const schema = line.op === undefined ? ENTRY_RECORD_SCHEMA : ops[line.op]?.schema;
+    if (schema === undefined) return [];
     const recorded = viewExpressions(at, view).map(({ path, expr }) => ({
       ...attribute(path, viewLayers),
       expr,
       type: /** @type {'dyn'} */ ('dyn'),
     }));
-    return compileCel(recorded, viewEnvironment(op.schema));
+    return compileCel(recorded, viewEnvironment(schema));
   });
   return [
     ...opFaults,
@@ -183,22 +186,31 @@ const didYouMean = (names) => (names.length === 0 ? '' : ` Did you mean ${names.
 const usageError = (text) => ({ status: 2, stdout: '', stderr: text });
 
 /**
- * The parser: one subparser per line; an `op` line gets the op's `args` and
- * `--json`, an `entry` line no arguments (D3 step 2).
+ * The op of a `commands.yaml` line: the op that an `op` line names, or the
+ * entry op of an `entry` line (`entryOp`, F-152 D6).
+ * @param {Record<string, any>} line
+ * @param {Readonly<Record<string, Op>>} ops
+ * @param {FlowSet} flowSet
+ * @returns {Op}
+ */
+const opOf = (line, ops, flowSet) => (line.op === undefined ? entryOp(line.entry, flowSet) : ops[line.op]);
+
+/**
+ * The parser: one subparser per line, with its op's `args` and `--json` (D3
+ * step 2); an `entry` line's `args` are its entry's options (F-152 D6).
  * @param {Record<string, any>} commands
  * @param {Readonly<Record<string, Op>>} ops
+ * @param {FlowSet} flowSet
  * @returns {{ root: Parser, parsers: Map<string, Parser> }}
  */
-function buildParser(commands, ops) {
+function buildParser(commands, ops, flowSet) {
   const root = new Parser({ prog: PROG });
   const sub = root.add_subparsers({ metavar: 'command', required: true });
   const parsers = new Map();
   for (const [name, line] of Object.entries(commands)) {
     const parser = sub.add_parser(name, { help: line.help, description: line.description });
-    if (line.op !== undefined) {
-      addArgs(parser, ops[line.op].args);
-      parser.add_argument('--json', { action: 'store_true', help: 'print the records as JSON' });
-    }
+    addArgs(parser, opOf(line, ops, flowSet).args);
+    parser.add_argument('--json', { action: 'store_true', help: 'print the records as JSON' });
     parsers.set(name, parser);
   }
   return { root, parsers };
@@ -221,7 +233,7 @@ export async function dispatch(argv, { ops, ...ctx }) {
   if (named && !Object.hasOwn(commands, name)) {
     return usageError(`${PROG}: '${name}' is not a command.${didYouMean(suggest(name, Object.keys(commands)))}\n`);
   }
-  const { root, parsers } = buildParser(commands, ops);
+  const { root, parsers } = buildParser(commands, ops, ctx.flowSet);
   let parsed;
   let extras;
   try {
@@ -244,8 +256,7 @@ export async function dispatch(argv, { ops, ...ctx }) {
     ];
     return usageError(lines.join(''));
   }
-  if (line.entry !== undefined) return usageError(`${PROG}: ${name}: entries are not supported yet\n`);
-  const op = ops[line.op];
+  const op = opOf(line, ops, ctx.flowSet);
   const args = { ...parsed };
   try {
     matchOf(op, args);

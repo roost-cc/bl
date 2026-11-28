@@ -14,6 +14,8 @@ import { outcome } from './outcome.js';
  * @property {import('../../config/load.js').Configuration} config  the frozen configuration
  * @property {string} backlogDir  the backlog's root
  * @property {import('../../engine/flow-set.js').FlowSet} flowSet  the flow set, built once at start
+ * @property {Readonly<Record<string, import('../../steps/index.js').Step>>} catalogue  the step
+ *   catalogue: the code steps and the shop's (F-140 D6), which a command that runs a flow gives it
  * @property {(line: string) => Promise<string>} [bl]  runs a `{{#bl}}` line in
  *   this process (`blIn`); the flow runner gives it to steps (F-141 D5)
  */

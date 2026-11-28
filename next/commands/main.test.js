@@ -6,13 +6,17 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, writeFileSync } from 'fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { delimiter, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { ALERTS, ALERTS_PATH, TEMPLATES, TEMPLATES_PATH } from '../test/helpers/config-fixture.js';
+import { ALERTS, ALERTS_PATH, fixtureText, TEMPLATES, TEMPLATES_PATH } from '../test/helpers/config-fixture.js';
+import { createItems, definedSteps, engineBacklog } from '../test/helpers/engine-backlog.js';
 import { fakeTmux, renamedTitles } from '../test/helpers/fake-tmux.js';
+import { UTOP_STEPS } from '../test/helpers/flow-fixture.js';
+import { git } from '../test/helpers/git.js';
 import { spawnToFiles } from '../test/helpers/spawn-files.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
+import { itemDir } from '../store/items.js';
 import { TMUX_TIMEOUT_MS } from './tab-title.js';
 
 const BL_NEXT = fileURLToPath(new URL('../bin/bl-next', import.meta.url));
@@ -46,6 +50,15 @@ async function runBlNext(files, { backlog = true, argv = [], env: extra = {}, bi
     mkdirSync(dirname(join(home, path)), { recursive: true });
     writeFileSync(join(home, path), text);
   }
+  return blNextIn(home, { backlog, argv, env: extra, bin });
+}
+
+/**
+ * Run `bl-next` as `runBlNext` does, in the home `home` as it is: its backlog is `<home>/backlog`.
+ * @param {string} home
+ * @param {{ backlog?: boolean, argv?: string[], env?: Record<string, string|undefined>, bin?: string }} [opts]
+ */
+async function blNextIn(home, { backlog = true, argv = [], env: extra = {}, bin = BL_NEXT } = {}) {
   const env = {
     ...process.env,
     HOME: home,
@@ -306,6 +319,100 @@ test('bl-next exits 1 on a flow set with a missing arrow, with the fault on stde
   assert.equal(fixed.stderr, '');
   assert.equal(fixed.status, 0);
   assert.equal(fixed.stdout, '{"id":"S-1","title":"Story S-1"}\n');
+});
+
+// ---------------------------------------------------------------------------
+// an entry command (F-152 D6)
+// ---------------------------------------------------------------------------
+
+/** bl-next with the fake steps of the uTop flow set; its agent step stages a usage entry. */
+const WITH_UTOP_STEPS = fileURLToPath(new URL('../test/helpers/bl-next-utop-steps.js', import.meta.url));
+
+/** The fixture's outcome schema, the text of each schema file of an agent box. */
+const OUTCOME_SCHEMA = fixtureText('schemas/implement.json');
+
+/** A rank graph, which uTop's rank boxes need at start (F-140 D8): it ends the graphs list. */
+const RANK_GRAPH = '  - { name: order, engine: rank, nodes: [feature, story] }\nrepos: {}\n';
+
+/**
+ * A committed backlog of the uTop flow set with no step gates, the command `run` of the entry
+ * `run`, and a prompt and an outcome schema file for each name of an agent box, which the start
+ * check needs (F-141 D5).
+ */
+function utopBacklog() {
+  const files = {
+    'config/commands.yaml': 'run:\n  entry: run\n  help: run a story\n',
+    'config/color-schemes/mocha.yaml': MOCHA,
+    'config/templates/en.yaml': TEMPLATES,
+  };
+  const ctx = engineBacklog({ 'defined-steps.yaml': definedSteps() }, RANK_GRAPH, UTOP_STEPS, files);
+  const namesOf = (/** @type {string|Record<string, string>} */ value) =>
+    typeof value === 'string' ? [value] : Object.values(value);
+  for (const flow of Object.values(ctx.flowSet.flows)) {
+    for (const node of Object.values(flow.nodes)) {
+      if (node.step !== 'agent') continue;
+      const { prompt, schema } = /** @type {any} */ (node.with);
+      for (const name of namesOf(prompt)) writeFileSync(join(ctx.backlogDir, 'config', 'prompts', name), 'Work\n');
+      for (const name of namesOf(schema))
+        writeFileSync(join(ctx.backlogDir, 'config', 'schemas', name), OUTCOME_SCHEMA);
+    }
+  }
+  git(ctx.backlogDir, 'add', '.');
+  git(ctx.backlogDir, 'commit', '-q', '-m', 'agent files');
+  return ctx;
+}
+
+test('bl-next run <id> --json on a refined uTop story with fake steps starts at prepare, streams each log and usage entry with item_id as JSON Lines, and stops', async () => {
+  const ctx = utopBacklog();
+  const [id] = await createItems(ctx, [{ type: 'story', state: { status: 'refined', run: 'idle' } }]);
+  const { status, stdout, stderr } = await blNextIn(dirname(ctx.backlogDir), {
+    bin: WITH_UTOP_STEPS,
+    argv: ['run', id, '--json'],
+  });
+  assert.equal(stderr, '');
+  assert.equal(status, 0);
+  const records = stdout
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  assert.ok(
+    records.every(({ item_id }) => item_id === id),
+    stdout,
+  );
+  const entries = records.map(({ item_id, ...entry }) => entry);
+  const path = join(ctx.backlogDir, itemDir(ctx, id).path);
+  const lines = (/** @type {string} */ file) =>
+    readFileSync(join(path, file), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+  // Each log entry after created, and each usage entry, as the files hold them, in commit order.
+  assert.deepEqual(
+    entries.filter((entry) => 'event' in entry),
+    lines('log.jsonl').slice(1),
+  );
+  assert.deepEqual(
+    entries.filter((entry) => !('event' in entry)),
+    lines('usage.jsonl'),
+  );
+  assert.equal(entries.at(0).event, 'flow_start');
+  assert.equal(entries.at(-1).event, 'flow_end');
+  assert.equal(entries[1].step, 'implement', 'prepare is the start box: implement runs after it');
+  assert.deepEqual(JSON.parse(readFileSync(join(path, 'state.json'), 'utf8')), { status: 'implemented', run: 'idle' });
+});
+
+test('bl-next run <id> on a story whose status the entry does not start from exits 1 with the reason, and commits nothing', async () => {
+  const ctx = utopBacklog();
+  const [id] = await createItems(ctx, [{ type: 'story', state: { status: 'draft', run: 'idle' } }]);
+  const base = git(ctx.backlogDir, 'rev-parse', 'HEAD');
+  const { status, stdout, stderr } = await blNextIn(dirname(ctx.backlogDir), {
+    bin: WITH_UTOP_STEPS,
+    argv: ['run', id],
+  });
+  assert.equal(stderr, `bl-next: ${id}: the entry run is refused: the status is draft; it starts only from refined\n`);
+  assert.equal(status, 1);
+  assert.equal(stdout, '');
+  assert.equal(git(ctx.backlogDir, 'rev-parse', 'HEAD'), base);
 });
 
 // ---------------------------------------------------------------------------
