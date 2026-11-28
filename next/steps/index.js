@@ -12,6 +12,7 @@
  * `flow_end` `note` when the outcome ends the invocation.
  */
 
+import { agent } from './agent.js';
 import { assertStep, succeed } from './simple.js';
 import { increment } from './increment.js';
 import { notify } from './notify.js';
@@ -66,4 +67,5 @@ export const STEPS = Object.freeze({
   increment,
   rank,
   notify,
+  agent,
 });

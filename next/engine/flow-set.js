@@ -41,6 +41,7 @@ import { checkFlow, deriveStatuses } from './derive.js';
  * import `engine/` but not `steps/`, so the engine hands them on.
  */
 export { STEPS } from '../steps/index.js';
+export { checkAgentBoxes } from '../steps/agent.js';
 export { checkNotifications } from '../steps/notify.js';
 export { pluginFaults } from '../steps/plugin.js';
 export { checkRankGraph } from '../steps/rank.js';

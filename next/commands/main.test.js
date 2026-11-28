@@ -408,6 +408,45 @@ test('bl-next exits 1 on a rank box when backlog.yaml has no graph of the engine
   assert.equal(ranked.status, 0);
 });
 
+// ---------------------------------------------------------------------------
+// the agent box check (F-141 D5)
+// ---------------------------------------------------------------------------
+
+test('bl-next exits 1 with one fault each on an agent box that names no profile, no prompt, no schema, or a replay profile with a model', async () => {
+  const box = (/** @type {string} */ args) =>
+    `{ use: agent, with: { ${args}, mode: headless }, success: stop, failure: stop }`;
+  const files = (/** @type {string} */ args) => ({
+    'backlog/backlog.yaml': BACKLOG,
+    'backlog/config/commands.yaml': ENTRIES,
+    'backlog/config/flows/story.yaml': shopFiles(box(args))['backlog/config/flows/story.yaml'],
+    'backlog/config/agents.yaml': 'replay: { adapter: replay }\nreplay-x: { adapter: replay, model: x }\n',
+    'backlog/config/prompts/work.md': 'Work {{item_id}}\n',
+    'backlog/config/schemas/work.json':
+      '{ "type": "object", "required": ["outcome"], "properties": { "outcome": { "enum": ["success", "failure"] } } }\n',
+  });
+  const { status, stdout, stderr } = await runBlNext(
+    files('agents: [replay, nobody, replay-x], prompt: { story: gone.md }, schema: gone.json'),
+    { argv: ['--help'] },
+  );
+  const at = 'config/flows/story.yaml: /flows/story/steps/tag: agent:';
+  assert.equal(
+    stderr,
+    [
+      `${at} the profile 'nobody' is not in config/agents.yaml`,
+      `${at} the profile 'replay-x': the replay adapter takes no model, and this profile gives 'x'`,
+      `${at} the prompt file config/prompts/gone.md does not exist`,
+      `${at} the schema file config/schemas/gone.json does not exist`,
+      DOES_NOT_LOAD,
+    ].join('\n'),
+  );
+  assert.equal(status, 1);
+  assert.equal(stdout, '');
+  // With every name configured, the same command runs.
+  const fine = await runBlNext(files('agents: [replay], prompt: work.md, schema: work.json'), { argv: ['--help'] });
+  assert.equal(fine.stderr, '');
+  assert.equal(fine.status, 0);
+});
+
 test('bl-next with no backlog to find exits 1 with bl-next: and the error', async () => {
   const { status, stderr } = await runBlNext({}, { backlog: false });
   assert.match(stderr, /^bl-next: no backlog found: .*\n$/);
