@@ -7,11 +7,9 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ConfigurationFaults } from '../config/check.js';
 import { engineBacklog } from '../test/helpers/engine-backlog.js';
 import { faultLines, UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 import { agent, checkAgentBoxes } from './agent.js';
-import { checkOverride } from './capacity.js';
 import { STEPS } from './index.js';
 
 /** A story flow whose one box runs the agent step with the `with:` text `args`. */
@@ -53,9 +51,10 @@ test('the with schema needs agents, prompt, schema and mode, and takes choices',
   ]);
 });
 
-test('inherited profile names are configuration faults for boxes and overrides', () => {
+test('inherited profile names are configuration faults for boxes', () => {
+  // An override's list takes the same faults (`profileFaults`): `engine/overrides.test.js`.
   const inherited = ['constructor', 'toString', 'hasOwnProperty', 'valueOf', '__proto__'];
-  const { backlogDir, config, flowSet } = engineBacklog(
+  const { config, flowSet } = engineBacklog(
     story(
       `{ agents: [${inherited.map((name) => `'${name}'`).join(', ')}], prompt: work.md, schema: work.json, mode: headless }`,
     ),
@@ -66,17 +65,6 @@ test('inherited profile names are configuration faults for boxes and overrides',
   assert.deepEqual(
     box.map(({ message }) => message).filter((message) => message.startsWith('the profile')),
     inherited.map((name) => `the profile '${name}' is not in config/agents.yaml`),
-  );
-  // The override check throws before runFlow's first commit, so before any capacity call.
-  assert.throws(
-    () => checkOverride({ config, backlogDir }, { profiles: inherited }),
-    (/** @type {any} */ error) =>
-      error instanceof ConfigurationFaults &&
-      error.faults.map(({ path }) => path).join(' ') ===
-        inherited
-          .map((name) => `/${name}`)
-          .sort()
-          .join(' '),
   );
 });
 

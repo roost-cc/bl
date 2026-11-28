@@ -17,8 +17,10 @@ import { UTOP, UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 import { git, tempRepo } from '../test/helpers/git.js';
 import { noReplayPath, REPLAY_BIN, replayEnv } from '../test/helpers/replay.js';
 import { stderrOfAsync } from '../test/helpers/streams.js';
+import { FLOW_CHILD } from '../test/helpers/flow-child-run.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 import { runFlow } from './runner.js';
+import { waitForWake } from './wake.js';
 
 const CATALOGUE = { ...UTOP_STEPS, ...STEPS };
 
@@ -71,12 +73,16 @@ function scriptOf(entries, head = []) {
 }
 
 /**
- * A backlog with the task flow of `args`, `files` beside it, and one task; its context has a
- * `{{#bl}}` runner that gives `[<line>]`.
+ * A backlog with the task flow of `args`, `files` beside it, and one task with `state`; its context
+ * has a `{{#bl}}` runner that gives `[<line>]`.
  * @param {string} [args]
- * @param {{ backlogYaml?: string, files?: Record<string, string>, flows?: Record<string, string> }} [options]
+ * @param {{ backlogYaml?: string, files?: Record<string, string>, flows?: Record<string, string>,
+ *   state?: Record<string, unknown> }} [options]
  */
-async function task(args = HEADLESS, { backlogYaml = 'repos: {}\n', files = {}, flows: more = {} } = {}) {
+async function task(
+  args = HEADLESS,
+  { backlogYaml = 'repos: {}\n', files = {}, flows: more = {}, state = { status: 'draft', run: 'idle' } } = {},
+) {
   const flows = { 'task.yaml': taskFlow(args), ...more };
   const base = engineBacklog(flows, backlogYaml, CATALOGUE, {
     'config/prompts/work.md': PROMPT,
@@ -84,7 +90,7 @@ async function task(args = HEADLESS, { backlogYaml = 'repos: {}\n', files = {}, 
     ...files,
   });
   const ctx = { ...base, bl: async (/** @type {string} */ line) => `[${line}]` };
-  const [id] = await createItems(ctx, [{ type: 'task', state: { status: 'draft', run: 'idle' } }]);
+  const [id] = await createItems(ctx, [{ type: 'task', state }]);
   return { ctx, id };
 }
 
@@ -100,7 +106,7 @@ const run = (
   env = {},
 ) =>
   withEnv({ ...replayEnv(scriptPath), ...env }, () =>
-    runFlow(ctx, { id, start: 'first', by: 'operator', entry: 'run', catalogue: CATALOGUE, ...extra }).catch((e) => e),
+    runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue: CATALOGUE, ...extra }).catch((e) => e),
   );
 
 /** The task's usage.jsonl entries in HEAD, or `[]` when HEAD holds none. */
@@ -276,6 +282,12 @@ const PROFILES = {
 /** The test's `PATH` without replay (D-479). */
 const NO_REPLAY = noReplayPath();
 
+/**
+ * The state of a task that a resume starts at `first`: an entry there is refused while its step gate
+ * fails (D-48), so the tests of a gated agent box resume at it.
+ */
+const NEXT_FIRST = { state: { status: 'draft', run: 'idle', next: 'first' } };
+
 /** A task whose first box runs the agents `list` headless, with `PROFILES`. */
 const listTask = (/** @type {string} */ list, options = {}) =>
   task(`{ agents: [${list}], prompt: work.md, schema: implement.json, mode: headless }`, {
@@ -293,8 +305,9 @@ const SUCCESS = 'result: { outcome: success, summary: done }';
 const logTurn = (/** @type {string} */ log, /** @type {string} */ text) => `run: [sh, -c, 'echo ${text} >> ${log}']`;
 
 test('without replay on the PATH, has_capacity() is false for [replay], and a box with [replay, replay-b] runs replay-b', async () => {
-  const alone = await listTask('replay');
-  const gated = await run(alone.ctx, alone.id, script('Work', '{ outcome: success, summary: done }'), {}, NO_REPLAY);
+  const alone = await listTask('replay', NEXT_FIRST);
+  const work = script('Work', '{ outcome: success, summary: done }');
+  const gated = await run(alone.ctx, alone.id, work, RESUME, NO_REPLAY);
   assert.deepEqual(gated, { ended: 'gated before: first', status: 'draft' });
 
   const { ctx, id } = await listTask('replay, replay-b');
@@ -304,11 +317,27 @@ test('without replay on the PATH, has_capacity() is false for [replay], and a bo
 });
 
 test("a step gate has_capacity() over a script whose capacity is available: false ends at 'gated before: <box>'", async () => {
-  const { ctx, id } = await listTask('replay, replay-b');
+  const { ctx, id } = await listTask('replay, replay-b', NEXT_FIRST);
   const none = scriptOf([['Work', [SUCCESS]]], ['capacity: { available: false, message: busy }']);
-  assert.deepEqual(await run(ctx, id, none), { ended: 'gated before: first', status: 'draft' });
+  assert.deepEqual(await run(ctx, id, none, RESUME), { ended: 'gated before: first', status: 'draft' });
   assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%s'), `${id}: first gated before`);
   assert.deepEqual(usageAtHead(ctx, id), [], 'no session ran');
+});
+
+test("a process suspended at a failing has_capacity() step gate wakes at the box's earliest capacity reset (F-152 D3)", async () => {
+  const { ctx, id } = await listTask('replay, replay-b', NEXT_FIRST);
+  const resets = new Date(Date.now() + 400).toISOString();
+  const none = scriptOf([['Work', [SUCCESS]]], [`capacity: { available: false, resets_at: '${resets}' }`]);
+  /** @type {any[]} */
+  const wakes = [];
+  const wake = async (/** @type {any} */ c, /** @type {any} */ suspend) => {
+    wakes.push({ agents: suspend.agents, source: await waitForWake(c, suspend) });
+    throw new Error('one wake is enough');
+  };
+  const { value, chunks } = await stderrOfAsync(async () => run(ctx, id, none, { ...RESUME, wake }));
+  assert.equal(/** @type {Error} */ (value).message, 'one wake is enough');
+  assert.deepEqual(wakes, [{ agents: ['replay', 'replay-b'], source: 'capacity' }]);
+  assert.deepEqual(chunks, [`${id}: suspended at gated before: first: has_capacity()\n`]);
 });
 
 test('a session with no result and an unchanged worktree makes the step run the next entry, whose outcome the box takes', async () => {
@@ -373,76 +402,116 @@ test('a failure result never runs the next entry', async () => {
   assert.ok(!existsSync(log), 'no second session ran');
 });
 
-test('override_rejects_adapter_profile_faults_before_flow_commit', async () => {
+/**
+ * The overrides of one `--agent` option that sets `agents` to `profiles`, in the defined steps
+ * `steps`, or in every agent box.
+ * @param {unknown} profiles
+ * @param {string[]} [steps]
+ */
+const agentOverride = (profiles, steps) => [
+  { sets: 'agents', value: profiles, ...(steps === undefined ? {} : { steps }) },
+];
+
+test('an override whose with fails the step schema, or names a profile with a fault, is refused before the first commit', async () => {
   const agentsYaml = `${PROFILES['config/agents.yaml']}replay-x: { adapter: replay, model: x }\n`;
   const { ctx, id } = await listTask('replay', { files: { 'config/agents.yaml': agentsYaml } });
   const head = git(ctx.backlogDir, 'rev-parse', 'HEAD');
   const scriptPath = script('Work', '{ outcome: success, summary: done }');
-  const at = 'config/agents.yaml';
-  /** Each row: the override's profiles, and the message of the configuration error. */
+  // The fault names the box and the key that the option sets.
+  const at = 'config/flows/task.yaml: /flows/task/steps/first: override: the override of with.agents';
+  /** Each row: the override's value, and the message of the configuration error. */
   const rows = [
-    [['nobody'], `${at}: /nobody: agents: the agents override: the profile 'nobody' is not in config/agents.yaml`],
+    [['nobody'], `${at}: the profile 'nobody' is not in config/agents.yaml`],
     [
       ['replay', 'replay-x'],
-      `${at}: /replay-x: agents: the agents override: the profile 'replay-x': the replay adapter takes no model, and this profile gives 'x'`,
+      `${at}: the profile 'replay-x': the replay adapter takes no model, and this profile gives 'x'`,
     ],
-    [[], `${at}: : agents: the agents override: it names no profile`],
-    [undefined, `${at}: : agents: the agents override: it names no profile`],
-    ['replay', `${at}: : agents: the agents override: it names no profile`],
+    [[], `${at}: with/agents: minItems: must NOT have fewer than 1 items`],
+    ['replay', `${at}: with/agents: type: must be array`],
   ];
   for (const [profiles, message] of rows) {
-    const error = await run(ctx, id, scriptPath, { agents: { profiles } });
+    const error = await run(ctx, id, scriptPath, { overrides: agentOverride(profiles) });
     assert.ok(error instanceof ConfigurationFaults, JSON.stringify(profiles));
     assert.equal(error.message, message);
   }
   assert.equal(git(ctx.backlogDir, 'rev-parse', 'HEAD'), head, 'no commit');
   // A profile that the box check takes runs.
-  assert.equal((await run(ctx, id, scriptPath, { agents: { profiles: ['replay'] } })).outcome, 'success');
+  assert.equal((await run(ctx, id, scriptPath, { overrides: agentOverride(['replay']) })).outcome, 'success');
 });
 
-/**
- * uTop's defined steps with no step gate and no post-conditions on `implement`, whose `Escalation`
- * and `Acceptance Criteria` sections a task does not have.
- */
-function plainImplement() {
-  const gate = `  implement: [{ condition: 'sections["Escalation"] == "None."', class: needs_operator_action }]\n`;
-  const after = `    after: ['checkboxes["Acceptance Criteria"].all(c, c.checked)', 'worktree_clean()']\n`;
+/** uTop's defined steps with no post-conditions on `fix`, whose findings a task does not have. */
+function plainFix() {
+  const after = [
+    '    after:',
+    `      - '!findings.exists(f, f.state == "open" && f.category in ["Must fix", "Should fix"])'`,
+    "      - 'worktree_clean()'",
+    '',
+  ].join('\n');
   const text = UTOP['defined-steps.yaml'];
-  assert.ok(text.includes(gate) && text.includes(after), 'the uTop text the test edits');
-  return text.replace(gate, '').replace(after, '');
+  const at = text.indexOf(after, text.indexOf('\n  fix:\n'));
+  assert.ok(at > 0, 'the uTop text the test edits');
+  return text.slice(0, at) + text.slice(at + after.length);
 }
 
-/** A task flow whose `run` entry runs uTop's defined step `implement`, then the inline agent box `second`. */
-const IMPLEMENT_THEN_SECOND = [
+/**
+ * A task flow whose `run` entry runs uTop's defined step `fix` (its list `[replay, claude, codex]`),
+ * then the inline agent box `second` with the list `[replay, replay-c]`.
+ */
+const FIX_THEN_SECOND = [
   'flows:',
   '  task:',
   '    initial: draft',
   '    statuses: { draft: {}, done: {}, superseded: {} }',
   '    entries:',
-  '      run: { from: [draft], start: implement }',
+  '      run: { from: [draft], start: fix }',
   '    steps:',
-  '      implement: { success: { next: second }, failure: stop }',
-  `      second: { use: agent, with: ${HEADLESS}, success: { status: done, next: stop }, failure: stop }`,
+  '      fix: { success: { next: second }, failure: stop }',
+  `      second: { use: agent, with: ${HEADLESS.replace('[replay]', '[replay, replay-c]')}, success: { status: done, next: stop }, failure: stop }`,
   '',
 ].join('\n');
 
-test("runFlow's agents override replaces the list of the boxes of the defined steps it names, or of every agent box", async () => {
-  const flows = { 'task.yaml': IMPLEMENT_THEN_SECOND, 'defined-steps.yaml': plainImplement() };
+test('an override with steps: [fix] runs each fix box with its list, which has_capacity() sees; other agent boxes keep their own', async () => {
+  const flows = { 'task.yaml': FIX_THEN_SECOND, 'defined-steps.yaml': plainFix() };
+  const files = {
+    ...PROFILES,
+    'config/prompts/fix.md': 'Fix {{item_id}}\n',
+    'config/schemas/fix.json': fixtureText('schemas/implement.json'),
+  };
   const both = () =>
     scriptOf([
-      ['^Implement', [SUCCESS]],
+      ['^Fix', [SUCCESS]],
       ['^Work', [SUCCESS]],
     ]);
-  for (const [agents, want] of [
-    [{ profiles: ['replay-b'], steps: ['implement'] }, ['implement: replay-b', 'second: replay']],
-    [{ profiles: ['replay-b'] }, ['implement: replay-b', 'second: replay-b']],
+  // Without replay on the PATH, replay has no capacity; replay-b and replay-c carry their own PATH.
+  for (const [overrides, want] of [
+    [agentOverride(['replay-b'], ['fix']), ['fix: replay-b', 'second: replay-c']],
+    [agentOverride(['replay-b']), ['fix: replay-b', 'second: replay-b']],
   ]) {
-    const { ctx, id } = await task(undefined, { files: PROFILES, flows });
-    const result = await run(ctx, id, both(), { start: 'implement', agents });
-    assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' }, JSON.stringify(agents));
+    const { ctx, id } = await task(undefined, { files, flows });
+    const result = await run(ctx, id, both(), { overrides }, NO_REPLAY);
+    assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' }, JSON.stringify(overrides));
     // Each box has its own commit; usage.jsonl at HEAD holds both entries.
-    assert.deepEqual(agentsAtHead(ctx, id), want, JSON.stringify(agents));
+    assert.deepEqual(agentsAtHead(ctx, id), want, JSON.stringify(overrides));
   }
+  // The step gate's has_capacity() reads the override's list: [replay] has no capacity, so the box
+  // is gated, and the suspended process waits on that list. An entry there is refused (D-48), so a
+  // resume starts at the box.
+  const { ctx, id } = await task(undefined, { files, flows, state: { status: 'draft', run: 'idle', next: 'fix' } });
+  /** @type {unknown[]} */
+  const waited = [];
+  const wake = async (/** @type {any} */ _c, /** @type {any} */ suspend) => {
+    waited.push(suspend.agents);
+    throw new Error('one wake is enough');
+  };
+  const overrides = agentOverride(['replay'], ['fix']);
+  const { value } = await stderrOfAsync(async () => run(ctx, id, both(), { ...RESUME, overrides, wake }, NO_REPLAY));
+  assert.equal(/** @type {Error} */ (value).message, 'one wake is enough');
+  assert.equal(subjectAt(ctx), `${id}: fix gated before`);
+  assert.deepEqual(waited, [['replay']]);
+  // A resume that finds the box still held gives the wake the same list.
+  const resumed = await stderrOfAsync(async () => run(ctx, id, both(), { ...RESUME, overrides, wake }, NO_REPLAY));
+  assert.equal(/** @type {Error} */ (resumed.value).message, 'one wake is enough');
+  assert.deepEqual(waited, [['replay'], ['replay']]);
 });
 
 // ---- sessions and resume (F-141 D8, D-417) ----
@@ -454,7 +523,7 @@ const stateAt = (/** @type {any} */ ctx, /** @type {string} */ id, rev = 'HEAD')
 /** The subject of the commit `rev`. */
 const subjectAt = (/** @type {any} */ ctx, rev = 'HEAD') => git(ctx.backlogDir, 'log', '-1', '--format=%s', rev);
 
-/** `run` of a resumed invocation at `first`: no entry. */
+/** `run` of a resumed invocation: no entry; the interrupted box `first` is where it goes on. */
 const RESUME = { resume: true, entry: undefined };
 
 /**
@@ -532,7 +601,7 @@ test('a kept session whose profile is no longer in the list is not resumed: the 
     ['Work', [logTurn(log, 'new'), SUCCESS]],
   ]);
   const { env } = await crashInSession(ctx, id, scriptPath);
-  const result = await run(ctx, id, scriptPath, { ...RESUME, agents: { profiles: ['replay-b'] } }, env);
+  const result = await run(ctx, id, scriptPath, { ...RESUME, overrides: agentOverride(['replay-b']) }, env);
   assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
   assert.deepEqual(readFileSync(log, 'utf8').split('\n'), ['new', '']);
   assert.equal(stateAt(ctx, id, 'HEAD~1').session.profile, 'replay-b');
@@ -588,8 +657,6 @@ test('an interactive agent box with no terminal ends the invocation idle with th
 
 // ---- an interactive session under a pseudo-terminal (F-141 D4, F-147 D7) ----
 
-const FLOW_CHILD = join(import.meta.dirname, '..', 'test', 'helpers', 'flow-child.js');
-
 test('under a pseudo-terminal, an interactive agent box on replay answers a scripted ask and takes the chosen branch', async () => {
   const { ctx, id } = await task(INTERACTIVE);
   const ask = [
@@ -598,7 +665,7 @@ test('under a pseudo-terminal, an interactive agent box on replay answers a scri
   ].join(' ');
   const scriptPath = scriptOf([['Work (?<id>T-\\d+)', ["say: 'Looking at {{id}}.'", ask]]]);
   const resultFile = join(mkTempDir('bl-agent-pty-'), 'result.json');
-  const term = pty.spawn(process.execPath, [FLOW_CHILD, ctx.backlogDir, id, 'first', resultFile], {
+  const term = pty.spawn(process.execPath, [FLOW_CHILD, ctx.backlogDir, id, 'run', resultFile], {
     env: { ...process.env, ...replayEnv(scriptPath) },
     cols: 200,
   });

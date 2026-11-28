@@ -150,6 +150,21 @@ export function itemDir(ctx, text) {
 }
 
 /**
+ * The directory of the item with id `text`, as `itemDir` gives it, for a
+ * caller that needs the item to exist.
+ *
+ * @param {StoreContext} ctx
+ * @param {string} text
+ * @returns {Item}
+ * @throws {Error} that names `text`, when its type's `dir` holds no such item
+ */
+export function existingItem(ctx, text) {
+  const item = itemDir(ctx, text);
+  if (item === null) throw new Error(`there is no item ${text} in the backlog`);
+  return item;
+}
+
+/**
  * Every item of every type: the types in `id_prefixes` order, each type's
  * items in number order.
  *

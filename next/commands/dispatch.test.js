@@ -12,9 +12,10 @@ import { KINDS } from '../config/kinds.js';
 import { loadConfiguration } from '../config/load.js';
 import { ALERTS, TEMPLATES } from '../test/helpers/config-fixture.js';
 import { withEnv } from '../test/helpers/env.js';
+import { buildLoaded, step } from '../test/helpers/flow-fixture.js';
 import { ESCAPE, recorder } from '../test/helpers/streams.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
-import { blIn, CommandFailed, dispatch, runInProcess, startFaults } from './dispatch.js';
+import { blIn, CommandFailed, dispatch, entryArgFaults, runInProcess, startFaults } from './dispatch.js';
 import { writeOutput } from './output.js';
 
 /** The fixture op: it gives back its arguments and its context. */
@@ -43,6 +44,28 @@ start:
   help: start an item
 `;
 
+/** The `--agent` option of the entry `start`, with the `sets` and `steps` of an override (F-152 D4). */
+const AGENT = { metavar: 'profile', nargs: 1, help: 'the agent profile', sets: 'agents', steps: ['implement'] };
+
+/**
+ * The flow set of every fixture: the story and task flows both have the entry `start`, with one
+ * `--agent` option declared alike, and the task's with `--dry-run` too.
+ */
+const FLOW_SET = Object.freeze({
+  flows: {
+    story: { entries: { start: { from: ['draft'], start: 'work', args: { '--agent': AGENT } } } },
+    task: {
+      entries: {
+        start: {
+          from: ['draft'],
+          start: 'work',
+          args: { '--agent': AGENT, '--dry-run': { action: 'store_true', help: 'change nothing' } },
+        },
+      },
+    },
+  },
+});
+
 /** The shop's `mocha` color scheme of every fixture. */
 const MOCHA = 'match: [bold, "#f9e2af"]\n';
 
@@ -53,7 +76,7 @@ const MOCHA = 'match: [bold, "#f9e2af"]\n';
  * `mocha`; `schemes` are the shop's color-scheme files, name → text, and
  * `operatorSchemes` the operator's. `registry` is added to backlog.yaml.
  * `alerts` is config/alerts.yaml, and `templates` the shop's language files,
- * name → text.
+ * name → text. The context's flow set is `FLOW_SET`.
  */
 function fixture(
   commands = COMMANDS,
@@ -87,7 +110,7 @@ function fixture(
   if (views !== undefined) writeFileSync(join(backlogDir, 'config', 'views.yaml'), views);
   if (operatorViews !== undefined) writeFileSync(join(operatorDir, 'views.yaml'), operatorViews);
   const config = loadConfiguration({ backlogDir, operatorDir, kinds: KINDS });
-  return { config, backlogDir };
+  return { config, backlogDir, flowSet: FLOW_SET };
 }
 
 const run = (argv, at = fixture()) => dispatch(argv, { ...at, ops: OPS });
@@ -99,7 +122,10 @@ test('dispatch runs the named op with the parsed arguments and the context', asy
   assert.equal(outcome.op, echo);
   const expected = { ids: ['F-1', 'S-2'], limit: 3, state: 'open', json: false };
   assert.deepEqual(outcome.args, expected);
-  assert.deepEqual(outcome.result, { args: expected, ctx: { config: at.config, backlogDir: at.backlogDir } });
+  assert.deepEqual(outcome.result, {
+    args: expected,
+    ctx: { config: at.config, backlogDir: at.backlogDir, flowSet: FLOW_SET },
+  });
 });
 
 test("a line's args go before the caller's arguments, so the caller's win", async () => {
@@ -169,12 +195,125 @@ test('a bad value or no command is an argparse error with the usage, exit 2', as
   assert.match(none.stderr, /bl-next: error: the following arguments are required: command\n$/);
 });
 
-test('an entry line exits 2: entries are not supported yet', async () => {
-  assert.deepEqual(await run(['start']), {
-    status: 2,
-    stdout: '',
-    stderr: 'bl-next: start: entries are not supported yet\n',
+// ---------------------------------------------------------------------------
+// entry commands (F-152 D6)
+// ---------------------------------------------------------------------------
+
+test("<entry> --help lists the id and the options of every flow's entry of that name, each once, with the item types that accept each, without sets and steps", async () => {
+  const { status, stdout } = await run(['start', '--help']);
+  assert.equal(status, 0);
+  assert.match(stdout, /^usage: bl-next start \[-h\] \[--agent profile\] \[--dry-run\] \[--json\] id\n/);
+  assert.match(stdout, /\n {2}id +the item \(item types: story, task\)\n/);
+  assert.match(stdout, /\n {2}--agent profile +the agent profile \(item types: story, task\)\n/);
+  // Only the task flow's entry declares --dry-run.
+  assert.match(stdout, /\n {2}--dry-run +change nothing \(item types: task\)\n/);
+  assert.match(stdout, /\n {2}--json +print the records as JSON\n/);
+  assert.equal(stdout.split('--agent profile').length - 1, 2, 'once in the usage and once in the options');
+  assert.doesNotMatch(stdout, /sets|steps|agents|implement/);
+});
+
+test('an entry command needs the id, suggests its options, and runs the entry with the parsed arguments', async () => {
+  const none = await run(['start']);
+  assert.equal(none.status, 2);
+  assert.match(none.stderr, /bl-next start: error: the following arguments are required: id\n$/);
+  assert.equal(
+    (await run(['start', 'S-1', '--agnet'])).stderr,
+    "bl-next: '--agnet' is not an option of 'start'. Did you mean '--agent'?\n",
+  );
+  // The fixture backlog has no item types: the entry runs, and refuses the id.
+  await assert.rejects(run(['start', 'S-1', '--agent', 'p']), /not an item id: "S-1"/);
+});
+
+/**
+ * The fault lines of `entryArgFaults` for a flow set whose story and task flows each have a `fix`
+ * entry with the options `story` and `task`.
+ * @param {Record<string, object>} story
+ * @param {Record<string, object>} [task]
+ */
+function entryArgLines(story, task = {}) {
+  const flow = (/** @type {Record<string, object>} */ args) => ({
+    initial: 'draft',
+    statuses: { draft: {} },
+    entries: { fix: { from: ['draft'], start: 'fix', args } },
+    steps: { fix: { success: 'stop', failure: 'stop' } },
   });
+  const { config, backlogDir, flowSet } = buildLoaded(
+    {
+      'settings.yaml': { max_box_visits: 20, gate_recheck_minutes: 15 },
+      'steps.yaml': { defined_steps: { fix: { use: 'agent', with: { agents: ['replay'] } } } },
+      'story.yaml': { flows: { story: flow(story) } },
+      'task.yaml': { flows: { task: flow(task) } },
+    },
+    { agent: step({ type: 'object', properties: { agents: {} } }) },
+  );
+  const faults = entryArgFaults(config, flowSet);
+  return faults.length === 0 ? [] : new ConfigurationFaults(faults, backlogDir).message.split('\n');
+}
+
+test('entryArgFaults_rejects_reserved_entry_arguments: the parser of the entry command refuses each', () => {
+  const at = (/** @type {string} */ name) =>
+    `config/flows/story.yaml: /flows/story/entries/fix/args/${name}: args: the parser of the entry command 'fix' refuses '${name}':`;
+  for (const [name, options, why] of /** @type {const} */ ([
+    ['--json', {}, 'argument --json: conflicting option string: --json'],
+    ['--help', {}, 'argument --help: conflicting option string: --help'],
+    ['-h', {}, 'argument -h: conflicting option string: -h'],
+    ['id', {}, "it stores its value under 'id', as id does"],
+    ['--id', {}, "it stores its value under 'id', as id does"],
+    ['--out', { dest: 'json' }, "it stores its value under 'json', as --json does"],
+  ])) {
+    assert.deepEqual(entryArgLines({ [name]: options }), [`${at(name)} ${why}`], `${name} ${JSON.stringify(options)}`);
+  }
+  // argparse's help action stores no value, so an option may store under `help`.
+  for (const [name, options] of /** @type {const} */ ([
+    ['--json-out', {}],
+    ['--agent', {}],
+    ['-a', {}],
+    ['target', {}],
+    ['--to', { dest: 'help' }],
+  ])) {
+    assert.deepEqual(entryArgLines({ [name]: options }), [], name);
+  }
+});
+
+test('entryArgFaults_rejects_colliding_entry_option_destinations: two options that argparse stores under one dest', () => {
+  const at = (/** @type {string} */ type, /** @type {string} */ name) =>
+    `config/flows/${type}.yaml: /flows/${type}/entries/fix/args/${name}: args: the parser of the entry command 'fix' refuses '${name}':`;
+  for (const [what, story, task, lines] of /** @type {const} */ ([
+    [
+      'an explicit dest',
+      { '--a': { dest: 'shared' }, '--b': { dest: 'shared' } },
+      {},
+      [`${at('story', '--b')} it stores its value under 'shared', as --a does`],
+    ],
+    [
+      'the default dests of two names',
+      { '--dry-run': {}, '--dry_run': {} },
+      {},
+      [`${at('story', '--dry_run')} it stores its value under 'dry_run', as --dry-run does`],
+    ],
+    [
+      'an explicit dest and a default dest',
+      { '--out': {}, '--to': { dest: 'out' } },
+      {},
+      [`${at('story', '--to')} it stores its value under 'out', as --out does`],
+    ],
+    [
+      'a positional and an option',
+      { target: {}, '--target': {} },
+      {},
+      [`${at('story', '--target')} it stores its value under 'target', as target does`],
+    ],
+    [
+      'options of two item types',
+      { '--a': { dest: 'shared' } },
+      { '--b': { dest: 'shared' } },
+      [`${at('task', '--b')} it stores its value under 'shared', as --a does`],
+    ],
+  ])) {
+    assert.deepEqual(entryArgLines(story, task), lines, what);
+  }
+  // Two dests, and one option that both item types declare alike.
+  assert.deepEqual(entryArgLines({ '--a': {}, '--b': {} }, { '--a': {} }), []);
 });
 
 test('startFaults names config/commands.yaml and /<name>/op for each op that the ops map does not hold', () => {
@@ -244,6 +383,14 @@ stories:
     'config/views.yaml: /stories/footer: cel: Unknown variable: items',
     'config/views.yaml: /stories/style: cel: Unknown variable: owner',
   ]);
+});
+
+test('a view of an entry command is checked against the entry record schema: its fields, and item_id', () => {
+  const view = (/** @type {string} */ field) =>
+    `start:\n  columns:\n    - { field: item_id, header: Item, justify: left, truncate: false }\n    - { field: ${field}, header: X, justify: left, truncate: false }\n`;
+  for (const field of ['event', 'box', 'ended', 'step', 'input', 'record.note'])
+    assert.equal(viewFaults(view(field)), '', field);
+  assert.equal(viewFaults(view('nosuch')), 'config/views.yaml: /start/columns/1/field: cel: Unknown variable: nosuch');
 });
 
 test('a view key that names no command is a fault at /<name>', () => {

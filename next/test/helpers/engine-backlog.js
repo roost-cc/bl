@@ -1,11 +1,24 @@
 // A committed backlog git repo for tests of the engine's conditions and gates (`engine/conditions.js`,
 // `engine/gates.js`): the uTop flow set, the types feature, story and task, the containment and
 // dependency graphs, and items made through `storeWrite`.
+import { parse, stringify } from 'yaml';
 import { git, initRepo } from './git.js';
 import { fixture, load } from './config-fixture.js';
 import { UTOP, UTOP_STEPS } from './flow-fixture.js';
 import { buildFlowSet } from '../../engine/flow-set.js';
 import { storeWrite } from '../../store/write.js';
+
+/**
+ * uTop's `defined-steps.yaml` with no step gates and no post-conditions (their conditions call
+ * functions that F-139 does not bind), after `edit` changes its `defined_steps`.
+ */
+export function definedSteps(edit = (/** @type {any} */ _steps) => {}) {
+  const value = parse(UTOP['defined-steps.yaml']);
+  delete value.step_gates;
+  for (const step of Object.values(value.defined_steps)) delete step.after;
+  edit(value.defined_steps);
+  return stringify(value);
+}
 
 const FILES = {
   'backlog.yaml': [

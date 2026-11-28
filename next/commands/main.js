@@ -6,7 +6,9 @@
  * configuration fault, or a fault of the flow set, stops it with one line per
  * fault and a line that names `bl-validate` (D-423). It then parses the
  * arguments and runs the command through `dispatch.js`, and prints the op's
- * records through `output.js`.
+ * records through `output.js`. An error of the op or of its records, such as
+ * an entry that its checks refuse (F-152 D6), ends it with one line,
+ * `bl-next: <message>`, and exit 1.
  *
  * Before the load, it names the terminal tab (F-138 D9): the status is the
  * command name, or `help` when the arguments are empty or hold `-h` or
@@ -19,7 +21,7 @@ import { findBacklogRoot, operatorDir } from '../config/files.js';
 import { KINDS } from '../config/kinds.js';
 import { loadConfiguration } from '../config/load.js';
 import { buildFlowSet, checkAgentBoxes, checkRankGraph, shopSteps, STEPS } from '../engine/flow-set.js';
-import { blIn, CommandFailed, dispatch, PROG, startFaults } from './dispatch.js';
+import { blIn, CommandFailed, dispatch, entryArgFaults, PROG, startFaults } from './dispatch.js';
 import { OPS } from './ops/index.js';
 import { writeOutput } from './output.js';
 import { captureTmuxWindowId, updateTabTitle } from './tab-title.js';
@@ -42,7 +44,8 @@ function startStatus(argv) {
  * @param {{ ops?: Readonly<Record<string, import('./ops/index.js').Op>>, steps?: Readonly<Record<string, import('../engine/flow-set.js').Step>> }} [options]
  *   `ops` is the op registry, `OPS`, and `steps` the step catalogue, `STEPS`,
  *   to which the shop's steps are added; a test passes fixture ops and steps
- * @returns {Promise<number>} the exit code: 1 on a configuration fault, 2 on a usage error, the status of a pager that started and failed
+ * @returns {Promise<number>} the exit code: 1 on a configuration fault or an error of the op, 2 on a
+ *   usage error, the status of a pager that started and failed
  */
 export async function main(argv, { ops = OPS, steps = STEPS } = {}) {
   // The window id first, before any async work, so every title targets the
@@ -66,8 +69,12 @@ export async function main(argv, { ops = OPS, steps = STEPS } = {}) {
     catalogue = Object.freeze({ ...steps, ...shopSteps(config) });
     flowSet = buildFlowSet(config, catalogue, backlogDir);
     // A rank box needs the rank graph (F-140 D8), and an agent box the names it gives (F-141 D5);
-    // only the flow set says which boxes there are.
-    const boxFaults = [...checkRankGraph({ backlogDir, config }, flowSet), ...checkAgentBoxes(config, flowSet)];
+    // only the flow set says which boxes there are, and which entry options (F-152 D6).
+    const boxFaults = [
+      ...checkRankGraph({ backlogDir, config }, flowSet),
+      ...checkAgentBoxes(config, flowSet),
+      ...entryArgFaults(config, flowSet),
+    ];
     if (boxFaults.length > 0) throw new ConfigurationFaults(boxFaults, backlogDir);
   } catch (error) {
     process.stderr.write(
@@ -83,10 +90,10 @@ export async function main(argv, { ops = OPS, steps = STEPS } = {}) {
     process.stderr.write(stderr);
     return status;
   };
-  const outcome = await dispatch(argv, context);
-  if ('status' in outcome) return exit(outcome);
-  const { name, op, args, result } = outcome;
   try {
+    const outcome = await dispatch(argv, context);
+    if ('status' in outcome) return exit(outcome);
+    const { name, op, args, result } = outcome;
     // A pager that started and failed fails the command with its status.
     return await writeOutput({
       command: name,
@@ -100,6 +107,8 @@ export async function main(argv, { ops = OPS, steps = STEPS } = {}) {
   } catch (error) {
     // A `{{#bl}}` command that failed fails this one, with its message (D7).
     if (error instanceof CommandFailed) return exit(error.exit);
-    throw error;
+    // An op that refused (an entry's checks, D-48) or a flow that crashed: one line that says why.
+    process.stderr.write(`${PROG}: ${/** @type {Error} */ (error).message}\n`);
+    return 1;
   }
 }

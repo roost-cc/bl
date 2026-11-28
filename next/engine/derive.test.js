@@ -9,7 +9,20 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { celEnvironment } from '../config/cel.js';
 import { build, faultLines, step, UTOP, UTOP_STEPS } from '../test/helpers/flow-fixture.js';
+import { celNodes } from './derive.js';
+
+test('celNodes gives each node of a parse tree, the root first, depth first, with the calls inside a list', () => {
+  const env = celEnvironment({ predicates: {} });
+  const ops = [...celNodes(env.parse('has_capacity() && status in ["a", "b"]').ast)].map(({ op }) => op);
+  assert.deepEqual(ops, ['&&', 'call', 'in', 'id', 'list', 'value', 'value']);
+  const calls = [...celNodes(env.parse('[has_capacity()].size() > 0').ast)].filter(({ op }) => op === 'call');
+  assert.deepEqual(
+    calls.map(({ args }) => /** @type {unknown[]} */ (args)[0]),
+    ['has_capacity'],
+  );
+});
 
 test("on the uTop flow set, deliver's status arrows have the derived from of flow-config.md's table, for the story and the feature", () => {
   const set = build(UTOP, UTOP_STEPS);

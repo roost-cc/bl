@@ -1,20 +1,20 @@
 /**
- * The `agents` list of a box, the override check, and the capacity walk (F-141 D7). The runs of
- * the D-120 rule are in `engine/agent-step.test.js`, because only `engine/` may import the runner.
+ * The `agents` list of a box, and the capacity walk (F-141 D7). The override check is in
+ * `engine/overrides.test.js`, and the runs of the D-120 rule are in `engine/agent-step.test.js`,
+ * because only `engine/` may import the runner.
  */
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'fs';
 import { join } from 'path';
-import { ConfigurationFaults } from '../config/check.js';
 import { engineBacklog } from '../test/helpers/engine-backlog.js';
 import { withEnv } from '../test/helpers/env.js';
 import { UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 import { replayEnv } from '../test/helpers/replay.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 import { agent } from './agent.js';
-import { agentList, capacityOf, checkOverride, firstWithCapacity } from './capacity.js';
+import { agentList, capacityOf, firstWithCapacity } from './capacity.js';
 
 /** A replay script with the top-level `capacity` text `capacity`, or none. */
 function scriptWith(/** @type {string|undefined} */ capacity) {
@@ -66,33 +66,11 @@ test('firstWithCapacity stops at the first entry with capacity, and gives the re
   });
 });
 
-test("agentList gives an agent box's list, or the override's where its steps name the box's defined step", () => {
+test("agentList gives the agents of an agent box's with after the overrides, and nothing for another box", () => {
   const { flowSet } = engineBacklog({}, undefined, { ...UTOP_STEPS, agent });
   const { nodes } = flowSet.flows.story;
   const { implement } = nodes;
-  assert.equal(implement.defined, 'implement');
-  assert.deepEqual(agentList(implement), ['replay', 'claude-opus', 'codex']);
-  const only = { profiles: ['replay-b'], steps: ['implement'] };
-  assert.deepEqual(agentList(implement, only), ['replay-b']);
-  assert.deepEqual(agentList(nodes.refine, only), ['replay', 'claude', 'codex'], 'another defined step');
-  assert.deepEqual(agentList(nodes.refine, { profiles: ['replay-b'] }), ['replay-b'], 'no steps: every agent box');
-  assert.equal(agentList(nodes.in_unit, { profiles: ['replay-b'] }), undefined, 'a box that runs no agent');
-});
-
-test('checkOverride refuses each profile that config/agents.yaml does not define, and no list or an empty one', () => {
-  const { config, backlogDir } = engineBacklog();
-  assert.doesNotThrow(() => checkOverride({ config, backlogDir }, undefined));
-  assert.doesNotThrow(() => checkOverride({ config, backlogDir }, { profiles: ['replay', 'codex'] }));
-  assert.throws(
-    () => checkOverride({ config, backlogDir }, { profiles: ['nobody', 'replay', 'none'] }),
-    (/** @type {any} */ error) =>
-      error instanceof ConfigurationFaults && error.faults.map(({ path }) => path).join(' ') === '/nobody /none',
-  );
-  for (const profiles of [[], undefined, 'replay']) {
-    assert.throws(
-      () => checkOverride({ config, backlogDir }, /** @type {any} */ ({ profiles })),
-      (/** @type {any} */ error) => error.faults[0]?.message === 'the agents override: it names no profile',
-      JSON.stringify(profiles),
-    );
-  }
+  assert.deepEqual(agentList(implement), ['replay', 'claude-opus', 'codex'], "the box's own with");
+  assert.deepEqual(agentList(implement, { ...implement.with, agents: ['replay-b'] }), ['replay-b']);
+  assert.equal(agentList(nodes.in_unit, { agents: ['replay-b'] }), undefined, 'a box that runs no agent');
 });

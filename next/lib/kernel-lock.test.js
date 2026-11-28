@@ -8,6 +8,7 @@ import { spawnSyncFiles } from './child-stdio.js';
 import { adopt, assertHeld, holderFileOf, holderOf, holds, release, tryLock, tryLockOnce } from './kernel-lock.js';
 import { git } from '../test/helpers/git.js';
 import { holdLock, holdLockInChild } from '../test/helpers/hold-lock.js';
+import { spawnToFiles, untilStderrHas } from '../test/helpers/spawn-files.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 
 const STAMP = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/;
@@ -64,6 +65,32 @@ test('tryLock names a holder that has not written its PID yet as unknown', () =>
   } finally {
     other.release();
   }
+});
+
+// A check (`holderOf`) of a free lock holds it shared for an instant. A take in
+// that instant tried once and failed, so `bl run` could refuse an item that only
+// `bl stop` polled (F-152 fix-tests round 4). Here a child holds the shared lock
+// for 300 ms, as a check that the scheduler stops would.
+test('take_retries_while_a_check_holds_the_lock: a check does not refuse a take or another check', async () => {
+  const path = join(mkTempDir('bl-kernel-lock-'), 'x.lock');
+  writeFileSync(path, '');
+  const run = spawnToFiles(process.execPath, [
+    '--input-type=module',
+    '-e',
+    `import fsExt from ${JSON.stringify(import.meta.resolve('fs-ext'))};
+     import { openSync } from 'node:fs';
+     fsExt.flockSync(openSync(process.argv[1], 'r'), 'shnb');
+     process.stderr.write('ready\\n');
+     setTimeout(() => {}, 300);`,
+    path,
+  ]);
+  await untilStderrHas(run, 'ready');
+  assert.equal(run.read().stderr, 'ready\n');
+  assert.equal(holderOf(path), null, 'a check finds the lock free while another check holds it');
+  const got = tryLock(path);
+  assert.ok('taken' in got, JSON.stringify(got));
+  release(got.taken);
+  assert.equal((await run.closed).status, 0);
 });
 
 test('tryLock is re-entrant in one process: only the last release frees the lock', () => {

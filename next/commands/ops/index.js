@@ -6,11 +6,18 @@
  * prints them. F-138 registers no op: each later feature adds one line here.
  */
 
+import { force } from './force.js';
+import { outcome } from './outcome.js';
+import { resume } from './resume.js';
+import { stop } from './stop.js';
+
 /**
  * @typedef {object} OpContext
  * @property {import('../../config/load.js').Configuration} config  the frozen configuration
  * @property {string} backlogDir  the backlog's root
  * @property {import('../../engine/flow-set.js').FlowSet} flowSet  the flow set, built once at start
+ * @property {Readonly<Record<string, import('../../steps/index.js').Step>>} catalogue  the step
+ *   catalogue: the code steps and the shop's (F-140 D6), which a command that runs a flow gives it
  * @property {(line: string) => Promise<string>} [bl]  runs a `{{#bl}}` line in
  *   this process (`blIn`); the flow runner gives it to steps (F-141 D5)
  */
@@ -28,4 +35,4 @@
  */
 
 /** @type {Readonly<Record<string, Op>>} op name → op */
-export const OPS = Object.freeze({});
+export const OPS = Object.freeze({ force, outcome, resume, stop });

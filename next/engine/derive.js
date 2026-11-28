@@ -31,31 +31,45 @@ const isStatus = (node) => node?.op === 'id' && node.args === 'status';
 const isString = (node) => node?.op === 'value' && typeof node.args === 'string';
 
 /**
+ * Each node of the parse tree `ast`, the root first, then the nodes in its
+ * `args`, depth first. The status literals of a property (D-40) and the
+ * `has_capacity()` call of a gate entry (`wake.js`, F-152 D3) are both found
+ * by this walk.
+ * @param {unknown} ast
+ * @returns {Generator<CelNode>}
+ */
+export function* celNodes(ast) {
+  if (Array.isArray(ast)) {
+    for (const node of ast) yield* celNodes(node);
+    return;
+  }
+  if (ast === null || typeof ast !== 'object') return;
+  const node = /** @type {CelNode} */ (ast);
+  yield node;
+  yield* celNodes(node.args);
+}
+
+/**
  * The string literals that `ast` compares `status` with: `status == "x"`,
  * `"x" != status` and `status in ["x", "y"]`, anywhere in the expression.
  * @param {unknown} ast
  * @returns {Generator<string>}
  */
 function* statusLiterals(ast) {
-  if (Array.isArray(ast)) {
-    for (const node of ast) yield* statusLiterals(node);
-    return;
-  }
-  if (ast === null || typeof ast !== 'object') return;
-  const node = /** @type {CelNode} */ (ast);
-  const [a, b] = Array.isArray(node.args) ? node.args : [];
-  if (node.op === '==' || node.op === '!=') {
-    for (const [x, y] of [
-      [a, b],
-      [b, a],
-    ]) {
-      if (isStatus(x) && isString(y)) yield y.args;
+  for (const node of celNodes(ast)) {
+    const [a, b] = Array.isArray(node.args) ? node.args : [];
+    if (node.op === '==' || node.op === '!=') {
+      for (const [x, y] of [
+        [a, b],
+        [b, a],
+      ]) {
+        if (isStatus(x) && isString(y)) yield y.args;
+      }
+    }
+    if (node.op === 'in' && isStatus(a) && b?.op === 'list') {
+      for (const item of b.args) if (isString(item)) yield item.args;
     }
   }
-  if (node.op === 'in' && isStatus(a) && b?.op === 'list') {
-    for (const item of b.args) if (isString(item)) yield item.args;
-  }
-  yield* statusLiterals(node.args);
 }
 
 /**

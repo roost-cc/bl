@@ -7,7 +7,12 @@
  *
  *   1. the names across the set (D-25, D-33, D-38, D-44) and the two settings;
  *   2. each defined step's code step and `with:` (D-33, D-34), the CEL that
- *      a step's `with` schema marks compiled (F-140 D5);
+ *      a step's `with` schema marks compiled (F-140 D5); then each entry
+ *      option's `sets` and `steps`: `steps` only with `sets`, each name in
+ *      `steps` a defined step whose code step's `with` schema has the
+ *      property `sets`, one declaration of an option across the entries of
+ *      one name (D-424, F-152 D4). The parser of the entry commands checks
+ *      the rest (`entryArgFaults`, `commands/dispatch.js`);
  *   3. what each box runs: a code step, a defined step or a subflow, by name,
  *      inline or under another name (D-36), with its step gate (D-38);
  *   4. where each arrow goes: a box of the same flow or subflow, `stop` in a
@@ -27,11 +32,13 @@
  */
 
 import { join } from 'path';
+import { isDeepStrictEqual } from 'util';
 import { celEnvironment } from '../config/cel.js';
 import { attribute, checkMarked, checkValue, compileCel, ConfigurationFaults } from '../config/check.js';
 import { pointerToken } from '../config/files.js';
 import { KINDS } from '../config/kinds.js';
 import { checkFlow, deriveStatuses } from './derive.js';
+import { takesKey } from './overrides.js';
 
 /**
  * The step catalogue that `bl-next` passes to `buildFlowSet` (D2), with the
@@ -60,7 +67,7 @@ const FLOWS_KIND = /** @type {import('../config/kinds.js').Kind} */ (KINDS.find(
 export const STOP = 'stop';
 
 /** The outcomes a box has arrows for (D-26): the ones the schema lets `return:` name. */
-const OUTCOMES = /** @type {readonly ('success'|'failure')[]} */ (
+export const OUTCOMES = /** @type {readonly ('success'|'failure')[]} */ (
   /** @type {any} */ (FLOWS_KIND.schema).$defs.Arrow.properties.return.enum
 );
 
@@ -298,6 +305,32 @@ export function buildFlowSet(config, catalogue, backlogDir) {
   for (const [, def] of defined) {
     if (!isCode(def.value.use)) fault(def.file, `${def.path}/use`, 'step', `'${def.value.use}' names no code step`);
     checkWith(def.file, def.path, def.value.use, def.value.with);
+  }
+
+  // ---- 2b. the options of the entries (D-424, F-152 D4) ----
+  /** @type {Map<string, { file: File, value: unknown }>} `<entry name>\0<option>` → its first declaration */
+  const options = new Map();
+  for (const [, def] of flows) {
+    for (const [name, entry] of Object.entries(def.value.entries ?? {})) {
+      for (const [option, value] of Object.entries(entry.args ?? {})) {
+        const path = `${def.path}/entries/${pointerToken(name)}/args/${pointerToken(option)}`;
+        const { sets, steps = [] } = /** @type {{ sets?: string, steps?: string[] }} */ (value);
+        if (sets === undefined && steps.length > 0)
+          fault(def.file, `${path}/steps`, 'args', 'steps needs sets: the key of with that the option replaces');
+        for (const [index, step] of steps.entries()) {
+          const at = `${path}/steps/${index}`;
+          const use = defined.get(step)?.value.use;
+          if (use === undefined) fault(def.file, at, 'args', `'${step}' names no defined step`);
+          else if (sets !== undefined && isCode(use) && !takesKey(catalogue[use], sets))
+            fault(def.file, at, 'args', `the with of '${step}' (the step '${use}') has no property '${sets}'`);
+        }
+        const key = `${name}\0${option}`;
+        const first = options.get(key);
+        if (first === undefined) options.set(key, { file: def.file, value });
+        else if (!isDeepStrictEqual(first.value, value))
+          fault(def.file, path, 'args', `the entry '${name}' declares ${option} differently in ${first.file.name}`);
+      }
+    }
   }
 
   // ---- 3. and 4. boxes and their arrows ----
