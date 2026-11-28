@@ -35,11 +35,14 @@ const FILES = {
  * @param {Readonly<Record<string, any>> | ((config: any) => Readonly<Record<string, any>>)} [catalogue]
  *   the step catalogue, or a function of the loaded configuration that gives
  *   it (for the shop's steps)
+ * @param {Record<string, string>} [files]  more files, path under the backlog → text
+ *   (for example `config/alerts.yaml`)
  * @returns {{ backlogDir: string, config: any, flowSet: import('../../engine/flow-set.js').FlowSet }}
  */
-export function engineBacklog(flows = {}, backlogYaml = 'repos: {}\n', catalogue = UTOP_STEPS) {
+export function engineBacklog(flows = {}, backlogYaml = 'repos: {}\n', catalogue = UTOP_STEPS, files = {}) {
   const all = {
     ...FILES,
+    ...files,
     'backlog.yaml': FILES['backlog.yaml'] + backlogYaml,
     ...Object.fromEntries(Object.entries({ ...UTOP, ...flows }).map(([name, text]) => [`config/flows/${name}`, text])),
   };

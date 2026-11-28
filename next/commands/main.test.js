@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, writeFileSync } from 'fs';
 import { delimiter, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { ALERTS, ALERTS_PATH } from '../test/helpers/config-fixture.js';
+import { ALERTS, ALERTS_PATH, TEMPLATES, TEMPLATES_PATH } from '../test/helpers/config-fixture.js';
 import { fakeTmux, renamedTitles } from '../test/helpers/fake-tmux.js';
 import { spawnToFiles } from '../test/helpers/spawn-files.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
@@ -35,8 +35,13 @@ async function runBlNext(files, { backlog = true, argv = [], env: extra = {}, bi
   const home = mkTempDir('bl-main-');
   // Every fixture backlog names the color scheme `mocha`, which the start check needs (D8), and
   // has a flow set with its two settings, which the flow set needs (F-139 D4), and the alert
-  // routing (F-140 D2).
-  const defaults = { [MOCHA_FILE]: MOCHA, [FLOW_SET_FILE]: FLOW_SET, [ALERTS_PATH]: ALERTS };
+  // routing (F-140 D2), and a template file for its language (F-140 D9).
+  const defaults = {
+    [MOCHA_FILE]: MOCHA,
+    [FLOW_SET_FILE]: FLOW_SET,
+    [ALERTS_PATH]: ALERTS,
+    [TEMPLATES_PATH]: TEMPLATES,
+  };
   for (const [path, text] of Object.entries({ ...defaults, ...files })) {
     mkdirSync(dirname(join(home, path)), { recursive: true });
     writeFileSync(join(home, path), text);

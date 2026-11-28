@@ -15,7 +15,7 @@ import { ArgumentParser } from 'argparse';
 import { parse } from 'shell-quote';
 import { attribute, compileCel } from '../config/check.js';
 import { pointerToken } from '../config/files.js';
-import { pluginFaults } from '../engine/flow-set.js';
+import { checkNotifications, pluginFaults } from '../engine/flow-set.js';
 import { addArgs } from './args.js';
 import { markdownForm, matchOf } from './output.js';
 import { colorScheme, refusedFormats } from './style.js';
@@ -108,7 +108,9 @@ function viewExpressions(at, view) {
  *     command has no op schema, and F-139 checks it;
  *   - the color scheme and its formats (`colorSchemeFaults`);
  *   - each plugin command that fills a name raw (`pluginFaults`, F-140
- *     Decision A5).
+ *     Decision A5);
+ *   - each route to a channel that `bl.notify` does not define, and a
+ *     `language` with no template file (`checkNotifications`, F-140 D9).
  * @param {Configuration} config
  * @param {Readonly<Record<string, Op>>} ops
  * @returns {Fault[]}
@@ -136,7 +138,13 @@ export function startFaults(config, ops) {
     }));
     return compileCel(recorded, viewEnvironment(op.schema));
   });
-  return [...opFaults, ...viewFaults, ...colorSchemeFaults(config), ...pluginFaults(config)];
+  return [
+    ...opFaults,
+    ...viewFaults,
+    ...colorSchemeFaults(config),
+    ...pluginFaults(config),
+    ...checkNotifications(config),
+  ];
 }
 
 /**

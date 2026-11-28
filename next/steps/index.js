@@ -14,6 +14,7 @@
 
 import { assertStep, succeed } from './simple.js';
 import { increment } from './increment.js';
+import { notify } from './notify.js';
 import { rank } from './rank.js';
 
 /** @typedef {'success'|'failure'} Outcome */
@@ -25,6 +26,8 @@ import { rank } from './rank.js';
  * @property {string} id  the item's id
  * @property {string} type  the item's type
  * @property {string} box  the box path, for example `deliver/self_check/test_unit`
+ * @property {string} [from]  the path of the previous node of the invocation,
+ *   the box the flow came from; absent at its first node (F-140 D9)
  * @property {Record<string, unknown>} record  the item's record when the step starts
  * @property {import('../config/load.js').Configuration} config  the frozen configuration
  * @property {string} backlogDir  the backlog's root
@@ -56,4 +59,5 @@ export const STEPS = Object.freeze({
   assert: assertStep,
   increment,
   rank,
+  notify,
 });

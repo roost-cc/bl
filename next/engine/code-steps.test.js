@@ -1,4 +1,4 @@
-// The code steps succeed, assert and increment (F-140 D5), shop steps (D6) and rank (D8), on a fixture task flow beside the uTop
+// The code steps succeed, assert and increment (F-140 D5), shop steps (D6), rank (D8) and notify (D9), on a fixture task flow beside the uTop
 // flow set, run by F-139's runner with the real step catalogue. They are here, not in steps/,
 // because only engine/ may import the runner (the layer rule, F-135 D3).
 import { test } from 'node:test';
@@ -253,5 +253,112 @@ test('increment_with_needs_counter_and_threshold_of_1_or_more', () => {
       /first\/with/,
       JSON.stringify(value),
     );
+  }
+});
+
+// ---- notify (F-140 D9) ----
+
+const fixtureText = (/** @type {string} */ name) =>
+  readFileSync(new URL(`../test/fixtures/${name}`, import.meta.url), 'utf8');
+
+/**
+ * A task flow that comes to `box` from uTop's defined step `self_round_cap` at its cap, as
+ * `self_check.yaml` does, so `box.name` is `self_round_cap`.
+ */
+const notifyFlow = (/** @type {string} */ box) =>
+  [
+    'flows:',
+    '  task:',
+    '    initial: draft',
+    '    statuses: { draft: {}, done: {}, superseded: {} }',
+    '    entries:',
+    '      run: { from: [draft], start: self_round_cap }',
+    '    steps:',
+    '      self_round_cap: { success: tell, failure: tell }',
+    `      tell: ${box}`,
+    '',
+  ].join('\n');
+
+/** A channel that appends its `{{message}}` to `.bl/<name>`, which git ignores, and then exits `code`. */
+const channel = (/** @type {string} */ name, code = 0) =>
+  `"mkdir -p .bl && printf '%s\\\\n' {{message}} >> .bl/${name} && exit ${code}"`;
+
+/**
+ * One task of the notify flow of `box`, run once, with `channels` as the
+ * top-level bl.notify (name → command YAML) and `alerts` as config/alerts.yaml;
+ * the uTop English texts. Its result, its id, its context and what bl wrote on stderr.
+ */
+async function runNotifyTask(
+  /** @type {string} */ box,
+  /** @type {Record<string, string>} */ channels,
+  alerts = fixtureText('alerts.yaml'),
+) {
+  const notify = Object.entries(channels).map(([name, command]) => `      ${name}: ${command}`);
+  const registry = ['repos: {}', 'plugin_registry:', '  stages:', '    bl.notify:', ...notify, ''].join('\n');
+  const files = { 'config/alerts.yaml': alerts, 'config/templates/en.yaml': fixtureText('templates/en.yaml') };
+  const ctx = engineBacklog({ 'task.yaml': notifyFlow(box) }, registry, CATALOGUE, files);
+  const counters = { self_rounds: { value: 3, threshold: 3 } };
+  const [id] = await createItems(ctx, [{ type: 'task', state: { status: 'draft', run: 'idle', counters } }]);
+  /** @type {string[]} */
+  const stderr = [];
+  const write = process.stderr.write;
+  process.stderr.write = /** @type {any} */ ((/** @type {string} */ chunk) => stderr.push(String(chunk)) > 0);
+  try {
+    const start = 'self_round_cap';
+    const result = await runFlow(ctx, { id, start, by: 'operator', entry: 'run', catalogue: CATALOGUE }).catch(
+      (e) => e,
+    );
+    return { ctx, id, result, stderr: stderr.join('') };
+  } finally {
+    process.stderr.write = write;
+  }
+}
+
+/** What the channel `name` wrote, or null when it did not run. */
+const delivered = (/** @type {any} */ ctx, /** @type {string} */ name) => {
+  try {
+    return readFileSync(join(ctx.backlogDir, '.bl', name), 'utf8');
+  } catch {
+    return null;
+  }
+};
+
+const ESCALATION = `{ use: notify, with: { template: escalation_waiting, topic: escalation }, ${ARROWS} }`;
+
+test('a notify box runs each routed channel with the rendered text as {{message}}, box.name the box it came from', async () => {
+  const { ctx, id, result } = await runNotifyTask(ESCALATION, { terminal: channel('terminal'), bell: channel('bell') });
+  assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
+  // escalation_waiting: '{{item_id}}{{#parents.unit}} (in {{parents.unit}}){{/parents.unit}} needs you after {{box.name}}: {{title}}'
+  const text = `${id} needs you after self_round_cap: task 1\n`;
+  assert.equal(delivered(ctx, 'terminal'), text);
+  assert.equal(delivered(ctx, 'bell'), text);
+});
+
+test('a notify box succeeds when one channel delivers, and fails, with the invocation going on, when none does', async () => {
+  const one = await runNotifyTask(ESCALATION, { terminal: channel('terminal', 1), bell: channel('bell') });
+  assert.deepEqual(one.result, { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.notEqual(delivered(one.ctx, 'terminal'), null);
+
+  // 127: the command is not installed, which is a crash code of a plugin but not here (D-101).
+  const none = await runNotifyTask(ESCALATION, {
+    terminal: channel('terminal', 1),
+    bell: 'no-such-notifier-cmd {{message}}',
+  });
+  assert.deepEqual(none.result, { ended: 'stop', status: 'superseded', outcome: 'failure' });
+  assert.match(none.stderr, /^bl\.notify bell: plugin `no-such-notifier-cmd \{\{message\}\}` exited 127 \(exit 127\)/m);
+});
+
+test('a notify box whose topic routes to [] runs no channel and succeeds', async () => {
+  const alerts = 'gated: []\nended: []\nnotify: [terminal]\nnotify.quiet: []\n';
+  const box = `{ use: notify, with: { template: escalation_waiting, topic: quiet }, ${ARROWS} }`;
+  const { ctx, result } = await runNotifyTask(box, { terminal: channel('terminal') }, alerts);
+  assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.equal(delivered(ctx, 'terminal'), null);
+});
+
+test('a notify box with no template or no topic, or another key, is a fault of the flow set', () => {
+  for (const args of ['{ template: x }', '{ topic: x }', '{ template: x, topic: y, z: 1 }']) {
+    const box = ESCALATION.replace('{ template: escalation_waiting, topic: escalation }', args);
+    assert.throws(() => engineBacklog({ 'task.yaml': notifyFlow(box) }, undefined, CATALOGUE), /tell\/with/, args);
   }
 });

@@ -21,6 +21,15 @@ export const ALERTS = 'gated: []\nended: []\nnotify: []\n';
 export const ALERTS_PATH = 'backlog/config/alerts.yaml';
 
 /**
+ * The smallest language file, `config/templates/en.yaml`: `bl-next`'s start
+ * check needs a template file for the backlog's `language: en` (F-140 D9).
+ */
+export const TEMPLATES = '{}\n';
+
+/** The path of the shop's English language file under a fixture home. */
+export const TEMPLATES_PATH = 'backlog/config/templates/en.yaml';
+
+/**
  * A home directory with a backlog in `<home>/backlog` and the operator's
  * directory in `<home>/.config/bl`, and `files` written under the home. The
  * backlog has `ALERTS` unless `files` gives `ALERTS_PATH`.

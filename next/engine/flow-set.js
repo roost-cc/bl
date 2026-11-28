@@ -35,12 +35,13 @@ import { checkFlow, deriveStatuses } from './derive.js';
 
 /**
  * The step catalogue that `bl-next` passes to `buildFlowSet` (D2), with the
- * shop's steps added (F-140 D6), the start check of the plugin commands that
- * `startFaults` adds (F-140 D3), and the start check of the rank graph that
- * `main.js` runs on the flow set (F-140 D8). The layer rule lets `commands/`
+ * shop's steps added (F-140 D6), the start checks of the plugin commands and
+ * of the notifications that `startFaults` adds (F-140 D3, D9), and the start
+ * check of the rank graph that `main.js` runs on the flow set (F-140 D8). The layer rule lets `commands/`
  * import `engine/` but not `steps/`, so the engine hands them on.
  */
 export { STEPS } from '../steps/index.js';
+export { checkNotifications } from '../steps/notify.js';
 export { pluginFaults } from '../steps/plugin.js';
 export { checkRankGraph } from '../steps/rank.js';
 export { shopSteps } from '../steps/shop.js';
