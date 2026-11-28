@@ -12,8 +12,8 @@
  * `state.json` against the state schema (`checkState`) and the statuses of
  * the item's type in the flow set, and writes nothing when a check fails.
  * Then it writes the state and `{ at, event: 'force', path, from, to, status,
- * by: 'operator', note }`, and gives that entry as its record (D-462). `from` is absent when the
- * path did not exist. The log entry schema requires `note`: with no `<note>`,
+ * by: 'operator', note }`, and gives that entry as its record (D-462). `from`
+ * is absent when the path did not exist. The log entry schema requires `note`: with no `<note>`,
  * it is empty.
  *
  * It refuses while the stored run state is `active: <box>` and a process

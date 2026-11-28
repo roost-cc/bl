@@ -2,8 +2,8 @@
  * wake.js — the wake of a process that a gate or a `wait` box suspended
  * (F-152 D3; flows.md, "Waking a suspended process", D-21, D-22).
  *
- * `waitForWake(ctx, { failing, agents })` resolves at the first of four
- * sources, and removes the watchers of all four before it resolves:
+ * `waitForWake(ctx, { failing, agents, open })` resolves at the first of five
+ * sources, and removes the watchers of all of them before it resolves:
  *
  *   1. `reflog`: a change of the backlog's `HEAD` reflog, the file that
  *      `git rev-parse --git-path logs/HEAD` names. Every commit, pull, merge

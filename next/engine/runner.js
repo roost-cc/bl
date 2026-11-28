@@ -72,7 +72,8 @@
  * (at a wait box, the `bl outcome` that ends the wait), waits for `wake`
  * (`waitForWake`), and runs a new invocation with `resume: true` and the
  * first `by`. The wake checks the item once after its watchers start
- * (`open`), so a change before them wakes the process at once. That invocation goes on where `wayOn` says, or finds the item
+ * (`open`), so a change before them wakes the process at once. That
+ * invocation goes on where `wayOn` says, or finds the item
  * still held, commits nothing, and suspends again; the line is printed again
  * only when it changed. When the stored run state is no longer the one the
  * process suspended at (a `bl force`), the process prints so and returns.
