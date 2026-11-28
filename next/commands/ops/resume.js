@@ -15,8 +15,9 @@
  *     For an `idle` item with no `next`, it prints `<id>: nothing to continue;
  *     entries from <status>: <names>` and gives no records.
  *
- * `--agent <profile>` replaces the `agents` of the start box only: an
- * override with `steps` set to the box's defined step (F-152 D4). A start box
+ * `--agent <profile>` replaces the `agents` of each box that runs the start
+ * box's defined step: an override with `steps` set to that defined step
+ * (F-152 D4). A start box
  * that runs no defined step has nothing for `steps` to name, so the op refuses
  * `--agent` there.
  */
