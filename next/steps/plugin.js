@@ -15,8 +15,8 @@
  * - `runPlugin` runs it as `sh -c <command> sh <args…>`, a long child in a
  *   process scope where user systemd has scopes (D-486), and maps the exit
  *   status to an outcome or a crash (`exitOutcome`). `runPredicate` runs a
- *   predicate the same way as a synchronous child, because CEL evaluation is
- *   synchronous.
+ *   predicate the same way, in a scope too, as a synchronous child, because
+ *   CEL evaluation is synchronous.
  * - `pluginFaults` finds the commands that fill a name raw, which would put
  *   the value into the command text (Decision A5).
  */
@@ -26,7 +26,7 @@ import { attribute } from '../config/check.js';
 import { isMapping, pointerToken } from '../config/files.js';
 import { rawNames, render } from '../config/template.js';
 import { exitStatus, runChild, runLongChild } from '../lib/child.js';
-import { scopeAvailable, scopeUnitName, scopedSpawn, stopScope } from '../lib/process-scope.js';
+import { scopeAvailable, scopeUnitName, scopedCommand, stopScope } from '../lib/process-scope.js';
 
 /** @typedef {import('../config/files.js').Fault} Fault */
 /** @typedef {import('./index.js').StepContext} StepContext */
@@ -137,6 +137,34 @@ const passStderr = (stderr) => {
 };
 
 /**
+ * The child that runs `command` with `args` as `sh -c <command> sh <args…>`:
+ * in a new process scope named `scopeUnitName(ctx.id, n)` when
+ * `scopeAvailable()` says yes, else plainly, with `unit` `null` (D-486).
+ * @param {{ id: string }} ctx
+ * @param {{ command: string, args: string[] }} rendered
+ * @returns {{ command: string, args: string[], unit: string|null }}
+ */
+function scopedChild(ctx, { command, args }) {
+  const argv = ['-c', command, 'sh', ...args];
+  if (!scopeAvailable().ok) return { command: 'sh', args: argv, unit: null };
+  const unit = scopeUnitName(ctx.id, ++scopes);
+  return { ...scopedCommand(unit, 'sh', argv), unit };
+}
+
+/**
+ * Stop the scope `unit` of the plugin `template` after its command, so a
+ * process it left is killed; nothing for `null`.
+ * @param {string|null} unit
+ * @param {string} template
+ * @throws {Error} when the scope's leftovers cannot be stopped
+ */
+function endScope(unit, template) {
+  if (unit === null) return;
+  const stop = stopScope(unit);
+  if (!stop.ok) throw new Error(`could not stop what plugin \`${template}\` left in ${unit}.scope: ${stop.output}`);
+}
+
+/**
  * Run `plugin` with `view` in `cwd`: `sh -c <command> sh <args…>`, in a
  * process scope named `scopeUnitName(ctx.id, n)` when `scopeAvailable()` says
  * yes, else as a plain long child (D-486). The scope is stopped after the
@@ -152,15 +180,9 @@ const passStderr = (stderr) => {
  */
 export async function runPlugin(ctx, plugin, view, cwd) {
   const { template, exitCodes } = pluginParts(plugin);
-  const { command, args } = pluginCommand(template, view);
-  const argv = ['-c', command, 'sh', ...args];
-  const unit = scopeAvailable().ok ? scopeUnitName(ctx.id, ++scopes) : null;
-  const run = unit === null ? runLongChild : scopedSpawn(unit);
-  const result = await run('sh', argv, { cwd, encoding: 'utf8', stdio: STDIO });
-  if (unit !== null) {
-    const stop = stopScope(unit);
-    if (!stop.ok) throw new Error(`could not stop what plugin \`${template}\` left in ${unit}.scope: ${stop.output}`);
-  }
+  const child = scopedChild(ctx, pluginCommand(template, view));
+  const result = await runLongChild(child.command, child.args, { cwd, encoding: 'utf8', stdio: STDIO });
+  endScope(child.unit, template);
   const stdout = String(result.stdout ?? '');
   const stderr = String(result.stderr ?? '');
   passStderr(stderr);
@@ -171,22 +193,20 @@ export async function runPlugin(ctx, plugin, view, cwd) {
 
 /**
  * Run the predicate `plugin` with `view` in the backlog root, as a
- * synchronous child in no process scope: `true` for `success`, `false` for
- * `failure`, by `exitOutcome`'s rule. stderr is written to `bl`'s stderr.
- * @param {{ backlogDir: string }} ctx
+ * synchronous child, in a process scope as `runPlugin` does (D-486): `true`
+ * for `success`, `false` for `failure`, by `exitOutcome`'s rule. stderr is
+ * written to `bl`'s stderr.
+ * @param {{ backlogDir: string, id: string }} ctx
  * @param {Plugin} plugin
  * @param {Record<string, unknown>} view
  * @returns {boolean}
- * @throws {Error} on a crash
+ * @throws {Error} on a crash, or when the scope's leftovers cannot be stopped
  */
 export function runPredicate(ctx, plugin, view) {
   const { template, exitCodes } = pluginParts(plugin);
-  const { command, args } = pluginCommand(template, view);
-  const result = runChild('sh', ['-c', command, 'sh', ...args], {
-    cwd: ctx.backlogDir,
-    encoding: 'utf8',
-    stdio: STDIO,
-  });
+  const child = scopedChild(ctx, pluginCommand(template, view));
+  const result = runChild(child.command, child.args, { cwd: ctx.backlogDir, encoding: 'utf8', stdio: STDIO });
+  endScope(child.unit, template);
   passStderr(result.stderr);
   return exitOutcome(result, exitCodes, template) === 'success';
 }

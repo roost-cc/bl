@@ -108,12 +108,11 @@ export function bindConditions(ctx, id, { tty = '/dev/tty', current } = {}) {
         .filter((child) => printedType(ctx, child) === type)
         .map((child) => itemRecord(ctx, child, current)),
     has_terminal: () => canOpen(tty),
-    predicate: (name, args) =>
-      runPredicate(
-        ctx,
-        ctx.config.scope(null).plugin_registry.predicates[name],
-        commandView({ ...ctx, id, record: itemRecord(ctx, id, current) }, { args: { ...args.map(fromCelValue) } }),
-      ),
+    predicate: (name, args) => {
+      const itemCtx = { ...ctx, id, record: itemRecord(ctx, id, current) };
+      const plugin = ctx.config.scope(null).plugin_registry.predicates[name];
+      return runPredicate(itemCtx, plugin, commandView(itemCtx, { args: { ...args.map(fromCelValue) } }));
+    },
   });
   return {
     evaluate(expr, record) {

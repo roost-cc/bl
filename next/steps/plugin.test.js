@@ -4,12 +4,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, writeFileSync } from 'fs';
+import { chmodSync, readFileSync, writeFileSync } from 'fs';
 import { delimiter, join } from 'path';
 import { pathToFileURL } from 'url';
 import { ConfigurationFaults } from '../config/check.js';
 import { runChild } from '../lib/child.js';
-import { scopeAvailable, scopeUnitName } from '../lib/process-scope.js';
+import { isPidAlive, scopeAvailable, scopeUnitName } from '../lib/process-scope.js';
 import { fixture, load } from '../test/helpers/config-fixture.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 import { exitOutcome, pluginCommand, pluginFaults, runPlugin, runPredicate } from './plugin.js';
@@ -199,12 +199,28 @@ test('with scopeAvailable() false, it runs as a plain long child', { skip: proce
 test('runPredicate gives true at exit 0 and false at exit 1, in the backlog root, and throws at exit 127', () => {
   const backlogDir = mkTempDir('bl-predicate-');
   writeFileSync(join(backlogDir, 'README.md'), 'a widget\n');
-  const ctx = { backlogDir };
+  const ctx = { backlogDir, id: 'T-1' };
   const readme = 'grep -q {{args.0}} README.md';
   assert.equal(runPredicate(ctx, readme, { args: { 0: 'widget' } }), true);
   assert.equal(runPredicate(ctx, readme, { args: { 0: 'gadget' } }), false);
   assert.equal(runPredicate(ctx, { command: 'exit 1', exit_codes: { 1: 'success' } }, {}), true);
   assert.throws(() => runPredicate(ctx, 'exit 127', {}), { message: 'plugin `exit 127` exited 127 (exit 127)' });
+});
+
+test('runPredicate_scopes_children', { skip: probe.ok ? false : probe.why }, () => {
+  // The predicate is true only in a scope named by scopeUnitName(ctx.id, n), and a process it leaves is stopped.
+  const backlogDir = mkTempDir('bl-predicate-');
+  const ctx = { backlogDir, id: 'T-3' };
+  const cgroup = runChild('cat', ['/proc/self/cgroup'], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }).stdout;
+  assert.ok(!/bl-t-3-/.test(cgroup));
+  assert.equal(runPredicate(ctx, "grep -q '/bl-t-3-[0-9]*-[0-9]*\\.scope$' /proc/self/cgroup", {}), true);
+  const pidFile = join(backlogDir, 'pid');
+  assert.equal(runPredicate(ctx, `sleep 300 >/dev/null 2>&1 & echo $! > ${pidFile}`, {}), true);
+  const pid = Number(readFileSync(pidFile, 'utf8'));
+  assert.ok(!isPidAlive(pid), `the leftover sleep ${pid} is stopped with its scope`);
 });
 
 /** The fault lines of `pluginFaults` on a backlog with this `backlog.yaml` tail. */
