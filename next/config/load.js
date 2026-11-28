@@ -204,8 +204,9 @@ export const AGENT_OUTCOMES = Object.freeze(/** @type {const} */ (['success', 'f
  * The outcome schemas (F-141 D2, D-107): every `.json` file of
  * `config/schemas/`, by file name, compiled once with the load's ajv instance
  * (`checker`). They are the shop's alone, not layered. A file that is not
- * JSON, that does not compile, or whose top level does not require an
- * `outcome` with an `enum` of `success` and `failure` only, is a fault with
+ * JSON, that does not compile, whose top level is not of type `object`, or
+ * whose top level does not require an `outcome` with an `enum` of `success`
+ * and `failure` only, is a fault with
  * the file, and is left out.
  * @param {string} backlogDir
  * @param {ReturnType<typeof shapeChecker>} checker
@@ -228,6 +229,11 @@ function readSchemas(backlogDir, checker, faults) {
       check = checker.compile(schema);
     } catch (error) {
       fault('', 'schema', error.message);
+      continue;
+    }
+    // Only an object can hold an outcome: `required` and `properties` pass every other value.
+    if (schema?.type !== 'object') {
+      fault('/type', 'outcome', 'the top level must be of type object');
       continue;
     }
     const values = schema.properties?.outcome?.enum;

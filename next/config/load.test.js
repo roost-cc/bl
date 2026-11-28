@@ -734,3 +734,27 @@ test('a schema that is not JSON, does not compile, or does not limit a required 
   );
   assert.equal(load(fixture(at('notes.txt', 'x'))).schema('notes.txt'), undefined);
 });
+
+test('outcome schemas reject every non-object result at load', () => {
+  const at = (text) => ({ ...SHOP_ONLY, 'backlog/config/schemas/x.json': text });
+  const limited = { required: ['outcome'], properties: { outcome: { enum: ['success', 'failure'] } } };
+  // Each file would pass a result that is not an object, so each is one fault.
+  const files = [
+    JSON.stringify(limited),
+    JSON.stringify({ ...limited, type: ['object', 'null'] }),
+    JSON.stringify({ ...limited, type: 'array' }),
+    ...['null', '[]', '1', '"x"', 'true', 'false'],
+  ];
+  for (const text of files) {
+    const lines = faultLines(fixture(at(text)));
+    assert.equal(lines.length, 1, `${text}: ${lines.join('\n')}`);
+    assert.match(lines[0], /^config\/schemas\/x\.json: /, text);
+  }
+  // A schema that loads rejects every result that is not an object.
+  const { validate } =
+    load(fixture(at(JSON.stringify({ ...limited, type: 'object' })))).schema('x.json') ?? assert.fail();
+  for (const value of [null, [], [{ outcome: 'success' }], 0, 1, '', 'success', true, false]) {
+    assert.notDeepEqual(validate(value), [], JSON.stringify(value));
+  }
+  assert.deepEqual(validate({ outcome: 'success' }), []);
+});
