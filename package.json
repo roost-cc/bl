@@ -42,7 +42,8 @@
   },
   "devDependencies": {
     "acorn": "8.19.0",
-    "acorn-walk": "8.3.5"
+    "acorn-walk": "8.3.5",
+    "replay": "github:roost-cc/replay#3ebf32b9cff4f9194fe1d856c6c9f2bd11b0c462"
   },
   "allowScripts": {
     "fs-ext@2.1.1": true
