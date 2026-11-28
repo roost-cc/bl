@@ -12,7 +12,7 @@ import { itemLockPath } from '../lib/lock.js';
 import { itemDir } from '../store/items.js';
 import { STEPS } from '../steps/index.js';
 import { storeWrite } from '../store/write.js';
-import { createItems, engineBacklog, setGraph } from '../test/helpers/engine-backlog.js';
+import { createItems, definedSteps, engineBacklog, setGraph } from '../test/helpers/engine-backlog.js';
 import { UTOP, UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 import { git, tempRepo } from '../test/helpers/git.js';
 import { holdLockInChild } from '../test/helpers/hold-lock.js';
@@ -24,18 +24,6 @@ import { waitUntil } from '../test/helpers/wait-until.js';
 import { readRunState } from './run-state.js';
 import { FlowCrash, runFlow } from './runner.js';
 import { BURST_MS, waitForWake } from './wake.js';
-
-/**
- * uTop's `defined-steps.yaml` with no step gates and no post-conditions (their conditions call
- * functions that F-139 does not bind), after `edit` changes its `defined_steps`.
- */
-function definedSteps(edit = (/** @type {any} */ _steps) => {}) {
-  const value = parse(UTOP['defined-steps.yaml']);
-  delete value.step_gates;
-  for (const step of Object.values(value.defined_steps)) delete step.after;
-  edit(value.defined_steps);
-  return stringify(value);
-}
 
 /** uTop's `story.yaml` after `edit` changes the story flow. */
 function storyFlow(edit) {
