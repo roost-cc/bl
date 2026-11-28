@@ -170,6 +170,26 @@ test('the stored run state names each step before it runs: active at its box, on
   });
 });
 
+test('ctx.from is the path of the previous node, and absent at the first node (F-140 D9)', async () => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'refined', run: 'idle' });
+  /** @type {Record<string, unknown>} */
+  const from = {};
+  const look = (/** @type {any} */ step) => {
+    from[step.box] = 'from' in step ? step.from : '(absent)';
+    return 'success';
+  };
+  const boxes = ['prepare', 'implement', 'in_unit', 'deliver_child/self_check/test_unit'];
+  const { catalogue } = fakeSteps(Object.fromEntries(boxes.map((box) => [box, look])));
+  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue });
+  assert.deepEqual(from, {
+    prepare: '(absent)',
+    implement: 'prepare',
+    in_unit: 'implement',
+    'deliver_child/self_check/test_unit': 'in_unit',
+  });
+});
+
 test("a step's staged write lands in its box's commit, and its recorded commit in the flow_end's commits", async () => {
   const ctx = backlog();
   const id = await story(ctx, { status: 'refined', run: 'idle' });

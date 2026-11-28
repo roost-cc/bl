@@ -11,7 +11,7 @@
  *   2. the step gate with the entry gates of the subflows the flow enters
  *      (D-11, Decision A4); a failing entry ends the invocation at
  *      `gated before: <box>` (Decision P1);
- *   3. the step from the catalogue (D2), with `ctx.evaluate`; a note it
+ *   3. the step from the catalogue (D2), with `ctx.evaluate` and `ctx.from`; a note it
  *      gives is printed as `<box>: <note>` and goes first in the box's notes,
  *      so a `flow_end` at this box holds it (F-140 Decision A2);
  *   4. after `success`, the post-conditions: a failing entry makes the outcome
@@ -238,6 +238,8 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
           id,
           type,
           box,
+          // The box the flow came from, which a notify text names (F-140 D9).
+          ...(previous === null ? {} : { from: previous }),
           record,
           config: ctx.config,
           backlogDir: ctx.backlogDir,
