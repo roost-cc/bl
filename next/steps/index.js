@@ -35,6 +35,8 @@ import { rank } from './rank.js';
  *   and status when the step starts (`snapshot`)
  * @property {import('../config/load.js').Configuration} config  the frozen configuration
  * @property {string} backlogDir  the backlog's root
+ * @property {(line: string) => Promise<string>} [bl]  runs a `{{#bl}}` command
+ *   line in process (`blIn` of the op context), for a prompt (F-141 D5)
  * @property {(fn: (w: unknown) => void) => void} stage  adds a function that the
  *   runner calls inside the box's store write, so the step's own writes (a
  *   counter, for example) go into the box's commit

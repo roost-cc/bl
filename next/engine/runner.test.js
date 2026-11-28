@@ -600,6 +600,20 @@ test('worktree_unchanged() in a step gate is a FlowCrash: it is a post-condition
   assert.deepEqual(ran, []);
 });
 
+test("each step gets the op context's {{#bl}} runner as ctx.bl", async () => {
+  const lines = [];
+  const ctx = { ...backlog(), bl: async (/** @type {string} */ line) => (lines.push(line), `ran ${line}`) };
+  const id = await story(ctx, { status: 'implemented', run: 'idle' });
+  /** @type {string[]} */
+  const texts = [];
+  const { catalogue } = fakeSteps({
+    close: async (/** @type {any} */ step) => (texts.push(await step.bl(`show ${step.id}`)), 'success'),
+  });
+  await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  assert.deepEqual(lines, [`show ${id}`]);
+  assert.deepEqual(texts, [`ran show ${id}`]);
+});
+
 test('with the default repoContexts, ctx.repos is empty, and worktree_clean() and worktree_unchanged() are true', async () => {
   const ctx = withAfter(['worktree_clean()', 'worktree_unchanged()']);
   const id = await story(ctx, { status: 'refined', run: 'idle' });

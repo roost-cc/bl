@@ -42,8 +42,9 @@ import { readRunState } from './run-state.js';
  * @typedef {import('./flow-set.js').FlowSet} FlowSet
  * @typedef {import('../steps/worktrees.js').RepoContext} RepoContext
  * @typedef {import('../steps/worktrees.js').RepoSnapshot} RepoSnapshot
- * @typedef {import('../store/items.js').StoreContext & { flowSet: FlowSet }} EngineContext
- *   a store context with the flow set (the op context, `OpContext`, is one)
+ * @typedef {import('../store/items.js').StoreContext & { flowSet: FlowSet, bl?: (line: string) => Promise<string> }} EngineContext
+ *   a store context with the flow set (the op context, `OpContext`, is one),
+ *   and the op context's `{{#bl}}` runner (`blIn`), which the runner gives steps
  */
 
 /**

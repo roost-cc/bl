@@ -11,6 +11,8 @@
  * @property {import('../../config/load.js').Configuration} config  the frozen configuration
  * @property {string} backlogDir  the backlog's root
  * @property {import('../../engine/flow-set.js').FlowSet} flowSet  the flow set, built once at start
+ * @property {(line: string) => Promise<string>} [bl]  runs a `{{#bl}}` line in
+ *   this process (`blIn`); the flow runner gives it to steps (F-141 D5)
  */
 
 /**

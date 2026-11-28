@@ -74,7 +74,9 @@ export async function main(argv, { ops = OPS, steps = STEPS } = {}) {
     );
     return 1;
   }
-  const context = { config, backlogDir, flowSet, catalogue, ops };
+  const context = { config, backlogDir, flowSet, catalogue, ops, bl: undefined };
+  // A step's prompt runs its {{#bl}} lines in this process, as a view does (F-141 D5).
+  context.bl = blIn(context, []);
   const exit = ({ status, stdout, stderr }) => {
     process.stdout.write(stdout);
     process.stderr.write(stderr);

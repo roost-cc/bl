@@ -288,6 +288,7 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, re
       snapshot,
       config: ctx.config,
       backlogDir: ctx.backlogDir,
+      bl: ctx.bl,
       stage: (fn) => staged.push(/** @type {(w: Writer) => void} */ (fn)),
       recordCommit: ({ repo, sha }) => commits.push({ repo, sha }),
       // The call that the gates make (gates.js), so assert and the gates evaluate in one place.
