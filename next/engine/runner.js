@@ -104,7 +104,7 @@ import { record as readRecord } from '../store/record.js';
 import { now, storeWrite } from '../store/write.js';
 import { bindConditions, engineRecord, hasTerminal } from './conditions.js';
 import { outcomeFor, wayOn } from './continuation.js';
-import { STOP } from './flow-set.js';
+import { OUTCOMES, STOP } from './flow-set.js';
 import { postConditions, statusGate, stepGate } from './gates.js';
 import { applyOverrides, overrideFaults } from './overrides.js';
 import { checkAgainstFlow, lockedRunState, parseRun } from './run-state.js';
@@ -281,7 +281,7 @@ export async function runFlow(
     while (suspend !== undefined) {
       const { run, failing } = suspend;
       // The failing entries are printed again only when they changed (D3). A wait box has none.
-      const why = failing.length > 0 ? texts(failing) : `waiting for bl outcome ${item.id} success|failure`;
+      const why = failing.length > 0 ? texts(failing) : `waiting for bl outcome ${item.id} ${OUTCOMES.join('|')}`;
       const report = `${item.id}: suspended at ${run}: ${why}`;
       if (report !== shown) info(report);
       shown = report;

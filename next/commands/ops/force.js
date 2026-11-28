@@ -24,6 +24,7 @@
 
 import jsonPatch from 'fast-json-patch';
 import { parse } from 'yaml';
+import { parseRun } from '../../engine/run-state.js';
 import { itemHolder, withLock } from '../../lib/lock.js';
 import { checkState, readState, STATE, throwFaults } from '../../store/item-json.js';
 import { itemDir } from '../../store/items.js';
@@ -69,11 +70,9 @@ export const force = {
     return withLock(ctx.backlogDir, async () => {
       const state = /** @type {{ status: string, run: string }} */ (readState(ctx, item));
       const holder = itemHolder(ctx.backlogDir, item.id);
-      if (state.run.startsWith('active: ') && holder !== null) {
-        throw new Error(
-          `${item.id}: process ${holder} runs ${state.run.slice('active: '.length)}; ` +
-            'bl force changes no item while a step runs',
-        );
+      const { kind, arg: box } = parseRun(state.run);
+      if (kind === 'active' && holder !== null) {
+        throw new Error(`${item.id}: process ${holder} runs ${box}; bl force changes no item while a step runs`);
       }
       const operation = to === null ? { op: 'remove', path: pointer } : { op: 'add', path: pointer, value: to };
       let patched;

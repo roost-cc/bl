@@ -15,6 +15,7 @@
  * step's outcome (`runner.js`). With no process, `bl resume` reads it (D-51).
  */
 
+import { OUTCOMES } from '../../engine/flow-set.js';
 import { parseRun, readRunState } from '../../engine/run-state.js';
 import { flowWrite } from '../../engine/runner.js';
 import { withLock } from '../../lib/lock.js';
@@ -30,7 +31,7 @@ const AT_A_BOX = ['active', 'interrupted', 'waiting'];
 export const outcome = {
   args: {
     id: { help: 'the item' },
-    outcome: { choices: ['success', 'failure'], help: 'the outcome of the box in its run state' },
+    outcome: { choices: [...OUTCOMES], help: 'the outcome of the box in its run state' },
     note: { nargs: '?', help: 'why, in prose' },
   },
   schema: LOG_ENTRY_SCHEMA,

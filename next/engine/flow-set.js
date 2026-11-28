@@ -66,7 +66,7 @@ const FLOWS_KIND = /** @type {import('../config/kinds.js').Kind} */ (KINDS.find(
 export const STOP = 'stop';
 
 /** The outcomes a box has arrows for (D-26): the ones the schema lets `return:` name. */
-const OUTCOMES = /** @type {readonly ('success'|'failure')[]} */ (
+export const OUTCOMES = /** @type {readonly ('success'|'failure')[]} */ (
   /** @type {any} */ (FLOWS_KIND.schema).$defs.Arrow.properties.return.enum
 );
 
