@@ -21,7 +21,7 @@ import { findBacklogRoot, operatorDir } from '../config/files.js';
 import { KINDS } from '../config/kinds.js';
 import { loadConfiguration } from '../config/load.js';
 import { buildFlowSet, checkAgentBoxes, checkRankGraph, shopSteps, STEPS } from '../engine/flow-set.js';
-import { blIn, CommandFailed, dispatch, PROG, startFaults } from './dispatch.js';
+import { blIn, CommandFailed, dispatch, entryArgFaults, PROG, startFaults } from './dispatch.js';
 import { OPS } from './ops/index.js';
 import { writeOutput } from './output.js';
 import { captureTmuxWindowId, updateTabTitle } from './tab-title.js';
@@ -69,8 +69,12 @@ export async function main(argv, { ops = OPS, steps = STEPS } = {}) {
     catalogue = Object.freeze({ ...steps, ...shopSteps(config) });
     flowSet = buildFlowSet(config, catalogue, backlogDir);
     // A rank box needs the rank graph (F-140 D8), and an agent box the names it gives (F-141 D5);
-    // only the flow set says which boxes there are.
-    const boxFaults = [...checkRankGraph({ backlogDir, config }, flowSet), ...checkAgentBoxes(config, flowSet)];
+    // only the flow set says which boxes there are, and which entry options (F-152 D6).
+    const boxFaults = [
+      ...checkRankGraph({ backlogDir, config }, flowSet),
+      ...checkAgentBoxes(config, flowSet),
+      ...entryArgFaults(config, flowSet),
+    ];
     if (boxFaults.length > 0) throw new ConfigurationFaults(boxFaults, backlogDir);
   } catch (error) {
     process.stderr.write(

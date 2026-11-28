@@ -100,6 +100,23 @@ export const ENTRY_RECORD_SCHEMA = Object.freeze({
  * @returns {Op}
  */
 export function entryOp(name, flowSet) {
+  const { id, options } = entryArgs(name, flowSet);
+  return {
+    args: { ...id, ...options },
+    schema: ENTRY_RECORD_SCHEMA,
+    run: (args, ctx) => runEntry(name, args, ctx),
+  };
+}
+
+/**
+ * The `args` of the entry op `name` in two parts: `id`, the positional that
+ * every entry command has, and `options`, the options of the entries of that
+ * name. The start check of the entry options (`entryArgFaults`) needs them apart.
+ * @param {string} name
+ * @param {import('../engine/flow-set.js').FlowSet} flowSet
+ * @returns {{ id: Op['args'], options: Op['args'] }}
+ */
+export function entryArgs(name, flowSet) {
   const entries = Object.entries(flowSet.flows).flatMap(([type, flow]) =>
     Object.hasOwn(flow.entries, name) ? [{ type, args: flow.entries[name].args ?? {} }] : [],
   );
@@ -118,11 +135,7 @@ export function entryOp(name, flowSet) {
       },
     ]),
   );
-  return {
-    args: { id: { help: help('the item', entries) }, ...options },
-    schema: ENTRY_RECORD_SCHEMA,
-    run: (args, ctx) => runEntry(name, args, ctx),
-  };
+  return { id: { id: { help: help('the item', entries) } }, options };
 }
 
 /**

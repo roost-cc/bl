@@ -56,18 +56,26 @@ export const UTOP_STEPS = Object.fromEntries([
 ]);
 
 /**
- * The flow set of a fixture backlog whose `config/flows/` holds `files`.
+ * The configuration and the flow set of a fixture backlog whose `config/flows/` holds `files`.
  * @param {Record<string, string|object>} files  file name → YAML text, or a value to write as YAML
  * @param {Record<string, any>} catalogue
  */
-export function build(files, catalogue) {
+export function buildLoaded(files, catalogue) {
   const written = { 'backlog/backlog.yaml': BACKLOG };
   for (const [name, value] of Object.entries(files)) {
     written[`backlog/config/flows/${name}`] = typeof value === 'string' ? value : stringify(value);
   }
   const dirs = fixture(written);
-  return buildFlowSet(load(dirs), catalogue, dirs.backlogDir);
+  const config = load(dirs);
+  return { config, backlogDir: dirs.backlogDir, flowSet: buildFlowSet(config, catalogue, dirs.backlogDir) };
 }
+
+/**
+ * The flow set of a fixture backlog whose `config/flows/` holds `files`.
+ * @param {Record<string, string|object>} files  file name → YAML text, or a value to write as YAML
+ * @param {Record<string, any>} catalogue
+ */
+export const build = (files, catalogue) => buildLoaded(files, catalogue).flowSet;
 
 /**
  * The fault lines of a flow set that must fail.

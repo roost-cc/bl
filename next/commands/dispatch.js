@@ -2,6 +2,8 @@
  * dispatch.js — the parser and the run of one command (F-138 D3).
  *
  *   - `startFaults(config, ops)`: the start checks of the ops and the views.
+ *   - `entryArgFaults(config, flowSet)`: the start check of the entry
+ *     options, on the parser that `dispatch` builds (F-152 D6).
  *   - `dispatch(argv, { ops, ...ctx })`: one `argparse` parser with
  *     a subparser per `commands.yaml` line, typo suggestions, help, and the
  *     run of the command's op.
@@ -17,7 +19,7 @@ import { attribute, compileCel } from '../config/check.js';
 import { pointerToken } from '../config/files.js';
 import { checkNotifications, pluginFaults, stageFaults } from '../engine/flow-set.js';
 import { addArgs } from './args.js';
-import { ENTRY_RECORD_SCHEMA, entryOp } from './entry.js';
+import { ENTRY_RECORD_SCHEMA, entryArgs, entryOp } from './entry.js';
 import { markdownForm, matchOf } from './output.js';
 import { colorScheme, refusedFormats } from './style.js';
 import { suggest } from './suggest.js';
@@ -210,10 +212,62 @@ function buildParser(commands, ops, flowSet) {
   for (const [name, line] of Object.entries(commands)) {
     const parser = sub.add_parser(name, { help: line.help, description: line.description });
     addArgs(parser, opOf(line, ops, flowSet).args);
-    parser.add_argument('--json', { action: 'store_true', help: 'print the records as JSON' });
+    addArgs(parser, COMMAND_ARGS);
     parsers.set(name, parser);
   }
   return { root, parsers };
+}
+
+/** The arguments that `buildParser` gives every command after its op's `args` (D3 step 2). */
+const COMMAND_ARGS = Object.freeze({ '--json': { action: 'store_true', help: 'print the records as JSON' } });
+
+/**
+ * The faults of the entry options (F-152 D6, D-424), from the parser of each
+ * entry command as `buildParser` builds it: argparse's own `-h` and `--help`,
+ * the `id` of `entryArgs`, `COMMAND_ARGS`, then each option of the entries of
+ * that name in every flow, one at a time. An option faults when argparse
+ * refuses it (another argument has its option string), or when argparse
+ * stores its value under the name (`dest`) of an argument that every entry
+ * command has, so that one value would set both. Each fault is at the option
+ * in each flow that declares it.
+ * @param {Configuration} config
+ * @param {FlowSet} flowSet
+ * @returns {Fault[]}
+ */
+export function entryArgFaults(config, flowSet) {
+  const { flows } = flowSet;
+  /** The flow file that defines the flow of `type`, as `buildFlowSet` found it. */
+  const fileOf = (/** @type {string} */ type) =>
+    config.names('flows').find((name) => Object.hasOwn(config.file('flows', name)?.flows ?? {}, type));
+  const names = new Set(Object.values(flows).flatMap((flow) => Object.keys(flow.entries)));
+  return [...names].flatMap((name) => {
+    const { id, options } = entryArgs(name, flowSet);
+    const parser = new Parser({ prog: PROG });
+    /** @type {Map<string, string>} each `dest` of the parser → the argument that has it */
+    const taken = new Map(
+      Object.entries({ ...addArgs(parser, id), ...addArgs(parser, COMMAND_ARGS) }).map(([arg, dest]) => [dest, arg]),
+    );
+    return Object.entries(options).flatMap(([option, spec]) => {
+      let problem;
+      try {
+        const dest = addArgs(parser, { [option]: spec })[option];
+        if (taken.has(dest)) problem = `it stores its value under '${dest}', as ${taken.get(dest)} does`;
+      } catch (error) {
+        problem = /** @type {Error} */ (error).message;
+      }
+      if (problem === undefined) return [];
+      return Object.entries(flows)
+        .filter(([, flow]) => Object.hasOwn(flow.entries, name) && Object.hasOwn(flow.entries[name].args ?? {}, option))
+        .map(([type]) => ({
+          ...attribute(
+            `/flows/${pointerToken(type)}/entries/${pointerToken(name)}/args/${pointerToken(option)}`,
+            /** @type {import('../config/layers.js').Layer[]} */ (config.layers('flows', fileOf(type))),
+          ),
+          rule: 'args',
+          message: `the parser of the entry command '${name}' refuses '${option}': ${problem}`,
+        }));
+    });
+  });
 }
 
 /**

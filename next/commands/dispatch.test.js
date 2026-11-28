@@ -12,9 +12,10 @@ import { KINDS } from '../config/kinds.js';
 import { loadConfiguration } from '../config/load.js';
 import { ALERTS, TEMPLATES } from '../test/helpers/config-fixture.js';
 import { withEnv } from '../test/helpers/env.js';
+import { buildLoaded, step } from '../test/helpers/flow-fixture.js';
 import { ESCAPE, recorder } from '../test/helpers/streams.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
-import { blIn, CommandFailed, dispatch, runInProcess, startFaults } from './dispatch.js';
+import { blIn, CommandFailed, dispatch, entryArgFaults, runInProcess, startFaults } from './dispatch.js';
 import { writeOutput } from './output.js';
 
 /** The fixture op: it gives back its arguments and its context. */
@@ -221,6 +222,57 @@ test('an entry command needs the id, suggests its options, and runs the entry wi
   );
   // The fixture backlog has no item types: the entry runs, and refuses the id.
   await assert.rejects(run(['start', 'S-1', '--agent', 'p']), /not an item id: "S-1"/);
+});
+
+/**
+ * The fault lines of `entryArgFaults` for a flow set whose story and task flows each have a `fix`
+ * entry with the options `story` and `task`.
+ * @param {Record<string, object>} story
+ * @param {Record<string, object>} [task]
+ */
+function entryArgLines(story, task = {}) {
+  const flow = (/** @type {Record<string, object>} */ args) => ({
+    initial: 'draft',
+    statuses: { draft: {} },
+    entries: { fix: { from: ['draft'], start: 'fix', args } },
+    steps: { fix: { success: 'stop', failure: 'stop' } },
+  });
+  const { config, backlogDir, flowSet } = buildLoaded(
+    {
+      'settings.yaml': { max_box_visits: 20, gate_recheck_minutes: 15 },
+      'steps.yaml': { defined_steps: { fix: { use: 'agent', with: { agents: ['replay'] } } } },
+      'story.yaml': { flows: { story: flow(story) } },
+      'task.yaml': { flows: { task: flow(task) } },
+    },
+    { agent: step({ type: 'object', properties: { agents: {} } }) },
+  );
+  const faults = entryArgFaults(config, flowSet);
+  return faults.length === 0 ? [] : new ConfigurationFaults(faults, backlogDir).message.split('\n');
+}
+
+test('entryArgFaults_rejects_reserved_entry_arguments: the parser of the entry command refuses each', () => {
+  const at = (/** @type {string} */ name) =>
+    `config/flows/story.yaml: /flows/story/entries/fix/args/${name}: args: the parser of the entry command 'fix' refuses '${name}':`;
+  for (const [name, options, why] of /** @type {const} */ ([
+    ['--json', {}, 'argument --json: conflicting option string: --json'],
+    ['--help', {}, 'argument --help: conflicting option string: --help'],
+    ['-h', {}, 'argument -h: conflicting option string: -h'],
+    ['id', {}, "it stores its value under 'id', as id does"],
+    ['--id', {}, "it stores its value under 'id', as id does"],
+    ['--out', { dest: 'json' }, "it stores its value under 'json', as --json does"],
+  ])) {
+    assert.deepEqual(entryArgLines({ [name]: options }), [`${at(name)} ${why}`], `${name} ${JSON.stringify(options)}`);
+  }
+  // argparse's help action stores no value, so an option may store under `help`.
+  for (const [name, options] of /** @type {const} */ ([
+    ['--json-out', {}],
+    ['--agent', {}],
+    ['-a', {}],
+    ['target', {}],
+    ['--to', { dest: 'help' }],
+  ])) {
+    assert.deepEqual(entryArgLines({ [name]: options }), [], name);
+  }
 });
 
 test('startFaults names config/commands.yaml and /<name>/op for each op that the ops map does not hold', () => {
