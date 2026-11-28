@@ -4,9 +4,15 @@
  *
  * `runFlow(ctx, { id, start, by, entry | resume, catalogue })` holds the item
  * lock for the whole invocation (D6) and applies the flow-change reset first
- * (D-46). Its first commit holds the `flow_start` and `active: <start>`; a
+ * (D-46). An entry starts at `start`. A resumed invocation takes no `start`:
+ * `wayOn` gives where it goes on from the stored run state and the last log
+ * entry (F-152 D2), or that the item is still held, or the entries of an item
+ * with nothing to continue; then `runFlow` gives that and commits nothing.
+ * Its first commit holds the `flow_start` and `active: <start>`; a
  * resumed invocation keeps there the agent `session` of its start box (F-141
- * D8). Then, for each node:
+ * D8). A resumed start with an outcome (a logged outcome, or a held
+ * transition) runs no step there: the `flow_start` goes in the commit of that
+ * outcome's arrow, and the node is never `active`. Then, for each node:
  *
  *   1. the visit limit (D-115, Decision A6);
  *   2. the step gate with the entry gates of the subflows the flow enters
@@ -59,9 +65,11 @@ import { sendAlert } from '../steps/notify.js';
 import { repoContexts as itemRepoContexts, snapshot as takeSnapshot } from '../steps/worktrees.js';
 import { readState } from '../store/item-json.js';
 import { itemDir } from '../store/items.js';
+import { LOG, readJsonl } from '../store/jsonl.js';
 import { record as readRecord } from '../store/record.js';
 import { now, storeWrite } from '../store/write.js';
 import { bindConditions, engineRecord, hasTerminal } from './conditions.js';
+import { wayOn } from './continuation.js';
 import { STOP } from './flow-set.js';
 import { postConditions, statusGate, stepGate } from './gates.js';
 import { checkAgainstFlow } from './run-state.js';
@@ -143,17 +151,21 @@ async function alertOrReport(id, name, send) {
 const subflowBox = (/** @type {string} */ id) => id.slice(0, id.lastIndexOf('/'));
 
 /**
- * Run one flow invocation of the item `id` from the node `start` (D8), and
- * give how it ended. Throws `FlowCrash` on a crash, and an error without a
- * commit when another process holds the item lock, or with no commit but the
- * reset's when `start` is no box of the item's flow.
+ * Run one flow invocation of the item `id` (D8): from the node `start` for an
+ * entry, or from where `wayOn` says for a resume (F-152 D2). Give how it
+ * ended, or, for a resume with nothing to run, the failing entries that still
+ * hold the item (`held`) or the entries its status allows (`entries`), with no
+ * commit but the reset's. Throws `FlowCrash` on a crash, and an error without a
+ * commit when another process holds the item lock or when the item is `active`
+ * on another host, or with no commit but the reset's when `start` is no box of
+ * the item's flow.
  * @param {EngineContext} ctx  a store context with the flow set (the op context is one)
  * @param {object} invocation
  * @param {string} invocation.id  the item's id
- * @param {string} invocation.start  the node id where the invocation starts
+ * @param {string} [invocation.start]  with `entry`: the node id where the invocation starts
  * @param {string} invocation.by  who started it: `operator`, or the parent item (`flow_start`'s `by`)
  * @param {string} [invocation.entry]  the entry that started it
- * @param {boolean} [invocation.resume]  `bl resume` started it; then `entry` is absent
+ * @param {boolean} [invocation.resume]  `bl resume` started it; then `entry` and `start` are absent
  * @param {Readonly<Record<string, Step>>} invocation.catalogue  the step catalogue (D2)
  * @param {typeof itemRepoContexts} [invocation.repoContexts]  gives the item's repo contexts
  *   before each step; `steps/worktrees.js` by default, a test seam (F-141 D6)
@@ -161,7 +173,7 @@ const subflowBox = (/** @type {string} */ id) => id.slice(0, id.lastIndexOf('/')
  *   `agents` list of the `agent` boxes that it applies to (`agentList`, F-141 D7)
  * @param {string} [invocation.tty]  the terminal an interactive step needs (`hasTerminal`), a
  *   test seam (F-141 D9)
- * @returns {Promise<FlowResult>}
+ * @returns {Promise<FlowResult | { held: FailingEntry[] } | { entries: string[] }>}
  * @throws {import('../config/check.js').ConfigurationFaults} before any commit, when `agents`
  *   names no profile, or a profile with a fault (`checkOverride`)
  */
@@ -192,12 +204,17 @@ export async function runFlow(
  * @param {EngineContext} ctx
  * @param {Item} item
  * @param {Flow} flow
- * @param {{ start: string, by: string, entry?: string, resume: boolean, catalogue: Readonly<Record<string, Step>>,
+ * @param {{ start?: string, by: string, entry?: string, resume: boolean, catalogue: Readonly<Record<string, Step>>,
  *   repoContexts: typeof itemRepoContexts, agents?: import('../steps/capacity.js').AgentsOverride,
  *   tty?: string }} invocation
- * @returns {Promise<FlowResult>}
+ * @returns {Promise<FlowResult | { held: FailingEntry[] } | { entries: string[] }>}
  */
-async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, repoContexts, agents: override, tty }) {
+async function invoke(
+  ctx,
+  item,
+  flow,
+  { start: entryStart, by, entry, resume, catalogue, repoContexts, agents: override, tty },
+) {
   const { id, type } = item;
   const host = hostname();
   /**
@@ -256,17 +273,40 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, re
     });
     info(`${id}: reset: ${reset.entry.note}`);
   }
-  // A start that the flow does not have (a box that the reset just found gone,
-  // or a return node, which runs no step) is refused before the flow_start.
-  if (flow.nodes[start]?.kind !== 'step') throw new Error(`${id}: '${start}' is no box of the ${type} flow`);
   const stored = /** @type {import('./run-state.js').State} */ (readState(ctx, item));
+  /** @type {string|undefined} the outcome a resumed start follows with no step (F-152 D2) */
+  let given;
+  /** @type {string} */
+  let start;
+  if (resume) {
+    const way = await wayOn(ctx, item, stored, readJsonl(ctx, item, LOG).at(-1), {
+      repos: repoContexts({ ...ctx, id }),
+      agents: override,
+    });
+    if (!('start' in way)) return way;
+    ({ start, outcome: given } = way);
+  } else {
+    start = /** @type {string} */ (entryStart);
+    // A start that the flow does not have (a box that the reset just found gone,
+    // or a return node, which runs no step) is refused before the flow_start.
+    if (flow.nodes[start]?.kind !== 'step') throw new Error(`${id}: '${start}' is no box of the ${type} flow`);
+  }
   let { status } = stored;
-  // A resumed invocation at the box of a kept session keeps it, so the step continues it (F-141 D8).
-  const kept = resume && stored.session?.box === start ? { session: stored.session } : {};
-  await flowCommit(resume ? `${id}: resumed at ${start}` : `${id}: ${entry} started`, start, (w) => {
-    setState(w, status, `active: ${start}`, { host, ...kept });
-    w.log(id, { at: now(), event: 'flow_start', ...(resume ? { resume: true } : { entry }), status, by });
-  });
+  const flowStart = { at: now(), event: 'flow_start', ...(resume ? { resume: true } : { entry }), status, by };
+  /**
+   * Log the `flow_start` in the commit of the start's outcome: a start with an
+   * outcome runs no step, so it has no commit of its own (`given`).
+   * @type {((w: Writer) => void) | null}
+   */
+  let logStart = null;
+  if (given === undefined) {
+    // A resumed invocation at the box of a kept session keeps it, so the step continues it (F-141 D8).
+    const kept = resume && stored.session?.box === start ? { session: stored.session } : {};
+    await flowCommit(resume ? `${id}: resumed at ${start}` : `${id}: ${entry} started`, start, (w) => {
+      setState(w, status, `active: ${start}`, { host, ...kept });
+      w.log(id, flowStart);
+    });
+  } else logStart = (w) => w.log(id, flowStart);
 
   /** @type {Array<{ repo: string, sha: string }>} */
   const commits = [];
@@ -337,54 +377,76 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, re
       const repos = repoContexts({ ...ctx, id });
       const before = takeSnapshot(repos);
       step = stepContext(box, record, staged, repos, before);
-      const visit = (visits.get(box) ?? 0) + 1;
-      visits.set(box, visit);
-      if (visit > ctx.flowSet.maxBoxVisits) throw new FlowCrash(`${box} started ${visit} times (max_box_visits)`);
-
-      const agents = agentList(node, override);
-      const gated = await stepGate(ctx, record, node, previous, { repos, agents });
-      if (gated.length > 0) {
-        const ended = `gated before: ${box}`;
-        await flowCommit(`${id}: ${box} gated before`, box, (w) => {
-          setState(w, status, ended);
-          w.log(id, flowEnd(ended, last, `the step gate of ${box} failed: ${texts(gated)}`));
-        });
-        // The interim end of F-139 Decision P1 sends no ended alert (F-140 Decision A3).
-        await alertOrReport(id, 'gated', async () => gatedAlert(step, gated, box));
-        return { ended, status, ...(last === undefined ? {} : { outcome: last }) };
-      }
-
-      // An agent step gets the list its gate checked.
-      const withArgs = agents === undefined ? node.with : { .../** @type {object} */ (node.with), agents };
-      const code = catalogue[/** @type {string} */ (node.step)];
-      if (code.interactive?.(withArgs) && !hasTerminal(tty)) {
-        // The step needs the operator, so it does not start (D-29): a later `bl resume` runs it.
-        const note = `no terminal for the interactive step ${box}`;
-        await flowCommit(`${id}: ${box} no terminal`, box, (w) => {
-          setState(w, status, 'idle', { next: box });
-          w.log(id, flowEnd(STOP, last, note));
-        });
-        info(`${box}: ${note}`);
-        info(`run \`bl resume ${id}\` to continue`);
-        await alertOrReport(id, 'ended.normal', async () => sendAlert(step, 'ended', ['normal'], { box }));
-        return { ended: STOP, status, ...(last === undefined ? {} : { outcome: last }) };
-      }
-      const result = await code.run(step, withArgs);
-      // A step gives a bare outcome or { outcome, note } (F-140 Decision A2).
-      let outcome = typeof result === 'string' ? result : result.outcome;
+      /** @type {string} */
+      let outcome;
       /** @type {string[]} */
       const notes = [];
-      const stepNote = typeof result === 'string' ? undefined : result.note;
-      if (stepNote !== undefined) notes.push(stepNote);
-      // The note is printed once the box's writes are committed, so a failed write prints none.
-      const printNote = () => stepNote !== undefined && info(`${box}: ${stepNote}`);
-      if (outcome === 'success') {
-        const failed = await postConditions(ctx, current(), node, { repos, snapshot: before });
-        if (failed.length > 0) {
-          outcome = 'failure';
-          notes.push(`the post-conditions of ${box} failed: ${texts(failed)}`);
+      /** @type {string|undefined} */
+      let stepNote;
+      if (given !== undefined) {
+        // A resumed start with an outcome: no step gate, no step, no post-conditions (F-152 D2).
+        outcome = given;
+        given = undefined;
+      } else {
+        const visit = (visits.get(box) ?? 0) + 1;
+        visits.set(box, visit);
+        if (visit > ctx.flowSet.maxBoxVisits) throw new FlowCrash(`${box} started ${visit} times (max_box_visits)`);
+
+        const agents = agentList(node, override);
+        const gated = await stepGate(ctx, record, node, previous, { repos, agents });
+        if (gated.length > 0) {
+          const ended = `gated before: ${box}`;
+          await flowCommit(`${id}: ${box} gated before`, box, (w) => {
+            setState(w, status, ended);
+            w.log(id, flowEnd(ended, last, `the step gate of ${box} failed: ${texts(gated)}`));
+          });
+          // The interim end of F-139 Decision P1 sends no ended alert (F-140 Decision A3).
+          await alertOrReport(id, 'gated', async () => gatedAlert(step, gated, box));
+          return { ended, status, ...(last === undefined ? {} : { outcome: last }) };
+        }
+
+        // An agent step gets the list its gate checked.
+        const withArgs = agents === undefined ? node.with : { .../** @type {object} */ (node.with), agents };
+        const code = catalogue[/** @type {string} */ (node.step)];
+        if (code.interactive?.(withArgs) && !hasTerminal(tty)) {
+          // The step needs the operator, so it does not start (D-29): a later `bl resume` runs it.
+          const note = `no terminal for the interactive step ${box}`;
+          await flowCommit(`${id}: ${box} no terminal`, box, (w) => {
+            setState(w, status, 'idle', { next: box });
+            w.log(id, flowEnd(STOP, last, note));
+          });
+          info(`${box}: ${note}`);
+          info(`run \`bl resume ${id}\` to continue`);
+          await alertOrReport(id, 'ended.normal', async () => sendAlert(step, 'ended', ['normal'], { box }));
+          return { ended: STOP, status, ...(last === undefined ? {} : { outcome: last }) };
+        }
+        const result = await code.run(step, withArgs);
+        // A step gives a bare outcome or { outcome, note } (F-140 Decision A2).
+        outcome = typeof result === 'string' ? result : result.outcome;
+        stepNote = typeof result === 'string' ? undefined : result.note;
+        if (stepNote !== undefined) notes.push(stepNote);
+        if (outcome === 'success') {
+          const failed = await postConditions(ctx, current(), node, { repos, snapshot: before });
+          if (failed.length > 0) {
+            outcome = 'failure';
+            notes.push(`the post-conditions of ${box} failed: ${texts(failed)}`);
+          }
         }
       }
+      // The note is printed once the box's writes are committed, so a failed write prints none.
+      const printNote = () => stepNote !== undefined && info(`${box}: ${stepNote}`);
+      /**
+       * The box's one commit: its `flow_start` first when it has no commit of its own (`logStart`).
+       * @param {string} message
+       * @param {(w: Writer) => void} fn
+       */
+      const boxCommit = async (message, fn) => {
+        await flowCommit(message, box, (w) => {
+          logStart?.(w);
+          fn(w);
+        });
+        logStart = null;
+      };
 
       // Follow the outcome's arrow, and through each return node the arrow of
       // the caller (D-43): a return node is never `active`.
@@ -397,7 +459,7 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, re
       for (;;) {
         const arrow = flow.nodes[from].arrows[followed];
         if (arrow == null) {
-          await flowCommit(`${id}: ${box} ${outcome}`, box, (w) => {
+          await boxCommit(`${id}: ${box} ${outcome}`, (w) => {
             setState(w, status, `active: ${box}`, { host }, staged);
             w.log(id, { at: now(), event: 'outcome', box, outcome, note: notes.join('; ') || undefined, by });
           });
@@ -433,7 +495,7 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, re
       }
 
       const note = notes.join('; ') || undefined;
-      await flowCommit(`${id}: ${box} ${outcome}${note === undefined ? '' : `\n\n${note}`}`, box, (w) => {
+      await boxCommit(`${id}: ${box} ${outcome}${note === undefined ? '' : `\n\n${note}`}`, (w) => {
         if (end === null) setState(w, status, `active: ${next}`, { host }, staged);
         else {
           setState(

@@ -8,6 +8,7 @@ import { join } from 'path';
 import { parse, stringify } from 'yaml';
 import { itemLockPath } from '../lib/lock.js';
 import { itemDir } from '../store/items.js';
+import { storeWrite } from '../store/write.js';
 import { createItems, engineBacklog, setGraph } from '../test/helpers/engine-backlog.js';
 import { UTOP, UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 import { git, tempRepo } from '../test/helpers/git.js';
@@ -260,9 +261,9 @@ test('runFlow_preserves_next_box_when_step_stages_state', async () => {
   ];
   for (const [what, flows, status, start, plan, state, event] of cases) {
     const ctx = backlog(flows);
-    const id = await story(ctx, { status, run: 'idle' });
+    const id = await story(ctx, { status, run: 'idle', next: start });
     const { catalogue } = fakeSteps(plan);
-    await runFlow(ctx, { id, start, by: 'operator', resume: true, catalogue }).catch((e) => e);
+    await runFlow(ctx, { id, by: 'operator', resume: true, catalogue }).catch((e) => e);
     assert.deepEqual(stateOf(ctx, id), state, what);
     assert.equal(logOf(ctx, id).at(-1).event, event, what);
   }
@@ -310,7 +311,7 @@ test('runFlow_keeps_counters_when_staged_state_omits_them', async () => {
     for (const [what, staged, counters] of writes) {
       const ctx = backlog(flows);
       const [id, other] = await createItems(ctx, [
-        { type: 'story', state: { status, run: 'idle', counters: COMMITTED } },
+        { type: 'story', state: { status, run: 'idle', next: start, counters: COMMITTED } },
         { type: 'story', state: { status: 'refined', run: 'idle' } },
       ]);
       const stage = (/** @type {any} */ step) => {
@@ -321,7 +322,7 @@ test('runFlow_keeps_counters_when_staged_state_omits_them', async () => {
         return 'success';
       };
       const { catalogue } = fakeSteps(plan(stage));
-      await runFlow(ctx, { id, start, by: 'operator', resume: true, catalogue }).catch((e) => e);
+      await runFlow(ctx, { id, by: 'operator', resume: true, catalogue }).catch((e) => e);
       assert.deepEqual(stateOf(ctx, id), { ...state, counters }, `${path}: ${what}`);
       assert.deepEqual(stateOf(ctx, other), OTHER, `${path}: ${what}: the other item`);
     }
@@ -418,20 +419,20 @@ const addTask = (/** @type {any} */ step) => {
   return 'success';
 };
 
-test("a subflow's gate is checked when the invocation starts at the subflow's first node (Decision A4)", async () => {
+test("a subflow's gate is checked when a resume starts at the subflow's first node (Decision A4)", async () => {
   const ctx = backlog(SELF_CHECK_GATE);
   const [id] = await createItems(ctx, [
     { type: 'story', state: { status: 'in_review', run: 'gated before: deliver/self_check/test_unit' } },
     { type: 'task', state: { status: 'draft', run: 'idle' } },
   ]);
   await setGraph(ctx, 'containment', { 'T-1': { parent: id } });
+  const base = head(ctx);
   const { catalogue, ran } = fakeSteps();
-  const start = 'deliver/self_check/test_unit';
-  const result = await runFlow(ctx, { id, start, by: 'operator', resume: true, catalogue });
-  assert.deepEqual(result, { ended: `gated before: ${start}`, status: 'in_review' });
+  const result = await runFlow(ctx, { id, by: 'operator', resume: true, catalogue });
+  const gate = 'children("task").size() == 0';
+  assert.deepEqual(result, { held: [{ entry: gate, text: gate }] });
   assert.deepEqual(ran, []);
-  const { event, resume } = logOf(ctx, id).at(-2);
-  assert.deepEqual({ event, resume }, { event: 'flow_start', resume: true });
+  assert.equal(head(ctx), base, 'no commit');
 });
 
 test("a subflow's gate is checked when deliver's fix arrow enters self_check from outside (Decision A4)", async () => {
@@ -638,9 +639,9 @@ test("runFlow_prints_and_logs_step_note: a step's note is printed with its box p
   const printed = [];
   t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(text));
   const ctx = backlog();
-  const id = await story(ctx, { status: 'in_progress', run: 'idle' });
+  const id = await story(ctx, { status: 'in_progress', run: 'idle', next: 'wait_implement' });
   const { catalogue } = fakeSteps({ wait_implement: () => ({ outcome: 'failure', note: 'why' }) });
-  const result = await runFlow(ctx, { id, start: 'wait_implement', by: 'operator', resume: true, catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', resume: true, catalogue });
   t.mock.restoreAll();
   assert.deepEqual(result, { ended: 'stop', status: 'in_progress', outcome: 'failure' });
   assert.deepEqual(printed, ['wait_implement: why\n']);
@@ -780,10 +781,10 @@ test('a step that throws is a FlowCrash with no flow_end, and the item then read
 
 test('the visit limit is a FlowCrash that names the box and the limit, with no flow_end', async () => {
   const ctx = backlog({ 'flow-set.yaml': 'max_box_visits: 2\ngate_recheck_minutes: 15\n' });
-  const id = await story(ctx, { status: 'in_progress', run: 'idle' });
+  const id = await story(ctx, { status: 'in_progress', run: 'idle', next: 'self_check/test_unit' });
   const { catalogue, ran } = fakeSteps({ 'self_check/test_unit': () => 'failure' });
   await assert.rejects(
-    runFlow(ctx, { id, start: 'self_check/test_unit', by: 'operator', resume: true, catalogue }),
+    runFlow(ctx, { id, by: 'operator', resume: true, catalogue }),
     (error) => error instanceof FlowCrash && error.message === 'self_check/test_unit started 3 times (max_box_visits)',
   );
   assert.equal(ran.filter((box) => box === 'self_check/test_unit').length, 2);
@@ -973,10 +974,10 @@ test('runFlow_alert_failure_keeps_committed_result', async (t) => {
 
 test("the visit limit's ended.crash text holds started 21 times (max_box_visits) when the limit is 20", async () => {
   const ctx = alerting({ 'flow-set.yaml': 'max_box_visits: 20\ngate_recheck_minutes: 15\n' });
-  const id = await story(ctx, { status: 'in_progress', run: 'idle' });
-  const { catalogue } = fakeSteps({ 'self_check/test_unit': () => 'failure' });
   const start = 'self_check/test_unit';
-  const crash = await runFlow(ctx, { id, start, by: 'operator', resume: true, catalogue }).catch((e) => e);
+  const id = await story(ctx, { status: 'in_progress', run: 'idle', next: start });
+  const { catalogue } = fakeSteps({ 'self_check/test_unit': () => 'failure' });
+  const crash = await runFlow(ctx, { id, by: 'operator', resume: true, catalogue }).catch((e) => e);
   assert.ok(crash instanceof FlowCrash);
   assert.equal(delivered(ctx, 'terminal'), `${id} crashed at ${start}: ${start} started 21 times (max_box_visits)\n`);
 });
@@ -1102,9 +1103,9 @@ test('runFlow_second_return_transition_gate_sees_self_item_status', async () => 
 
 test('an arrow whose derived from does not hold the status stops the invocation with a note, and keeps the status', async () => {
   const ctx = backlog();
-  const id = await story(ctx, { status: 'draft', run: 'idle' });
+  const id = await story(ctx, { status: 'draft', run: 'idle', next: 'close' });
   const { catalogue } = fakeSteps();
-  const result = await runFlow(ctx, { id, start: 'close', by: 'operator', resume: true, catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', resume: true, catalogue });
   assert.deepEqual(result, { ended: 'stop', status: 'draft', outcome: 'success' });
   assert.deepEqual(stateOf(ctx, id), { status: 'draft', run: 'idle' });
   assert.equal(logOf(ctx, id).at(-1).note, 'the success arrow of close sets done only from implemented');
@@ -1133,7 +1134,7 @@ test('runFlow refuses a start that is no box of the flow, or a return node, with
   const base = head(ctx);
   const { catalogue, ran } = fakeSteps();
   for (const start of ['gone', 'deliver/_return_success']) {
-    await assert.rejects(runFlow(ctx, { id, start, by: 'operator', resume: true, catalogue }), {
+    await assert.rejects(runFlow(ctx, { id, start, by: 'operator', entry: 'close', catalogue }), {
       message: `${id}: '${start}' is no box of the story flow`,
     });
   }
@@ -1169,11 +1170,11 @@ test("ctx.session commits state.json with the box's session at once, and the box
   assert.equal(JSON.parse(git(ctx.backlogDir, 'show', `${commits[at + 1].sha}:${path}/state.json`)).session, undefined);
 });
 
-test('a resumed invocation keeps the session in its flow_start commit only at the box of the session', async () => {
+test('a resumed invocation keeps the session in its flow_start commit, and an entry at the box does not', async () => {
+  // A stored session names the active box (checkState), and a resume of it starts there.
   const cases = [
     // [what, start, resume, the session the step sees]
     ['resumed at the box', 'implement', true, SESSION],
-    ['resumed at another box', 'prepare', true, undefined],
     ['started by an entry at the box', 'implement', false, undefined],
   ];
   for (const [what, start, resume, want] of cases) {
@@ -1187,8 +1188,8 @@ test('a resumed invocation keeps the session in its flow_start commit only at th
       return 'success';
     };
     const { catalogue } = fakeSteps({ [start]: look });
-    const how = resume ? { resume: true } : { entry: 'deliver' };
-    await runFlow(ctx, { id, start, by: 'operator', ...how, catalogue });
+    const how = resume ? { resume: true } : { start, entry: 'deliver' };
+    await runFlow(ctx, { id, by: 'operator', ...how, catalogue });
     // The first run of the box; a later one comes after a box's commit, which holds no session.
     assert.deepEqual(seen[0], want, what);
   }
@@ -1269,4 +1270,182 @@ test('a stored state that the flow no longer has is reset first, in its own comm
   assert.deepEqual(commits[0].subject, `${id}: reset to the story flow`);
   assert.deepEqual(commits[0].trailers, ['Bl-Flow: story', `Bl-Item: ${id}`]);
   assert.deepEqual(stateOf(ctx, id), { status: 'done', run: 'idle', counters: { rounds: { value: 2 } } });
+});
+
+// ---- resume from the stored run state (F-152 D2) ----
+
+const AT = '2026-11-28T10:00:00Z';
+
+/** Append `entries` to the item's log in one store write. */
+const appendLog = (ctx, id, ...entries) =>
+  storeWrite(ctx, { message: 'chore: log' }, (w) => entries.forEach((entry) => w.log(id, { at: AT, ...entry })));
+
+/** An `outcome` entry for `box`, as `bl outcome` writes it. */
+const outcomeEntry = (box, outcome = 'success') => ({ event: 'outcome', box, outcome, by: 'operator' });
+
+/** Resume the item `id` with the fake steps `catalogue`. */
+const resume = (ctx, id, catalogue) => runFlow(ctx, { id, by: 'operator', resume: true, catalogue });
+
+/** The log events after the `created` entry. */
+const eventsOf = (ctx, id) =>
+  logOf(ctx, id)
+    .slice(1)
+    .map(({ event }) => event);
+
+test('resume on interrupted: <box> runs the box again', async () => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'implemented', run: 'active: close', host: hostname() });
+  const base = head(ctx);
+  const { catalogue, ran } = fakeSteps();
+  assert.deepEqual(await resume(ctx, id, catalogue), { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.deepEqual(ran, ['close']);
+  assert.deepEqual(
+    commitsSince(ctx, base).map(({ subject }) => subject),
+    [`${id}: resumed at close`, `${id}: close success`],
+  );
+  const { event, resume: resumed } = logOf(ctx, id).at(-2);
+  assert.deepEqual({ event, resumed }, { event: 'flow_start', resumed: true });
+});
+
+test('resume on interrupted: <box> with a last outcome entry for the box follows its arrow, and runs no step (D-51)', async () => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'implemented', run: 'active: close', host: hostname() });
+  await appendLog(ctx, id, outcomeEntry('close'));
+  const base = head(ctx);
+  const { catalogue, ran } = fakeSteps();
+  assert.deepEqual(await resume(ctx, id, catalogue), { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.deepEqual(ran, [], 'no step runs');
+  // No step started, so the flow_start shares the commit of the outcome's arrow.
+  const commits = commitsSince(ctx, base);
+  assert.deepEqual(
+    commits.map(({ subject, trailers }) => [subject, trailers]),
+    [[`${id}: close success`, ['Bl-Flow: story', 'Bl-Step: close', `Bl-Item: ${id}`]]],
+  );
+  const path = itemDir(ctx, id).path;
+  assert.deepEqual(git(ctx.backlogDir, 'show', '--name-only', '--format=', commits[0].sha).split('\n').sort(), [
+    `${path}/log.jsonl`,
+    `${path}/state.json`,
+  ]);
+  assert.deepEqual(eventsOf(ctx, id), ['outcome', 'flow_start', 'flow_end']);
+  const { at, ...start } = logOf(ctx, id).at(-2);
+  assert.deepEqual(start, { event: 'flow_start', resume: true, status: 'implemented', by: 'operator' });
+  assert.deepEqual(stateOf(ctx, id), { status: 'done', run: 'idle' });
+});
+
+test('resume on gated: <to> whose gate now passes makes the held transition with no step, and goes on', async () => {
+  const ctx = backlog();
+  const id = await story(ctx, {
+    status: 'refined',
+    run: 'gated: in_progress',
+    held: { box: 'prepare', outcome: 'success' },
+  });
+  const base = head(ctx);
+  const { catalogue, ran } = fakeSteps();
+  assert.deepEqual(await resume(ctx, id, catalogue), { ended: 'stop', status: 'implemented', outcome: 'success' });
+  assert.deepEqual(ran, RUN_BOXES.slice(1), 'prepare does not run again');
+  const [first] = commitsSince(ctx, base);
+  assert.equal(first.subject, `${id}: prepare success`);
+  const path = itemDir(ctx, id).path;
+  assert.deepEqual(JSON.parse(git(ctx.backlogDir, 'show', `${first.sha}:${path}/state.json`)), {
+    status: 'in_progress',
+    run: 'active: implement',
+    host: hostname(),
+  });
+  assert.deepEqual(eventsOf(ctx, id), ['flow_start', 'flow_end']);
+});
+
+test('resume on gated: <to> held at a return node makes the held transition, and no return node is ever active', async () => {
+  const ctx = backlog(BOTH_SIDES);
+  const id = await story(ctx, {
+    status: 'ready_for_merge',
+    run: 'gated: merged',
+    held: { box: 'deliver/_return_success', outcome: 'success' },
+  });
+  const base = head(ctx);
+  const { catalogue, ran } = fakeSteps();
+  assert.deepEqual(await resume(ctx, id, catalogue), { ended: 'stop', status: 'merged', outcome: 'success' });
+  assert.deepEqual(ran, []);
+  assert.deepEqual(storedRuns(ctx, base, itemDir(ctx, id).path), ['idle']);
+});
+
+test('resume on gated: <to> whose status left the arrow from writes idle and a flow_end that says so (D-19)', async () => {
+  const ctx = backlog();
+  const [id] = await createItems(ctx, [
+    { type: 'story', state: { status: 'draft', run: 'gated: done', held: { box: 'close', outcome: 'success' } } },
+    { type: 'task', state: { status: 'draft', run: 'idle' } },
+  ]);
+  await setGraph(ctx, 'containment', { 'T-1': { parent: id } }); // the gate of done fails too
+  const { catalogue, ran } = fakeSteps();
+  assert.deepEqual(await resume(ctx, id, catalogue), { ended: 'stop', status: 'draft', outcome: 'success' });
+  assert.deepEqual(ran, []);
+  assert.deepEqual(stateOf(ctx, id), { status: 'draft', run: 'idle' });
+  const { at, ...end } = logOf(ctx, id).at(-1);
+  assert.deepEqual(end, {
+    event: 'flow_end',
+    ended: 'stop',
+    outcome: 'success',
+    status: 'draft',
+    commits: [],
+    note: 'the success arrow of close sets done only from implemented',
+  });
+});
+
+test('resume on gated before: <box> whose step gate now passes starts the step, and on idle with next starts at next', async () => {
+  const ctx = backlog({ 'gates.yaml': 'step_gates:\n  close: [\'status == "implemented"\']\n' });
+  const gated = await story(ctx, { status: 'implemented', run: 'gated before: close' });
+  const { catalogue, ran } = fakeSteps();
+  assert.deepEqual(await resume(ctx, gated, catalogue), { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.deepEqual(ran, ['close']);
+
+  const next = await story(ctx, { status: 'in_progress', run: 'idle', next: 'wait_implement' });
+  const { catalogue: steps, ran: runs } = fakeSteps({ wait_implement: 'failure' });
+  assert.deepEqual(await resume(ctx, next, steps), { ended: 'stop', status: 'in_progress', outcome: 'failure' });
+  assert.deepEqual(runs, ['wait_implement']);
+  assert.equal(git(ctx.backlogDir, 'log', '-2', '--format=%s').split('\n')[1], `${next}: resumed at wait_implement`);
+});
+
+test('resume commits nothing while a gate still fails, at waiting: <box> with no outcome, and on idle with no next', async () => {
+  const ctx = backlog({ 'gates.yaml': 'step_gates:\n  close: [\'status == "merged"\']\n' });
+  const [gated, before, waiting, idle] = await createItems(ctx, [
+    { type: 'story', state: { status: 'implemented', run: 'gated: done', held: { box: 'close', outcome: 'success' } } },
+    { type: 'story', state: { status: 'implemented', run: 'gated before: close' } },
+    { type: 'story', state: { status: 'in_progress', run: 'waiting: wait_implement' } },
+    { type: 'story', state: { status: 'refined', run: 'idle' } },
+    { type: 'task', state: { status: 'draft', run: 'idle' } },
+  ]);
+  await setGraph(ctx, 'containment', { 'T-1': { parent: gated } });
+  const base = head(ctx);
+  const { catalogue, ran } = fakeSteps();
+  const done = 'children("task").all(c, c.closed)';
+  assert.deepEqual(await resume(ctx, gated, catalogue), {
+    held: [{ entry: { condition: done, class: 'expected' }, text: done }],
+  });
+  const merged = 'status == "merged"';
+  assert.deepEqual(await resume(ctx, before, catalogue), { held: [{ entry: merged, text: merged }] });
+  assert.deepEqual(await resume(ctx, waiting, catalogue), { held: [] });
+  assert.deepEqual(await resume(ctx, idle, catalogue), { entries: ['refine', 'run', 'implement', 'supersede'] });
+  assert.deepEqual(ran, []);
+  assert.equal(head(ctx), base, 'no commit');
+});
+
+test('resume on active of another host is refused with no commit, and names that host (D-4)', async () => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'implemented', run: 'active: close', host: 'elsewhere' });
+  const base = head(ctx);
+  const { catalogue, ran } = fakeSteps();
+  await assert.rejects(resume(ctx, id, catalogue), {
+    message: new RegExp(`^${id}: active at close on the host elsewhere;`),
+  });
+  assert.deepEqual(ran, []);
+  assert.equal(head(ctx), base);
+});
+
+test('a force entry after an outcome entry makes the outcome unused: resume runs the box again (D-613)', async () => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'implemented', run: 'active: close', host: hostname() });
+  const force = { event: 'force', path: '/status', from: 'implemented', to: 'implemented', status: 'implemented' };
+  await appendLog(ctx, id, outcomeEntry('close', 'failure'), { ...force, by: 'operator', note: 'retry' });
+  const { catalogue, ran } = fakeSteps();
+  assert.deepEqual(await resume(ctx, id, catalogue), { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.deepEqual(ran, ['close']);
 });

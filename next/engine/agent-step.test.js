@@ -454,8 +454,8 @@ const stateAt = (/** @type {any} */ ctx, /** @type {string} */ id, rev = 'HEAD')
 /** The subject of the commit `rev`. */
 const subjectAt = (/** @type {any} */ ctx, rev = 'HEAD') => git(ctx.backlogDir, 'log', '-1', '--format=%s', rev);
 
-/** `run` of a resumed invocation at `first`: no entry. */
-const RESUME = { resume: true, entry: undefined };
+/** `run` of a resumed invocation: no entry and no start; the interrupted box `first` is where it goes on. */
+const RESUME = { resume: true, entry: undefined, start: undefined };
 
 /**
  * Run the task once with `scriptPath`, whose first session ends at an `exit:` turn, so that the box

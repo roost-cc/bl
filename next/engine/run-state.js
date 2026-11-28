@@ -42,7 +42,7 @@ import { itemLockPath } from '../lib/lock.js';
  * `gated before`) and its box or `to` status (`''` for `idle`).
  * @param {string} run
  */
-function parseRun(run) {
+export function parseRun(run) {
   const at = run.indexOf(': ');
   return at === -1 ? { kind: run, arg: '' } : { kind: run.slice(0, at), arg: run.slice(at + 2) };
 }
