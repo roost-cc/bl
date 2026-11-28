@@ -10,8 +10,9 @@
  *      a step's `with` schema marks compiled (F-140 D5); then each entry
  *      option's `sets` and `steps`: `steps` only with `sets`, each name in
  *      `steps` a defined step whose code step's `with` schema has the
- *      property `sets`, and one declaration of an option across the entries
- *      of one name (D-424, F-152 D4);
+ *      property `sets`, one declaration of an option across the entries of
+ *      one name (D-424, F-152 D4), and no option that takes an argument that
+ *      every entry command has (`GENERATED`);
  *   3. what each box runs: a code step, a defined step or a subflow, by name,
  *      inline or under another name (D-36), with its step gate (D-38);
  *   4. where each arrow goes: a box of the same flow or subflow, `stop` in a
@@ -72,6 +73,17 @@ export const OUTCOMES = /** @type {readonly ('success'|'failure')[]} */ (
 
 /** The flow set's settings: each is set in exactly one file (D4 step 1). */
 const SETTINGS = Object.freeze(['max_box_visits', 'gate_recheck_minutes']);
+
+/**
+ * The arguments that the parser of every entry command has (F-152 D6): the
+ * positional `id` (`entryOp`), `--json` (`buildParser`) and argparse's own
+ * `-h` and `--help`. An entry option with one of their names or their `dest`
+ * would break the parser or take their value, so the load refuses it.
+ */
+const GENERATED = Object.freeze({ names: ['id', '--json', '-h', '--help'], dests: ['id', 'json', 'help'] });
+
+/** argparse's default `dest` of the option `name`: no leading dashes, and `_` for `-`. */
+const dashless = (/** @type {string} */ name) => name.replace(/^--?/, '').replaceAll('-', '_');
 
 /**
  * @typedef {string | { condition: string, class: string }} GateEntry  as the
@@ -313,7 +325,14 @@ export function buildFlowSet(config, catalogue, backlogDir) {
     for (const [name, entry] of Object.entries(def.value.entries ?? {})) {
       for (const [option, value] of Object.entries(entry.args ?? {})) {
         const path = `${def.path}/entries/${pointerToken(name)}/args/${pointerToken(option)}`;
-        const { sets, steps = [] } = /** @type {{ sets?: string, steps?: string[] }} */ (value);
+        const { sets, steps = [], dest } = /** @type {{ sets?: string, steps?: string[], dest?: string }} */ (value);
+        if (GENERATED.names.includes(option) || GENERATED.dests.includes(dest ?? dashless(option)))
+          fault(
+            def.file,
+            path,
+            'args',
+            `'${option}' takes an argument that every entry command has: ${GENERATED.names.join(', ')}`,
+          );
         if (sets === undefined && steps.length > 0)
           fault(def.file, `${path}/steps`, 'args', 'steps needs sets: the key of with that the option replaces');
         for (const [index, step] of steps.entries()) {

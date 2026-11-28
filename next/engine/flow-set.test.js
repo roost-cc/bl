@@ -782,3 +782,35 @@ test('buildFlowSet takes an entry option with sets and steps, and refuses a wron
     "config/flows/task.yaml: /flows/task/entries/fix/args/--agent: args: the entry 'fix' declares --agent differently in story.yaml",
   ]);
 });
+
+test('buildFlowSet_rejects_reserved_entry_arguments', () => {
+  /** The flow set files with a story fix entry whose one option is `name` with `options`. */
+  const filesOf = (/** @type {string} */ name, /** @type {object} */ options = {}) => {
+    const files = /** @type {any} */ (optionFlows());
+    files['story.yaml'].flows.story.entries.fix.args = { [name]: options };
+    return files;
+  };
+  const faultsOf = (/** @type {string} */ name, /** @type {object} */ options) =>
+    faultLines(filesOf(name, options), OPTION_STEPS);
+  const generated = 'id, --json, -h, --help';
+  for (const [name, options] of /** @type {const} */ ([
+    ['--json', {}],
+    ['--help', {}],
+    ['-h', {}],
+    ['id', {}],
+    ['--id', {}],
+    ['--out', { dest: 'json' }],
+    ['--to', { dest: 'help' }],
+  ])) {
+    assert.deepEqual(
+      faultsOf(name, options),
+      [
+        `config/flows/story.yaml: /flows/story/entries/fix/args/${name}: args: '${name}' takes an argument that every entry command has: ${generated}`,
+      ],
+      `${name} ${JSON.stringify(options)}`,
+    );
+  }
+  for (const name of ['--json-out', '--agent', '-a', 'target']) {
+    assert.doesNotThrow(() => build(filesOf(name), OPTION_STEPS), name);
+  }
+});
