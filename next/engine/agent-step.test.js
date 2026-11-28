@@ -22,7 +22,10 @@ import { runFlow } from './runner.js';
 
 const CATALOGUE = { ...UTOP_STEPS, ...STEPS };
 
-/** A task flow whose `run` entry starts at the agent box `first`, with the `with:` text `args`. */
+/**
+ * A task flow whose `run` entry starts at the agent box `first`, with the `with:` text `args`; text
+ * after the `with:` map in `args`, such as `after: […]`, adds keys to the box.
+ */
 const taskFlow = (/** @type {string} */ args) =>
   [
     'flows:',
@@ -233,6 +236,25 @@ test('a failing bl.pre-agent is a crash that names the repo, and no session star
   assert.equal(crash.name, 'FlowCrash');
   assert.equal(crash.message, 'first: bl.pre-agent failed in b: no tools in b');
   assert.ok(!readFileSync(log, 'utf8').includes('session'));
+});
+
+test("worktree_clean() and worktree_unchanged() as post-conditions of an agent box read the test's repo contexts", async () => {
+  const backlogYaml = "repos: { a: {} }\nplugin_registry: { stages: { bl.pre-agent: 'true' } }\n";
+  const add = "run: [sh, -c, 'echo x > new']";
+  const commit = 'run: [git, commit, -q, --allow-empty, -m, wip]';
+  for (const [after, turns, outcome] of [
+    ['worktree_clean()', [add], 'failure'],
+    ['worktree_clean()', [commit], 'success'],
+    ['worktree_unchanged()', [commit], 'failure'],
+    ['worktree_unchanged()', [], 'success'],
+  ]) {
+    const { ctx, id } = await task(`${HEADLESS}, after: ['${after}']`, { backlogYaml });
+    const repos = [tempRepo('a')];
+    const scriptPath = script('Work', '{ outcome: success, summary: done }', /** @type {string[]} */ (turns));
+    const result = await run(ctx, id, scriptPath, { repoContexts: () => repos });
+    const status = outcome === 'success' ? 'done' : 'superseded';
+    assert.deepEqual(result, { ended: 'stop', status, outcome }, `${after} after ${turns.join(', ') || 'no change'}`);
+  }
 });
 
 // ---- capacity, has_capacity() and the next entry (F-141 D7, D-120) ----
