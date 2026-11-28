@@ -10,7 +10,8 @@
  *
  *   - `args`: the positional `id`, and the options that the entries of that
  *     name declare across all flows, each once (the flow set refuses two
- *     declarations of one option that differ, D-424);
+ *     declarations of one option that differ, D-424). Each help ends with
+ *     the item types whose flows accept the argument (D-424);
  *   - `schema`: `ENTRY_RECORD_SCHEMA`, a log entry or a usage entry with
  *     `item_id`;
  *   - `run`: `runEntry`.
@@ -99,11 +100,26 @@ export const ENTRY_RECORD_SCHEMA = Object.freeze({
  * @returns {Op}
  */
 export function entryOp(name, flowSet) {
-  const declared = Object.values(flowSet.flows).map((flow) =>
-    Object.hasOwn(flow.entries, name) ? (flow.entries[name].args ?? {}) : {},
+  const entries = Object.entries(flowSet.flows).flatMap(([type, flow]) =>
+    Object.hasOwn(flow.entries, name) ? [{ type, args: flow.entries[name].args ?? {} }] : [],
+  );
+  /** Each help ends with the item types that accept the argument (D-424). */
+  const help = (/** @type {string|undefined} */ text, /** @type {typeof entries} */ accepting) =>
+    `${text === undefined ? '' : `${text} `}(item types: ${accepting.map(({ type }) => type).join(', ')})`;
+  const options = Object.fromEntries(
+    Object.entries(Object.assign({}, ...entries.map(({ args }) => args))).map(([option, value]) => [
+      option,
+      {
+        ...value,
+        help: help(
+          value.help,
+          entries.filter(({ args }) => Object.hasOwn(args, option)),
+        ),
+      },
+    ]),
   );
   return {
-    args: { id: { help: 'the item' }, ...Object.assign({}, ...declared) },
+    args: { id: { help: help('the item', entries) }, ...options },
     schema: ENTRY_RECORD_SCHEMA,
     run: (args, ctx) => runEntry(name, args, ctx),
   };

@@ -198,13 +198,14 @@ test('a bad value or no command is an argparse error with the usage, exit 2', as
 // entry commands (F-152 D6)
 // ---------------------------------------------------------------------------
 
-test("<entry> --help lists the id and the options of every flow's entry of that name, each once, without sets and steps", async () => {
+test("<entry> --help lists the id and the options of every flow's entry of that name, each once, with the item types that accept each, without sets and steps", async () => {
   const { status, stdout } = await run(['start', '--help']);
   assert.equal(status, 0);
   assert.match(stdout, /^usage: bl-next start \[-h\] \[--agent profile\] \[--dry-run\] \[--json\] id\n/);
-  assert.match(stdout, /\n {2}id +the item\n/);
-  assert.match(stdout, /\n {2}--agent profile +the agent profile\n/);
-  assert.match(stdout, /\n {2}--dry-run +change nothing\n/);
+  assert.match(stdout, /\n {2}id +the item \(item types: story, task\)\n/);
+  assert.match(stdout, /\n {2}--agent profile +the agent profile \(item types: story, task\)\n/);
+  // Only the task flow's entry declares --dry-run.
+  assert.match(stdout, /\n {2}--dry-run +change nothing \(item types: task\)\n/);
   assert.match(stdout, /\n {2}--json +print the records as JSON\n/);
   assert.equal(stdout.split('--agent profile').length - 1, 2, 'once in the usage and once in the options');
   assert.doesNotMatch(stdout, /sets|steps|agents|implement/);
