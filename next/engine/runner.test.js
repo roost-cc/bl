@@ -546,7 +546,9 @@ test("each step gets the repo contexts as ctx.repos, and each repo's HEAD and st
   const { repos, repoContexts } = twoRepos();
   /** @type {unknown[]} */
   const seen = [];
-  const record = (/** @type {any} */ step) => seen.push({ repos: step.repos, snapshot: step.snapshot });
+  // The content hash is tested in steps/worktrees.test.js.
+  const record = (/** @type {any} */ step) =>
+    seen.push({ repos: step.repos, snapshot: step.snapshot.map(({ content, ...rest }) => rest) });
   const { catalogue } = fakeSteps({
     prepare: (/** @type {any} */ step) => {
       record(step);

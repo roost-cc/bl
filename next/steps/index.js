@@ -33,7 +33,7 @@ import { rank } from './rank.js';
  * @property {import('./worktrees.js').RepoContext[]} repos  the item's repo contexts
  *   (`repoContexts`, F-141 D6); `[]` until F-143's `prepare` records worktrees
  * @property {import('./worktrees.js').RepoSnapshot[]} snapshot  each repo's `HEAD`
- *   and status when the step starts (`snapshot`)
+ *   status and uncommitted content when the step starts (`snapshot`)
  * @property {import('../config/load.js').Configuration} config  the frozen configuration
  * @property {string} backlogDir  the backlog's root
  * @property {(line: string) => Promise<string>} [bl]  runs a `{{#bl}}` command
