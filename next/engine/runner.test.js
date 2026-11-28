@@ -2,7 +2,7 @@
 // gate, with fake steps, on a committed backlog repo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { hostname } from 'os';
 import { join } from 'path';
 import { parse, stringify } from 'yaml';
@@ -1119,6 +1119,29 @@ test('runFlow is refused, with no commit, while another process holds the item l
     assert.equal(head(ctx), base);
   } finally {
     await child.kill();
+  }
+});
+
+test('runFlow_removes_sigusr2_listener_when_lock_open_fails: a refused lock and a lock file that cannot be opened', async () => {
+  for (const [what, hold, error] of /** @type {const} */ ([
+    ['another process holds it', (/** @type {string} */ path) => holdLockInChild(path), /another process/],
+    [
+      'the lock path is a directory',
+      async (/** @type {string} */ path) => void mkdirSync(path, { recursive: true }),
+      { code: 'EISDIR' },
+    ],
+  ])) {
+    const ctx = backlog();
+    const id = await story(ctx, { status: 'implemented', run: 'idle' });
+    const before = process.listenerCount('SIGUSR2');
+    const child = await hold(itemLockPath(ctx.backlogDir, id));
+    try {
+      const { catalogue } = fakeSteps();
+      await assert.rejects(runFlow(ctx, { id, by: 'operator', entry: 'close', catalogue }), error, what);
+      assert.equal(process.listenerCount('SIGUSR2'), before, what);
+    } finally {
+      await child?.kill();
+    }
   }
 });
 

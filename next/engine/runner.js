@@ -271,10 +271,17 @@ export async function runFlow(
   // lock, so a signal at the instant the lock is taken does not end the process either.
   const nothing = () => {};
   process.on('SIGUSR2', nothing);
-  const lock = tryLockOnce(path, `the flow of ${item.id}`);
-  if (!('taken' in lock)) {
+  /** @type {ReturnType<typeof tryLockOnce>} */
+  let lock;
+  try {
+    lock = tryLockOnce(path, `the flow of ${item.id}`);
+    if (!('taken' in lock)) {
+      throw new Error(`${item.id}: another process (pid ${lock.holder}) runs its flow and holds ${path}`);
+    }
+  } catch (error) {
+    // A refused lock, and a lock file that cannot be opened (EISDIR), leave no listener.
     process.off('SIGUSR2', nothing);
-    throw new Error(`${item.id}: another process (pid ${lock.holder}) runs its flow and holds ${path}`);
+    throw error;
   }
   try {
     const invocation = { by, catalogue, repoContexts, overrides, tty, emit };
