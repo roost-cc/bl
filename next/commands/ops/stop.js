@@ -15,7 +15,7 @@
 
 import { signalHolder } from '../../lib/lock.js';
 import { info } from '../../lib/stderr.js';
-import { itemDir } from '../../store/items.js';
+import { existingItem } from '../../store/items.js';
 
 /** @type {import('./index.js').Op} */
 export const stop = {
@@ -23,8 +23,7 @@ export const stop = {
   // The op gives no records, so no record holds to its schema.
   schema: { not: {} },
   run: ({ id }, ctx) => {
-    const item = itemDir(ctx, /** @type {string} */ (id));
-    if (item === null) throw new Error(`there is no item ${id} in the backlog`);
+    const item = existingItem(ctx, /** @type {string} */ (id));
     const holder = signalHolder(ctx.backlogDir, item.id, 'SIGTERM', 'bl stop');
     info(holder === null ? `${item.id}: no process holds the item` : `${item.id}: stopped process ${holder}`);
     return [];

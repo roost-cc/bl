@@ -27,7 +27,7 @@ import { parse } from 'yaml';
 import { parseRun } from '../../engine/run-state.js';
 import { itemHolder, withLock } from '../../lib/lock.js';
 import { checkState, readState, STATE, throwFaults } from '../../store/item-json.js';
-import { itemDir } from '../../store/items.js';
+import { existingItem } from '../../store/items.js';
 import { now, storeWrite } from '../../store/write.js';
 import LOG_ENTRY_SCHEMA from '../../store/schemas/log-entry.schema.json' with { type: 'json' };
 
@@ -63,8 +63,7 @@ export const force = {
   },
   schema: LOG_ENTRY_SCHEMA,
   run: async ({ id, path, value: text, note }, ctx) => {
-    const item = itemDir(ctx, /** @type {string} */ (id));
-    if (item === null) throw new Error(`there is no item ${id} in the backlog`);
+    const item = existingItem(ctx, /** @type {string} */ (id));
     const to = scalar(/** @type {string} */ (text));
     const pointer = /** @type {string} */ (path);
     return withLock(ctx.backlogDir, async () => {

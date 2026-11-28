@@ -27,7 +27,7 @@ import { ArgumentParser } from 'argparse';
 import { EventEmitter, on } from 'events';
 import { runFlow } from '../engine/runner.js';
 import { waitForWake } from '../engine/wake.js';
-import { itemDir } from '../store/items.js';
+import { existingItem } from '../store/items.js';
 import LOG_ENTRY_SCHEMA from '../store/schemas/log-entry.schema.json' with { type: 'json' };
 import USAGE_ENTRY_SCHEMA from '../store/schemas/usage-entry.schema.json' with { type: 'json' };
 import { addArgs } from './args.js';
@@ -121,8 +121,7 @@ export function entryOp(name, flowSet) {
  */
 export function runEntry(name, args, ctx) {
   const id = /** @type {string} */ (args.id);
-  const item = itemDir(ctx, id);
-  if (item === null) throw new Error(`there is no item ${id} in the backlog`);
+  const item = existingItem(ctx, id);
   const { flows } = ctx.flowSet;
   const flow = flows[item.type];
   if (flow === undefined || !Object.hasOwn(flow.entries, name)) {

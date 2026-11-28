@@ -27,7 +27,7 @@ import { waitForWake } from '../../engine/wake.js';
 import { info } from '../../lib/stderr.js';
 import { signalHolder } from '../../lib/lock.js';
 import { readState } from '../../store/item-json.js';
-import { itemDir } from '../../store/items.js';
+import { existingItem } from '../../store/items.js';
 import { ENTRY_RECORD_SCHEMA, flowRecords } from '../entry.js';
 
 /**
@@ -51,8 +51,7 @@ export const resume = {
   },
   schema: ENTRY_RECORD_SCHEMA,
   run: ({ id, agent }, ctx) => {
-    const item = itemDir(ctx, /** @type {string} */ (id));
-    if (item === null) throw new Error(`there is no item ${id} in the backlog`);
+    const item = existingItem(ctx, /** @type {string} */ (id));
     const holder = signalHolder(ctx.backlogDir, item.id, 'SIGUSR2', 'bl resume');
     if (holder !== null) {
       info(`${item.id}: woke process ${holder}`);

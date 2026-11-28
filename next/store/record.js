@@ -14,7 +14,7 @@ import { join } from 'path';
 import { DOCUMENT, parseDocument } from './document.js';
 import { graphValues, workUnit } from './graphs.js';
 import { ATTRIBUTES, STATE, readAttributes, readState } from './item-json.js';
-import { backlogText, itemDefinition, itemDir } from './items.js';
+import { backlogText, existingItem, itemDefinition, itemDir } from './items.js';
 
 /**
  * @typedef {import('./items.js').StoreContext} StoreContext
@@ -57,8 +57,7 @@ export function recordReader(ctx) {
     return { unit, change: dir === null ? '' : (backlogText(ctx, `${dir.path}/${CHANGE}`) ?? '') };
   };
   return (id) => {
-    const item = itemDir(ctx, id);
-    if (item === null) throw new Error(`there is no item ${id} in the backlog`);
+    const item = existingItem(ctx, id);
     const documentPath = `${item.path}/${DOCUMENT}`;
     const body = present(backlogText(ctx, documentPath), documentPath);
     const { title, sections } = parseDocument(body);

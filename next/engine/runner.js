@@ -98,7 +98,7 @@ import { agentList } from '../steps/capacity.js';
 import { sendAlert } from '../steps/notify.js';
 import { repoContexts as itemRepoContexts, snapshot as takeSnapshot } from '../steps/worktrees.js';
 import { readState } from '../store/item-json.js';
-import { itemDir } from '../store/items.js';
+import { existingItem } from '../store/items.js';
 import { LOG, readJsonl } from '../store/jsonl.js';
 import { record as readRecord } from '../store/record.js';
 import { now, storeWrite } from '../store/write.js';
@@ -254,8 +254,7 @@ export async function runFlow(
     emit = () => {},
   },
 ) {
-  const item = itemDir(ctx, id);
-  if (item === null) throw new Error(`there is no item ${id} in the backlog`);
+  const item = existingItem(ctx, id);
   const flow = ctx.flowSet.flows[item.type];
   if (flow === undefined) throw new Error(`${item.id}: the item type ${item.type} has no flow`);
   if (!resume && !Object.hasOwn(flow.entries, /** @type {string} */ (entry))) {

@@ -20,7 +20,7 @@ import { parseRun, readRunState } from '../../engine/run-state.js';
 import { flowWrite } from '../../engine/runner.js';
 import { withLock } from '../../lib/lock.js';
 import { readState } from '../../store/item-json.js';
-import { itemDir } from '../../store/items.js';
+import { existingItem } from '../../store/items.js';
 import { now } from '../../store/write.js';
 import LOG_ENTRY_SCHEMA from '../../store/schemas/log-entry.schema.json' with { type: 'json' };
 
@@ -36,8 +36,7 @@ export const outcome = {
   },
   schema: LOG_ENTRY_SCHEMA,
   run: async ({ id, outcome: name, note }, ctx) => {
-    const item = itemDir(ctx, /** @type {string} */ (id));
-    if (item === null) throw new Error(`there is no item ${id} in the backlog`);
+    const item = existingItem(ctx, /** @type {string} */ (id));
     return withLock(ctx.backlogDir, async () => {
       const state = /** @type {import('../../engine/run-state.js').State} */ (readState(ctx, item));
       const run = readRunState(ctx, item.id, state);
