@@ -9,6 +9,8 @@
 // And no synchronous call leaves stdin 'pipe' (its default): Node ends that
 // stdin with the same refused shutdown, and the call reports EPERM, which
 // makes execFileSync and execSync throw, from a child that succeeded.
+// A child that `node-pty` starts is on a pseudo-terminal, with no pipe, and
+// the guard leaves it out (`ptyNames`).
 //
 // The check parses each file with acorn: an `input` key across lines or as a
 // `{ input }` shorthand needs a JavaScript parser, and acorn is the standard
@@ -267,6 +269,20 @@ function stdinPipes(value, bindings) {
 }
 
 /**
+ * The local names a source imports from `node-pty`: its `spawn` starts a
+ * child on a pseudo-terminal, so all three of the child's streams are the
+ * terminal, never a pipe or a socket, and the sandbox's refusals above do
+ * not reach it. A test of an interactive session needs one (F-141 D9).
+ */
+function ptyNames(ast) {
+  return new Set(
+    ast.body
+      .filter((n) => n.type === 'ImportDeclaration' && n.source.value === 'node-pty')
+      .flatMap((n) => n.specifiers.map((s) => s.local.name)),
+  );
+}
+
+/**
  * The guard's findings in one source: `[{ line, what }]`.
  * @param {string} source
  */
@@ -275,9 +291,13 @@ export function childStdioViolations(source) {
   const aliases = nodeAliases(ast);
   const declared = declaredSyncAliases(ast);
   const bindings = bindingsOf(ast);
+  const pty = ptyNames(ast);
   const out = [];
   ancestor(ast, {
     CallExpression(call, _state, ancestors) {
+      const { callee } = call;
+      const base = callee.type === 'MemberExpression' ? callee.object : callee;
+      if (base.type === 'Identifier' && pty.has(base.name)) return;
       const called = calleeName(call.callee);
       const alias = call.callee.type === 'Identifier' ? syncAliasAt(called, ancestors, declared) : null;
       const name = alias ?? called;
@@ -396,6 +416,16 @@ const CASES = [
     hits: 0,
   },
   { name: 'an async spawn of a non-Node child', src: `spawn('git', ['x'])`, hits: 0 },
+  {
+    name: 'a Node child on a pseudo-terminal of node-pty',
+    src: `import pty from 'node-pty';\nimport { spawn as ptySpawn } from 'node-pty';\npty.spawn(process.execPath, ['x']);\nptySpawn('node', ['x'])`,
+    hits: 0,
+  },
+  {
+    name: 'a spawn of another module in a file that imports node-pty',
+    src: `import pty from 'node-pty';\nimport cp from 'child_process';\ncp.spawn(process.execPath, ['x'])`,
+    hits: 1,
+  },
   { name: 'spawnSync with opaque options', src: `spawnSync('git', ['x'], opts)`, hits: 0 },
 ];
 
