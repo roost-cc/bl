@@ -124,8 +124,9 @@ export const readAttributes = (ctx, item) =>
  */
 export function checkState(state) {
   const faults = checkValue(STATE_SCHEMA, state);
+  if (faults.length > 0) return faults;
   const { run, session } = /** @type {{ run: string, session?: { box: string } }} */ (state);
-  if (faults.length > 0 || session === undefined || run === `active: ${session.box}`) return faults;
+  if (session === undefined || run === `active: ${session.box}`) return faults;
   return [
     { file: '', path: '/session/box', rule: 'session', message: `the session's box must be the box of '${run}'` },
   ];

@@ -119,6 +119,8 @@ test('state_rejects_session_for_a_different_active_box', () => {
     const label = `${run} ${JSON.stringify(session)}`;
     assert.deepEqual(rules(checkState({ status: 'in_progress', run, session })), expected, label);
   }
+  // A value that is not an object is a schema fault, and the box rule does not read it.
+  for (const value of [null, 1, 'x', []]) assert.deepEqual(rules(checkState(value)), ['type '], JSON.stringify(value));
 });
 
 test('attributes.json: an undeclared key, a value that fails its schema and a missing required attribute are one finding each', () => {
