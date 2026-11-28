@@ -17,6 +17,7 @@ import { UTOP, UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 import { git, tempRepo } from '../test/helpers/git.js';
 import { noReplayPath, REPLAY_BIN, replayEnv } from '../test/helpers/replay.js';
 import { stderrOfAsync } from '../test/helpers/streams.js';
+import { FLOW_CHILD } from '../test/helpers/flow-child-run.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 import { runFlow } from './runner.js';
 import { waitForWake } from './wake.js';
@@ -655,8 +656,6 @@ test('an interactive agent box with no terminal ends the invocation idle with th
 });
 
 // ---- an interactive session under a pseudo-terminal (F-141 D4, F-147 D7) ----
-
-const FLOW_CHILD = join(import.meta.dirname, '..', 'test', 'helpers', 'flow-child.js');
 
 test('under a pseudo-terminal, an interactive agent box on replay answers a scripted ask and takes the chosen branch', async () => {
   const { ctx, id } = await task(INTERACTIVE);

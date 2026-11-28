@@ -4,7 +4,7 @@
  * flows.md, "Resume", D-49 to D-51, and "Waking a suspended process", D-22;
  * commands.md, D-458).
  *
- *   - When a process holds the item lock (`itemHolder`), the op sends it
+ *   - When a process holds the item lock (`signalHolder`), the op sends it
  *     SIGUSR2, prints `<id>: woke process <pid>` on stderr, and gives no
  *     records. A suspended process checks its gate again; a running step goes
  *     on (`runFlow` listens for SIGUSR2 while it holds the lock).
@@ -25,7 +25,7 @@ import { runFlow } from '../../engine/runner.js';
 import { parseRun } from '../../engine/run-state.js';
 import { waitForWake } from '../../engine/wake.js';
 import { info } from '../../lib/stderr.js';
-import { itemHolder } from '../../lib/lock.js';
+import { signalHolder } from '../../lib/lock.js';
 import { readState } from '../../store/item-json.js';
 import { itemDir } from '../../store/items.js';
 import { ENTRY_RECORD_SCHEMA, flowRecords } from '../entry.js';
@@ -53,12 +53,8 @@ export const resume = {
   run: ({ id, agent }, ctx) => {
     const item = itemDir(ctx, /** @type {string} */ (id));
     if (item === null) throw new Error(`there is no item ${id} in the backlog`);
-    const holder = itemHolder(ctx.backlogDir, item.id);
-    if (holder === 'unknown') {
-      throw new Error(`${item.id}: a process is taking the item lock and has not written its pid; run bl resume again`);
-    }
+    const holder = signalHolder(ctx.backlogDir, item.id, 'SIGUSR2', 'bl resume');
     if (holder !== null) {
-      process.kill(holder, 'SIGUSR2');
       info(`${item.id}: woke process ${holder}`);
       return [];
     }

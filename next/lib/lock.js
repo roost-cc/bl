@@ -102,6 +102,27 @@ export const itemLockPath = (backlogRoot, id) => join(backlogRoot, LOCK_DIR, `it
 export const itemHolder = (backlogRoot, id) => holderOf(itemLockPath(backlogRoot, id));
 
 /**
+ * Send `signal` to the process that holds the item lock of `id` (`itemHolder`),
+ * and give its PID, or `null` when no process holds the lock. A signal needs a
+ * PID, so in the instant before a new holder writes it, this throws and asks
+ * for `command` again. `bl resume` (SIGUSR2) and `bl stop` (SIGTERM) use it.
+ *
+ * @param {string} backlogRoot
+ * @param {string} id
+ * @param {NodeJS.Signals} signal
+ * @param {string} command  the command to run again, as `bl resume`
+ * @returns {number | null}
+ */
+export function signalHolder(backlogRoot, id, signal, command) {
+  const holder = itemHolder(backlogRoot, id);
+  if (holder === 'unknown') {
+    throw new Error(`${id}: a process is taking the item lock and has not written its pid; run ${command} again`);
+  }
+  if (holder !== null) process.kill(holder, signal);
+  return holder;
+}
+
+/**
  * Create `<backlogRoot>/.bl/lock/` when it is missing, before a take opens
  * (and creates) a lock file in it. A missing backlog root is not created: the
  * error (ENOENT) is thrown.

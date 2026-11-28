@@ -2,8 +2,7 @@
 // gate, with fake steps, on a committed backlog repo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'child_process';
-import { closeSync, openSync, readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { hostname } from 'os';
 import { join } from 'path';
 import { parse, stringify } from 'yaml';
@@ -13,13 +12,13 @@ import { itemDir } from '../store/items.js';
 import { STEPS } from '../steps/index.js';
 import { storeWrite } from '../store/write.js';
 import { createItems, definedSteps, engineBacklog, setGraph } from '../test/helpers/engine-backlog.js';
+import { startFlowChild } from '../test/helpers/flow-child-run.js';
 import { UTOP, UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 import { git, tempRepo } from '../test/helpers/git.js';
 import { holdLockInChild } from '../test/helpers/hold-lock.js';
 import { channel, delivered, notifyBacklog } from '../test/helpers/notify-backlog.js';
 import { sendUsr2 } from '../test/helpers/sigusr2.js';
 import { recordingWake, suspending } from '../test/helpers/suspending.js';
-import { mkTempDir } from '../test/helpers/tempdir.js';
 import { waitUntil } from '../test/helpers/wait-until.js';
 import { readRunState } from './run-state.js';
 import { FlowCrash, runFlow } from './runner.js';
@@ -1591,22 +1590,12 @@ test('a bl force of /run while suspended makes the process print that the run st
   assert.deepEqual(eventsOf(ctx, id), ['flow_start', 'flow_end', 'force']);
 });
 
-const FLOW_CHILD = join(import.meta.dirname, '..', 'test', 'helpers', 'flow-child.js');
-
 test('SIGTERM to a suspended process ends it; the item keeps gated: <to>, and the log ends with that flow_end', async (t) => {
   const ctx = backlog();
   const { id } = await storyWithTask(ctx);
-  const dir = mkTempDir('bl-flow-child-');
-  const stderrFile = join(dir, 'stderr');
-  const stderr = openSync(stderrFile, 'w');
-  const child = spawn(process.execPath, [FLOW_CHILD, ctx.backlogDir, id, 'resume', join(dir, 'result.json'), 'wake'], {
-    stdio: ['ignore', 'ignore', stderr],
-  });
-  closeSync(stderr);
-  t.after(() => child.kill('SIGKILL')); // a failed assertion leaves no suspended child behind
-  const exited = new Promise((done) => child.on('exit', (code, signal) => done({ code, signal })));
+  const { child, exited, stderr } = startFlowChild(t, ctx.backlogDir, id, 'resume', ['wake']);
   const suspended = `${id}: suspended at gated: done`;
-  await until('the suspend', () => readFileSync(stderrFile, 'utf8').includes(suspended));
+  await until('the suspend', () => stderr().includes(suspended));
   const lock = itemLockPath(ctx.backlogDir, id);
   assert.equal(holderOf(lock), child.pid);
 
