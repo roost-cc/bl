@@ -18,6 +18,7 @@ import { git, tempRepo } from '../test/helpers/git.js';
 import { holdLockInChild } from '../test/helpers/hold-lock.js';
 import { channel, delivered, notifyBacklog } from '../test/helpers/notify-backlog.js';
 import { sendUsr2 } from '../test/helpers/sigusr2.js';
+import { recordingWake, suspending } from '../test/helpers/suspending.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 import { waitUntil } from '../test/helpers/wait-until.js';
 import { readRunState } from './run-state.js';
@@ -1459,36 +1460,6 @@ test('a force entry after an outcome entry makes the outcome unused: resume runs
 
 // ---- suspend and wake (F-152 D3, Decision A1) ----
 
-/**
- * Start `runFlow` with `invocation` and `waitForWake`, or the `wake` in `invocation`, with stderr
- * caught: give its promise and the lines it printed so far. If the test ends while the flow is
- * suspended (an assertion failed), a SIGUSR2 wakes it and its next wait throws, so the flow ends
- * and the test file does not hang.
- */
-function suspending(/** @type {any} */ t, /** @type {any} */ ctx, /** @type {any} */ invocation) {
-  /** @type {string[]} */
-  const printed = [];
-  t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(String(text)) > 0);
-  const { wake = waitForWake } = invocation;
-  let ended = false;
-  let settled = false;
-  const pending = runFlow(ctx, {
-    by: 'operator',
-    ...invocation,
-    wake: async (/** @type {any} */ c, /** @type {any} */ suspend) => {
-      if (ended) throw new Error('the test ended');
-      return wake(c, suspend);
-    },
-  }).finally(() => (settled = true));
-  pending.catch(() => {});
-  t.after(() => {
-    ended = true;
-    if (!settled) sendUsr2();
-  });
-  const lines = () => printed.join('').split('\n').filter(Boolean);
-  return { pending, lines };
-}
-
 /** Wait until `check` is true. */
 const until = (/** @type {string} */ what, /** @type {() => boolean} */ check) =>
   waitUntil(() => (check() ? true : undefined), what);
@@ -1685,17 +1656,6 @@ test('SIGTERM to a suspended process ends it; the item keeps gated: <to>, and th
 function waitingSteps(/** @type {Record<string, any>} */ plan = {}) {
   const { catalogue, ran } = fakeSteps(plan);
   return { catalogue: { ...catalogue, wait: STEPS.wait }, ran };
-}
-
-/** A `wake` that records each suspend's run state in `runs`, then waits with `waitForWake`. */
-function recordingWake() {
-  /** @type {string[]} */
-  const runs = [];
-  const wake = async (/** @type {any} */ c, /** @type {any} */ suspend) => {
-    runs.push(suspend.run);
-    return waitForWake(c, suspend);
-  };
-  return { runs, wake };
 }
 
 const WAIT_FIX = 'deliver/self_check/wait_fix';
