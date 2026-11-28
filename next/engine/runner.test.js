@@ -10,6 +10,7 @@ import { parse, stringify } from 'yaml';
 import { holderOf } from '../lib/kernel-lock.js';
 import { itemLockPath } from '../lib/lock.js';
 import { itemDir } from '../store/items.js';
+import { STEPS } from '../steps/index.js';
 import { storeWrite } from '../store/write.js';
 import { createItems, engineBacklog, setGraph } from '../test/helpers/engine-backlog.js';
 import { UTOP, UTOP_STEPS } from '../test/helpers/flow-fixture.js';
@@ -1676,4 +1677,129 @@ test('SIGTERM to a suspended process ends it; the item keeps gated: <to>, and th
   const { event, ended } = logOf(ctx, id).at(-1);
   assert.deepEqual({ event, ended }, { event: 'flow_end', ended: 'gated: done' });
   assert.equal(git(ctx.backlogDir, 'status', '--porcelain'), '', 'nothing is left to write');
+});
+
+// ---- wait boxes (F-152 D5) ----
+
+/** `fakeSteps(plan)` with the real `wait` step, which runs no step and so never shows in `ran`. */
+function waitingSteps(/** @type {Record<string, any>} */ plan = {}) {
+  const { catalogue, ran } = fakeSteps(plan);
+  return { catalogue: { ...catalogue, wait: STEPS.wait }, ran };
+}
+
+/** A `wake` that records each suspend's run state in `runs`, then waits with `waitForWake`. */
+function recordingWake() {
+  /** @type {string[]} */
+  const runs = [];
+  const wake = async (/** @type {any} */ c, /** @type {any} */ suspend) => {
+    runs.push(suspend.run);
+    return waitForWake(c, suspend);
+  };
+  return { runs, wake };
+}
+
+const WAIT_FIX = 'deliver/self_check/wait_fix';
+
+test("a flow that reaches self_check's wait_fix commits waiting: <box> and its flow_end and suspends; a commit that is no outcome for the box wakes it with no commit; an outcome entry success follows the success arrow, and failure the failure arrow, each after a flow_start with resume", async (t) => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'in_progress', run: 'idle' });
+  // A loose story: in_unit fails, so the deliver subflow runs, and open findings after the
+  // self-review with the round cap reached go to notify_fix, then to wait_fix.
+  const { catalogue, ran } = waitingSteps({
+    in_unit: 'failure',
+    'deliver/self_check/self_review/findings_closed': 'failure',
+    'deliver/self_check/self_round_cap': 'failure',
+    'deliver/self_check/fix': 'failure',
+  });
+  const { runs, wake } = recordingWake();
+  const run = suspending(t, ctx, { id, start: 'in_unit', entry: 'deliver', catalogue, wake });
+  const suspended = `${id}: suspended at waiting: ${WAIT_FIX}: waiting for bl outcome ${id} success|failure`;
+  await until('the wait', () => runs.length === 1);
+  assert.deepEqual(stateOf(ctx, id), { status: 'in_progress', run: `waiting: ${WAIT_FIX}` });
+  const { at, ...end } = logOf(ctx, id).at(-1);
+  assert.deepEqual(end, {
+    event: 'flow_end',
+    ended: `waiting: ${WAIT_FIX}`,
+    outcome: 'success',
+    status: 'in_progress',
+    commits: [],
+  });
+  assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%s'), `${id}: ${WAIT_FIX} waiting`);
+  assert.equal(ran.at(-1), 'deliver/self_check/notify_fix', 'the wait box runs no step');
+  assert.ok(run.lines().includes(suspended), run.lines().join('\n'));
+
+  // A commit that is no outcome for the box: a wake, and no commit.
+  git(ctx.backlogDir, 'commit', '-q', '--allow-empty', '-m', 'another item');
+  const other = head(ctx);
+  await until('the wake on another commit', () => runs.length === 2);
+  assert.equal(head(ctx), other, 'no commit');
+  assert.deepEqual(stateOf(ctx, id), { status: 'in_progress', run: `waiting: ${WAIT_FIX}` });
+
+  // success: the success arrow runs fix, which fails, and the flow waits at wait_fix again.
+  const before = ran.length;
+  await appendLog(ctx, id, outcomeEntry(WAIT_FIX, 'success'));
+  await until('the second wait at wait_fix', () => runs.length === 3 && ran.length > before);
+  assert.deepEqual(ran.slice(before), ['deliver/self_check/fix', 'deliver/self_check/notify_fix']);
+  assert.deepEqual(eventsOf(ctx, id).slice(-3), ['outcome', 'flow_start', 'flow_end']);
+  const { at: startAt, ...resumed } = logOf(ctx, id).at(-2);
+  assert.deepEqual(resumed, { event: 'flow_start', resume: true, status: 'in_progress', by: 'operator' });
+  assert.deepEqual(stateOf(ctx, id), { status: 'in_progress', run: `waiting: ${WAIT_FIX}` });
+
+  // failure: the failure arrow returns failure out of self_check and deliver, to the story's
+  // deliver failure arrow.
+  await appendLog(ctx, id, outcomeEntry(WAIT_FIX, 'failure'));
+  const result = await run.pending;
+  t.mock.restoreAll();
+  assert.deepEqual(result, { ended: 'stop', status: 'changes_requested', outcome: 'failure' });
+  assert.equal(ran.length, before + 2, 'no step runs for the failure outcome');
+  assert.deepEqual(eventsOf(ctx, id).slice(-3), ['outcome', 'flow_start', 'flow_end']);
+  assert.deepEqual(stateOf(ctx, id), { status: 'changes_requested', run: 'idle' });
+  assert.deepEqual(
+    run.lines().filter((line) => line.includes('suspended')),
+    [suspended],
+    'the line is printed again only when it changed',
+  );
+});
+
+test('the step gate of a wait box is checked before the box: a failing one ends at gated before: <box>, and once it passes the box waits', async (t) => {
+  const ctx = backlog({ 'gates.yaml': 'step_gates:\n  wait: [\'item("T-1").closed\']\n' });
+  const [id] = await createItems(ctx, [
+    { type: 'story', state: { status: 'in_progress', run: 'idle' } },
+    { type: 'task', state: { status: 'draft', run: 'idle' } },
+  ]);
+  const { catalogue, ran } = waitingSteps();
+  const { runs, wake } = recordingWake();
+  const run = suspending(t, ctx, { id, start: 'wait_implement', entry: 'implement', catalogue, wake });
+  await until('the gated wait', () => runs.length === 1);
+  assert.deepEqual(runs, ['gated before: wait_implement']);
+  assert.deepEqual(stateOf(ctx, id), { status: 'in_progress', run: 'gated before: wait_implement' });
+
+  await closeTask(ctx, 'T-1');
+  await until('the wait', () => runs.length === 2);
+  assert.deepEqual(runs, ['gated before: wait_implement', 'waiting: wait_implement']);
+  assert.deepEqual(stateOf(ctx, id), { status: 'in_progress', run: 'waiting: wait_implement' });
+
+  await appendLog(ctx, id, outcomeEntry('wait_implement', 'failure'));
+  const result = await run.pending;
+  t.mock.restoreAll();
+  assert.deepEqual(result, { ended: 'stop', status: 'in_progress', outcome: 'failure' });
+  assert.deepEqual(ran, []);
+  assert.deepEqual(eventsOf(ctx, id), [
+    'flow_start',
+    'flow_end',
+    'flow_start',
+    'flow_end',
+    'outcome',
+    'flow_start',
+    'flow_end',
+  ]);
+});
+
+test('without wake, an invocation that reaches a wait box returns at waiting: <box>', async () => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'in_progress', run: 'idle' });
+  const { catalogue } = waitingSteps();
+  const result = await runFlow(ctx, { id, start: 'wait_implement', by: 'operator', entry: 'implement', catalogue });
+  assert.deepEqual(result, { ended: 'waiting: wait_implement', status: 'in_progress' });
+  assert.equal(holderOf(itemLockPath(ctx.backlogDir, id)), null);
 });

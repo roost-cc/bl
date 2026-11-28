@@ -17,6 +17,7 @@ import { assertStep, succeed } from './simple.js';
 import { increment } from './increment.js';
 import { notify } from './notify.js';
 import { rank } from './rank.js';
+import { wait } from './wait.js';
 
 /** @typedef {'success'|'failure'} Outcome */
 
@@ -62,9 +63,12 @@ import { rank } from './rank.js';
  * @property {(withArgs: any) => boolean} [interactive]  true when the box's step needs
  *   the operator's terminal; with no terminal, the runner does not start it
  *   (D-29, F-141 D9). A step without it is never interactive.
- * @property {(ctx: StepContext, withArgs: any) => StepResult | Promise<StepResult>} run
+ * @property {true} [waits]  the box waits for an `outcome` entry (`wait`, F-152 D5): the
+ *   runner checks its step gate, then commits `waiting: <box>` and suspends; such a step
+ *   has no `run`
+ * @property {(ctx: StepContext, withArgs: any) => StepResult | Promise<StepResult>} [run]
  *   runs the step, and the runner awaits what it gives; a step that throws is
- *   a crash
+ *   a crash. Every step without `waits` has it.
  */
 
 /** @type {Readonly<Record<string, Step>>} code step name → step */
@@ -75,4 +79,5 @@ export const STEPS = Object.freeze({
   rank,
   notify,
   agent,
+  wait,
 });

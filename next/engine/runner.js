@@ -20,6 +20,9 @@
  *      `gated before: <box>`, and the process suspends. In an `agent` box,
  *      `has_capacity()` reads the box's `agents` list, which the invocation's
  *      `agents` override replaces where it applies (`agentList`, F-141 D7);
+ *      a box whose step `waits` (`wait`) runs no step: the invocation ends at
+ *      `waiting: <box>`, and the process suspends until an `outcome` entry for
+ *      the box is the last log entry (D-32, F-152 D5);
  *   3. an interactive step with no terminal does not start: the invocation
  *      ends `idle` with that box `next` (D-29, F-141 D9);
  *   4. the step from the catalogue (D2), an `agent` step with that same list,
@@ -47,9 +50,10 @@
  * history"): the runner throws `FlowCrash`, and the command layer prints it.
  *
  * **Suspend and wake (F-152 D3, Decision A1).** An invocation that ends at a
- * gate has committed its gated run state and its `flow_end`. With a `wake`
- * option, `runFlow` then keeps the item lock and suspends: it prints
- * `<id>: suspended at <run state>: <failing entries>`, waits for `wake`
+ * gate or a wait box has committed its gated or waiting run state and its
+ * `flow_end`. With a `wake` option, `runFlow` then keeps the item lock and
+ * suspends: it prints `<id>: suspended at <run state>: <failing entries>`
+ * (at a wait box, the `bl outcome` that ends the wait), waits for `wake`
  * (`waitForWake`), and runs a new invocation with `resume: true` and the
  * first `by`. That invocation goes on where `wayOn` says, or finds the item
  * still held, commits nothing, and suspends again; the line is printed again
@@ -99,7 +103,7 @@ import { checkAgainstFlow, parseRun } from './run-state.js';
 
 /**
  * @typedef {object} FlowResult  how the invocation ended, as its `flow_end` gives it
- * @property {string} ended  `stop`, `gated: <to status>` or `gated before: <box>`
+ * @property {string} ended  `stop`, `gated: <to status>`, `gated before: <box>` or `waiting: <box>`
  * @property {string} status  the status at the end
  * @property {string} [outcome]  the outcome of the last step; absent when no step ran
  */
@@ -219,8 +223,9 @@ export async function runFlow(
     let shown = '';
     while (suspend !== undefined) {
       const { run, failing } = suspend;
-      // The failing entries are printed again only when they changed (D3).
-      const report = `${item.id}: suspended at ${run}: ${texts(failing)}`;
+      // The failing entries are printed again only when they changed (D3). A wait box has none.
+      const why = failing.length > 0 ? texts(failing) : `waiting for bl outcome ${item.id} success|failure`;
+      const report = `${item.id}: suspended at ${run}: ${why}`;
       if (report !== shown) info(report);
       shown = report;
       await wake(ctx, suspend);
@@ -379,6 +384,13 @@ async function invoke(
    * @param {string|undefined} note
    */
   const flowEnd = (ended, outcome, note) => ({ at: now(), event: 'flow_end', ended, outcome, status, commits, note });
+  /**
+   * The result of an invocation that ends `ended` before the step of its box
+   * runs: the outcome is the last step's, absent when no step ran.
+   * @param {string} ended
+   * @returns {FlowResult}
+   */
+  const endedBefore = (ended) => ({ ended, status, ...(last === undefined ? {} : { outcome: last }) });
 
   /**
    * The step context of `box` over `record`, with its staged writes in `staged`,
@@ -458,15 +470,21 @@ async function invoke(
           });
           // A gated end suspends, so it sends no ended alert (F-140 Decision A3).
           await alertOrReport(id, 'gated', async () => gatedAlert(step, gated, box));
-          return {
-            result: { ended, status, ...(last === undefined ? {} : { outcome: last }) },
-            suspend: { run: ended, failing: gated, agents },
-          };
+          return { result: endedBefore(ended), suspend: { run: ended, failing: gated, agents } };
         }
 
+        const code = catalogue[/** @type {string} */ (node.step)];
+        if (code.waits) {
+          // A wait box runs no step: the process suspends until an outcome entry for the box (D-32, F-152 D5).
+          const ended = `waiting: ${box}`;
+          await flowCommit(`${id}: ${box} waiting`, box, (w) => {
+            setState(w, status, ended);
+            w.log(id, flowEnd(ended, last, undefined));
+          });
+          return { result: endedBefore(ended), suspend: { run: ended, failing: [] } };
+        }
         // An agent step gets the list its gate checked.
         const withArgs = agents === undefined ? node.with : { .../** @type {object} */ (node.with), agents };
-        const code = catalogue[/** @type {string} */ (node.step)];
         if (code.interactive?.(withArgs) && !hasTerminal(tty)) {
           // The step needs the operator, so it does not start (D-29): a later `bl resume` runs it.
           const note = `no terminal for the interactive step ${box}`;
@@ -477,9 +495,9 @@ async function invoke(
           info(`${box}: ${note}`);
           info(`run \`bl resume ${id}\` to continue`);
           await alertOrReport(id, 'ended.normal', async () => sendAlert(step, 'ended', ['normal'], { box }));
-          return { result: { ended: STOP, status, ...(last === undefined ? {} : { outcome: last }) } };
+          return { result: endedBefore(STOP) };
         }
-        const result = await code.run(step, withArgs);
+        const result = await /** @type {NonNullable<Step['run']>} */ (code.run)(step, withArgs);
         // A step gives a bare outcome or { outcome, note } (F-140 Decision A2).
         outcome = typeof result === 'string' ? result : result.outcome;
         stepNote = typeof result === 'string' ? undefined : result.note;
