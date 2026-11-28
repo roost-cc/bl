@@ -18,9 +18,11 @@ import assert from 'node:assert/strict';
 import fs, { chmodSync, writeFileSync } from 'fs';
 import { syncBuiltinESMExports } from 'module';
 import { delimiter, join } from 'path';
-import { SIGKILL_AFTER_MS } from './child.js';
+import { pathToFileURL } from 'url';
+import { SIGKILL_AFTER_MS, runChild } from './child.js';
 import {
   isPidAlive,
+  runScopedChild,
   scopeAvailable,
   scopeUnitName,
   scopedSpawn,
@@ -307,3 +309,56 @@ test("staleScopes finds a dead bl's scope of the unit, not this bl's", { skip },
   }
   assert.deepEqual(staleScopes(UNIT), []);
 });
+
+// runScopedChild (F-141 D4): the scoped long child of plugins and agent sessions.
+test('runScopedChild runs the child in a new scope of the unit, and stops it afterwards', { skip }, async () => {
+  const pidFile = join(mkTempDir('bl-scoped-child-'), 'pid');
+  const { result, unit, stop } = await runScopedChild(
+    'sh',
+    ['-c', `setsid sleep 300 >/dev/null 2>&1 & echo $! > ${pidFile}; cat /proc/self/cgroup; exit 3`],
+    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    'T-scoped',
+  );
+  assert.equal(result.status, 3, String(result.stderr));
+  assert.match(String(unit), /^bl-t-scoped-\d+-\d+$/);
+  assert.match(String(result.stdout), new RegExp(`/${unit}\\.scope$`, 'm'));
+  assert.deepEqual(stop, { ok: true });
+  const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+  assert.ok(
+    eventually(() => !isPidAlive(pid)),
+    `the leftover sleep ${pid} is stopped with its scope`,
+  );
+  const second = await runScopedChild('true', [], { stdio: 'ignore' }, 'T-scoped');
+  assert.notEqual(second.unit, unit, 'each child gets a scope of its own');
+});
+
+test(
+  'with scopeAvailable() false, runScopedChild runs a plain long child',
+  { skip: process.platform !== 'linux' },
+  () => {
+    // A `systemd-run` that fails makes the probe say no, in a process of its own: the probe is cached.
+    const bin = mkTempDir('bl-fake-systemd-run-');
+    writeFileSync(join(bin, 'systemd-run'), '#!/bin/sh\nexit 1\n');
+    chmodSync(join(bin, 'systemd-run'), 0o755);
+    const script = join(mkTempDir('bl-scoped-child-script-'), 'run.mjs');
+    const scopeModule = JSON.stringify(pathToFileURL(join(import.meta.dirname, 'process-scope.js')).href);
+    writeFileSync(
+      script,
+      [
+        `import { runScopedChild } from ${scopeModule};`,
+        `const opts = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] };`,
+        `const { result, unit, stop } = await runScopedChild('cat', ['/proc/self/cgroup'], opts, 'T-plain');`,
+        `process.stdout.write(JSON.stringify({ status: result.status, stdout: result.stdout, unit, stop }));`,
+      ].join('\n'),
+    );
+    const child = runChild(process.execPath, [script], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}` },
+    });
+    assert.equal(child.status, 0, String(child.stderr));
+    const r = JSON.parse(String(child.stdout));
+    assert.deepEqual({ status: r.status, unit: r.unit, stop: r.stop }, { status: 0, unit: null, stop: { ok: true } });
+    assert.doesNotMatch(r.stdout, /bl-t-plain-/);
+  },
+);

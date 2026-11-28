@@ -27,8 +27,8 @@ import { parse as parseShell } from 'shell-quote';
 import { attribute } from '../config/check.js';
 import { isMapping, pointerToken } from '../config/files.js';
 import { rawNames, render } from '../config/template.js';
-import { exitStatus, runChild, runLongChild } from '../lib/child.js';
-import { scopeAvailable, scopeUnitName, scopedCommand, stopScope } from '../lib/process-scope.js';
+import { exitStatus, runChild } from '../lib/child.js';
+import { nextScope, runScopedChild, scopedCommand, stopScope } from '../lib/process-scope.js';
 
 /** @typedef {import('../config/files.js').Fault} Fault */
 /** @typedef {import('./index.js').StepContext} StepContext */
@@ -39,9 +39,6 @@ import { scopeAvailable, scopeUnitName, scopedCommand, stopScope } from '../lib/
 
 /** The stdio of every plugin child: no stdin, stdout and stderr kept. */
 const STDIO = /** @type {const} */ (['ignore', 'pipe', 'pipe']);
-
-/** How many scopes this process has started, for each scope's name. */
-let scopes = 0;
 
 /**
  * `template` rendered for `sh -c`, with each filled value as one positional
@@ -155,36 +152,24 @@ const passStderr = (stderr) => {
   if (stderr) process.stderr.write(stderr);
 };
 
-/**
- * The child that runs `command` with `args` as `sh -c <command> sh <args…>`:
- * in a new process scope named `scopeUnitName(ctx.id, n)` when
- * `scopeAvailable()` says yes, else plainly, with `unit` `null` (D-486).
- * @param {{ id: string }} ctx
- * @param {{ command: string, args: string[] }} rendered
- * @returns {{ command: string, args: string[], unit: string|null }}
- */
-function scopedChild(ctx, { command, args }) {
-  const argv = ['-c', command, 'sh', ...args];
-  if (!scopeAvailable().ok) return { command: 'sh', args: argv, unit: null };
-  const unit = scopeUnitName(ctx.id, ++scopes);
-  return { ...scopedCommand(unit, 'sh', argv), unit };
-}
+/** The argv of `sh -c <command> sh <args…>`. */
+const shArgs = ({ command, args }) => ['-c', command, 'sh', ...args];
 
 /**
  * The outcome of the plugin `template`'s child `result` by `exitOutcome`,
- * after its stderr is written to `bl`'s stderr and its scope `unit` is
- * stopped, so a process it left is killed (no stop for `null`). A failed
- * stop does not hide the child's result: the error names both.
+ * after its stderr is written to `bl`'s stderr. `stop` is the stop of its
+ * scope `unit`, which killed a process it left. A failed stop does not hide
+ * the child's result: the error names both.
  * @param {{ status?: number|null, signal?: string|null, error?: Error, stderr?: unknown }} result
  * @param {string|null} unit
+ * @param {{ ok: boolean, output?: string }} stop
  * @param {Record<string, 'success'|'failure'>} exitCodes
  * @param {string} template
  * @returns {'success'|'failure'}
  * @throws {Error} on a crash, or when the scope's leftovers cannot be stopped
  */
-function settle(result, unit, exitCodes, template) {
+function settle(result, unit, stop, exitCodes, template) {
   passStderr(result.stderr);
-  const stop = unit === null ? { ok: true } : stopScope(unit);
   const stopFault = stop.ok ? '' : `could not stop what plugin \`${template}\` left in ${unit}.scope: ${stop.output}`;
   let outcome;
   try {
@@ -213,9 +198,9 @@ function settle(result, unit, exitCodes, template) {
  */
 export async function runPlugin(ctx, plugin, view, cwd) {
   const { template, exitCodes } = pluginParts(plugin);
-  const child = scopedChild(ctx, pluginCommand(template, view));
-  const result = await runLongChild(child.command, child.args, { cwd, encoding: 'utf8', stdio: STDIO });
-  const outcome = settle(result, child.unit, exitCodes, template);
+  const argv = shArgs(pluginCommand(template, view));
+  const { result, unit, stop } = await runScopedChild('sh', argv, { cwd, encoding: 'utf8', stdio: STDIO }, ctx.id);
+  const outcome = settle(result, unit, stop, exitCodes, template);
   const stdout = String(result.stdout ?? '');
   const stderr = String(result.stderr ?? '');
   const note = lastLine(stderr);
@@ -235,9 +220,12 @@ export async function runPlugin(ctx, plugin, view, cwd) {
  */
 export function runPredicate(ctx, plugin, view) {
   const { template, exitCodes } = pluginParts(plugin);
-  const child = scopedChild(ctx, pluginCommand(template, view));
+  const argv = shArgs(pluginCommand(template, view));
+  const unit = nextScope(ctx.id);
+  const child = unit === null ? { command: 'sh', args: argv } : scopedCommand(unit, 'sh', argv);
   const result = runChild(child.command, child.args, { cwd: ctx.backlogDir, encoding: 'utf8', stdio: STDIO });
-  return settle(result, child.unit, exitCodes, template) === 'success';
+  const stop = unit === null ? { ok: true } : stopScope(unit);
+  return settle(result, unit, stop, exitCodes, template) === 'success';
 }
 
 /**

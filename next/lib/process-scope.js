@@ -158,6 +158,40 @@ export function scopedSpawn(unit) {
   };
 }
 
+/** How many scopes this process has started, for each scope's name. */
+let scopes = 0;
+
+/**
+ * The name of a new scope for work unit `unitId`, `scopeUnitName(unitId, n)`
+ * with the next `n` of this process, when `scopeAvailable()` says yes; else
+ * `null`, and the child runs unscoped (D-486).
+ * @param {string} unitId
+ * @returns {string|null}
+ */
+export function nextScope(unitId) {
+  return scopeAvailable().ok ? scopeUnitName(unitId, ++scopes) : null;
+}
+
+/**
+ * Run the long child `command args…` for work unit `unitId`: in a new process
+ * scope (`scopedSpawn`) when `nextScope` gives one, else as a plain long child
+ * (`runLongChild`). Afterwards the scope is stopped, so a process the child
+ * left is killed. Plugins and agent sessions run their long children through
+ * it (F-141 D4).
+ * @param {string} command
+ * @param {readonly string[]} args
+ * @param {Parameters<typeof runLongChild>[2]} opts
+ * @param {string} unitId  the work unit, for the scope's name
+ * @returns {Promise<{ result: Awaited<ReturnType<typeof runLongChild>>, unit: string|null,
+ *   stop: { ok: boolean, output?: string } }>}  `unit` is `null` and `stop` ok when unscoped
+ */
+export async function runScopedChild(command, args, opts, unitId) {
+  const unit = nextScope(unitId);
+  if (unit === null) return { result: await runLongChild(command, args, opts), unit, stop: { ok: true } };
+  const result = await scopedSpawn(unit)(command, args, opts);
+  return { result, unit, stop: stopScope(unit) };
+}
+
 /**
  * Whether scope `unit` is active (running processes). systemd says
  * `inactive` of a unit `--collect` has removed, and `failed` of one that
