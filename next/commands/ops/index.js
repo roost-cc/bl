@@ -8,6 +8,7 @@
 
 import { force } from './force.js';
 import { outcome } from './outcome.js';
+import { resume } from './resume.js';
 
 /**
  * @typedef {object} OpContext
@@ -33,4 +34,4 @@ import { outcome } from './outcome.js';
  */
 
 /** @type {Readonly<Record<string, Op>>} op name → op */
-export const OPS = Object.freeze({ force, outcome });
+export const OPS = Object.freeze({ force, outcome, resume });
