@@ -83,6 +83,20 @@ test('assert_entry_that_throws_is_a_crash_that_names_the_expression', async () =
   assert.match(late.message, /^first: counters\.r\.value > 0: /);
 });
 
+test('assert_calls_a_shop_predicate, and a call with the wrong number of arguments is a fault at load', async () => {
+  const predicates = "repos: {}\nplugin_registry:\n  predicates:\n    is: 'test {{args.0}} = {{args.1}}'\n";
+  const box = (/** @type {string} */ call) => `{ use: assert, with: ['${call}'], ${ARROWS} }`;
+  const ctx = engineBacklog({ 'task.yaml': taskFlow(box("predicates.is(item_id, ''T-1'')")) }, predicates, CATALOGUE);
+  const [id] = await createItems(ctx, [{ type: 'task', state: { status: 'draft', run: 'idle' } }]);
+  assert.deepEqual(await run(ctx, id), { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.throws(
+    () => engineBacklog({ 'task.yaml': taskFlow(box('predicates.is(item_id)')) }, predicates, CATALOGUE),
+    (/** @type {Error} */ error) =>
+      error.name === 'ConfigurationFaults' &&
+      /^config\/flows\/task\.yaml: \/flows\/task\/steps\/first\/with\/0: cel: /m.test(error.message),
+  );
+});
+
 /** Run the task once, and give the subject of HEAD and the item's state.json in it. */
 async function committed(/** @type {any} */ ctx, /** @type {string} */ id) {
   await run(ctx, id);
