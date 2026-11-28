@@ -171,16 +171,30 @@ function scopedChild(ctx, { command, args }) {
 }
 
 /**
- * Stop the scope `unit` of the plugin `template` after its command, so a
- * process it left is killed; nothing for `null`.
+ * The outcome of the plugin `template`'s child `result` by `exitOutcome`,
+ * after its stderr is written to `bl`'s stderr and its scope `unit` is
+ * stopped, so a process it left is killed (no stop for `null`). A failed
+ * stop does not hide the child's result: the error names both.
+ * @param {{ status?: number|null, signal?: string|null, error?: Error, stderr?: unknown }} result
  * @param {string|null} unit
+ * @param {Record<string, 'success'|'failure'>} exitCodes
  * @param {string} template
- * @throws {Error} when the scope's leftovers cannot be stopped
+ * @returns {'success'|'failure'}
+ * @throws {Error} on a crash, or when the scope's leftovers cannot be stopped
  */
-function endScope(unit, template) {
-  if (unit === null) return;
-  const stop = stopScope(unit);
-  if (!stop.ok) throw new Error(`could not stop what plugin \`${template}\` left in ${unit}.scope: ${stop.output}`);
+function settle(result, unit, exitCodes, template) {
+  passStderr(result.stderr);
+  const stop = unit === null ? { ok: true } : stopScope(unit);
+  const stopFault = stop.ok ? '' : `could not stop what plugin \`${template}\` left in ${unit}.scope: ${stop.output}`;
+  let outcome;
+  try {
+    outcome = exitOutcome(result, exitCodes, template);
+  } catch (crash) {
+    if (stopFault) throw new Error(`${/** @type {Error} */ (crash).message}; and ${stopFault}`);
+    throw crash;
+  }
+  if (stopFault) throw new Error(`${stopFault} (the plugin exited ${exitStatus(result)}: ${outcome})`);
+  return outcome;
 }
 
 /**
@@ -201,11 +215,9 @@ export async function runPlugin(ctx, plugin, view, cwd) {
   const { template, exitCodes } = pluginParts(plugin);
   const child = scopedChild(ctx, pluginCommand(template, view));
   const result = await runLongChild(child.command, child.args, { cwd, encoding: 'utf8', stdio: STDIO });
-  endScope(child.unit, template);
+  const outcome = settle(result, child.unit, exitCodes, template);
   const stdout = String(result.stdout ?? '');
   const stderr = String(result.stderr ?? '');
-  passStderr(stderr);
-  const outcome = exitOutcome(result, exitCodes, template);
   const note = lastLine(stderr);
   return { outcome, ...(note === undefined ? {} : { note }), stdout, stderr, code: exitStatus(result) };
 }
@@ -225,9 +237,7 @@ export function runPredicate(ctx, plugin, view) {
   const { template, exitCodes } = pluginParts(plugin);
   const child = scopedChild(ctx, pluginCommand(template, view));
   const result = runChild(child.command, child.args, { cwd: ctx.backlogDir, encoding: 'utf8', stdio: STDIO });
-  endScope(child.unit, template);
-  passStderr(result.stderr);
-  return exitOutcome(result, exitCodes, template) === 'success';
+  return settle(result, child.unit, exitCodes, template) === 'success';
 }
 
 /**

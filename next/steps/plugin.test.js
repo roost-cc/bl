@@ -242,6 +242,61 @@ test('with scopeAvailable() false, it runs as a plain long child', { skip: proce
   assert.doesNotMatch(r.stdout, /bl-t-2-/);
 });
 
+test('cleanup_failure_keeps_the_child_result', { skip: process.platform !== 'linux' }, () => {
+  // A systemd-run that runs the command plainly and a systemctl whose stop fails, in a process of its own: the probe is cached.
+  const bin = mkTempDir('bl-fake-systemd-');
+  writeFileSync(
+    join(bin, 'systemd-run'),
+    '#!/bin/sh\nwhile [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done\n[ "$#" -eq 0 ] && exit 0\nshift\nexec "$@"\n',
+  );
+  writeFileSync(
+    join(bin, 'systemctl'),
+    '#!/bin/sh\ncase "$2" in stop) echo "stop failed" >&2; exit 1;; is-active) echo active;; esac\n',
+  );
+  chmodSync(join(bin, 'systemd-run'), 0o755);
+  chmodSync(join(bin, 'systemctl'), 0o755);
+  const script = join(mkTempDir('bl-plugin-script-'), 'run.mjs');
+  writeFileSync(
+    script,
+    [
+      `import { runPlugin, runPredicate } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, 'plugin.js')).href)};`,
+      `const out = [];`,
+      `for (const code of [0, 1, 127]) {`,
+      `  const command = 'echo child-error-' + code + ' >&2; exit ' + code;`,
+      `  for (const run of [() => runPlugin({ id: 'T-4' }, command, {}, process.cwd()), () => runPredicate({ id: 'T-4', backlogDir: process.cwd() }, command, {})]) {`,
+      `    try { out.push({ code, value: await run() }); } catch (error) { out.push({ code, error: error.message }); }`,
+      `  }`,
+      `}`,
+      `process.stdout.write(JSON.stringify(out));`,
+    ].join('\n'),
+  );
+  const child = runChild(process.execPath, [script], {
+    cwd: bin,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}` },
+  });
+  assert.equal(child.status, 0, child.stderr);
+  const results = JSON.parse(child.stdout);
+  const left = (code) =>
+    `could not stop what plugin \`echo child-error-${code} >&2; exit ${code}\` left in bl-t-4-\\d+-\\d+\\.scope: stop failed`;
+  const want = {
+    0: (code) => new RegExp(`^${left(code)} \\(the plugin exited 0: success\\)$`),
+    1: (code) => new RegExp(`^${left(code)} \\(the plugin exited 1: failure\\)$`),
+    127: (code) =>
+      new RegExp(
+        `^plugin \`echo child-error-127 >&2; exit 127\` exited 127 \\(exit 127\\): child-error-127; and ${left(code)}$`,
+      ),
+  };
+  // Each runner, at a success, a failure and a crash: the error names the child's result and the failed stop.
+  assert.equal(results.length, 6);
+  for (const { code, error } of results) assert.match(error, want[code](code), String(code));
+  // The child's stderr reaches bl's stderr before the error.
+  for (const code of [0, 1, 127]) {
+    assert.equal(child.stderr.split('\n').filter((line) => line === `child-error-${code}`).length, 2, child.stderr);
+  }
+});
+
 test('runPredicate gives true at exit 0 and false at exit 1, in the backlog root, and throws at exit 127', () => {
   const backlogDir = mkTempDir('bl-predicate-');
   writeFileSync(join(backlogDir, 'README.md'), 'a widget\n');
