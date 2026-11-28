@@ -7,6 +7,8 @@
  * these, and never read `plugin_registry` themselves.
  */
 
+import { attribute } from '../config/check.js';
+import { isMapping, pointerToken } from '../config/files.js';
 import { runPlugin } from './plugin.js';
 import { commandView } from './view.js';
 
@@ -29,23 +31,90 @@ import { commandView } from './view.js';
  * @param {string} repo
  * @param {string} stage  a `bl.` name, for example `bl.regenerate`
  * @returns {Definition[]}
- * @throws {Error} when the repo has no definition for the stage, or a list names a shared definition that does not exist
+ * @throws {Error} when the repo has no definition for the stage, a list names a shared definition that does not
+ *   exist, or a definition holds no command under the stage's key (`stageFaults` reports these at start)
  */
 export function stageDefinitions(config, repo, stage) {
   const stages = config.scope(repo)?.plugin_registry?.stages ?? {};
-  const value = stages[stage];
-  if (value === undefined) {
+  if (stages[stage] === undefined) {
     throw new Error(`repo '${repo}' has no definition for the stage '${stage}' (steps.md, "Plugins")`);
   }
-  if (value === 'none') return [];
-  if (typeof value === 'string') return [{ [stage.slice('bl.'.length)]: value }];
-  if (!Array.isArray(value)) return [value];
-  return value.map((name) => {
-    if (!Object.hasOwn(stages, name) || name.startsWith('bl.')) {
-      throw new Error(`repo '${repo}' stage '${stage}' names '${name}', which is not a shared definition`);
+  const resolved = resolveStage(stages, stage);
+  if ('problem' in resolved) throw new Error(`repo '${repo}' ${resolved.problem}`);
+  return resolved.definitions;
+}
+
+/** Whether `value` is the command of `stage`: a map of scope to command for `bl.test`, else a command. */
+const isCommand = (stage, value) =>
+  stage === 'bl.test'
+    ? isMapping(value) && Object.values(value).every((command) => typeof command === 'string')
+    : typeof value === 'string';
+
+/**
+ * The definitions of the defined `stage` in `stages`, or the first problem
+ * and the path under `stages` where it is: a list that names no shared
+ * definition, or a definition with no command under the stage's key.
+ * @param {Record<string, unknown>} stages
+ * @param {string} stage
+ * @returns {{ definitions: Definition[] } | { problem: string, at: string[] }}
+ */
+function resolveStage(stages, stage) {
+  const value = stages[stage];
+  if (value === 'none') return { definitions: [] };
+  const key = stage.slice('bl.'.length);
+  /** @type {Array<{ definition: unknown, at: string[] }>} */
+  let named;
+  if (typeof value === 'string') named = [{ definition: { [key]: value }, at: [stage] }];
+  else if (!Array.isArray(value)) named = [{ definition: value, at: [stage] }];
+  else {
+    named = [];
+    for (const [i, name] of value.entries()) {
+      if (!Object.hasOwn(stages, name) || name.startsWith('bl.')) {
+        return {
+          problem: `stage '${stage}' names '${name}', which is not a shared definition`,
+          at: [stage, String(i)],
+        };
+      }
+      named.push({ definition: stages[name], at: [name] });
     }
-    return stages[name];
-  });
+  }
+  const what = stage === 'bl.test' ? 'map of scope to command' : 'command';
+  for (const { definition, at } of named) {
+    if (!isCommand(stage, /** @type {Definition} */ (definition)[key])) {
+      return { problem: `stage '${stage}' has no ${what} under '${key}' in '${at[0]}'`, at: [...at, key] };
+    }
+  }
+  return { definitions: named.map(({ definition }) => /** @type {Definition} */ (definition)) };
+}
+
+/** The stages that hold a group or a map of channels, which their own steps read (D4). */
+const NOT_SINGLE = new Set(['bl.change', 'bl.notify']);
+
+/**
+ * The start faults of the stages of the top-level scope and of each repo
+ * scope: one `stage` fault for each defined `bl.` stage whose list names no
+ * shared definition, or whose definition holds no command under the stage's
+ * key. Each is at the file and path that write it, once, though every repo
+ * scope holds the top-level stages too.
+ * @param {import('../config/load.js').Configuration} config
+ * @returns {import('../config/files.js').Fault[]}
+ */
+export function stageFaults(config) {
+  const repos = Object.keys(config.scope(null)?.repos ?? {});
+  /** @type {Map<string, import('../config/files.js').Fault>} */
+  const faults = new Map();
+  for (const repo of [null, ...repos]) {
+    const stages = config.scope(repo)?.plugin_registry?.stages ?? {};
+    const layers = /** @type {import('../config/layers.js').Layer[]} */ (config.layers('backlog', repo));
+    for (const stage of Object.keys(stages)) {
+      if (!stage.startsWith('bl.') || NOT_SINGLE.has(stage)) continue;
+      const resolved = resolveStage(stages, stage);
+      if (!('problem' in resolved)) continue;
+      const at = attribute(`/plugin_registry/stages/${resolved.at.map(pointerToken).join('/')}`, layers);
+      faults.set(`${at.file}\0${at.path}\0${resolved.problem}`, { ...at, rule: 'stage', message: resolved.problem });
+    }
+  }
+  return [...faults.values()];
 }
 
 /**

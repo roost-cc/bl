@@ -6,12 +6,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { ConfigurationFaults } from '../config/check.js';
 import { record } from '../store/record.js';
 import { fixture, load } from '../test/helpers/config-fixture.js';
 import { createItems, engineBacklog } from '../test/helpers/engine-backlog.js';
 import { git, initRepo } from '../test/helpers/git.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
-import { runStage, stageDefinitions } from './stage.js';
+import { runStage, stageDefinitions, stageFaults } from './stage.js';
 
 /** The uTop sample's repos and stages (`utop-backlog/backlog.yaml`), and three repos that patch them. */
 const REGISTRY = [
@@ -55,6 +56,82 @@ test('a stage with no definition at the top level or the repo entry throws an er
   assert.throws(() => stageDefinitions(c, 'typo', 'bl.regenerate'), {
     message: "repo 'typo' stage 'bl.regenerate' names 'go-summ', which is not a shared definition",
   });
+  const numeric = load(
+    fixture({
+      'backlog/backlog.yaml':
+        'color_scheme: mocha\nlanguage: en\nrepos: { r: {} }\nplugin_registry: { stages: { bl.cleanup: { cleanup: 42 } } }\n',
+    }),
+  );
+  assert.throws(() => stageDefinitions(numeric, 'r', 'bl.cleanup'), {
+    message: "repo 'r' stage 'bl.cleanup' has no command under 'cleanup' in 'bl.cleanup'",
+  });
+});
+
+/** The fault lines of `stageFaults` on a backlog with this `backlog.yaml` tail. */
+function stageFaultLines(tail) {
+  const dirs = fixture({ 'backlog/backlog.yaml': `color_scheme: mocha\nlanguage: en\n${tail}` });
+  const faults = stageFaults(load(dirs));
+  return faults.length === 0 ? [] : new ConfigurationFaults(faults, dirs.backlogDir).message.split('\n');
+}
+
+test('stage_definitions_reject_missing_or_non_string_commands_at_load', () => {
+  const single = ['bl.pre-checkout', 'bl.post-checkout', 'bl.pre-agent', 'bl.regenerate', 'bl.cleanup'];
+  // Each bad command under the stage's key: missing, a number, an object; bl.test needs a map of commands.
+  const bad = [
+    ...single.flatMap((stage) =>
+      ['{}', '{ x: 1 }', `{ ${stage.slice(3)}: 42 }`, `{ ${stage.slice(3)}: { a: b } }`].map((d) => [stage, d]),
+    ),
+    ['bl.test', '{}'],
+    ['bl.test', '{ test: npm test }'],
+    ['bl.test', '{ test: { unit: 42 } }'],
+  ];
+  for (const [stage, definition] of bad) {
+    const key = stage.slice(3);
+    const what = stage === 'bl.test' ? 'map of scope to command' : 'command';
+    const message = (name) => `stage: stage '${stage}' has no ${what} under '${key}' in '${name}'`;
+    // An inline and a shared definition, at the top level and in a repo entry.
+    const cases = [
+      [
+        `repos: {}\nplugin_registry: { stages: { ${stage}: ${definition} } }\n`,
+        `/plugin_registry/stages/${stage}/${key}`,
+        stage,
+      ],
+      [
+        `repos: {}\nplugin_registry: { stages: { ${stage}: [s], s: ${definition} } }\n`,
+        `/plugin_registry/stages/s/${key}`,
+        's',
+      ],
+      [
+        `repos: { r: { plugin_registry: { stages: { ${stage}: ${definition} } } } }\n`,
+        `/repos/r/plugin_registry/stages/${stage}/${key}`,
+        stage,
+      ],
+      [
+        `repos: { r: { plugin_registry: { stages: { ${stage}: [s], s: ${definition} } } } }\n`,
+        `/repos/r/plugin_registry/stages/s/${key}`,
+        's',
+      ],
+    ];
+    for (const [tail, path, name] of cases) {
+      assert.deepEqual(
+        stageFaultLines(tail),
+        [`backlog.yaml: ${path}: ${message(name)}`],
+        `${stage} ${definition} ${tail}`,
+      );
+    }
+  }
+  // A list that names no shared definition is a fault at its entry.
+  assert.deepEqual(stageFaultLines('repos: {}\nplugin_registry: { stages: { bl.cleanup: [gone] } }\n'), [
+    "backlog.yaml: /plugin_registry/stages/bl.cleanup/0: stage: stage 'bl.cleanup' names 'gone', which is not a shared definition",
+  ]);
+  // A top-level fault is reported once, though each repo scope holds it.
+  assert.equal(stageFaultLines('repos: { a: {}, b: {} }\nplugin_registry: { stages: { bl.cleanup: {} } }\n').length, 1);
+  // The uTop sample's stages, none, an inline command and bl.test's map of commands give none.
+  assert.deepEqual(stageFaultLines(`${REGISTRY.replace(/^ {2}typo:.*\n/m, '')}`), []);
+  assert.deepEqual(
+    stageFaultLines('repos: {}\nplugin_registry: { stages: { bl.test: { test: { unit: npm test, int: none } } } }\n'),
+    [],
+  );
 });
 
 /**
