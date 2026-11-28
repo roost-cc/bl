@@ -118,3 +118,24 @@ test("a failing has_capacity() entry wakes it at the earliest resets_at of the b
     assert.equal((await wake(failing, agents, 0.02)).source, 'timer', agents.join(', '));
   }
 });
+
+test('waitForWake starts the capacity timer from the reset deadline after slow capacity queries', async () => {
+  // Ten profiles, so the capacity queries take a large part of the time to the reset.
+  const script = capacityScript('{ available: true }');
+  const names = Array.from({ length: 10 }, (_, i) => `slow${i}`);
+  const agents = [
+    fixtureText('agents.yaml'),
+    ...names.map((name) => `${name}: { adapter: replay, env: { REPLAY_SCRIPT: '${script}' } }`),
+    '',
+  ].join('\n');
+  const ctx = engineBacklog({}, 'repos: {}\n', undefined, { 'config/agents.yaml': agents });
+  const deadline = Date.now() + 2500;
+  writeFileSync(
+    script,
+    `capacity: { available: false, resets_at: '${new Date(deadline).toISOString()}' }\nentries: []\n`,
+  );
+  const source = await withEnv(replayEnv(script), () => waitForWake(ctx, { failing: CAPACITY, agents: names }));
+  const late = Date.now() - deadline;
+  assert.equal(source, 'capacity');
+  assert.ok(late >= -50 && late < 500, `woke ${late} ms after the reset`);
+});

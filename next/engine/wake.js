@@ -51,8 +51,9 @@ function callsCapacity(env, { entry }) {
 }
 
 /**
- * The time in ms from now to the earliest capacity reset (source 4), or
- * `null` when there is none to wait for.
+ * The time of the earliest capacity reset (source 4), in ms since the epoch,
+ * or `null` when there is none to wait for. The caller schedules it from the
+ * time, so the capacity calls do not move it later.
  * @param {EngineContext} ctx
  * @param {readonly FailingEntry[]} failing
  * @param {readonly string[]} [agents]
@@ -69,7 +70,7 @@ async function capacityReset(ctx, failing, agents) {
     const { available, resets_at } = await capacityOf(ctx, name);
     // A reset in the past would wake the process at once, again and again: the timer covers it.
     const at = resets_at === null ? NaN : Date.parse(resets_at);
-    if (!available && at > now) resets.push(at - now);
+    if (!available && at > now) resets.push(at);
   }
   return resets.length === 0 ? null : Math.min(...resets);
 }
@@ -100,11 +101,14 @@ export async function waitForWake(ctx, { failing, agents }) {
     burst = setTimeout(() => wake('reflog'), BURST_MS);
   });
   process.on('SIGUSR2', onSignal);
+  const start = Date.now();
   timers.push(setTimeout(() => wake('timer'), recheck));
   try {
     // A wake during the capacity calls is kept: `woken` resolves with it as soon as they return.
-    const ms = await capacityReset(ctx, failing, agents);
-    if (ms !== null && ms < recheck) timers.push(setTimeout(() => wake('capacity'), ms));
+    const at = await capacityReset(ctx, failing, agents);
+    if (at !== null && at < start + recheck) {
+      timers.push(setTimeout(() => wake('capacity'), Math.max(0, at - Date.now())));
+    }
     return await woken;
   } finally {
     watcher.close();
