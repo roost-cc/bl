@@ -7,6 +7,7 @@ import { readFileSync, realpathSync } from 'fs';
 import { join } from 'path';
 import { STEPS } from '../steps/index.js';
 import { shopSteps } from '../steps/shop.js';
+import { checkState } from '../store/item-json.js';
 import { itemDir } from '../store/items.js';
 import { createItems, engineBacklog, setGraph } from '../test/helpers/engine-backlog.js';
 import { UTOP_STEPS } from '../test/helpers/flow-fixture.js';
@@ -125,6 +126,36 @@ test('increment_keeps_stored_threshold_and_other_counters', async () => {
   // A stored counter with no value counts from 0, and keeps the threshold it has.
   const novalue = await task(INCREMENT, { counters: { r: { threshold: 5 } } });
   assert.deepEqual((await committed(novalue.ctx, novalue.id)).state.counters, { r: { value: 1, threshold: 5 } });
+});
+
+test('increment_rejects_or_advances_counters_at_integer_limit', async () => {
+  const MAX = Number.MAX_SAFE_INTEGER;
+  // A counter below the limit advances by one, up to the limit.
+  const below = await task(INCREMENT, { counters: { r: { value: MAX - 1, threshold: MAX } } });
+  assert.deepEqual((await committed(below.ctx, below.id)).state.counters, { r: { value: MAX, threshold: MAX } });
+  // A counter at the limit is a crash, and the box commits no counter.
+  const at = await task(INCREMENT, { counters: { r: { value: MAX, threshold: 3 } } });
+  const crash = await run(at.ctx, at.id);
+  assert.equal(crash.name, 'FlowCrash');
+  assert.equal(crash.message, `first: ${at.id}: the counter 'r' is at ${MAX}, the largest value it can hold`);
+  const state = JSON.parse(readFileSync(join(at.ctx.backlogDir, itemDir(at.ctx, at.id).path, 'state.json'), 'utf8'));
+  assert.deepEqual(state.counters, { r: { value: MAX, threshold: 3 } });
+  // A stored value or threshold above the limit is a fault of state.json, and so is a threshold argument above it.
+  for (const counter of [{ value: MAX + 1 }, { threshold: MAX + 1 }]) {
+    assert.match(
+      checkState({ status: 'draft', run: 'idle', counters: { r: counter } })[0]?.message ?? '',
+      /<= 9007199254740991/,
+    );
+  }
+  const box = INCREMENT.replace('threshold: 3', `threshold: ${MAX + 1}`);
+  assert.throws(() => engineBacklog({ 'task.yaml': taskFlow(box) }, undefined, CATALOGUE), /first\/with/);
+  assert.doesNotThrow(() =>
+    engineBacklog(
+      { 'task.yaml': taskFlow(INCREMENT.replace('threshold: 3', `threshold: ${MAX}`)) },
+      undefined,
+      CATALOGUE,
+    ),
+  );
 });
 
 // ---- shop steps (F-140 D6) ----
