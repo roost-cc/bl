@@ -26,8 +26,9 @@ import {
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { _hooks, STAGING_ATTEMPTS, STAGING_DIR, atomicWriteFile } from './atomic-write.js';
+import { _hooks, STAGING_ATTEMPTS, atomicWriteFile } from './atomic-write.js';
 import { spawnSyncFiles } from './child-stdio.js';
+import { STAGING_DIR } from './staging.js';
 import { stderrOf } from '../test/helpers/streams.js';
 import { LOCK_FILE } from './lock.js';
 import { git } from '../test/helpers/git.js';

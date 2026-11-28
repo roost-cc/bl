@@ -40,8 +40,6 @@ import { basename, dirname, join, resolve } from 'path';
 import { STAGING_DIR } from './staging.js';
 import { warn } from './stderr.js';
 
-export { STAGING_DIR };
-
 /** Generated staging names tried before a persistent EEXIST propagates. */
 export const STAGING_ATTEMPTS = 10;
 

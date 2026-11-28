@@ -186,8 +186,11 @@ function readPartials(backlogDir, operatorDir, faults) {
 const readPrompts = (backlogDir) =>
   new Map(filesOf(join(backlogDir, 'config', 'prompts')).map(([name, file]) => [name, readFileSync(file, 'utf8')]));
 
-/** The values that an outcome schema's `outcome` may take (agents.md, "The agent step"). */
-const OUTCOMES = ['success', 'failure'];
+/**
+ * The values that an outcome schema's `outcome` may take, which are the
+ * outcomes of the `agent` step (agents.md, "The agent step").
+ */
+export const AGENT_OUTCOMES = Object.freeze(/** @type {const} */ (['success', 'failure']));
 
 /**
  * @typedef {object} OutcomeSchema
@@ -232,8 +235,8 @@ function readSchemas(backlogDir, checker, faults) {
       fault('/required', 'outcome', 'the top level must require outcome');
       continue;
     }
-    if (!Array.isArray(values) || values.length === 0 || !values.every((v) => OUTCOMES.includes(v))) {
-      fault('/properties/outcome/enum', 'outcome', `outcome must be an enum of ${OUTCOMES.join(' and ')} only`);
+    if (!Array.isArray(values) || values.length === 0 || !values.every((v) => AGENT_OUTCOMES.includes(v))) {
+      fault('/properties/outcome/enum', 'outcome', `outcome must be an enum of ${AGENT_OUTCOMES.join(' and ')} only`);
       continue;
     }
     const validate = (value) => check(value, [{ file: '', pointer: '', patch: value }]).faults;

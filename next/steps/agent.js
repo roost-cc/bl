@@ -28,6 +28,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { ADAPTERS, adapterOf } from '../adapters/index.js';
+import { AGENT_OUTCOMES } from '../config/load.js';
 import { renderAsync } from '../config/template.js';
 import { STAGING_DIR } from '../lib/staging.js';
 import { readState } from '../store/item-json.js';
@@ -164,7 +165,8 @@ function keptSession(ctx, agents) {
 
 /** @type {Step} */
 export const agent = Object.freeze({
-  outcomes: Object.freeze(/** @type {const} */ (['success', 'failure'])),
+  // An outcome schema limits a result's outcome to these (config/load.js).
+  outcomes: AGENT_OUTCOMES,
   with: {
     type: 'object',
     properties: {
