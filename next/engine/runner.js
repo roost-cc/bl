@@ -30,6 +30,10 @@
  * `interrupted: <box>` (D-50). A crash writes no `flow_end` (history.md, "Item
  * history"): the runner throws `FlowCrash`, and the command layer prints it.
  *
+ * After the commit of a gated end the runner sends the `gated` alert, after
+ * a `flow_end` at `stop` the `ended.normal` alert, and before it throws
+ * `FlowCrash` the `ended.crash` alert (F-140 D10, Decision A3).
+ *
  * Gates and post-conditions read the committed record (`gates.js`), so they do
  * not see the staged writes of the box that runs.
  */
@@ -39,6 +43,7 @@ import { hostname } from 'os';
 import { release, tryLockOnce } from '../lib/kernel-lock.js';
 import { ensureLockDir, itemLockPath } from '../lib/lock.js';
 import { info } from '../lib/stderr.js';
+import { sendAlert } from '../steps/notify.js';
 import { readState } from '../store/item-json.js';
 import { itemDir } from '../store/items.js';
 import { record as readRecord } from '../store/record.js';
@@ -53,6 +58,7 @@ import { checkAgainstFlow } from './run-state.js';
  * @typedef {import('./flow-set.js').Flow} Flow
  * @typedef {import('./gates.js').FailingEntry} FailingEntry
  * @typedef {import('../steps/index.js').Step} Step
+ * @typedef {import('../steps/index.js').StepContext} StepContext
  * @typedef {import('../store/items.js').Item} Item
  * @typedef {import('../store/write.js').Writer} Writer
  */
@@ -82,6 +88,27 @@ export class FlowCrash extends Error {
 
 /** The texts of failing gate entries, as one note. */
 const texts = (/** @type {FailingEntry[]} */ failing) => failing.map(({ text }) => text).join(', ');
+
+/** The class of a failing entry, or undefined for a plain or a dependency entry. */
+const classOf = (/** @type {FailingEntry} */ { entry }) =>
+  typeof entry === 'object' && 'class' in entry ? entry.class : undefined;
+
+/**
+ * The `gated` alert of the failing entries `failing` (F-140 D10, D-97): its
+ * reasons are their classes, so an entry with no class routes by `gated`, and
+ * its `condition` and `class` are the first entry's. `box` is the gated box of
+ * a step gate, and absent for a status gate.
+ * @param {StepContext} step
+ * @param {FailingEntry[]} failing
+ * @param {string} [box]
+ */
+async function gatedAlert(step, failing, box) {
+  await sendAlert(step, 'gated', failing.map(classOf), {
+    ...(box === undefined ? {} : { box }),
+    condition: failing[0].text,
+    class: classOf(failing[0]) ?? '',
+  });
+}
 
 /** The node id a return node `<subflow box>/_return_<outcome>` stands for: its subflow box. */
 const subflowBox = (/** @type {string} */ id) => id.slice(0, id.lastIndexOf('/'));
@@ -211,14 +238,45 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
    */
   const flowEnd = (ended, outcome, note) => ({ at: now(), event: 'flow_end', ended, outcome, status, commits, note });
 
+  /**
+   * The step context of `box` over `record`, with its staged writes in `staged`.
+   * @param {string} box
+   * @param {import('./conditions.js').ItemRecord} record
+   * @param {Array<(w: Writer) => void>} staged
+   * @returns {StepContext}
+   */
+  const stepContext = (box, record, staged) => {
+    /** @type {ReturnType<typeof bindConditions>|undefined} */
+    let conditions;
+    return {
+      id,
+      type,
+      box,
+      // The box the flow came from, which a notify text names (F-140 D9).
+      ...(previous === null ? {} : { from: previous }),
+      record,
+      config: ctx.config,
+      backlogDir: ctx.backlogDir,
+      stage: (fn) => staged.push(/** @type {(w: Writer) => void} */ (fn)),
+      recordCommit: ({ repo, sha }) => commits.push({ repo, sha }),
+      // The call that the gates make (gates.js), so assert and the gates evaluate in one place.
+      evaluate: (expr) => (conditions ??= bindConditions(ctx, id, { current: record })).evaluate(expr, record),
+    };
+  };
+
   for (let box = start; ;) {
+    /** @type {StepContext|undefined} */
+    let step;
     try {
       const node = flow.nodes[box];
+      /** @type {Array<(w: Writer) => void>} */
+      const staged = [];
+      const record = current();
+      step = stepContext(box, record, staged);
       const visit = (visits.get(box) ?? 0) + 1;
       visits.set(box, visit);
       if (visit > ctx.flowSet.maxBoxVisits) throw new FlowCrash(`${box} started ${visit} times (max_box_visits)`);
 
-      const record = current();
       const gated = stepGate(ctx, record, node, previous);
       if (gated.length > 0) {
         const ended = `gated before: ${box}`;
@@ -226,30 +284,12 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
           setState(w, status, ended);
           w.log(id, flowEnd(ended, last, `the step gate of ${box} failed: ${texts(gated)}`));
         });
+        // The interim end of F-139 Decision P1 sends no ended alert (F-140 Decision A3).
+        await gatedAlert(step, gated, box);
         return { ended, status, ...(last === undefined ? {} : { outcome: last }) };
       }
 
-      /** @type {Array<(w: Writer) => void>} */
-      const staged = [];
-      /** @type {ReturnType<typeof bindConditions>|undefined} */
-      let conditions;
-      const result = await catalogue[/** @type {string} */ (node.step)].run(
-        {
-          id,
-          type,
-          box,
-          // The box the flow came from, which a notify text names (F-140 D9).
-          ...(previous === null ? {} : { from: previous }),
-          record,
-          config: ctx.config,
-          backlogDir: ctx.backlogDir,
-          stage: (fn) => staged.push(/** @type {(w: Writer) => void} */ (fn)),
-          recordCommit: ({ repo, sha }) => commits.push({ repo, sha }),
-          // The call that the gates make (gates.js), so assert and the gates evaluate in one place.
-          evaluate: (expr) => (conditions ??= bindConditions(ctx, id, { current: record })).evaluate(expr, record),
-        },
-        node.with,
-      );
+      const result = await catalogue[/** @type {string} */ (node.step)].run(step, node.with);
       // A step gives a bare outcome or { outcome, note } (F-140 Decision A2).
       let outcome = typeof result === 'string' ? result : result.outcome;
       /** @type {string[]} */
@@ -270,7 +310,7 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
       // the caller (D-43): a return node is never `active`.
       let from = box;
       let followed = outcome;
-      /** @type {{ ended: string, held?: { box: string, outcome: string } } | null} */
+      /** @type {{ ended: string, held?: { box: string, outcome: string }, gated?: FailingEntry[] } | null} */
       let end = null;
       /** @type {string} */
       let next = STOP;
@@ -293,7 +333,7 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
           const failing = statusGate(ctx, current(), arrow.status);
           if (failing.length > 0) {
             notes.push(`the status gate of ${arrow.status} failed: ${texts(failing)}`);
-            end = { ended: `gated: ${arrow.status}`, held: { box: from, outcome: followed } };
+            end = { ended: `gated: ${arrow.status}`, held: { box: from, outcome: followed }, gated: failing };
             break;
           }
           status = arrow.status;
@@ -325,7 +365,12 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
           w.log(id, flowEnd(end.ended, outcome, note));
         }
       });
-      if (end !== null) return { ended: end.ended, status, outcome };
+      if (end !== null) {
+        // A status gate has no box (D-97); a stop is the normal end (F-140 Decision A3).
+        if (end.gated !== undefined) await gatedAlert(step, end.gated);
+        else await sendAlert(step, 'ended', ['normal'], { box });
+        return { ended: end.ended, status, outcome };
+      }
       // The arrow out of a return node is its caller's arrow, so the flow
       // comes from the subflow box, outside the subflow: an arrow back to the
       // subflow's first node enters it again (Decision A4).
@@ -333,8 +378,18 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
       last = outcome;
       box = next;
     } catch (error) {
-      if (error instanceof FlowCrash) throw error;
-      throw new FlowCrash(`${box}: ${/** @type {Error} */ (error).message}`, { cause: error });
+      // Every crash is made here once and sends one ended.crash alert (F-140 D10).
+      const crash =
+        error instanceof FlowCrash
+          ? error
+          : new FlowCrash(`${box}: ${/** @type {Error} */ (error).message}`, { cause: error });
+      try {
+        await sendAlert(step ?? stepContext(box, current(), []), 'ended', ['crash'], { box, error: crash.message });
+      } catch (alertError) {
+        // An alert that cannot be sent does not hide the crash it is about.
+        info(`${id}: the ended.crash alert failed: ${/** @type {Error} */ (alertError).message}`);
+      }
+      throw crash;
     }
   }
 }

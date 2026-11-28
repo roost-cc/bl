@@ -12,6 +12,7 @@ import { createItems, engineBacklog, setGraph } from '../test/helpers/engine-bac
 import { UTOP, UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 import { git } from '../test/helpers/git.js';
 import { holdLockInChild } from '../test/helpers/hold-lock.js';
+import { channel, delivered, notifyBacklog } from '../test/helpers/notify-backlog.js';
 import { readRunState } from './run-state.js';
 import { FlowCrash, runFlow } from './runner.js';
 
@@ -643,6 +644,149 @@ test('the visit limit is a FlowCrash that names the box and the limit, with no f
   assert.equal(ran.filter((box) => box === 'self_check/test_unit').length, 2);
   assert.equal(logOf(ctx, id).at(-1).event, 'flow_start');
   assert.equal(readRunState(ctx, id, stateOf(ctx, id)), 'interrupted: self_check/test_unit');
+});
+
+// ---- alerts (F-140 D10, Decision A3) ----
+
+/** Routes where a class has a channel of its own, and the ended alerts reach `terminal`. */
+const ROUTES = 'gated: [terminal]\ngated.needs_operator_action: [bell]\nended: [terminal]\nnotify: []\n';
+
+/**
+ * A backlog as `backlog(flows)` gives it, with the channels `terminal` and
+ * `bell` (exit `codes`), `alerts` as config/alerts.yaml (by default uTop's)
+ * and the uTop English texts.
+ * @param {Record<string, string>} [flows]
+ * @param {string} [alerts]
+ * @param {Record<string, number>} [codes]
+ */
+function alerting(flows = {}, alerts = undefined, codes = { terminal: 0, bell: 0 }) {
+  const channels = Object.fromEntries(Object.entries(codes).map(([name, code]) => [name, channel(name, code)]));
+  return notifyBacklog({ flows: { 'defined-steps.yaml': definedSteps(), ...flows }, channels, alerts });
+}
+
+test('a failing step gate sends one gated alert to the channels of its classes and of gated, joined, and no ended alert', async () => {
+  const gate = `step_gates:\n  close: [{ condition: 'false', class: needs_operator_action }, 'status == "merged"']\n`;
+  const ctx = alerting({ 'gates.yaml': gate }, ROUTES);
+  const id = await story(ctx, { status: 'implemented', run: 'idle' });
+  const { catalogue } = fakeSteps();
+  const result = await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  assert.deepEqual(result, { ended: 'gated before: close', status: 'implemented' });
+  const text = `${id} is held before close: false [needs_operator_action]\n`;
+  assert.equal(delivered(ctx, 'bell'), text);
+  assert.equal(delivered(ctx, 'terminal'), text, 'one alert, and no ended alert after it');
+});
+
+test('a failing status gate sends one gated alert with no box, and a dependency entry routes by gated with its item first', async () => {
+  const ctx = alerting({}, ROUTES);
+  const [id] = await createItems(ctx, [
+    { type: 'story', state: { status: 'implemented', run: 'idle' } },
+    { type: 'task', state: { status: 'draft', run: 'idle' } },
+  ]);
+  await setGraph(ctx, 'containment', { 'T-1': { parent: id } });
+  const { catalogue } = fakeSteps();
+  const result = await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  assert.deepEqual(result, { ended: 'gated: done', status: 'implemented', outcome: 'success' });
+  // uTop's gate of done gives this entry the class expected, which ROUTES sends by gated.
+  assert.equal(delivered(ctx, 'terminal'), `${id} is held: children("task").all(c, c.closed) [expected]\n`);
+  assert.equal(delivered(ctx, 'bell'), null);
+
+  const other = alerting({}, ROUTES);
+  const [s1, s2] = await createItems(other, [
+    { type: 'story', state: { status: 'implemented', run: 'idle' } },
+    { type: 'story', state: { status: 'refined', run: 'idle' } },
+  ]);
+  await setGraph(other, 'dependency', { [s1]: { done: [{ [s2]: 'status == "done"' }] } });
+  await runFlow(other, { id: s1, start: 'close', by: 'operator', entry: 'close', catalogue });
+  assert.equal(delivered(other, 'terminal'), `${s1} is held: ${s2}: status == "done"\n`);
+  assert.equal(delivered(other, 'bell'), null);
+});
+
+test("a gated alert's condition longer than 120 characters is cut at 120 with …", async () => {
+  const condition = `status == "${'x'.repeat(130)}"`;
+  const ctx = alerting({ 'gates.yaml': `step_gates:\n  close: ['${condition}']\n` }, ROUTES);
+  const id = await story(ctx, { status: 'implemented', run: 'idle' });
+  const { catalogue } = fakeSteps();
+  await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  assert.equal(delivered(ctx, 'terminal'), `${id} is held before close: ${condition.slice(0, 120)}…\n`);
+});
+
+test('a flow_end at stop sends one ended.normal alert, which uTop routes to [], so no channel runs', async () => {
+  const utop = alerting();
+  const id = await story(utop, { status: 'implemented', run: 'idle' });
+  const { catalogue } = fakeSteps();
+  const result = await runFlow(utop, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.equal(delivered(utop, 'terminal'), null);
+  assert.equal(delivered(utop, 'bell'), null);
+
+  const routed = alerting({}, ROUTES);
+  const other = await story(routed, { status: 'implemented', run: 'idle' });
+  await runFlow(routed, { id: other, start: 'close', by: 'operator', entry: 'close', catalogue });
+  assert.equal(delivered(routed, 'terminal'), `${other}: bl ended (normal)\n`);
+});
+
+test("a step that throws sends one ended.crash alert with the box's path and the error, and runFlow still throws FlowCrash", async () => {
+  const ctx = alerting();
+  const id = await story(ctx, { status: 'refined', run: 'idle' });
+  const { catalogue } = fakeSteps({
+    implement: () => {
+      throw new Error('the agent crashed');
+    },
+  });
+  const crash = await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue }).catch((e) => e);
+  assert.ok(crash instanceof FlowCrash);
+  assert.equal(crash.message, 'implement: the agent crashed');
+  const text = `${id} crashed at implement: implement: the agent crashed\n`;
+  assert.equal(delivered(ctx, 'terminal'), text);
+  assert.equal(delivered(ctx, 'bell'), text);
+});
+
+test('an ended.crash alert that throws prints one line, and runFlow throws the FlowCrash it is about', async (t) => {
+  // With no language file, the alert's text read throws.
+  const flows = { 'defined-steps.yaml': definedSteps() };
+  const ctx = notifyBacklog({ flows, channels: { terminal: channel('terminal'), bell: channel('bell') }, texts: null });
+  const id = await story(ctx, { status: 'refined', run: 'idle' });
+  const { catalogue } = fakeSteps({
+    implement: () => {
+      throw new Error('the agent crashed');
+    },
+  });
+  const printed = [];
+  t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(text));
+  const crash = await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue }).catch((e) => e);
+  t.mock.restoreAll();
+  assert.ok(crash instanceof FlowCrash);
+  assert.equal(crash.message, 'implement: the agent crashed');
+  assert.deepEqual(printed, [
+    `${id}: the ended.crash alert failed: the language 'en' has no template file templates/en.yaml\n`,
+  ]);
+});
+
+test("the visit limit's ended.crash text holds started 21 times (max_box_visits) when the limit is 20", async () => {
+  const ctx = alerting({ 'flow-set.yaml': 'max_box_visits: 20\ngate_recheck_minutes: 15\n' });
+  const id = await story(ctx, { status: 'in_progress', run: 'idle' });
+  const { catalogue } = fakeSteps({ 'self_check/test_unit': () => 'failure' });
+  const start = 'self_check/test_unit';
+  const crash = await runFlow(ctx, { id, start, by: 'operator', resume: true, catalogue }).catch((e) => e);
+  assert.ok(crash instanceof FlowCrash);
+  assert.equal(delivered(ctx, 'terminal'), `${id} crashed at ${start}: ${start} started 21 times (max_box_visits)\n`);
+});
+
+test('an alert whose channels all fail prints one line that names it, after the lines of send, and the invocation ends as it would', async (t) => {
+  const gate = `step_gates:\n  close: [{ condition: 'false', class: needs_operator_action }]\n`;
+  // bell exits 127, a crash code of a plugin, which send prints as a line of its own (D-101).
+  const ctx = alerting({ 'gates.yaml': gate }, undefined, { terminal: 1, bell: 127 });
+  const id = await story(ctx, { status: 'implemented', run: 'idle' });
+  const { catalogue } = fakeSteps();
+  const printed = [];
+  t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(text));
+  const result = await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  t.mock.restoreAll();
+  assert.deepEqual(result, { ended: 'gated before: close', status: 'implemented' });
+  assert.deepEqual(stateOf(ctx, id), { status: 'implemented', run: 'gated before: close' });
+  const lines = printed.join('').split('\n').filter(Boolean);
+  assert.match(lines[0], /^bl\.notify bell: .*exited 127/);
+  assert.deepEqual(lines.slice(1), [`${id}: the gated.needs_operator_action alert reached no channel`]);
 });
 
 /** The story flow with a status on both sides of deliver's return (flow-config.md, case 4). */

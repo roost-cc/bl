@@ -11,8 +11,8 @@
  *   the top-level `bl.notify` through the plugin runner, with the text as
  *   `{{message}}`. A channel that does not exit 0 is not delivered, and is
  *   never a crash.
- * - The `notify` step is a flow box's notification. The alerts are the other
- *   caller.
+ * - The `notify` step is a flow box's notification. `sendAlert` is the other
+ *   caller: the runner's `gated` and `ended` alerts (D10).
  * - `checkNotifications` is the start check of the routes and the language.
  */
 
@@ -35,15 +35,17 @@ const channelsOf = (/** @type {Configuration} */ config) =>
 /**
  * The channels of `kind` for `reasons` (D-97): for each reason the
  * `<kind>.<reason>` key if `alerts` has it, else the `<kind>` key, joined in
- * order with repeats dropped. With no reason, the `<kind>` key.
+ * order with repeats dropped. With no reason, the `<kind>` key. An undefined
+ * reason (a gate entry with no class) takes the `<kind>` key.
  * @param {Record<string, string[]>} alerts  `config.file('alerts')`
  * @param {string} kind  `gated`, `ended` or `notify`
- * @param {string[]} [reasons]
+ * @param {Array<string|undefined>} [reasons]
  * @returns {string[]}
  */
 export function routeChannels(alerts, kind, reasons = []) {
-  const keys =
-    reasons.length === 0 ? [kind] : reasons.map((r) => (Object.hasOwn(alerts, `${kind}.${r}`) ? `${kind}.${r}` : kind));
+  const keyOf = (/** @type {string|undefined} */ r) =>
+    r !== undefined && Object.hasOwn(alerts, `${kind}.${r}`) ? `${kind}.${r}` : kind;
+  const keys = reasons.length === 0 ? [kind] : reasons.map(keyOf);
   return [...new Set(keys.flatMap((key) => alerts[key] ?? []))];
 }
 
@@ -93,6 +95,41 @@ export async function send(ctx, channels, text, view) {
     }
   }
   return delivered;
+}
+
+/** The longest `condition` an alert text gets; a longer one is cut with `…` (D-97). */
+const CONDITION_MAX = 120;
+
+/**
+ * Send the alert `kind` (D10; alerts.md, "Alerts", D-97): to the channels
+ * that `routeChannels` gives for `reasons`, the text of `<kind>.<reasons[0]>`
+ * or `<kind>`, rendered with the command view of `extras` plus `reason`, the
+ * first reason. `condition` is cut at 120 characters with `…`. A route of
+ * `[]` sends nothing and reads no text. An alert that no channel delivers
+ * prints one line on stderr that names it, after the lines of `send`.
+ * @param {StepContext} ctx  the step context of the box the alert is about
+ * @param {string} kind  `gated` or `ended`
+ * @param {Array<string|undefined>} reasons  for a `gated` alert the class of each failing
+ *   entry, undefined for an entry with none; `normal` or `crash` for an `ended` one
+ * @param {{ box?: string, condition?: string, class?: string, error?: string }} [extras]
+ * @returns {Promise<void>}
+ * @throws {Error} when the language file has no text for the alert
+ */
+export async function sendAlert(ctx, kind, reasons, { condition, ...extras } = {}) {
+  const channels = routeChannels(ctx.config.file('alerts'), kind, reasons);
+  if (channels.length === 0) return;
+  const [reason] = reasons;
+  const text = templateText(ctx.config, kind, reason);
+  const view = commandView(ctx, {
+    ...extras,
+    ...(reason === undefined ? {} : { reason }),
+    ...(condition === undefined
+      ? {}
+      : { condition: condition.length > CONDITION_MAX ? `${condition.slice(0, CONDITION_MAX)}…` : condition }),
+  });
+  const delivered = await send(ctx, channels, text, view);
+  if (delivered === 0)
+    info(`${ctx.id}: the ${reason === undefined ? kind : `${kind}.${reason}`} alert reached no channel`);
 }
 
 /**
