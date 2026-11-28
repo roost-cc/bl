@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "config/agents.yaml and the operator's agents.yaml",
+  "description": "The agent profiles (agents.md, \"Agent profiles\", D-498; F-141 D2): a profile name to the adapter that runs it, and optionally a model, arguments that come after bl's own, and environment variables. Steps and `--agent` name a profile. The operator's file is patched over the shop's, so it can add an argument to one profile.",
+  "type": "object",
+  "additionalProperties": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["adapter"],
+    "properties": {
+      "adapter": { "enum": ["claude", "codex", "local", "replay"] },
+      "model": { "type": "string" },
+      "args": { "type": "array", "items": { "type": "string" } },
+      "env": { "type": "object", "additionalProperties": { "type": "string" } }
+    }
+  }
+}

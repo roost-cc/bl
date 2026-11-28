@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "The result of an implement session",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["outcome", "summary"],
+  "properties": {
+    "outcome": { "enum": ["success", "failure"] },
+    "summary": { "type": "string", "minLength": 1 }
+  }
+}

@@ -9,6 +9,7 @@
  */
 
 import { MARKER } from './files.js';
+import AGENTS_SCHEMA from './schemas/agents.schema.json' with { type: 'json' };
 import ALERTS_SCHEMA from './schemas/alerts.schema.json' with { type: 'json' };
 import BACKLOG_SCHEMA from './schemas/backlog.schema.json' with { type: 'json' };
 import COLOR_SCHEME_SCHEMA from './schemas/color-scheme.schema.json' with { type: 'json' };
@@ -79,5 +80,13 @@ export const KINDS = Object.freeze([
     operator: 'templates/',
     order: 'who',
     schema: TEMPLATES_SCHEMA,
+  }),
+  // F-141 D2: the agent profiles (D-498); an operator layer can add an argument to one profile.
+  Object.freeze({
+    name: 'agents',
+    shop: 'config/agents.yaml',
+    operator: 'agents.yaml',
+    order: 'who',
+    schema: AGENTS_SCHEMA,
   }),
 ]);

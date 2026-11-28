@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import { parse } from 'yaml';
 import { record } from '../store/record.js';
 import { createItems } from '../test/helpers/engine-backlog.js';
-import { channel, delivered, fixtureText, notifyBacklog } from '../test/helpers/notify-backlog.js';
+import { fixtureText } from '../test/helpers/config-fixture.js';
+import { channel, delivered, notifyBacklog } from '../test/helpers/notify-backlog.js';
 import { routeChannels, sendAlert, templateText } from './notify.js';
 
 const fixture = (/** @type {string} */ name) => parse(fixtureText(name));

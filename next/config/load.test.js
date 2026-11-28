@@ -7,7 +7,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { KINDS } from './kinds.js';
 import { render } from './template.js';
-import { faultLines as fixtureFaultLines, fixture, load as fixtureLoad } from '../test/helpers/config-fixture.js';
+import {
+  faultLines as fixtureFaultLines,
+  fixture,
+  fixtureText,
+  load as fixtureLoad,
+} from '../test/helpers/config-fixture.js';
 
 /** The shipped backlog kind alone: the fixture kinds below reuse the names and paths of other shipped kinds. */
 const BACKLOG_KINDS = KINDS.filter((kind) => kind.name === 'backlog');
@@ -650,4 +655,82 @@ test('a none kind with no file: the result is {}, and a required key names the s
   assert.deepEqual(faultLines(fixture(SHOP_ONLY), [...BACKLOG_KINDS, FLOW]), [
     "config/flow.yaml: /when: required: must have required property 'when'",
   ]);
+});
+
+/** The shipped backlog and agents kinds (F-141 D2). */
+const AGENT_KINDS = KINDS.filter((kind) => kind.name === 'backlog' || kind.name === 'agents');
+
+test("an operator agents.yaml layers a profile's args over the shop's, and adds a profile (F-141 D2)", () => {
+  const config = load(
+    fixture({
+      ...SHOP_ONLY,
+      'backlog/config/agents.yaml':
+        'codex: { adapter: codex, args: [--fast], env: { A: a } }\nreplay: { adapter: replay }\n',
+      '.config/bl/agents.yaml':
+        "codex: { args: [--fast, --search], env: { B: b } }\nmine: { adapter: replay, args: ['-v'] }\n",
+    }),
+    AGENT_KINDS,
+  );
+  assert.deepEqual(config.file('agents'), {
+    codex: { adapter: 'codex', args: ['--fast', '--search'], env: { A: 'a', B: 'b' } },
+    replay: { adapter: 'replay' },
+    mine: { adapter: 'replay', args: ['-v'] },
+  });
+});
+
+test("prompt(name) gives a shop prompt's text, and undefined for an unknown name or an operator's file (F-141 D2)", () => {
+  const config = load(
+    fixture({
+      ...SHOP_ONLY,
+      '.config/bl/prompts/implement.md': 'operator text',
+      '.config/bl/prompts/mine.md': 'operator text',
+      '.config/bl/schemas/mine.json': '{}',
+    }),
+  );
+  assert.equal(config.prompt('implement.md'), fixtureText('prompts/implement.md'));
+  assert.equal(config.prompt('mine.md'), undefined);
+  assert.equal(config.prompt('refine.md'), undefined);
+  assert.equal(config.schema('mine.json'), undefined);
+  assert.equal(config.schema('refine.json'), undefined);
+});
+
+test('schema(name) gives the parsed schema and its validate, compiled at load (F-141 D2)', () => {
+  const { schema, validate } = load(fixture(SHOP_ONLY)).schema('implement.json') ?? assert.fail('no schema');
+  assert.deepEqual(schema, JSON.parse(fixtureText('schemas/implement.json')));
+  assert.ok(Object.isFrozen(schema.properties));
+  const shown = (value) => validate(value).map(({ path, rule }) => `${path}: ${rule}`);
+  assert.deepEqual(shown({ outcome: 'success', summary: 'done' }), []);
+  assert.deepEqual(shown({ outcome: 'blocked', summary: 'x' }), ['/outcome: enum']);
+  assert.deepEqual(shown({ outcome: 'failure' }), ['/summary: required']);
+});
+
+test('a schema that is not JSON, does not compile, or does not limit a required outcome is a fault that names its file (F-141 D2)', () => {
+  const at = (name, text) => ({ ...SHOP_ONLY, [`backlog/config/schemas/${name}`]: text });
+  const outcome = (properties, required = ['outcome']) => JSON.stringify({ type: 'object', required, properties });
+  const rows = [
+    [at('a.json', '{ "type": '), /^config\/schemas\/a\.json: : json: /],
+    [at('b.json', '{ "type": "objekt" }'), /^config\/schemas\/b\.json: : schema: /],
+    [at('c.json', '{ "required": ["outcome"], "nope": 1 }'), /^config\/schemas\/c\.json: : schema: .*nope/],
+    [at('d.json', outcome({ outcome: { enum: ['success'] } }, [])), /^config\/schemas\/d\.json: \/required: outcome: /],
+    [
+      at('e.json', outcome({ outcome: { type: 'string' } })),
+      /^config\/schemas\/e\.json: \/properties\/outcome\/enum: outcome: /,
+    ],
+    [
+      at('f.json', outcome({ outcome: { enum: ['success', 'blocked'] } })),
+      /^config\/schemas\/f\.json: \/properties\/outcome\/enum: outcome: /,
+    ],
+    [at('g.json', outcome({ outcome: { enum: [] } })), /^config\/schemas\/g\.json: /],
+  ];
+  for (const [files, line] of rows) {
+    const lines = faultLines(fixture(files));
+    assert.equal(lines.length, 1, lines.join('\n'));
+    assert.match(lines[0], line);
+  }
+  // An outcome limited to one of the two values loads, and a file that is not .json is not read.
+  assert.deepEqual(
+    load(fixture(at('h.json', outcome({ outcome: { enum: ['failure'] } })))).schema('h.json')?.schema.required,
+    ['outcome'],
+  );
+  assert.equal(load(fixture(at('notes.txt', 'x'))).schema('notes.txt'), undefined);
 });

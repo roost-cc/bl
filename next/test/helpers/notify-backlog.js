@@ -3,11 +3,8 @@
 // copies, and channels that append their {{message}} to a file under .bl/, which git ignores.
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { fixtureText } from './config-fixture.js';
 import { engineBacklog } from './engine-backlog.js';
-
-/** The text of the file `name` of `next/test/fixtures/`. */
-export const fixtureText = (/** @type {string} */ name) =>
-  readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8');
 
 /** A channel command, as YAML, that appends its `{{message}}` to `.bl/<name>` and then exits `code`. */
 export const channel = (/** @type {string} */ name, code = 0) =>

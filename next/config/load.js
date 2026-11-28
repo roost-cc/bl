@@ -5,7 +5,8 @@
  * (D4), and checks each layered result against its kind's schema. Then it
  * takes the shop predicates from the top-level scope (F-140 D2), compiles each
  * CEL string the schemas mark in the environment they give (D5), runs the CEL
- * self-test (D6), and reads and parses the partials (D7). It then throws
+ * self-test (D6), reads and parses the partials (D7), and reads the prompts
+ * and compiles the outcome schemas of the shop (F-141 D2). It then throws
  * `ConfigurationFaults` with every fault, or returns the frozen configuration.
  * Nothing reads a configuration file after it returns (architecture.md,
  * "Configuration loads once").
@@ -45,6 +46,10 @@ const NO_CEL_INPUTS = Object.freeze({ predicates: Object.freeze({}) });
  *   of the scope of the repo `name`, the top level with none or `null`
  * @property {(name: string) => string|undefined} partial  the text of a partial,
  *   `undefined` for a name that neither directory holds; `render` takes it (D7)
+ * @property {(name: string) => string|undefined} prompt  the text of the file
+ *   `config/prompts/<name>`, `undefined` for a name it does not hold (F-141 D2)
+ * @property {(name: string) => OutcomeSchema|undefined} schema  the outcome
+ *   schema `config/schemas/<name>`, `undefined` for a name it does not hold
  * @property {import('./cel.js').CelInputs} celInputs  the inputs of `bindCel`
  */
 
@@ -132,6 +137,22 @@ function unitsOf(kind, backlogDir, operatorDir, faults) {
 const PARTIAL = '.mustache';
 
 /**
+ * The files of `dir` whose names end in `suffix`, sorted by name: `[name, path]`.
+ * A missing directory has none.
+ * @param {string} dir
+ * @param {string} [suffix]
+ * @returns {[string, string][]}
+ */
+const filesOf = (dir, suffix = '') =>
+  isDirectory(dir)
+    ? readdirSync(dir)
+        .filter((name) => name.endsWith(suffix))
+        .sort()
+        .map((name) => /** @type {[string, string]} */ ([name, join(dir, name)]))
+        .filter(([, file]) => isFile(file))
+    : [];
+
+/**
  * The partials (D7): `config/partials/<name>.mustache`, which the operator's
  * `<operatorDir>/partials/<name>.mustache` replaces by name (D-441). Each file
  * is parsed with `Mustache.parse`, and a parse error is a fault with the file.
@@ -143,12 +164,7 @@ const PARTIAL = '.mustache';
 function readPartials(backlogDir, operatorDir, faults) {
   const partials = new Map();
   for (const dir of [join(backlogDir, 'config', 'partials'), join(operatorDir, 'partials')]) {
-    if (!isDirectory(dir)) continue;
-    for (const name of readdirSync(dir)
-      .filter((n) => n.endsWith(PARTIAL))
-      .sort()) {
-      const file = join(dir, name);
-      if (!isFile(file)) continue;
+    for (const [name, file] of filesOf(dir, PARTIAL)) {
       const text = readFileSync(file, 'utf8');
       try {
         Mustache.parse(text);
@@ -159,6 +175,71 @@ function readPartials(backlogDir, operatorDir, faults) {
     }
   }
   return partials;
+}
+
+/**
+ * The prompts (F-141 D2, D-107): the text of every file of `config/prompts/`,
+ * by file name. They are the shop's alone, not layered.
+ * @param {string} backlogDir
+ * @returns {Map<string, string>} name → text
+ */
+const readPrompts = (backlogDir) =>
+  new Map(filesOf(join(backlogDir, 'config', 'prompts')).map(([name, file]) => [name, readFileSync(file, 'utf8')]));
+
+/** The values that an outcome schema's `outcome` may take (agents.md, "The agent step"). */
+const OUTCOMES = ['success', 'failure'];
+
+/**
+ * @typedef {object} OutcomeSchema
+ * @property {Record<string, unknown>} schema  the parsed file, frozen
+ * @property {(value: unknown) => Fault[]} validate  the faults of an agent's
+ *   result by the schema, none when it is valid; each with `file` empty and its
+ *   path in the result
+ */
+
+/**
+ * The outcome schemas (F-141 D2, D-107): every `.json` file of
+ * `config/schemas/`, by file name, compiled once with the load's ajv instance
+ * (`checker`). They are the shop's alone, not layered. A file that is not
+ * JSON, that does not compile, or whose top level does not require an
+ * `outcome` with an `enum` of `success` and `failure` only, is a fault with
+ * the file, and is left out.
+ * @param {string} backlogDir
+ * @param {ReturnType<typeof shapeChecker>} checker
+ * @param {Fault[]} faults
+ * @returns {Map<string, OutcomeSchema>}
+ */
+function readSchemas(backlogDir, checker, faults) {
+  const schemas = new Map();
+  for (const [name, file] of filesOf(join(backlogDir, 'config', 'schemas'), '.json')) {
+    const fault = (path, rule, message) => faults.push({ file, path, rule, message });
+    let schema;
+    try {
+      schema = JSON.parse(readFileSync(file, 'utf8'));
+    } catch (error) {
+      fault('', 'json', error.message);
+      continue;
+    }
+    let check;
+    try {
+      check = checker.compile(schema);
+    } catch (error) {
+      fault('', 'schema', error.message);
+      continue;
+    }
+    const values = schema.properties?.outcome?.enum;
+    if (!Array.isArray(schema.required) || !schema.required.includes('outcome')) {
+      fault('/required', 'outcome', 'the top level must require outcome');
+      continue;
+    }
+    if (!Array.isArray(values) || values.length === 0 || !values.every((v) => OUTCOMES.includes(v))) {
+      fault('/properties/outcome/enum', 'outcome', `outcome must be an enum of ${OUTCOMES.join(' and ')} only`);
+      continue;
+    }
+    const validate = (value) => check(value, [{ file: '', pointer: '', patch: value }]).faults;
+    schemas.set(name, Object.freeze({ schema: deepFreeze(schema), validate }));
+  }
+  return schemas;
 }
 
 /**
@@ -252,6 +333,8 @@ export function loadConfiguration({ backlogDir, operatorDir, kinds }) {
   const celInputs = inputs ?? NO_CEL_INPUTS;
   celSelfTest(celInputs);
   const partials = readPartials(backlogDir, operatorDir, faults);
+  const prompts = readPrompts(backlogDir);
+  const schemas = readSchemas(backlogDir, checker, faults);
   if (faults.length > 0) throw new ConfigurationFaults(faults, backlogDir);
 
   /** The loaded unit of a `who` or `none` kind, as `file` and `layers` take it. */
@@ -272,6 +355,8 @@ export function loadConfiguration({ backlogDir, operatorDir, kinds }) {
     layers: (kind, name) =>
       kind === bothKind?.name ? results.get(kind)?.get(name ?? null)?.layers : unitOf(kind, name)?.layers,
     partial: (name) => partials.get(name),
+    prompt: (name) => prompts.get(name),
+    schema: (name) => schemas.get(name),
     celInputs,
   });
 }
