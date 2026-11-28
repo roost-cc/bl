@@ -19,8 +19,8 @@
  */
 
 import { randomUUID } from 'crypto';
-import { closeSync, openSync, readFileSync } from 'fs';
-import { describeExit, exitStatus, lastLine, runChild } from '../lib/child.js';
+import { closeSync, openSync, readFileSync, statSync } from 'fs';
+import { describeExit, exitStatus, findOnPath, lastLine, runChild } from '../lib/child.js';
 import { runScopedChild } from '../lib/process-scope.js';
 import { profileCommand } from './profile.js';
 
@@ -86,10 +86,11 @@ async function capacity(profile) {
  * in `run.cwd`, with the prompt on stdin.
  * @param {AgentRun} run
  * @param {string[]} sessionArgs  `--session-id <id>` or `--resume <id>`
+ * @param {string} program  `replay`, or the file `start` found for it
  * @returns {Promise<Ended>}
  * @throws {Error} when the session's process scope cannot be stopped
  */
-async function session(run, sessionArgs) {
+async function session(run, sessionArgs, program) {
   const interactive = run.mode === 'interactive';
   const { args, env } = profileCommand(
     [...sessionArgs, '--schema', run.schemaPath, '--result', run.resultPath, ...(interactive ? ['--interactive'] : [])],
@@ -100,7 +101,7 @@ async function session(run, sessionArgs) {
   try {
     const out = tty ?? 'pipe';
     ran = await runScopedChild(
-      PROGRAM,
+      program,
       args,
       { cwd: run.cwd, env, encoding: 'utf8', input: run.prompt, stdio: ['pipe', out, out] },
       run.unit,
@@ -125,14 +126,24 @@ async function session(run, sessionArgs) {
 
 /**
  * A new session: its id is made here and given to `run.onSession` before
- * `replay` starts.
+ * `replay` starts. A session that cannot launch, because `replay` is not on
+ * the `PATH` or `run.cwd` is not a directory, gives no id, so no later
+ * invocation resumes a session that never started.
  * @param {AgentRun} run
  * @returns {Promise<Ended>}
  */
 async function start(run) {
+  const program = findOnPath(PROGRAM, profileCommand([], run.profile).env.PATH, run.cwd);
+  /** @type {string|null} */
+  let why = null;
+  if (program === undefined) why = 'replay is not on the PATH';
+  else if (!statSync(run.cwd, { throwIfNoEntry: false })?.isDirectory()) {
+    why = `the working directory ${run.cwd} does not exist`;
+  }
+  if (why !== null) return { result: null, error: `replay could not start: ${why}`, usage: NO_USAGE };
   const id = randomUUID();
   await run.onSession(id);
-  return session(run, ['--session-id', id]);
+  return session(run, ['--session-id', id], /** @type {string} */ (program));
 }
 
 /**
@@ -141,7 +152,7 @@ async function start(run) {
  * @returns {Promise<Ended>}
  */
 async function resume(run) {
-  return session(run, ['--resume', /** @type {string} */ (run.session)]);
+  return session(run, ['--resume', /** @type {string} */ (run.session)], PROGRAM);
 }
 
 /** @type {Adapter} */

@@ -160,6 +160,34 @@ test('start runs a scripted headless session: onSession gets the id first, then 
   });
 });
 
+test('failed_replay_launch_does_not_keep_a_resumable_session', async () => {
+  const s = setup();
+  const rows = [
+    {
+      name: 'replay not on the PATH',
+      env: { ...replayEnv(s.script), PATH: mkTempDir('bl-empty-path-') },
+      extra: {},
+      error: 'replay could not start: replay is not on the PATH',
+    },
+    {
+      name: 'a working directory that does not exist',
+      env: replayEnv(s.script),
+      extra: { cwd: join(s.repo, 'gone') },
+      error: `replay could not start: the working directory ${join(s.repo, 'gone')} does not exist`,
+    },
+  ];
+  for (const { name, env, extra, error } of rows) {
+    const ids = [];
+    const ended = await withEnv(env, () => replay.start(agentRun(s, 'implement S-7', ids, extra)));
+    assert.deepEqual(ended, { result: null, error, usage: ZERO }, name);
+    assert.deepEqual(ids, [], `${name}: no session id is given, so none is kept to resume`);
+  }
+  // A session that launched and then exited keeps its id: `resume` continues it (the test below).
+  const ids = [];
+  await withEnv(replayEnv(s.script), () => replay.start(agentRun(s, 'crash S-8', ids)));
+  assert.equal(ids.length, 1);
+});
+
 test('resume after an exit turn gives the result of the rest of the session', async () => {
   const s = setup();
   await withEnv(replayEnv(s.script), async () => {

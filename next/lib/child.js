@@ -63,7 +63,8 @@
  * killed (F-124 D6).
  */
 
-import { delimiter } from 'path';
+import { accessSync, constants, statSync } from 'fs';
+import { delimiter, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnFiles, spawnSyncFiles } from './child-stdio.js';
 import { EXIT_CODES, INTERRUPT_SIGNALS, interruptOf, raiseSignal, signalExitCode } from './signal-exit.js';
@@ -121,6 +122,31 @@ export async function runLongChild(command, args = [], opts = {}) {
   } finally {
     longChildren.delete(controller);
   }
+}
+
+/**
+ * The executable file that `command` names on the `PATH` `path`, as an
+ * absolute path, or `undefined` when no entry holds one. A relative entry is
+ * read from `cwd`, as the child that runs in `cwd` reads it. A caller that
+ * must know a child can launch before it starts the child, such as an agent
+ * adapter that records a session id first (F-141 D3), resolves it here.
+ * @param {string} command
+ * @param {string|undefined} path
+ * @param {string} cwd
+ * @returns {string|undefined}
+ */
+export function findOnPath(command, path, cwd) {
+  for (const dir of String(path ?? '').split(delimiter)) {
+    if (dir === '') continue;
+    const file = resolve(cwd, dir, command);
+    try {
+      accessSync(file, constants.X_OK);
+      if (statSync(file).isFile()) return file;
+    } catch {
+      // Not in this entry: the next one.
+    }
+  }
+  return undefined;
 }
 
 /**

@@ -35,7 +35,8 @@ import { replay } from './replay.js';
  * @typedef {object} Ended
  * @property {unknown} result  the parsed result, or `null` when there is none
  * @property {string|null} error  `null` with a result; else one line: the exit
- *   code and the last line of stderr, or why the result could not be read
+ *   code and the last line of stderr, why the result could not be read, or why
+ *   the session could not start
  * @property {Usage} usage  zeros when the adapter cannot read them
  */
 /**
@@ -43,7 +44,8 @@ import { replay } from './replay.js';
  * @property {(profile: Profile) => string[]} faults  faults of a profile, for example a model the agent cannot take
  * @property {(profile: Profile) => Promise<Capacity>} capacity
  * @property {(run: AgentRun) => Promise<Ended>} start  a new session; it calls
- *   `run.onSession(id)` as soon as it knows the id, before the agent can change anything
+ *   `run.onSession(id)` as soon as it knows the id, before the agent can change anything,
+ *   and never for a session that it knows cannot launch
  * @property {(run: AgentRun) => Promise<Ended>} resume  the session `run.session`
  */
 
