@@ -68,7 +68,8 @@ export async function wayOn(ctx, item, state, last, { repos, agents } = {}) {
     );
   }
   const record = () => engineRecord(ctx, ctx.flowSet, readRecord(ctx, item.id));
-  const logged = last?.event === 'outcome' && last.box === arg ? { outcome: /** @type {string} */ (last.outcome) } : {};
+  const given = outcomeFor(last, arg);
+  const logged = given === undefined ? {} : { outcome: given };
   switch (kind) {
     case 'active': // of this host, under the caller's lock: interrupted
     case 'interrupted':
@@ -95,6 +96,16 @@ export async function wayOn(ctx, item, state, last, { repos, agents } = {}) {
       return state.next === undefined ? { entries: entriesFrom(flow, state.status) } : { start: state.next };
   }
 }
+
+/**
+ * The outcome that the log entry `last` records for the box `box`: its
+ * `outcome` when it is an `outcome` entry for that box, else undefined
+ * (D-9, D-51). `wayOn` reads it at a resume, and the runner after a step.
+ * @param {{ event: string, box?: string, outcome?: string } | undefined} last  the item's last log entry
+ * @param {string} box
+ * @returns {string|undefined}
+ */
+export const outcomeFor = (last, box) => (last?.event === 'outcome' && last.box === box ? last.outcome : undefined);
 
 /**
  * The names of the entries of `flow` whose `from` holds `status`.

@@ -1763,3 +1763,32 @@ test('without wake, an invocation that reaches a wait box returns at waiting: <b
   assert.deepEqual(result, { ended: 'waiting: wait_implement', status: 'in_progress' });
   assert.equal(holderOf(itemLockPath(ctx.backlogDir, id)), null);
 });
+
+// ---- an outcome logged while a step runs (F-152 D7, D-9) ----
+
+test("an outcome entry for the box that another writer commits while the step runs wins over the step's outcome: the runner follows its arrow, and the box's commit logs a flow_start with resume after it", async () => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'refined', run: 'idle' });
+  const base = head(ctx);
+  // implement's failure arrow goes to notify_implement; the logged success goes on to in_unit.
+  const { catalogue, ran } = fakeSteps({
+    implement: async (/** @type {any} */ step) => {
+      await appendLog(ctx, step.id, outcomeEntry('implement', 'success'));
+      return 'failure';
+    },
+  });
+  const result = await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue });
+  assert.deepEqual(result, { ended: 'stop', status: 'implemented', outcome: 'success' });
+  assert.deepEqual(ran, RUN_BOXES, 'the success arrow of implement is followed');
+  assert.deepEqual(eventsOf(ctx, id), ['flow_start', 'outcome', 'flow_start', 'flow_end']);
+  const { at, ...resumed } = logOf(ctx, id).at(-2);
+  assert.deepEqual(resumed, { event: 'flow_start', resume: true, status: 'in_progress', by: 'operator' });
+  const commit = commitsSince(ctx, base).find(({ subject }) => subject === `${id}: implement success`);
+  assert.ok(commit !== undefined, 'the commit of implement names the logged outcome');
+  const path = itemDir(ctx, id).path;
+  assert.deepEqual(git(ctx.backlogDir, 'show', '--name-only', '--format=', commit.sha).split('\n').sort(), [
+    `${path}/log.jsonl`,
+    `${path}/state.json`,
+  ]);
+  assert.deepEqual(stateOf(ctx, id), { status: 'implemented', run: 'idle' });
+});

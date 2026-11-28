@@ -6,6 +6,8 @@
  * prints them. F-138 registers no op: each later feature adds one line here.
  */
 
+import { outcome } from './outcome.js';
+
 /**
  * @typedef {object} OpContext
  * @property {import('../../config/load.js').Configuration} config  the frozen configuration
@@ -28,4 +30,4 @@
  */
 
 /** @type {Readonly<Record<string, Op>>} op name → op */
-export const OPS = Object.freeze({});
+export const OPS = Object.freeze({ outcome });

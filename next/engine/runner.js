@@ -32,8 +32,13 @@
  *      session id at once (F-141 D8); a note it
  *      gives is printed as `<box>: <note>` and goes first in the box's notes,
  *      so a `flow_end` at this box holds it (F-140 Decision A2);
- *   5. after `success`, the post-conditions: a failing entry makes the outcome
- *      `failure` (D-35);
+ *   5. when the item's last log entry is an `outcome` for the box that
+ *      `bl outcome` wrote while the step ran, that outcome wins over the
+ *      step's, with no post-conditions (D-9); the box's commit then logs a
+ *      `flow_start` with `resume` after it, as a resume that follows a logged
+ *      outcome does (F-152 D2), so the run state may leave the box (D-612).
+ *      Else, after `success`, the post-conditions: a failing entry makes the
+ *      outcome `failure` (D-35);
  *   6. the arrow of the outcome, through any return nodes (D-26, D-43): a
  *      missing arrow commits an `outcome` entry and crashes; an arrow with a
  *      `status` makes the transition, unless the status is not in the arrow's
@@ -86,7 +91,7 @@ import { LOG, readJsonl } from '../store/jsonl.js';
 import { record as readRecord } from '../store/record.js';
 import { now, storeWrite } from '../store/write.js';
 import { bindConditions, engineRecord, hasTerminal } from './conditions.js';
-import { wayOn } from './continuation.js';
+import { outcomeFor, wayOn } from './continuation.js';
 import { STOP } from './flow-set.js';
 import { postConditions, statusGate, stepGate } from './gates.js';
 import { checkAgainstFlow, parseRun } from './run-state.js';
@@ -162,6 +167,27 @@ async function alertOrReport(id, name, send) {
   } catch (error) {
     info(`${id}: the ${name} alert failed: ${/** @type {Error} */ (error).message}`);
   }
+}
+
+/**
+ * One store write of an item of the type `type` with the message `message`
+ * and the trailers of the flow and, when given, of the box (history.md,
+ * "Commit trailers"); the store write adds `Bl-Item`. The runner and
+ * `bl outcome` commit through it.
+ * @template T
+ * @param {import('../store/items.js').StoreContext} ctx
+ * @param {string} type  the item's type, which names its flow
+ * @param {string} message
+ * @param {string|null} box
+ * @param {(w: Writer) => T} fn
+ * @returns {Promise<T>}
+ */
+export async function flowWrite(ctx, type, message, box, fn) {
+  return await storeWrite(
+    ctx,
+    { message, trailers: [`Bl-Flow: ${type}`, ...(box === null ? [] : [`Bl-Step: ${box}`])] },
+    fn,
+  );
 }
 
 /** The node id a return node `<subflow box>/_return_<outcome>` stands for: its subflow box. */
@@ -273,19 +299,13 @@ async function invoke(
   const { id, type } = item;
   const host = hostname();
   /**
-   * One store write with the message `message` and the trailers of the flow
-   * and, when given, of the box (history.md, "Commit trailers"); the store
-   * write adds `Bl-Item`.
+   * `flowWrite` of this item's flow.
    * @param {string} message
    * @param {string|null} box
    * @param {(w: Writer) => void} fn
    */
   const flowCommit = async (message, box, fn) => {
-    await storeWrite(
-      ctx,
-      { message, trailers: [`Bl-Flow: ${type}`, ...(box === null ? [] : [`Bl-Step: ${box}`])] },
-      fn,
-    );
+    await flowWrite(ctx, type, message, box, fn);
   };
   /**
    * Stage the step's writes `staged`, then `state.json` with `status`, `run`
@@ -502,7 +522,15 @@ async function invoke(
         outcome = typeof result === 'string' ? result : result.outcome;
         stepNote = typeof result === 'string' ? undefined : result.note;
         if (stepNote !== undefined) notes.push(stepNote);
-        if (outcome === 'success') {
+        // An outcome that `bl outcome` logged for the box while the step ran wins (D-9).
+        const logged = outcomeFor(readJsonl(ctx, item, LOG).at(-1), box);
+        if (logged !== undefined) {
+          outcome = logged;
+          // The commit of its arrow logs a flow_start after it, as a resume that follows a logged
+          // outcome does, so the outcome is no longer the newest state entry (D-612).
+          const resumed = { at: now(), event: 'flow_start', resume: true, status, by };
+          logStart = (w) => w.log(id, resumed);
+        } else if (outcome === 'success') {
           const failed = await postConditions(ctx, current(), node, { repos, snapshot: before });
           if (failed.length > 0) {
             outcome = 'failure';
