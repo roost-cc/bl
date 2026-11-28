@@ -49,6 +49,30 @@ export function render(template, view, { partial, bl, config, escape = String } 
   return Mustache.render(template, full, partials, { escape });
 }
 
+/**
+ * `template` rendered with `view`, each `{{#bl}}` line run through the async
+ * `bl`, for views and prompts (F-141 D5). Mustache is not async, so a render
+ * with `bl` takes two passes: the first collects the rendered command line of
+ * each occurrence, `bl` runs each line once, in order, and the second pass
+ * puts each text in place.
+ * @param {string} template
+ * @param {Record<string, unknown>} view
+ * @param {{ partial?: RenderOptions['partial'], bl?: (line: string) => Promise<string>, config?: unknown }} [options]
+ * @returns {Promise<string>}
+ */
+export async function renderAsync(template, view, { partial, bl, config } = {}) {
+  if (bl === undefined) return render(template, view, { partial, config });
+  /** @type {string[]} */
+  const lines = [];
+  render(template, view, { partial, config, bl: (line) => (lines.push(line), '') });
+  /** @type {string[]} */
+  const texts = [];
+  for (const line of lines) texts.push(await bl(line));
+  // The second pass meets the occurrences in the same order as the first.
+  let next = 0;
+  return render(template, view, { partial, config, bl: () => texts[next++] ?? '' });
+}
+
 /** The Mustache token types that read a name: `&` is `{{{name}}}` and `{{& name}}`. */
 const NAME_TOKENS = new Set(['name', '&', '#', '^']);
 

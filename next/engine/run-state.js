@@ -26,6 +26,8 @@ import { itemLockPath } from '../lib/lock.js';
  * @property {string} [host]  with `active` only: the host that runs the box
  * @property {string} [next]  with `idle` only: the box where the next invocation starts
  * @property {{ box: string, outcome: string }} [held]  with `gated` only: the arrow that holds the transition
+ * @property {{ box: string, profile: string, id: string }} [session]  with `active` only: the agent session of
+ *   the box that runs (F-141 D8)
  */
 
 /**

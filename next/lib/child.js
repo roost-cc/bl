@@ -63,7 +63,8 @@
  * killed (F-124 D6).
  */
 
-import { delimiter } from 'path';
+import { accessSync, constants, statSync } from 'fs';
+import { delimiter, isAbsolute, join } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnFiles, spawnSyncFiles } from './child-stdio.js';
 import { EXIT_CODES, INTERRUPT_SIGNALS, interruptOf, raiseSignal, signalExitCode } from './signal-exit.js';
@@ -121,6 +122,32 @@ export async function runLongChild(command, args = [], opts = {}) {
   } finally {
     longChildren.delete(controller);
   }
+}
+
+/**
+ * The executable file that `command` names on the `PATH` `path`, as an
+ * absolute path, or `undefined` when no entry holds one. Only an absolute
+ * entry counts: a relative or empty entry names a directory relative to a
+ * working directory, and the calls of one program can run in different ones.
+ * A caller that must know a child can launch before it starts the child, such
+ * as an agent adapter that records a session id first (F-141 D3), resolves it
+ * here, and then runs the file it gives.
+ * @param {string} command
+ * @param {string|undefined} path
+ * @returns {string|undefined}
+ */
+export function findOnPath(command, path) {
+  for (const dir of String(path ?? '').split(delimiter)) {
+    if (!isAbsolute(dir)) continue;
+    const file = join(dir, command);
+    try {
+      accessSync(file, constants.X_OK);
+      if (statSync(file).isFile()) return file;
+    } catch {
+      // Not in this entry: the next one.
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -259,6 +286,18 @@ export function describeExit(r, what) {
   if (r.signal) return `${what} was ended by ${r.signal}${text ? `: ${text}` : ''}`;
   return text || `${what} exited ${r.status}`;
 }
+
+/**
+ * The last non-empty line of a child's output `text`, trimmed, or undefined:
+ * the note of a plugin and the error line of an agent session.
+ * @param {unknown} text
+ * @returns {string|undefined}
+ */
+export const lastLine = (text) =>
+  String(text ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .findLast(Boolean);
 
 /**
  * The exit status a `spawnSync` result stands for, as a shell reports it

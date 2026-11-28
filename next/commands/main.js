@@ -18,7 +18,7 @@ import { ConfigurationFaults } from '../config/check.js';
 import { findBacklogRoot, operatorDir } from '../config/files.js';
 import { KINDS } from '../config/kinds.js';
 import { loadConfiguration } from '../config/load.js';
-import { buildFlowSet, checkRankGraph, shopSteps, STEPS } from '../engine/flow-set.js';
+import { buildFlowSet, checkAgentBoxes, checkRankGraph, shopSteps, STEPS } from '../engine/flow-set.js';
 import { blIn, CommandFailed, dispatch, PROG, startFaults } from './dispatch.js';
 import { OPS } from './ops/index.js';
 import { writeOutput } from './output.js';
@@ -65,16 +65,19 @@ export async function main(argv, { ops = OPS, steps = STEPS } = {}) {
     // `steps.` name cannot clash with a code step's name.
     catalogue = Object.freeze({ ...steps, ...shopSteps(config) });
     flowSet = buildFlowSet(config, catalogue, backlogDir);
-    // A rank box needs the rank graph (F-140 D8); only the flow set says whether one uses it.
-    const rankFaults = checkRankGraph({ backlogDir, config }, flowSet);
-    if (rankFaults.length > 0) throw new ConfigurationFaults(rankFaults, backlogDir);
+    // A rank box needs the rank graph (F-140 D8), and an agent box the names it gives (F-141 D5);
+    // only the flow set says which boxes there are.
+    const boxFaults = [...checkRankGraph({ backlogDir, config }, flowSet), ...checkAgentBoxes(config, flowSet)];
+    if (boxFaults.length > 0) throw new ConfigurationFaults(boxFaults, backlogDir);
   } catch (error) {
     process.stderr.write(
       error instanceof ConfigurationFaults ? `${error.message}\n${DOES_NOT_LOAD}\n` : `${PROG}: ${error.message}\n`,
     );
     return 1;
   }
-  const context = { config, backlogDir, flowSet, catalogue, ops };
+  const context = { config, backlogDir, flowSet, catalogue, ops, bl: undefined };
+  // A step's prompt runs its {{#bl}} lines in this process, as a view does (F-141 D5).
+  context.bl = blIn(context, []);
   const exit = ({ status, stdout, stderr }) => {
     process.stdout.write(stdout);
     process.stderr.write(stderr);

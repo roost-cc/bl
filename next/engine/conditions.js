@@ -12,6 +12,12 @@
  *     and `children(type)` give records through `engineRecord`, the item
  *     whose flow runs as its current record (`itemRecord`), and
  *     `has_terminal()` is true when the process can open `/dev/tty` (D-30).
+ *     `worktree_clean()` is true when no repo context has an uncommitted
+ *     change, and `worktree_unchanged()` when no repo changed since the
+ *     snapshot before the step (`steps/worktrees.js`, F-141 D6); with no
+ *     snapshot, as in a gate, `worktree_unchanged()` throws.
+ *     `has_capacity()` is true when an entry of the box's `agents` has
+ *     capacity (`firstWithCapacity`, F-141 D7); outside an agent box it throws.
  *     A shop predicate runs its top-level plugin with `runPredicate`, in the
  *     backlog root, with the item's command view plus `args`: `0`, `1`, … to
  *     the call's arguments as plain JSON (`fromCelValue`; F-140 D7, Decision
@@ -20,12 +26,16 @@
  *
  * An evaluation that throws is an error whose message names the expression
  * (D-496): an absent key or an unbound function never counts as false.
+ * `evaluate` gives a promise, because an adapter's capacity call is
+ * asynchronous (F-141 D7).
  */
 
 import { closeSync, openSync } from 'fs';
 import { bindCel, fromCelValue, UNBOUND } from '../config/cel.js';
+import { firstWithCapacity } from '../steps/capacity.js';
 import { runPredicate } from '../steps/plugin.js';
 import { commandView } from '../steps/view.js';
+import { changed, clean } from '../steps/worktrees.js';
 import { childrenOf, graphValues } from '../store/graphs.js';
 import { readState } from '../store/item-json.js';
 import { itemDir, printedType } from '../store/items.js';
@@ -35,8 +45,11 @@ import { readRunState } from './run-state.js';
 /**
  * @typedef {import('../store/record.js').ItemRecord} ItemRecord
  * @typedef {import('./flow-set.js').FlowSet} FlowSet
- * @typedef {import('../store/items.js').StoreContext & { flowSet: FlowSet }} EngineContext
- *   a store context with the flow set (the op context, `OpContext`, is one)
+ * @typedef {import('../steps/worktrees.js').RepoContext} RepoContext
+ * @typedef {import('../steps/worktrees.js').RepoSnapshot} RepoSnapshot
+ * @typedef {import('../store/items.js').StoreContext & { flowSet: FlowSet, bl?: (line: string) => Promise<string> }} EngineContext
+ *   a store context with the flow set (the op context, `OpContext`, is one),
+ *   and the op context's `{{#bl}}` runner (`blIn`), which the runner gives steps
  */
 
 /**
@@ -76,12 +89,14 @@ export function itemRecord(ctx, other, current) {
 }
 
 /**
- * Whether the process can open `path` for reading.
- * @param {string} path
+ * Whether the process has a terminal: it can open `tty` for reading (D-30).
+ * `has_terminal()` and the runner's check of an interactive step call it
+ * (F-141 D9).
+ * @param {string} [tty]  the terminal, `/dev/tty`; a test seam
  */
-function canOpen(path) {
+export function hasTerminal(tty = '/dev/tty') {
   try {
-    closeSync(openSync(path, 'r'));
+    closeSync(openSync(tty, 'r'));
     return true;
   } catch {
     return false;
@@ -94,20 +109,34 @@ function canOpen(path) {
  * records it needs anew.
  * @param {EngineContext} ctx
  * @param {string} id  the item's id in its printed form
- * @param {{ tty?: string, current?: ItemRecord }} [options]  `tty`: the file `has_terminal()`
- *   opens, a test seam; `current`: the record of the item whose flow runs, which `item()`
- *   and `children()` give for that item (`itemRecord`)
- * @returns {{ evaluate: (expr: string, record: ItemRecord) => unknown }}
+ * @param {{ tty?: string, current?: ItemRecord, repos?: readonly RepoContext[], snapshot?: readonly RepoSnapshot[],
+ *   agents?: readonly string[] }} [options]
+ *   `tty`: the file `has_terminal()` opens, a test seam; `current`: the record of the item
+ *   whose flow runs, which `item()` and `children()` give for that item (`itemRecord`);
+ *   `repos`: the repo contexts that `worktree_clean()` reads; `snapshot`: the snapshot of
+ *   `repos` before the step, which `worktree_unchanged()` compares with, given only to
+ *   post-conditions (F-141 D6); `agents`: the `agents` list of the box, which
+ *   `has_capacity()` reads (F-141 D7)
+ * @returns {{ evaluate: (expr: string, record: ItemRecord) => Promise<unknown> }}
  */
-export function bindConditions(ctx, id, { tty = '/dev/tty', current } = {}) {
+export function bindConditions(ctx, id, { tty, current, repos = [], snapshot, agents } = {}) {
   const bound = bindCel(ctx.config.celInputs, {
     ...UNBOUND,
+    has_capacity: async () => {
+      if (agents === undefined) throw new Error('has_capacity() needs an agent box');
+      return (await firstWithCapacity(ctx, agents)).name !== null;
+    },
+    worktree_clean: () => clean(repos),
+    worktree_unchanged: () => {
+      if (snapshot === undefined) throw new Error('worktree_unchanged() is a post-condition');
+      return !changed(snapshot, repos);
+    },
     item: (other) => itemRecord(ctx, other, current),
     children: (type) =>
       childrenOf(graphValues(ctx), id)
         .filter((child) => printedType(ctx, child) === type)
         .map((child) => itemRecord(ctx, child, current)),
-    has_terminal: () => canOpen(tty),
+    has_terminal: () => hasTerminal(tty),
     predicate: (name, args) => {
       const itemCtx = { ...ctx, id, record: itemRecord(ctx, id, current) };
       const plugin = ctx.config.scope(null).plugin_registry.predicates[name];
@@ -115,9 +144,9 @@ export function bindConditions(ctx, id, { tty = '/dev/tty', current } = {}) {
     },
   });
   return {
-    evaluate(expr, record) {
+    async evaluate(expr, record) {
       try {
-        return bound.evaluate(expr, record);
+        return await bound.evaluate(expr, record);
       } catch (error) {
         throw new Error(`${expr}: ${String(/** @type {Error} */ (error).message).split('\n')[0]}`, { cause: error });
       }

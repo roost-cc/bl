@@ -25,6 +25,7 @@ import { git } from '../test/helpers/git.js';
 import { holdLock, holdLockInChild } from '../test/helpers/hold-lock.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 import { spawnToFiles, untilStderrHas } from '../test/helpers/spawn-files.js';
+import { stderrOf } from '../test/helpers/streams.js';
 
 const SRC = new URL('./main-sync.js', import.meta.url).href;
 
@@ -86,14 +87,8 @@ function syncInChild(repo, opts = {}, env = {}) {
 }
 
 function captureErr(fn) {
-  const write = process.stderr.write;
-  const chunks = [];
-  process.stderr.write = (chunk) => chunks.push(String(chunk)) > 0;
-  try {
-    return { value: fn(), err: chunks.join('') };
-  } finally {
-    process.stderr.write = write;
-  }
+  const { value, chunks } = stderrOf(fn);
+  return { value, err: chunks.join('') };
 }
 
 test('two processes syncing one clone at once both succeed', async () => {

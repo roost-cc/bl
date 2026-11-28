@@ -10,8 +10,12 @@ import RECORD_SCHEMA from '../config/schemas/record.schema.json' with { type: 'j
 import { itemLockPath } from '../lib/lock.js';
 import { recordReader } from '../store/record.js';
 import { createItems, engineBacklog, setGraph } from '../test/helpers/engine-backlog.js';
+import { git, tempRepo } from '../test/helpers/git.js';
+import { withEnv } from '../test/helpers/env.js';
 import { holdLock } from '../test/helpers/hold-lock.js';
+import { noReplayPath, replayEnv } from '../test/helpers/replay.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
+import { snapshot } from '../steps/worktrees.js';
 import { bindConditions, engineRecord } from './conditions.js';
 
 const BOX = 'deliver/self_check/test_unit';
@@ -66,21 +70,21 @@ test('the records of item(id) and children(type) carry closed and the run state 
   const ctx = await backlog();
   const feature = engineRecord(ctx, ctx.flowSet, recordReader(ctx)('F-1'));
   const conditions = bindConditions(ctx, 'F-1');
-  assert.equal(conditions.evaluate('item("S-3").run', feature), `interrupted: ${BOX}`);
-  assert.equal(conditions.evaluate('item("S-2").closed', feature), true);
-  assert.equal(conditions.evaluate('item("S-3").closed', feature), false);
-  assert.deepEqual(conditions.evaluate('children("story").map(c, c.item_id)', feature), ['S-1', 'S-2', 'S-3']);
-  assert.deepEqual(conditions.evaluate('children("story").map(c, c.closed)', feature), [true, true, false]);
-  assert.deepEqual(conditions.evaluate('children("story").map(c, c.run)', feature), [
+  assert.equal(await conditions.evaluate('item("S-3").run', feature), `interrupted: ${BOX}`);
+  assert.equal(await conditions.evaluate('item("S-2").closed', feature), true);
+  assert.equal(await conditions.evaluate('item("S-3").closed', feature), false);
+  assert.deepEqual(await conditions.evaluate('children("story").map(c, c.item_id)', feature), ['S-1', 'S-2', 'S-3']);
+  assert.deepEqual(await conditions.evaluate('children("story").map(c, c.closed)', feature), [true, true, false]);
+  assert.deepEqual(await conditions.evaluate('children("story").map(c, c.run)', feature), [
     'idle',
     'idle',
     `interrupted: ${BOX}`,
   ]);
-  assert.deepEqual(conditions.evaluate('children("task").map(c, c.item_id)', feature), ['T-1']);
-  assert.equal(conditions.evaluate('children("task").all(c, c.closed)', feature), false);
+  assert.deepEqual(await conditions.evaluate('children("task").map(c, c.item_id)', feature), ['T-1']);
+  assert.equal(await conditions.evaluate('children("task").all(c, c.closed)', feature), false);
   const story = engineRecord(ctx, ctx.flowSet, recordReader(ctx)('S-1'));
-  assert.equal(bindConditions(ctx, 'S-1').evaluate('children("task").all(c, c.closed)', story), true);
-  assert.deepEqual(bindConditions(ctx, 'S-2').evaluate('children("task")', story), []);
+  assert.equal(await bindConditions(ctx, 'S-1').evaluate('children("task").all(c, c.closed)', story), true);
+  assert.deepEqual(await bindConditions(ctx, 'S-2').evaluate('children("task")', story), []);
 });
 
 test('item(id) of the item whose flow runs gives its current record, from its own and from another item', async () => {
@@ -94,16 +98,23 @@ test('item(id) of the item whose flow runs gives its current record, from its ow
     ['a dependency entry of another item', 'F-1', feature],
   ]) {
     const conditions = bindConditions(ctx, id, { current });
-    assert.equal(conditions.evaluate('item("S-3").status', record), 'done', what);
-    assert.equal(conditions.evaluate('item("S-3").closed', record), true, what);
-    assert.equal(conditions.evaluate('item("S-1").status', record), 'done', `${what}: another item`);
-    assert.equal(conditions.evaluate('item("S-2").status', record), 'superseded', `${what}: another item`);
+    assert.equal(await conditions.evaluate('item("S-3").status', record), 'done', what);
+    assert.equal(await conditions.evaluate('item("S-3").closed', record), true, what);
+    assert.equal(await conditions.evaluate('item("S-1").status', record), 'done', `${what}: another item`);
+    assert.equal(await conditions.evaluate('item("S-2").status', record), 'superseded', `${what}: another item`);
   }
   const statuses = 'children("story").map(c, c.status)';
-  assert.deepEqual(bindConditions(ctx, 'F-1', { current }).evaluate(statuses, feature), ['done', 'superseded', 'done']);
-  assert.equal(bindConditions(ctx, 'F-1', { current }).evaluate('children("story").all(c, c.closed)', feature), true);
-  assert.equal(bindConditions(ctx, 'F-1').evaluate('item("S-3").status', feature), 'in_progress', 'no current');
-  assert.deepEqual(bindConditions(ctx, 'F-1').evaluate(statuses, feature), ['done', 'superseded', 'in_progress']);
+  assert.deepEqual(await bindConditions(ctx, 'F-1', { current }).evaluate(statuses, feature), [
+    'done',
+    'superseded',
+    'done',
+  ]);
+  assert.equal(
+    await bindConditions(ctx, 'F-1', { current }).evaluate('children("story").all(c, c.closed)', feature),
+    true,
+  );
+  assert.equal(await bindConditions(ctx, 'F-1').evaluate('item("S-3").status', feature), 'in_progress', 'no current');
+  assert.deepEqual(await bindConditions(ctx, 'F-1').evaluate(statuses, feature), ['done', 'superseded', 'in_progress']);
 });
 
 test('has_terminal() is true when the process can open the terminal, and false when it cannot', async () => {
@@ -111,8 +122,44 @@ test('has_terminal() is true when the process can open the terminal, and false w
   const story = engineRecord(ctx, ctx.flowSet, recordReader(ctx)('S-1'));
   const tty = join(mkTempDir('bl-tty-'), 'tty');
   writeFileSync(tty, '');
-  assert.equal(bindConditions(ctx, 'S-1', { tty }).evaluate('has_terminal()', story), true);
-  assert.equal(bindConditions(ctx, 'S-1', { tty: `${tty}-gone` }).evaluate('has_terminal()', story), false);
+  assert.equal(await bindConditions(ctx, 'S-1', { tty }).evaluate('has_terminal()', story), true);
+  assert.equal(await bindConditions(ctx, 'S-1', { tty: `${tty}-gone` }).evaluate('has_terminal()', story), false);
+});
+
+test('worktree_clean() and worktree_unchanged() read the repo contexts and the snapshot (F-141 D6)', async () => {
+  const ctx = await backlog();
+  const story = engineRecord(ctx, ctx.flowSet, recordReader(ctx)('S-1'));
+  const repos = [tempRepo('a'), tempRepo('b')];
+  const before = snapshot(repos);
+  const conditions = bindConditions(ctx, 'S-1', { repos, snapshot: before });
+  const both = '[worktree_clean(), worktree_unchanged()]';
+  assert.deepEqual(await conditions.evaluate(both, story), [true, true], 'no change');
+  writeFileSync(join(repos[1].worktree_path, 'new'), '');
+  assert.deepEqual(await conditions.evaluate(both, story), [false, false], 'an uncommitted file');
+  git(repos[1].worktree_path, 'add', 'new');
+  git(repos[1].worktree_path, 'commit', '-q', '-m', 'new');
+  assert.deepEqual(await conditions.evaluate(both, story), [true, false], 'a commit');
+  assert.deepEqual(await bindConditions(ctx, 'S-1', { snapshot: [] }).evaluate(both, story), [true, true], 'no repos');
+  await assert.rejects(async () => bindConditions(ctx, 'S-1', { repos }).evaluate('worktree_unchanged()', story), {
+    message: 'worktree_unchanged(): worktree_unchanged() is a post-condition',
+  });
+});
+
+test("has_capacity() is true when an entry of the box's agents has capacity, through its adapter (F-141 D7)", async () => {
+  const ctx = await backlog();
+  const story = engineRecord(ctx, ctx.flowSet, recordReader(ctx)('S-1'));
+  const available = join(mkTempDir('bl-capacity-'), 'script.yaml');
+  writeFileSync(available, 'entries: []\n');
+  const none = join(mkTempDir('bl-capacity-'), 'script.yaml');
+  writeFileSync(none, 'capacity: { available: false }\nentries: []\n');
+  const has = (/** @type {string} */ script, env = {}) =>
+    withEnv({ ...replayEnv(script), ...env }, () =>
+      bindConditions(ctx, 'S-1', { agents: ['replay'] }).evaluate('has_capacity()', story),
+    );
+  assert.equal(await has(available), true);
+  assert.equal(await has(none), false);
+  // Without replay on the PATH, replay has no capacity (D-479).
+  assert.equal(await has(available, noReplayPath()), false);
 });
 
 test('an absent key, an unbound function, and an unknown item throw an error that names the expression', async () => {
@@ -122,12 +169,12 @@ test('an absent key, an unbound function, and an unknown item throw an error tha
   for (const [expr, message] of [
     ['attributes.owner == "bl"', 'No such key: owner'],
     ['!attributes.owner.startsWith("x")', 'No such key: owner'],
-    ['has_capacity()', 'not bound: has_capacity'],
-    ['!worktree_clean()', 'not bound: worktree_clean'],
+    ['has_capacity()', 'has_capacity() needs an agent box'],
+    ['!conflict_free()', 'not bound: conflict_free'],
     ['signed("Design", "operator")', 'not bound: signed'],
     ['item("S-9").closed', 'there is no item S-9 in the backlog'],
   ]) {
-    assert.throws(() => conditions.evaluate(expr, story), { message: `${expr}: ${message}` }, expr);
+    await assert.rejects(async () => conditions.evaluate(expr, story), { message: `${expr}: ${message}` }, expr);
   }
 });
 
@@ -156,17 +203,17 @@ async function predicateBacklog() {
 test('a shop predicate runs its command in the backlog root: true at exit 0, false at exit 1, and by its exit_codes', async () => {
   const { ctx, story } = await predicateBacklog();
   const conditions = bindConditions(ctx, 'S-1');
-  assert.equal(conditions.evaluate('predicates.readme_mentions("widget")', story), true);
-  assert.equal(conditions.evaluate('predicates.readme_mentions("gadget")', story), false);
-  assert.equal(conditions.evaluate('predicates.fails()', story), false);
-  assert.equal(conditions.evaluate('predicates.passes_at_1()', story), true);
+  assert.equal(await conditions.evaluate('predicates.readme_mentions("widget")', story), true);
+  assert.equal(await conditions.evaluate('predicates.readme_mentions("gadget")', story), false);
+  assert.equal(await conditions.evaluate('predicates.fails()', story), false);
+  assert.equal(await conditions.evaluate('predicates.passes_at_1()', story), true);
 });
 
 test("each predicate argument reaches the command as one argument: an expression's value, an int and a timestamp as JSON text", async () => {
   const { ctx, story } = await predicateBacklog();
   const conditions = bindConditions(ctx, 'S-1');
   for (const expr of ['item_id', 'title', '180', 'timestamp("2026-01-01T00:00:00Z")', '"$(echo no)"']) {
-    assert.equal(conditions.evaluate(`predicates.record(${expr})`, story), true, expr);
+    assert.equal(await conditions.evaluate(`predicates.record(${expr})`, story), true, expr);
   }
   assert.equal(
     readFileSync(join(ctx.backlogDir, '.bl/args'), 'utf8'),

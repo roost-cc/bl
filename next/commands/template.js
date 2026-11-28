@@ -8,14 +8,12 @@
  *   - `markdownTable`: a `columns` view as a Markdown table, for a `{{#bl}}`
  *     lambda: no truncation and no styles.
  *
- * The renderer is F-136's `render`, with the partials of the configuration.
- * `{{#bl}}` runs a command, which is async, and Mustache is not. So a template
- * with `bl` renders twice: the first pass collects the rendered command line of
- * each occurrence, `bl` runs each occurrence once, in order, and the second
- * pass puts each text in place.
+ * The renderer is `renderAsync` (`config/template.js`), with the partials of
+ * the configuration: `{{#bl}}` runs a command, which is async, so a template
+ * with `bl` renders in two passes, as prompts do (F-141 D5).
  */
 
-import { render } from '../config/template.js';
+import { renderAsync } from '../config/template.js';
 import { oneLine, tableCells } from './table.js';
 
 /** @typedef {import('../config/load.js').Configuration} Configuration */
@@ -29,40 +27,20 @@ import { oneLine, tableCells } from './table.js';
  */
 
 /**
- * `template` rendered with `data`, each `{{#bl}}` line run through `bl`.
- * @param {string} template
- * @param {Record<string, unknown>} data
- * @param {TemplateOptions} options
- * @returns {Promise<string>}
- */
-async function renderWithBl(template, data, { config, bl }) {
-  const partial = config.partial;
-  if (bl === undefined) return render(template, data, { partial });
-  /** @type {string[]} */
-  const lines = [];
-  render(template, data, { partial, bl: (line) => (lines.push(line), '') });
-  /** @type {string[]} */
-  const texts = [];
-  for (const line of lines) texts.push(await bl(line));
-  // The second pass meets the occurrences in the same order as the first.
-  let next = 0;
-  return render(template, data, { partial, bl: () => texts[next++] ?? '' });
-}
-
-/**
  * The text of records through a `template` or a `records_template` view.
  * @param {{ template?: string, records_template?: string }} view
  * @param {unknown[]} records
  * @param {TemplateOptions} options
  * @returns {Promise<string>}
  */
-export async function renderTemplate(view, records, options) {
+export async function renderTemplate(view, records, { config, bl }) {
+  const options = { partial: config.partial, bl };
   // With `bl`, every render reads one copy: a command that `bl` runs can change `records`.
-  const snapshot = options.bl === undefined ? records : structuredClone(records);
-  if (view.records_template !== undefined) return renderWithBl(view.records_template, { records: snapshot }, options);
+  const snapshot = bl === undefined ? records : structuredClone(records);
+  if (view.records_template !== undefined) return renderAsync(view.records_template, { records: snapshot }, options);
   let out = '';
   for (const record of snapshot) {
-    const text = await renderWithBl(/** @type {string} */ (view.template), /** @type {any} */ (record), options);
+    const text = await renderAsync(/** @type {string} */ (view.template), /** @type {any} */ (record), options);
     out += text.replace(/\n*$/, '\n');
   }
   return out;

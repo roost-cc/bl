@@ -28,6 +28,9 @@ const EXCEPTIONS = new Map([
   // The guard matches calls by name, and a shop step's `run` (steps/shop.js) is async.
   ['lib/credential-helper.js run', 'a different function named run: the sync git-config reader it is given'],
   ['store/write.js run', "a different function named run: AsyncLocalStorage's run, inside a then callback"],
+  // bindConditions' evaluate is async, because has_capacity() calls an adapter (F-141 D7).
+  ['commands/table.js evaluate', "a different function named evaluate: view-cel.js's sync evaluate of a view"],
+  ['config/cel.js evaluate', "the self-test's bindCel evaluate, whose stub handlers are all sync"],
 ]);
 
 const isFunction = (n) => /Function/.test(n.type);

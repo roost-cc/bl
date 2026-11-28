@@ -3,10 +3,14 @@
  *
  * Copied from `test/helpers/git-backlog.js`, cut down to `git` and its
  * identity. The tests of `next/` that build temp repos share it, and
- * `initRepo` for a repo that `bl`'s own git children commit in.
+ * `initRepo` for a repo that `bl`'s own git children commit in, and
+ * `tempRepo` for a repo context (F-141 D6).
  */
 
 import { spawnSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { mkTempDir } from './tempdir.js';
 
 /** Identity for commits, without reading the developer's git config. */
 const GIT_ENV = {
@@ -67,4 +71,19 @@ function configureRepo(dir) {
     'core.hooksPath': '.git/hooks',
   }))
     git(dir, 'config', key, value);
+}
+
+/**
+ * A repo context (F-140 D4) of a fresh repo of `initRepo` with one commit,
+ * whose worktree is the repo itself.
+ * @param {string} name  the context's `repo`
+ * @returns {{ repo: string, repo_path: string, worktree_path: string, branch: string, base: string }}
+ */
+export function tempRepo(name) {
+  const path = mkTempDir(`bl-repo-${name}-`);
+  initRepo(path);
+  writeFileSync(join(path, 'a'), 'a\n');
+  git(path, 'add', 'a');
+  git(path, 'commit', '-q', '-m', 'a');
+  return { repo: name, repo_path: path, worktree_path: path, branch: 'main', base: 'main' };
 }

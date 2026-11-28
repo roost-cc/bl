@@ -23,8 +23,11 @@ export const succeed = Object.freeze({
 export const assertStep = Object.freeze({
   outcomes: Object.freeze(/** @type {const} */ (['success', 'failure'])),
   with: { type: 'array', minItems: 1, items: { type: 'string', cel: 'bool' } },
-  // Every entry is evaluated, as a gate evaluates each of its entries, so an
-  // entry that throws is a crash even after one that is false.
-  run: (ctx, /** @type {string[]} */ conditions) =>
-    conditions.map((expr) => ctx.evaluate(expr)).every((value) => value === true) ? 'success' : 'failure',
+  // Every entry is evaluated, in order, as a gate evaluates each of its
+  // entries, so an entry that throws is a crash even after one that is false.
+  run: async (ctx, /** @type {string[]} */ conditions) => {
+    let all = true;
+    for (const expr of conditions) if ((await ctx.evaluate(expr)) !== true) all = false;
+    return all ? 'success' : 'failure';
+  },
 });

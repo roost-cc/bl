@@ -1,22 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { stderrOf as caught } from '../test/helpers/streams.js';
 import { info, warn } from './stderr.js';
 
-/** What `fn` writes to stderr, caught by replacing `process.stderr.write`. */
-function stderrOf(fn) {
-  const chunks = [];
-  const write = process.stderr.write;
-  process.stderr.write = (chunk) => {
-    chunks.push(String(chunk));
-    return true;
-  };
-  try {
-    fn();
-  } finally {
-    process.stderr.write = write;
-  }
-  return chunks.join('');
-}
+/** What `fn` writes to stderr. */
+const stderrOf = (fn) => caught(fn).chunks.join('');
 
 test('info writes its arguments joined by spaces as one line', () => {
   assert.equal(

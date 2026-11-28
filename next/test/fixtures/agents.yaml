@@ -1,0 +1,6 @@
+# Agent profiles (agents.md, "Agent profiles", D-498). Each name maps to an adapter and,
+# optionally, a model, extra arguments and environment. Steps and --agent name a profile.
+replay: { adapter: replay }
+claude: { adapter: claude }
+claude-opus: { adapter: claude, model: opus }
+codex: { adapter: codex }

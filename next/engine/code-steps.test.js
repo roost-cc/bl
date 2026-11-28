@@ -13,6 +13,7 @@ import { createItems, engineBacklog, setGraph } from '../test/helpers/engine-bac
 import { UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 import { git } from '../test/helpers/git.js';
 import { channel, delivered, notifyBacklog } from '../test/helpers/notify-backlog.js';
+import { stderrOfAsync } from '../test/helpers/streams.js';
 import { runFlow } from './runner.js';
 
 const CATALOGUE = { ...UTOP_STEPS, ...STEPS };
@@ -392,19 +393,11 @@ async function runNotifyTask(
   const ctx = notifyBacklog({ flows: { 'task.yaml': notifyFlow(box) }, channels, alerts, catalogue: CATALOGUE });
   const counters = { self_rounds: { value: 3, threshold: 3 } };
   const [id] = await createItems(ctx, [{ type: 'task', state: { status: 'draft', run: 'idle', counters } }]);
-  /** @type {string[]} */
-  const stderr = [];
-  const write = process.stderr.write;
-  process.stderr.write = /** @type {any} */ ((/** @type {string} */ chunk) => stderr.push(String(chunk)) > 0);
-  try {
-    const start = 'self_round_cap';
-    const result = await runFlow(ctx, { id, start, by: 'operator', entry: 'run', catalogue: CATALOGUE }).catch(
-      (e) => e,
-    );
-    return { ctx, id, result, stderr: stderr.join('') };
-  } finally {
-    process.stderr.write = write;
-  }
+  const start = 'self_round_cap';
+  const { value: result, chunks } = await stderrOfAsync(() =>
+    runFlow(ctx, { id, start, by: 'operator', entry: 'run', catalogue: CATALOGUE }).catch((e) => e),
+  );
+  return { ctx, id, result, stderr: chunks.join('') };
 }
 
 const ESCALATION = `{ use: notify, with: { template: escalation_waiting, topic: escalation }, ${ARROWS} }`;

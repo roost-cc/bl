@@ -36,14 +36,14 @@ test("the status gate of done fails while a task child is open, with the flow's 
   await setGraph(ctx, 'containment', { 'T-1': { parent: 'S-1' }, 'T-2': { parent: 'S-1' } });
   const before = snapshot(ctx);
   const condition = 'children("task").all(c, c.closed)';
-  assert.deepEqual(statusGate(ctx, recordOf(ctx, 'S-1'), 'done'), [
+  assert.deepEqual(await statusGate(ctx, recordOf(ctx, 'S-1'), 'done'), [
     { entry: { condition, class: 'expected' }, text: condition },
   ]);
-  assert.deepEqual(statusGate(ctx, recordOf(ctx, 'S-1'), 'merged'), [], 'merged has no gate');
+  assert.deepEqual(await statusGate(ctx, recordOf(ctx, 'S-1'), 'merged'), [], 'merged has no gate');
   assert.deepEqual(snapshot(ctx), before, 'the evaluation commits nothing and changes no file');
 
   await setStatuses(ctx, { 'T-1': 'superseded' });
-  assert.deepEqual(statusGate(ctx, recordOf(ctx, 'S-1'), 'done'), []);
+  assert.deepEqual(await statusGate(ctx, recordOf(ctx, 'S-1'), 'done'), []);
 });
 
 test('a dependency entry under the target status fails while its expression is false over the named item', async () => {
@@ -61,16 +61,16 @@ test('a dependency entry under the target status fails while its expression is f
   });
   const before = snapshot(ctx);
   // The store writes the entries in canonical order, sorted by item (F-148 D2).
-  assert.deepEqual(statusGate(ctx, recordOf(ctx, 'S-1'), 'merged'), [
+  assert.deepEqual(await statusGate(ctx, recordOf(ctx, 'S-1'), 'merged'), [
     { entry: { item: 'S-1', expression: 'status == "merged"' }, text: 'S-1: status == "merged"' },
     { entry: { item: 'S-2', expression: 'status == "done"' }, text: 'S-2: status == "done"' },
   ]);
-  assert.deepEqual(statusGate(ctx, recordOf(ctx, 'S-2'), 'merged'), [], 'no entry for S-2');
+  assert.deepEqual(await statusGate(ctx, recordOf(ctx, 'S-2'), 'merged'), [], 'no entry for S-2');
   assert.deepEqual(snapshot(ctx), before, 'the evaluation commits nothing and changes no file');
 
   await setStatuses(ctx, { 'S-2': 'done' });
   assert.deepEqual(
-    statusGate(ctx, recordOf(ctx, 'S-1'), 'merged').map(({ text }) => text),
+    (await statusGate(ctx, recordOf(ctx, 'S-1'), 'merged')).map(({ text }) => text),
     ['S-1: status == "merged"'],
   );
 });
@@ -84,7 +84,7 @@ test("the status gate gives the flow's failing entries, then the dependency entr
   await setGraph(ctx, 'containment', { 'T-1': { parent: 'S-1' } });
   await setGraph(ctx, 'dependency', { 'S-1': { done: [{ 'T-1': 'status == "done"' }] } });
   assert.deepEqual(
-    statusGate(ctx, recordOf(ctx, 'S-1'), 'done').map(({ text }) => text),
+    (await statusGate(ctx, recordOf(ctx, 'S-1'), 'done')).map(({ text }) => text),
     ['children("task").all(c, c.closed)', 'T-1: status == "done"'],
   );
 });
@@ -111,18 +111,18 @@ test("a node's step gate and its after entries give their failing entries in ord
   const node = ctx.flowSet.flows.chore.nodes.checked;
   const story = recordOf(ctx, 'S-1');
   const before = snapshot(ctx);
-  assert.deepEqual(stepGate(ctx, story, node), [
+  assert.deepEqual(await stepGate(ctx, story, node), [
     { entry: 'status == "x"', text: 'status == "x"' },
     { entry: 'status == "y"', text: 'status == "y"' },
     { entry: { condition: 'status == "z"', class: 'expected' }, text: 'status == "z"' },
   ]);
-  assert.deepEqual(postConditions(ctx, story, node), [
+  assert.deepEqual(await postConditions(ctx, story, node), [
     { entry: 'status == "a"', text: 'status == "a"' },
     { entry: 'status == "b"', text: 'status == "b"' },
   ]);
   assert.deepEqual(snapshot(ctx), before, 'the evaluation commits nothing and changes no file');
   const passing = ctx.flowSet.flows.story.nodes['deliver/self_check/count_test_fix'];
-  assert.deepEqual([stepGate(ctx, story, passing), postConditions(ctx, story, passing)], [[], []]);
+  assert.deepEqual([await stepGate(ctx, story, passing), await postConditions(ctx, story, passing)], [[], []]);
 });
 
 /** Failing step gates on the subflows deliver and self_check and on the defined step test_unit. */
@@ -139,15 +139,15 @@ test('stepGate checks the entry gates of the subflows that the flow enters, oute
   const node = ctx.flowSet.flows.story.nodes['deliver/self_check/test_unit'];
   const story = recordOf(ctx, 'S-1');
   const before = snapshot(ctx);
-  const texts = (/** @type {string|null|undefined} */ previous) =>
-    stepGate(ctx, story, node, previous).map(({ text }) => text);
+  const texts = async (/** @type {string|null|undefined} */ previous) =>
+    (await stepGate(ctx, story, node, previous)).map(({ text }) => text);
   const all = ['status == "deliver"', 'status == "self_check"', 'status == "test_unit"'];
-  assert.deepEqual(texts('in_unit'), all, 'entering both subflows from the story flow');
-  assert.deepEqual(texts(null), all, "the invocation's first node");
-  assert.deepEqual(texts(undefined), all, 'no previous node given');
-  assert.deepEqual(texts('deliver/fix'), all.slice(1), 'entering self_check from inside deliver');
-  assert.deepEqual(texts('deliver/self_check/fix'), all.slice(2), 'a loop inside self_check');
-  assert.deepEqual(texts('deliver_child/self_check/fix'), all, 'another copy of self_check is not inside');
+  assert.deepEqual(await texts('in_unit'), all, 'entering both subflows from the story flow');
+  assert.deepEqual(await texts(null), all, "the invocation's first node");
+  assert.deepEqual(await texts(undefined), all, 'no previous node given');
+  assert.deepEqual(await texts('deliver/fix'), all.slice(1), 'entering self_check from inside deliver');
+  assert.deepEqual(await texts('deliver/self_check/fix'), all.slice(2), 'a loop inside self_check');
+  assert.deepEqual(await texts('deliver_child/self_check/fix'), all, 'another copy of self_check is not inside');
   assert.deepEqual(snapshot(ctx), before, 'the evaluation commits nothing and changes no file');
 });
 
@@ -155,11 +155,12 @@ test('a gate entry that throws is an error that names the expression, not a fail
   const ctx = engineBacklog({ 'throws.yaml': 'step_gates:\n  test_unit: [\'attributes.owner == "bl"\']\n' });
   await createItems(ctx, [{ type: 'story', state: { status: 'in_progress', ...IDLE } }]);
   const node = ctx.flowSet.flows.story.nodes['deliver/self_check/test_unit'];
-  assert.throws(() => stepGate(ctx, recordOf(ctx, 'S-1'), node, 'in_unit'), {
+  await assert.rejects(async () => stepGate(ctx, recordOf(ctx, 'S-1'), node, 'in_unit'), {
     message: 'attributes.owner == "bl": No such key: owner',
   });
+  // A status gate has no agent box, so has_capacity() there throws.
   await setGraph(ctx, 'dependency', { 'S-1': { done: [{ 'S-1': 'has_capacity()' }] } });
-  assert.throws(() => statusGate(ctx, recordOf(ctx, 'S-1'), 'done'), {
-    message: 'has_capacity(): not bound: has_capacity',
+  await assert.rejects(async () => statusGate(ctx, recordOf(ctx, 'S-1'), 'done'), {
+    message: 'has_capacity(): has_capacity() needs an agent box',
   });
 });

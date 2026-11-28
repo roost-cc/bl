@@ -116,11 +116,21 @@ export const readAttributes = (ctx, item) =>
   readJson(ctx, item, ATTRIBUTES, (value) => checkAttributes(value, itemDefinition(ctx, item.type)));
 
 /**
- * The faults of a `state.json` value by the state schema.
+ * The faults of a `state.json` value by the state schema, and, for a value
+ * that passes it, a `session` whose `box` is not the box of `active: <box>`:
+ * a schema cannot compare two fields (F-141 D8).
  * @param {unknown} state
  * @returns {Fault[]}
  */
-export const checkState = (state) => checkValue(STATE_SCHEMA, state);
+export function checkState(state) {
+  const faults = checkValue(STATE_SCHEMA, state);
+  if (faults.length > 0) return faults;
+  const { run, session } = /** @type {{ run: string, session?: { box: string } }} */ (state);
+  if (session === undefined || run === `active: ${session.box}`) return faults;
+  return [
+    { file: '', path: '/session/box', rule: 'session', message: `the session's box must be the box of '${run}'` },
+  ];
+}
 
 /** The schema of each item definition's `attributes.json`, made once. */
 const attributeSchemas = new WeakMap();

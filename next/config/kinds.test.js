@@ -5,13 +5,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
 import { ConfigurationFaults } from './check.js';
 import { KINDS } from './kinds.js';
 import { loadConfiguration } from './load.js';
-import { ALERTS, ALERTS_PATH } from '../test/helpers/config-fixture.js';
+import { ALERTS, ALERTS_PATH, fixtureText } from '../test/helpers/config-fixture.js';
 import { withEnv } from '../test/helpers/env.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 
@@ -177,9 +176,6 @@ test('each refused shape is a configuration fault with its file and path', () =>
   }
 });
 
-/** A fixture file of `next/test/fixtures/` (F-140 D1). */
-const FIXTURE = (name) => readFileSync(fileURLToPath(new URL(`../test/fixtures/${name}`, import.meta.url)), 'utf8');
-
 /** The uTop sample's `repos` and `plugin_registry` (backlog.yaml), in a fixture backlog. */
 const UTOP_BACKLOG = `color_scheme: mocha
 language: en
@@ -213,8 +209,8 @@ plugin_registry:
 test("the uTop sample's plugin_registry, alerts.yaml and templates/en.yaml load, with the operator's files patched over them", () => {
   const config = load({
     'backlog/backlog.yaml': UTOP_BACKLOG,
-    [ALERTS_PATH]: FIXTURE('alerts.yaml'),
-    'backlog/config/templates/en.yaml': FIXTURE('templates/en.yaml'),
+    [ALERTS_PATH]: fixtureText('alerts.yaml'),
+    'backlog/config/templates/en.yaml': fixtureText('templates/en.yaml'),
     '.config/bl/alerts.yaml': 'ended: [bell]\nnotify.escalation: null\n',
     '.config/bl/templates/en.yaml': "ended: '{{item_id}} stopped'\n",
   });
@@ -257,6 +253,46 @@ test('each refused alert routing is one fault with its file and path', () => {
   assert.deepEqual(faultLines({ '.config/bl/alerts.yaml': 'notify: null\n' }), [
     required('notify', '~/.config/bl/alerts.yaml'),
   ]);
+});
+
+test("the uTop sample's agents.yaml loads, and file('agents') gives its four profiles (F-141 D2)", () => {
+  assert.deepEqual(
+    (({ shop, operator, order }) => ({ shop, operator, order }))(KINDS.find((kind) => kind.name === 'agents') ?? {}),
+    { shop: 'config/agents.yaml', operator: 'agents.yaml', order: 'who' },
+  );
+  const config = load({ 'backlog/config/agents.yaml': fixtureText('agents.yaml') });
+  assert.deepEqual(config.file('agents'), {
+    replay: { adapter: 'replay' },
+    claude: { adapter: 'claude' },
+    'claude-opus': { adapter: 'claude', model: 'opus' },
+    codex: { adapter: 'codex' },
+  });
+});
+
+test('each refused agent profile is a fault that names its file and path (F-141 D2)', () => {
+  const rows = [
+    ['p: { adapter: gemini }\n', 'config/agents.yaml: /p/adapter: enum: must be equal to one of the allowed values'],
+    ['p: { model: opus }\n', "config/agents.yaml: /p/adapter: required: must have required property 'adapter'"],
+    [
+      'p: { adapter: replay, argv: [] }\n',
+      'config/agents.yaml: /p/argv: additionalProperties: must NOT have additional properties',
+    ],
+    ['p: { adapter: replay, args: --fast }\n', 'config/agents.yaml: /p/args: type: must be array'],
+    ['p: { adapter: replay, args: [1] }\n', 'config/agents.yaml: /p/args/0: type: must be string'],
+    ['p: { adapter: replay, env: { A: 1 } }\n', 'config/agents.yaml: /p/env/A: type: must be string'],
+    ['p: { adapter: replay, model: 4 }\n', 'config/agents.yaml: /p/model: type: must be string'],
+  ];
+  for (const [text, line] of rows) {
+    assert.deepEqual(faultLines({ 'backlog/config/agents.yaml': text }), [line], text);
+  }
+  // An operator layer that breaks a profile names the operator's file.
+  assert.deepEqual(
+    faultLines({
+      'backlog/config/agents.yaml': fixtureText('agents.yaml'),
+      '.config/bl/agents.yaml': 'codex: { args: x }\n',
+    }),
+    ['~/.config/bl/agents.yaml: /codex/args: type: must be array'],
+  );
 });
 
 test('no string in views.schema.json carries the cel keyword', () => {
