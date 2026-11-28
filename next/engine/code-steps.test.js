@@ -11,6 +11,7 @@ import { itemDir } from '../store/items.js';
 import { createItems, engineBacklog, setGraph } from '../test/helpers/engine-backlog.js';
 import { UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 import { git } from '../test/helpers/git.js';
+import { channel, delivered, notifyBacklog } from '../test/helpers/notify-backlog.js';
 import { runFlow } from './runner.js';
 
 const CATALOGUE = { ...UTOP_STEPS, ...STEPS };
@@ -258,9 +259,6 @@ test('increment_with_needs_counter_and_threshold_of_1_or_more', () => {
 
 // ---- notify (F-140 D9) ----
 
-const fixtureText = (/** @type {string} */ name) =>
-  readFileSync(new URL(`../test/fixtures/${name}`, import.meta.url), 'utf8');
-
 /**
  * A task flow that comes to `box` from uTop's defined step `self_round_cap` at its cap, as
  * `self_check.yaml` does, so `box.name` is `self_round_cap`.
@@ -279,10 +277,6 @@ const notifyFlow = (/** @type {string} */ box) =>
     '',
   ].join('\n');
 
-/** A channel that appends its `{{message}}` to `.bl/<name>`, which git ignores, and then exits `code`. */
-const channel = (/** @type {string} */ name, code = 0) =>
-  `"mkdir -p .bl && printf '%s\\\\n' {{message}} >> .bl/${name} && exit ${code}"`;
-
 /**
  * One task of the notify flow of `box`, run once, with `channels` as the
  * top-level bl.notify (name → command YAML) and `alerts` as config/alerts.yaml;
@@ -291,12 +285,9 @@ const channel = (/** @type {string} */ name, code = 0) =>
 async function runNotifyTask(
   /** @type {string} */ box,
   /** @type {Record<string, string>} */ channels,
-  alerts = fixtureText('alerts.yaml'),
+  /** @type {string|undefined} */ alerts = undefined,
 ) {
-  const notify = Object.entries(channels).map(([name, command]) => `      ${name}: ${command}`);
-  const registry = ['repos: {}', 'plugin_registry:', '  stages:', '    bl.notify:', ...notify, ''].join('\n');
-  const files = { 'config/alerts.yaml': alerts, 'config/templates/en.yaml': fixtureText('templates/en.yaml') };
-  const ctx = engineBacklog({ 'task.yaml': notifyFlow(box) }, registry, CATALOGUE, files);
+  const ctx = notifyBacklog({ flows: { 'task.yaml': notifyFlow(box) }, channels, alerts, catalogue: CATALOGUE });
   const counters = { self_rounds: { value: 3, threshold: 3 } };
   const [id] = await createItems(ctx, [{ type: 'task', state: { status: 'draft', run: 'idle', counters } }]);
   /** @type {string[]} */
@@ -313,15 +304,6 @@ async function runNotifyTask(
     process.stderr.write = write;
   }
 }
-
-/** What the channel `name` wrote, or null when it did not run. */
-const delivered = (/** @type {any} */ ctx, /** @type {string} */ name) => {
-  try {
-    return readFileSync(join(ctx.backlogDir, '.bl', name), 'utf8');
-  } catch {
-    return null;
-  }
-};
 
 const ESCALATION = `{ use: notify, with: { template: escalation_waiting, topic: escalation }, ${ARROWS} }`;
 
