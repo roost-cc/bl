@@ -720,3 +720,65 @@ test('buildFlowSet_rejects_assert_cel_at_load: an assert entry that does not com
   }
   assert.doesNotThrow(() => build(files(['status == "draft"', 'has_terminal()']), steps));
 });
+
+// ---- the options of the entries (D-424, F-152 D4) ----
+
+/** A catalogue whose `agent` step's `with` schema has the property `agents`, and whose `succeed` takes no `with`. */
+const OPTION_STEPS = { agent: step({ type: 'object', properties: { agents: {} } }), succeed: step(null, ['success']) };
+
+/**
+ * A flow set with the defined steps `fix` (an agent) and `done` (succeed), and a story and a task
+ * flow whose `fix` entries declare `--agent` as `story` and `task` give it; `undefined`: no `args`.
+ * @param {object} [story]
+ * @param {object} [task]
+ */
+const optionFlows = (story, task) => {
+  const flow = (/** @type {object|undefined} */ option) => ({
+    initial: 'draft',
+    statuses: { draft: {} },
+    entries: {
+      fix: { from: ['draft'], start: 'fix', ...(option === undefined ? {} : { args: { '--agent': option } }) },
+    },
+    steps: { fix: { success: 'stop', failure: 'stop' } },
+  });
+  return {
+    'settings.yaml': SETTINGS,
+    'steps.yaml': { defined_steps: { fix: { use: 'agent', with: { agents: ['replay'] } }, done: { use: 'succeed' } } },
+    'story.yaml': { flows: { story: flow(story) } },
+    'task.yaml': { flows: { task: flow(task) } },
+  };
+};
+
+test('buildFlowSet takes an entry option with sets and steps, and refuses a wrong one with the file and the path', () => {
+  const agent = { metavar: 'profile', nargs: 1, help: 'the agent profile', sets: 'agents', steps: ['fix'] };
+  assert.doesNotThrow(() => build(optionFlows(agent, agent), OPTION_STEPS), 'one declaration in two flows');
+  assert.doesNotThrow(() => build(optionFlows({ sets: 'agents' }), OPTION_STEPS), 'sets with no steps');
+  const at = 'config/flows/story.yaml: /flows/story/entries/fix/args/--agent';
+  const cases = [
+    // [what, the story's declaration, the fault lines]
+    [
+      'steps without sets',
+      { nargs: 1, steps: ['fix'] },
+      [`${at}/steps: args: steps needs sets: the key of with that the option replaces`],
+    ],
+    [
+      'a name that is no defined step',
+      { sets: 'agents', steps: ['agent', 'nope'] },
+      [`${at}/steps/0: args: 'agent' names no defined step`, `${at}/steps/1: args: 'nope' names no defined step`],
+    ],
+    [
+      'a sets that is no property of a named step',
+      { sets: 'model', steps: ['fix', 'done'] },
+      [
+        `${at}/steps/0: args: the with of 'fix' (the step 'agent') has no property 'model'`,
+        `${at}/steps/1: args: the with of 'done' (the step 'succeed') has no property 'model'`,
+      ],
+    ],
+  ];
+  for (const [what, option, lines] of cases) {
+    assert.deepEqual(faultLines(optionFlows(/** @type {object} */ (option)), OPTION_STEPS), lines, String(what));
+  }
+  assert.deepEqual(faultLines(optionFlows(agent, { ...agent, help: 'another help' }), OPTION_STEPS), [
+    "config/flows/task.yaml: /flows/task/entries/fix/args/--agent: args: the entry 'fix' declares --agent differently in story.yaml",
+  ]);
+});

@@ -23,6 +23,7 @@ import { agentList } from '../steps/capacity.js';
 import { record as readRecord } from '../store/record.js';
 import { engineRecord } from './conditions.js';
 import { statusGate, stepGate } from './gates.js';
+import { applyOverrides } from './overrides.js';
 import { parseRun, readRunState } from './run-state.js';
 
 /**
@@ -53,12 +54,14 @@ import { parseRun, readRunState } from './run-state.js';
  * @param {State} state  the item's stored state, after the flow-change reset
  * @param {{ event: string, box?: string, outcome?: string } | undefined} last  the item's last log entry
  * @param {{ repos?: import('./gates.js').Worktrees['repos'],
- *   agents?: import('../steps/capacity.js').AgentsOverride }} [options]  the repo contexts and the
- *   invocation's `agents` override, which a step gate reads as the runner's does
+ *   overrides?: readonly import('./overrides.js').Override[],
+ *   catalogue?: import('./overrides.js').Catalogue }} [options]  the repo contexts, and the
+ *   invocation's overrides and the step catalogue, so a step gate reads the `agents` list as the
+ *   runner's does (`applyOverrides`, F-152 D4)
  * @returns {Promise<Continuation>}
  * @throws {Error} with no write, for `active` on another host
  */
-export async function wayOn(ctx, item, state, last, { repos, agents } = {}) {
+export async function wayOn(ctx, item, state, last, { repos, overrides = [], catalogue = {} } = {}) {
   const flow = ctx.flowSet.flows[item.type];
   const { kind, arg } = parseRun(readRunState(ctx, item.id, state));
   if (kind === 'active' && state.host !== undefined && state.host !== hostname()) {
@@ -89,7 +92,8 @@ export async function wayOn(ctx, item, state, last, { repos, agents } = {}) {
     }
     case 'gated before': {
       const node = flow.nodes[arg];
-      const failing = await stepGate(ctx, record(), node, null, { repos, agents: agentList(node, agents) });
+      const agents = agentList(node, applyOverrides(node, overrides, catalogue));
+      const failing = await stepGate(ctx, record(), node, null, { repos, agents });
       return failing.length === 0 ? { start: arg } : { held: failing };
     }
     default: // idle

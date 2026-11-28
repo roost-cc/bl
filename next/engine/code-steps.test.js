@@ -171,12 +171,17 @@ const SHOP = [
   '',
 ].join('\n');
 
-/** One task of the task flow of `box` on the shop backlog, run once; its result and context. */
-async function runShopTask(/** @type {string} */ box) {
+/**
+ * One task of the task flow of `box` on the shop backlog, run once with `overrides`; its result and context.
+ * @param {string} box
+ * @param {import('./overrides.js').Override[]} [overrides]
+ */
+async function runShopTask(box, overrides = []) {
   const ctx = engineBacklog({ 'task.yaml': taskFlow(box) }, SHOP, (config) => ({ ...CATALOGUE, ...shopSteps(config) }));
   const [id] = await createItems(ctx, [{ type: 'task', state: { status: 'draft', run: 'idle' } }]);
   const catalogue = { ...CATALOGUE, ...shopSteps(ctx.config) };
-  const result = await runFlow(ctx, { id, start: 'first', by: 'operator', entry: 'run', catalogue }).catch((e) => e);
+  const invocation = { id, start: 'first', by: 'operator', entry: 'run', catalogue, overrides };
+  const result = await runFlow(ctx, invocation).catch((e) => e);
   return { ctx, id, result };
 }
 
@@ -190,6 +195,15 @@ test('a shop step goes to the arrow of its exit status, by its exit_codes', asyn
     const { result } = await runShopTask(`{ use: steps.tag_release, with: { code: ${code} }, ${ARROWS} }`);
     assert.deepEqual(result, { ended: 'stop', status, outcome }, `code ${code}`);
   }
+});
+
+test('an override on a shop step replaces the with value that its command reads (F-152 D4)', async () => {
+  // The box's own code is 2, which exits with failure; the override's 1 exits with success.
+  const box = `{ use: steps.tag_release, with: { code: 2 }, ${ARROWS} }`;
+  const { result } = await runShopTask(box, [{ sets: 'code', value: 1 }]);
+  assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
+  // A key that the command does not read is in no with schema, so the override applies to no box.
+  assert.equal((await runShopTask(box, [{ sets: 'other', value: 1 }])).result.outcome, 'failure');
 });
 
 test('a shop step runs once in the backlog root, {{repo}} renders as nothing, and its last stderr line is the note', async () => {

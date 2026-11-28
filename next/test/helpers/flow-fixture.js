@@ -33,11 +33,13 @@ export const step = (schema = null, outcomes = ['success', 'failure']) => ({
 /**
  * The code steps that the uTop flow set names, as fake steps that take any
  * `with:`, with the outcomes of steps.md's catalogue: `failure` is not used
- * by `cleanup`, `increment`, `prepare`, `rank` and `succeed`.
+ * by `cleanup`, `increment`, `prepare`, `rank` and `succeed`. The schema of
+ * `agent` names the property `agents`, which the entries' `--agent` options
+ * set (F-152 D4).
  */
 export const UTOP_STEPS = Object.fromEntries([
+  ['agent', step({ type: 'object', properties: { agents: {} } })],
   ...[
-    'agent',
     'assert',
     'fast_forward',
     'join',

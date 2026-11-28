@@ -390,76 +390,115 @@ test('a failure result never runs the next entry', async () => {
   assert.ok(!existsSync(log), 'no second session ran');
 });
 
-test('override_rejects_adapter_profile_faults_before_flow_commit', async () => {
+/**
+ * The overrides of one `--agent` option that sets `agents` to `profiles`, in the defined steps
+ * `steps`, or in every agent box.
+ * @param {unknown} profiles
+ * @param {string[]} [steps]
+ */
+const agentOverride = (profiles, steps) => [
+  { sets: 'agents', value: profiles, ...(steps === undefined ? {} : { steps }) },
+];
+
+test('an override whose with fails the step schema, or names a profile with a fault, is refused before the first commit', async () => {
   const agentsYaml = `${PROFILES['config/agents.yaml']}replay-x: { adapter: replay, model: x }\n`;
   const { ctx, id } = await listTask('replay', { files: { 'config/agents.yaml': agentsYaml } });
   const head = git(ctx.backlogDir, 'rev-parse', 'HEAD');
   const scriptPath = script('Work', '{ outcome: success, summary: done }');
-  const at = 'config/agents.yaml';
-  /** Each row: the override's profiles, and the message of the configuration error. */
+  // The fault names the box and the key that the option sets.
+  const at = 'config/flows/task.yaml: /flows/task/steps/first: override: the override of with.agents';
+  /** Each row: the override's value, and the message of the configuration error. */
   const rows = [
-    [['nobody'], `${at}: /nobody: agents: the agents override: the profile 'nobody' is not in config/agents.yaml`],
+    [['nobody'], `${at}: the profile 'nobody' is not in config/agents.yaml`],
     [
       ['replay', 'replay-x'],
-      `${at}: /replay-x: agents: the agents override: the profile 'replay-x': the replay adapter takes no model, and this profile gives 'x'`,
+      `${at}: the profile 'replay-x': the replay adapter takes no model, and this profile gives 'x'`,
     ],
-    [[], `${at}: : agents: the agents override: it names no profile`],
-    [undefined, `${at}: : agents: the agents override: it names no profile`],
-    ['replay', `${at}: : agents: the agents override: it names no profile`],
+    [[], `${at}: with/agents: minItems: must NOT have fewer than 1 items`],
+    ['replay', `${at}: with/agents: type: must be array`],
   ];
   for (const [profiles, message] of rows) {
-    const error = await run(ctx, id, scriptPath, { agents: { profiles } });
+    const error = await run(ctx, id, scriptPath, { overrides: agentOverride(profiles) });
     assert.ok(error instanceof ConfigurationFaults, JSON.stringify(profiles));
     assert.equal(error.message, message);
   }
   assert.equal(git(ctx.backlogDir, 'rev-parse', 'HEAD'), head, 'no commit');
   // A profile that the box check takes runs.
-  assert.equal((await run(ctx, id, scriptPath, { agents: { profiles: ['replay'] } })).outcome, 'success');
+  assert.equal((await run(ctx, id, scriptPath, { overrides: agentOverride(['replay']) })).outcome, 'success');
 });
 
-/**
- * uTop's defined steps with no step gate and no post-conditions on `implement`, whose `Escalation`
- * and `Acceptance Criteria` sections a task does not have.
- */
-function plainImplement() {
-  const gate = `  implement: [{ condition: 'sections["Escalation"] == "None."', class: needs_operator_action }]\n`;
-  const after = `    after: ['checkboxes["Acceptance Criteria"].all(c, c.checked)', 'worktree_clean()']\n`;
+/** uTop's defined steps with no post-conditions on `fix`, whose findings a task does not have. */
+function plainFix() {
+  const after = [
+    '    after:',
+    `      - '!findings.exists(f, f.state == "open" && f.category in ["Must fix", "Should fix"])'`,
+    "      - 'worktree_clean()'",
+    '',
+  ].join('\n');
   const text = UTOP['defined-steps.yaml'];
-  assert.ok(text.includes(gate) && text.includes(after), 'the uTop text the test edits');
-  return text.replace(gate, '').replace(after, '');
+  const at = text.indexOf(after, text.indexOf('\n  fix:\n'));
+  assert.ok(at > 0, 'the uTop text the test edits');
+  return text.slice(0, at) + text.slice(at + after.length);
 }
 
-/** A task flow whose `run` entry runs uTop's defined step `implement`, then the inline agent box `second`. */
-const IMPLEMENT_THEN_SECOND = [
+/**
+ * A task flow whose `run` entry runs uTop's defined step `fix` (its list `[replay, claude, codex]`),
+ * then the inline agent box `second` with the list `[replay, replay-c]`.
+ */
+const FIX_THEN_SECOND = [
   'flows:',
   '  task:',
   '    initial: draft',
   '    statuses: { draft: {}, done: {}, superseded: {} }',
   '    entries:',
-  '      run: { from: [draft], start: implement }',
+  '      run: { from: [draft], start: fix }',
   '    steps:',
-  '      implement: { success: { next: second }, failure: stop }',
-  `      second: { use: agent, with: ${HEADLESS}, success: { status: done, next: stop }, failure: stop }`,
+  '      fix: { success: { next: second }, failure: stop }',
+  `      second: { use: agent, with: ${HEADLESS.replace('[replay]', '[replay, replay-c]')}, success: { status: done, next: stop }, failure: stop }`,
   '',
 ].join('\n');
 
-test("runFlow's agents override replaces the list of the boxes of the defined steps it names, or of every agent box", async () => {
-  const flows = { 'task.yaml': IMPLEMENT_THEN_SECOND, 'defined-steps.yaml': plainImplement() };
+test('an override with steps: [fix] runs each fix box with its list, which has_capacity() sees; other agent boxes keep their own', async () => {
+  const flows = { 'task.yaml': FIX_THEN_SECOND, 'defined-steps.yaml': plainFix() };
+  const files = {
+    ...PROFILES,
+    'config/prompts/fix.md': 'Fix {{item_id}}\n',
+    'config/schemas/fix.json': fixtureText('schemas/implement.json'),
+  };
   const both = () =>
     scriptOf([
-      ['^Implement', [SUCCESS]],
+      ['^Fix', [SUCCESS]],
       ['^Work', [SUCCESS]],
     ]);
-  for (const [agents, want] of [
-    [{ profiles: ['replay-b'], steps: ['implement'] }, ['implement: replay-b', 'second: replay']],
-    [{ profiles: ['replay-b'] }, ['implement: replay-b', 'second: replay-b']],
+  // Without replay on the PATH, replay has no capacity; replay-b and replay-c carry their own PATH.
+  for (const [overrides, want] of [
+    [agentOverride(['replay-b'], ['fix']), ['fix: replay-b', 'second: replay-c']],
+    [agentOverride(['replay-b']), ['fix: replay-b', 'second: replay-b']],
   ]) {
-    const { ctx, id } = await task(undefined, { files: PROFILES, flows });
-    const result = await run(ctx, id, both(), { start: 'implement', agents });
-    assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' }, JSON.stringify(agents));
+    const { ctx, id } = await task(undefined, { files, flows });
+    const result = await run(ctx, id, both(), { start: 'fix', overrides }, NO_REPLAY);
+    assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' }, JSON.stringify(overrides));
     // Each box has its own commit; usage.jsonl at HEAD holds both entries.
-    assert.deepEqual(agentsAtHead(ctx, id), want, JSON.stringify(agents));
+    assert.deepEqual(agentsAtHead(ctx, id), want, JSON.stringify(overrides));
   }
+  // The step gate's has_capacity() reads the override's list: [replay] has no capacity, so the box
+  // is gated, and the suspended process waits on that list.
+  const { ctx, id } = await task(undefined, { files, flows });
+  /** @type {unknown[]} */
+  const waited = [];
+  const wake = async (/** @type {any} */ _c, /** @type {any} */ suspend) => {
+    waited.push(suspend.agents);
+    throw new Error('one wake is enough');
+  };
+  const overrides = agentOverride(['replay'], ['fix']);
+  const { value } = await stderrOfAsync(async () => run(ctx, id, both(), { start: 'fix', overrides, wake }, NO_REPLAY));
+  assert.equal(/** @type {Error} */ (value).message, 'one wake is enough');
+  assert.equal(subjectAt(ctx), `${id}: fix gated before`);
+  assert.deepEqual(waited, [['replay']]);
+  // A resume that finds the box still held gives the wake the same list.
+  const resumed = await stderrOfAsync(async () => run(ctx, id, both(), { ...RESUME, overrides, wake }, NO_REPLAY));
+  assert.equal(/** @type {Error} */ (resumed.value).message, 'one wake is enough');
+  assert.deepEqual(waited, [['replay'], ['replay']]);
 });
 
 // ---- sessions and resume (F-141 D8, D-417) ----
@@ -549,7 +588,7 @@ test('a kept session whose profile is no longer in the list is not resumed: the 
     ['Work', [logTurn(log, 'new'), SUCCESS]],
   ]);
   const { env } = await crashInSession(ctx, id, scriptPath);
-  const result = await run(ctx, id, scriptPath, { ...RESUME, agents: { profiles: ['replay-b'] } }, env);
+  const result = await run(ctx, id, scriptPath, { ...RESUME, overrides: agentOverride(['replay-b']) }, env);
   assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
   assert.deepEqual(readFileSync(log, 'utf8').split('\n'), ['new', '']);
   assert.equal(stateAt(ctx, id, 'HEAD~1').session.profile, 'replay-b');

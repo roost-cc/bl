@@ -17,16 +17,17 @@
  *   1. the visit limit (D-115, Decision A6);
  *   2. the step gate with the entry gates of the subflows the flow enters
  *      (D-11, Decision A4); a failing entry ends the invocation at
- *      `gated before: <box>`, and the process suspends. In an `agent` box,
- *      `has_capacity()` reads the box's `agents` list, which the invocation's
- *      `agents` override replaces where it applies (`agentList`, F-141 D7);
+ *      `gated before: <box>`, and the process suspends. The gate and the step
+ *      see one `with`: the node's, with the invocation's overrides that apply
+ *      to it (`applyOverrides`, F-152 D4), so in an `agent` box
+ *      `has_capacity()` reads the list that the step runs (`agentList`);
  *      a box whose step `waits` (`wait`) runs no step: the invocation ends at
  *      `waiting: <box>`, and the process suspends until an `outcome` entry for
  *      the box is the last log entry (D-32, F-152 D5);
  *   3. an interactive step with no terminal does not start: the invocation
  *      ends `idle` with that box `next` (D-29, F-141 D9);
- *   4. the step from the catalogue (D2), an `agent` step with that same list,
- *      with `ctx.evaluate`, `ctx.from`,
+ *   4. the step from the catalogue (D2), with that `with`, and with
+ *      `ctx.evaluate`, `ctx.from`,
  *      `ctx.repos` and `ctx.snapshot`, the item's repo contexts and their state
  *      before the step (F-141 D6), and `ctx.session`, which commits the agent
  *      session id at once (F-141 D8); a note it
@@ -79,10 +80,11 @@
 
 import { relative } from 'path';
 import { hostname } from 'os';
+import { ConfigurationFaults } from '../config/check.js';
 import { release, tryLockOnce } from '../lib/kernel-lock.js';
 import { ensureLockDir, itemLockPath } from '../lib/lock.js';
 import { info } from '../lib/stderr.js';
-import { agentList, checkOverride } from '../steps/capacity.js';
+import { agentList } from '../steps/capacity.js';
 import { sendAlert } from '../steps/notify.js';
 import { repoContexts as itemRepoContexts, snapshot as takeSnapshot } from '../steps/worktrees.js';
 import { readState } from '../store/item-json.js';
@@ -94,6 +96,7 @@ import { bindConditions, engineRecord, hasTerminal } from './conditions.js';
 import { outcomeFor, wayOn } from './continuation.js';
 import { STOP } from './flow-set.js';
 import { postConditions, statusGate, stepGate } from './gates.js';
+import { applyOverrides, overrideFaults } from './overrides.js';
 import { checkAgainstFlow, parseRun } from './run-state.js';
 
 /**
@@ -213,25 +216,28 @@ const subflowBox = (/** @type {string} */ id) => id.slice(0, id.lastIndexOf('/')
  * @param {Readonly<Record<string, Step>>} invocation.catalogue  the step catalogue (D2)
  * @param {typeof itemRepoContexts} [invocation.repoContexts]  gives the item's repo contexts
  *   before each step; `steps/worktrees.js` by default, a test seam (F-141 D6)
- * @param {import('../steps/capacity.js').AgentsOverride} [invocation.agents]  replaces the
- *   `agents` list of the `agent` boxes that it applies to (`agentList`, F-141 D7)
+ * @param {readonly import('./overrides.js').Override[]} [invocation.overrides]  the entry options
+ *   with `sets`: each replaces one key of `with` in the boxes it applies to (`applyOverrides`,
+ *   F-152 D4)
  * @param {string} [invocation.tty]  the terminal an interactive step needs (`hasTerminal`), a
  *   test seam (F-141 D9)
  * @param {Wake} [invocation.wake]  gives the next wake of a suspended process (`waitForWake`);
  *   absent, `runFlow` returns at the first suspend
  * @returns {Promise<FlowResult | { held: FailingEntry[] } | { entries: string[] }>}
- * @throws {import('../config/check.js').ConfigurationFaults} before any commit, when `agents`
- *   names no profile, or a profile with a fault (`checkOverride`)
+ * @throws {ConfigurationFaults} before any commit, when an override makes a box's `with` fail
+ *   its step's `with` schema, or names a profile that is not defined or has a fault
+ *   (`overrideFaults`)
  */
 export async function runFlow(
   ctx,
-  { id, start, by, entry, resume = false, catalogue, repoContexts = itemRepoContexts, agents, tty, wake },
+  { id, start, by, entry, resume = false, catalogue, repoContexts = itemRepoContexts, overrides = [], tty, wake },
 ) {
-  checkOverride(ctx, agents);
   const item = itemDir(ctx, id);
   if (item === null) throw new Error(`there is no item ${id} in the backlog`);
   const flow = ctx.flowSet.flows[item.type];
   if (flow === undefined) throw new Error(`${item.id}: the item type ${item.type} has no flow`);
+  const faults = overrideFaults(ctx.config, flow, catalogue, overrides);
+  if (faults.length > 0) throw new ConfigurationFaults(faults, ctx.backlogDir);
   const path = itemLockPath(ctx.backlogDir, item.id);
   ensureLockDir(ctx.backlogDir);
   const lock = tryLockOnce(path, `the flow of ${item.id}`);
@@ -243,7 +249,7 @@ export async function runFlow(
   const nothing = () => {};
   process.on('SIGUSR2', nothing);
   try {
-    const invocation = { by, catalogue, repoContexts, agents, tty };
+    const invocation = { by, catalogue, repoContexts, overrides, tty };
     let { result, suspend } = await invoke(ctx, item, flow, { ...invocation, start, entry, resume });
     if (wake === undefined) return result;
     let shown = '';
@@ -286,7 +292,7 @@ export async function runFlow(
  * @param {Item} item
  * @param {Flow} flow
  * @param {{ start?: string, by: string, entry?: string, resume: boolean, catalogue: Readonly<Record<string, Step>>,
- *   repoContexts: typeof itemRepoContexts, agents?: import('../steps/capacity.js').AgentsOverride,
+ *   repoContexts: typeof itemRepoContexts, overrides: readonly import('./overrides.js').Override[],
  *   tty?: string }} invocation
  * @returns {Promise<{ result: FlowResult | { held: FailingEntry[] } | { entries: string[] }, suspend?: Suspend }>}
  */
@@ -294,10 +300,12 @@ async function invoke(
   ctx,
   item,
   flow,
-  { start: entryStart, by, entry, resume, catalogue, repoContexts, agents: override, tty },
+  { start: entryStart, by, entry, resume, catalogue, repoContexts, overrides, tty },
 ) {
   const { id, type } = item;
   const host = hostname();
+  /** The `with` of `node` that its step gate and its step see (F-152 D4). */
+  const argsOf = (/** @type {import('./flow-set.js').Node} */ node) => applyOverrides(node, overrides, catalogue);
   /**
    * `flowWrite` of this item's flow.
    * @param {string} message
@@ -356,12 +364,14 @@ async function invoke(
   if (resume) {
     const way = await wayOn(ctx, item, stored, readJsonl(ctx, item, LOG).at(-1), {
       repos: repoContexts({ ...ctx, id }),
-      agents: override,
+      overrides,
+      catalogue,
     });
     if ('held' in way) {
       // Still held: the process suspends at the stored run state, with no commit (F-152 D3).
       const { kind, arg } = parseRun(stored.run);
-      const agents = kind === 'gated before' ? agentList(flow.nodes[arg], override) : undefined;
+      const node = flow.nodes[arg];
+      const agents = kind === 'gated before' ? agentList(node, argsOf(node)) : undefined;
       return { result: way, suspend: { run: stored.run, failing: way.held, agents } };
     }
     if ('entries' in way) return { result: way };
@@ -480,7 +490,8 @@ async function invoke(
         visits.set(box, visit);
         if (visit > ctx.flowSet.maxBoxVisits) throw new FlowCrash(`${box} started ${visit} times (max_box_visits)`);
 
-        const agents = agentList(node, override);
+        const withArgs = argsOf(node);
+        const agents = agentList(node, withArgs);
         const gated = await stepGate(ctx, record, node, previous, { repos, agents });
         if (gated.length > 0) {
           const ended = `gated before: ${box}`;
@@ -503,8 +514,6 @@ async function invoke(
           });
           return { result: endedBefore(ended), suspend: { run: ended, failing: [] } };
         }
-        // An agent step gets the list its gate checked.
-        const withArgs = agents === undefined ? node.with : { .../** @type {object} */ (node.with), agents };
         if (code.interactive?.(withArgs) && !hasTerminal(tty)) {
           // The step needs the operator, so it does not start (D-29): a later `bl resume` runs it.
           const note = `no terminal for the interactive step ${box}`;
