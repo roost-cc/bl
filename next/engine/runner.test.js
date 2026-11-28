@@ -2,10 +2,12 @@
 // gate, with fake steps, on a committed backlog repo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'fs';
+import { spawn } from 'child_process';
+import { closeSync, openSync, readFileSync, writeFileSync } from 'fs';
 import { hostname } from 'os';
 import { join } from 'path';
 import { parse, stringify } from 'yaml';
+import { holderOf } from '../lib/kernel-lock.js';
 import { itemLockPath } from '../lib/lock.js';
 import { itemDir } from '../store/items.js';
 import { storeWrite } from '../store/write.js';
@@ -14,8 +16,12 @@ import { UTOP, UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 import { git, tempRepo } from '../test/helpers/git.js';
 import { holdLockInChild } from '../test/helpers/hold-lock.js';
 import { channel, delivered, notifyBacklog } from '../test/helpers/notify-backlog.js';
+import { sendUsr2 } from '../test/helpers/sigusr2.js';
+import { mkTempDir } from '../test/helpers/tempdir.js';
+import { waitUntil } from '../test/helpers/wait-until.js';
 import { readRunState } from './run-state.js';
 import { FlowCrash, runFlow } from './runner.js';
+import { BURST_MS, waitForWake } from './wake.js';
 
 /**
  * uTop's `defined-steps.yaml` with no step gates and no post-conditions (their conditions call
@@ -1448,4 +1454,226 @@ test('a force entry after an outcome entry makes the outcome unused: resume runs
   const { catalogue, ran } = fakeSteps();
   assert.deepEqual(await resume(ctx, id, catalogue), { ended: 'stop', status: 'done', outcome: 'success' });
   assert.deepEqual(ran, ['close']);
+});
+
+// ---- suspend and wake (F-152 D3, Decision A1) ----
+
+/**
+ * Start `runFlow` with `invocation` and `waitForWake`, or the `wake` in `invocation`, with stderr
+ * caught: give its promise and the lines it printed so far. If the test ends while the flow is
+ * suspended (an assertion failed), a SIGUSR2 wakes it and its next wait throws, so the flow ends
+ * and the test file does not hang.
+ */
+function suspending(/** @type {any} */ t, /** @type {any} */ ctx, /** @type {any} */ invocation) {
+  /** @type {string[]} */
+  const printed = [];
+  t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(String(text)) > 0);
+  const { wake = waitForWake } = invocation;
+  let ended = false;
+  let settled = false;
+  const pending = runFlow(ctx, {
+    by: 'operator',
+    ...invocation,
+    wake: async (/** @type {any} */ c, /** @type {any} */ suspend) => {
+      if (ended) throw new Error('the test ended');
+      return wake(c, suspend);
+    },
+  }).finally(() => (settled = true));
+  pending.catch(() => {});
+  t.after(() => {
+    ended = true;
+    if (!settled) sendUsr2();
+  });
+  const lines = () => printed.join('').split('\n').filter(Boolean);
+  return { pending, lines };
+}
+
+/** Wait until `check` is true. */
+const until = (/** @type {string} */ what, /** @type {() => boolean} */ check) =>
+  waitUntil(() => (check() ? true : undefined), what);
+
+/** Close the task `task` in a commit, as its own flow would. */
+const closeTask = (/** @type {any} */ ctx, /** @type {string} */ task) =>
+  storeWrite(ctx, { message: `chore: close ${task}` }, (w) => w.state(task, { status: 'done', run: 'idle' }));
+
+/** Close the task `task` in the working tree, with no commit, so only a signal or the timer sees it. */
+const closeTaskUncommitted = (/** @type {any} */ ctx, /** @type {string} */ task) =>
+  writeFileSync(join(itemPath(ctx, task), 'state.json'), `${JSON.stringify({ status: 'done', run: 'idle' })}\n`);
+
+/** A story at implemented with one draft task child, so the status gate of done fails. */
+async function storyWithTask(/** @type {any} */ ctx) {
+  const [id, task] = await createItems(ctx, [
+    { type: 'story', state: { status: 'implemented', run: 'idle' } },
+    { type: 'task', state: { status: 'draft', run: 'idle' } },
+  ]);
+  await setGraph(ctx, 'containment', { [task]: { parent: id } });
+  return { id, task };
+}
+
+const DONE_GATE = 'children("task").all(c, c.closed)';
+
+test('with waitForWake, a failing status gate commits gated: <to> and a flow_end and keeps the item lock; a commit that opens the gate wakes it within 2 seconds, and the same process resumes with the first by and goes on to stop', async (t) => {
+  const ctx = backlog();
+  const { id, task } = await storyWithTask(ctx);
+  const { catalogue, ran } = fakeSteps();
+  const run = suspending(t, ctx, { id, start: 'close', entry: 'close', by: 'F-1', catalogue });
+  await until('the suspend', () => run.lines().includes(`${id}: suspended at gated: done: ${DONE_GATE}`));
+  assert.deepEqual(stateOf(ctx, id), {
+    status: 'implemented',
+    run: 'gated: done',
+    held: { box: 'close', outcome: 'success' },
+  });
+  assert.deepEqual(eventsOf(ctx, id), ['flow_start', 'flow_end'], 'the flow_end is written at the suspend');
+  await assert.rejects(resume(ctx, id, catalogue), {
+    message: new RegExp(`^${id}: another process \\(pid ${process.pid}\\)`),
+  });
+
+  await closeTask(ctx, task);
+  const at = Date.now();
+  const result = await run.pending;
+  const ms = Date.now() - at;
+  t.mock.restoreAll();
+  assert.ok(ms < 2000, `woke after ${ms} ms`);
+  assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.deepEqual(ran, ['close'], 'close does not run again');
+  assert.deepEqual(eventsOf(ctx, id), ['flow_start', 'flow_end', 'flow_start', 'flow_end']);
+  const { at: _, ...resumed } = logOf(ctx, id).at(-2);
+  assert.deepEqual(resumed, { event: 'flow_start', resume: true, status: 'implemented', by: 'F-1' });
+  assert.deepEqual(stateOf(ctx, id), { status: 'done', run: 'idle' });
+  assert.equal(holderOf(itemLockPath(ctx.backlogDir, id)), null, 'the lock is released');
+});
+
+test('a failing step gate suspends at gated before: <box>; a burst of commits gives one gate check, and a wake that still fails prints the failing entries again only when they changed', async (t) => {
+  const ctx = backlog({ 'gates.yaml': 'step_gates:\n  close: [\'item("T-1").closed\', \'item("T-2").closed\']\n' });
+  const [id] = await createItems(ctx, [
+    { type: 'story', state: { status: 'implemented', run: 'idle' } },
+    { type: 'task', state: { status: 'draft', run: 'idle' } },
+    { type: 'task', state: { status: 'draft', run: 'idle' } },
+  ]);
+  const { catalogue, ran } = fakeSteps();
+  /** @type {string[][]} the failing entries of each wait */
+  const waits = [];
+  const wake = async (/** @type {any} */ c, /** @type {any} */ suspend) => {
+    waits.push(suspend.failing.map((/** @type {any} */ { text }) => text));
+    return waitForWake(c, suspend);
+  };
+  const run = suspending(t, ctx, { id, start: 'close', entry: 'close', catalogue, wake });
+  await until('the first wait', () => waits.length === 1);
+  assert.deepEqual(stateOf(ctx, id), { status: 'implemented', run: 'gated before: close' });
+
+  await closeTask(ctx, 'T-1');
+  await until('the second wait', () => waits.length === 2);
+  for (let i = 0; i < 3; i++) git(ctx.backlogDir, 'commit', '-q', '--allow-empty', '-m', `burst ${i}`);
+  await until('the third wait', () => waits.length === 3);
+  await new Promise((done) => setTimeout(done, BURST_MS * 2));
+  assert.equal(waits.length, 3, 'the burst gave one gate check');
+
+  await closeTask(ctx, 'T-2');
+  const result = await run.pending;
+  t.mock.restoreAll();
+  assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.deepEqual(ran, ['close']);
+  assert.deepEqual(waits, [
+    ['item("T-1").closed', 'item("T-2").closed'],
+    ['item("T-2").closed'],
+    ['item("T-2").closed'],
+  ]);
+  assert.deepEqual(
+    run.lines().filter((line) => line.includes('suspended')),
+    [
+      `${id}: suspended at gated before: close: item("T-1").closed, item("T-2").closed`,
+      `${id}: suspended at gated before: close: item("T-2").closed`,
+    ],
+  );
+  assert.equal(git(ctx.backlogDir, 'log', '-2', '--format=%s').split('\n')[1], `${id}: resumed at close`);
+});
+
+test('SIGUSR2 to a process whose step is running does not end it', async () => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'implemented', run: 'idle' });
+  const { catalogue } = fakeSteps({
+    close: async () => {
+      sendUsr2();
+      await new Promise((done) => setTimeout(done, 100));
+      return 'success';
+    },
+  });
+  const result = await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.equal(process.listenerCount('SIGUSR2'), 0, 'the listener goes with the lock');
+});
+
+test('SIGUSR2 wakes a suspended process, and so does gate_recheck_minutes, with no commit and no signal', async (t) => {
+  for (const [how, minutes, poke] of [
+    ['SIGUSR2', 15, sendUsr2],
+    ['the timer', 0.005, () => {}],
+  ]) {
+    const base = backlog();
+    const ctx = { ...base, flowSet: { ...base.flowSet, gateRecheckMinutes: minutes } };
+    const { id, task } = await storyWithTask(ctx);
+    const { catalogue } = fakeSteps();
+    const run = suspending(t, ctx, { id, start: 'close', entry: 'close', catalogue });
+    await until('the suspend', () => run.lines().some((line) => line.startsWith(`${id}: suspended`)));
+    closeTaskUncommitted(ctx, task);
+    const at = Date.now();
+    /** @type {() => void} */ (poke)();
+    const result = await run.pending;
+    const ms = Date.now() - at;
+    t.mock.restoreAll();
+    assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' }, how);
+    assert.ok(ms < BURST_MS, `${how}: woke after ${ms} ms`);
+  }
+});
+
+test('a bl force of /run while suspended makes the process print that the run state changed, release the lock and return', async (t) => {
+  const ctx = backlog();
+  const { id } = await storyWithTask(ctx);
+  const { catalogue } = fakeSteps();
+  const run = suspending(t, ctx, { id, start: 'close', entry: 'close', catalogue });
+  await until('the suspend', () => run.lines().some((line) => line.startsWith(`${id}: suspended`)));
+  await storeWrite(ctx, { message: `${id}: force /run` }, (w) => {
+    w.state(id, { status: 'implemented', run: 'idle' });
+    const force = { event: 'force', path: '/run', from: 'gated: done', to: 'idle', status: 'implemented' };
+    w.log(id, { at: AT, ...force, by: 'operator', note: 'by hand' });
+  });
+  const result = await run.pending;
+  t.mock.restoreAll();
+  assert.deepEqual(result, { ended: 'gated: done', status: 'implemented', outcome: 'success' });
+  assert.equal(run.lines().at(-1), `${id}: the run state changed to idle; this process ends`);
+  assert.equal(holderOf(itemLockPath(ctx.backlogDir, id)), null);
+  assert.deepEqual(eventsOf(ctx, id), ['flow_start', 'flow_end', 'force']);
+});
+
+const FLOW_CHILD = join(import.meta.dirname, '..', 'test', 'helpers', 'flow-child.js');
+
+test('SIGTERM to a suspended process ends it; the item keeps gated: <to>, and the log ends with that flow_end', async (t) => {
+  const ctx = backlog();
+  const { id } = await storyWithTask(ctx);
+  const dir = mkTempDir('bl-flow-child-');
+  const stderrFile = join(dir, 'stderr');
+  const stderr = openSync(stderrFile, 'w');
+  const child = spawn(
+    process.execPath,
+    [FLOW_CHILD, ctx.backlogDir, id, 'close', join(dir, 'result.json'), 'close', 'wake'],
+    { stdio: ['ignore', 'ignore', stderr] },
+  );
+  closeSync(stderr);
+  t.after(() => child.kill('SIGKILL')); // a failed assertion leaves no suspended child behind
+  const exited = new Promise((done) => child.on('exit', (code, signal) => done({ code, signal })));
+  const suspended = `${id}: suspended at gated: done`;
+  await until('the suspend', () => readFileSync(stderrFile, 'utf8').includes(suspended));
+  const lock = itemLockPath(ctx.backlogDir, id);
+  assert.equal(holderOf(lock), child.pid);
+
+  child.kill('SIGTERM');
+  assert.deepEqual(await exited, { code: 143, signal: null });
+  assert.equal(holderOf(lock), null, 'the kernel freed the lock');
+  assert.deepEqual(stateOf(ctx, id), {
+    status: 'implemented',
+    run: 'gated: done',
+    held: { box: 'close', outcome: 'success' },
+  });
+  const { event, ended } = logOf(ctx, id).at(-1);
+  assert.deepEqual({ event, ended }, { event: 'flow_end', ended: 'gated: done' });
+  assert.equal(git(ctx.backlogDir, 'status', '--porcelain'), '', 'nothing is left to write');
 });

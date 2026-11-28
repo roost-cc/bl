@@ -17,7 +17,7 @@
  *   1. the visit limit (D-115, Decision A6);
  *   2. the step gate with the entry gates of the subflows the flow enters
  *      (D-11, Decision A4); a failing entry ends the invocation at
- *      `gated before: <box>` (Decision P1). In an `agent` box,
+ *      `gated before: <box>`, and the process suspends. In an `agent` box,
  *      `has_capacity()` reads the box's `agents` list, which the invocation's
  *      `agents` override replaces where it applies (`agentList`, F-141 D7);
  *   3. an interactive step with no terminal does not start: the invocation
@@ -35,7 +35,7 @@
  *      missing arrow commits an `outcome` entry and crashes; an arrow with a
  *      `status` makes the transition, unless the status is not in the arrow's
  *      derived `from` (the invocation stops) or the status gate fails (the
- *      invocation ends at `gated: <to>`, D-18, D-19);
+ *      invocation ends at `gated: <to>`, D-18, D-19, and the process suspends);
  *   7. one commit for the box: the step's staged writes, the status and the
  *      run state that follows, `active: <next node>` with `host`, or at the end
  *      the end run state and a `flow_end`. It holds no `session`, so a session
@@ -45,6 +45,19 @@
  * leaves `active: <box>` of a box that has not finished; the item then reads
  * `interrupted: <box>` (D-50). A crash writes no `flow_end` (history.md, "Item
  * history"): the runner throws `FlowCrash`, and the command layer prints it.
+ *
+ * **Suspend and wake (F-152 D3, Decision A1).** An invocation that ends at a
+ * gate has committed its gated run state and its `flow_end`. With a `wake`
+ * option, `runFlow` then keeps the item lock and suspends: it prints
+ * `<id>: suspended at <run state>: <failing entries>`, waits for `wake`
+ * (`waitForWake`), and runs a new invocation with `resume: true` and the
+ * first `by`. That invocation goes on where `wayOn` says, or finds the item
+ * still held, commits nothing, and suspends again; the line is printed again
+ * only when it changed. When the stored run state is no longer the one the
+ * process suspended at (a `bl force`), the process prints so and returns.
+ * Without `wake`, `runFlow` returns at the first suspend. While it holds the
+ * item lock, `runFlow` keeps a SIGUSR2 listener that does nothing, so the
+ * signal of `bl resume` (D-22) does not end a running step.
  *
  * After the commit of a gated end the runner sends the `gated` alert, after
  * a `flow_end` at `stop` the `ended.normal` alert, and before it throws
@@ -72,7 +85,7 @@ import { bindConditions, engineRecord, hasTerminal } from './conditions.js';
 import { wayOn } from './continuation.js';
 import { STOP } from './flow-set.js';
 import { postConditions, statusGate, stepGate } from './gates.js';
-import { checkAgainstFlow } from './run-state.js';
+import { checkAgainstFlow, parseRun } from './run-state.js';
 
 /**
  * @typedef {import('./conditions.js').EngineContext} EngineContext
@@ -152,7 +165,8 @@ const subflowBox = (/** @type {string} */ id) => id.slice(0, id.lastIndexOf('/')
 
 /**
  * Run one flow invocation of the item `id` (D8): from the node `start` for an
- * entry, or from where `wayOn` says for a resume (F-152 D2). Give how it
+ * entry, or from where `wayOn` says for a resume (F-152 D2); with `wake`, the
+ * invocations after each suspend too (F-152 D3). Give how the last one
  * ended, or, for a resume with nothing to run, the failing entries that still
  * hold the item (`held`) or the entries its status allows (`entries`), with no
  * commit but the reset's. Throws `FlowCrash` on a crash, and an error without a
@@ -173,13 +187,15 @@ const subflowBox = (/** @type {string} */ id) => id.slice(0, id.lastIndexOf('/')
  *   `agents` list of the `agent` boxes that it applies to (`agentList`, F-141 D7)
  * @param {string} [invocation.tty]  the terminal an interactive step needs (`hasTerminal`), a
  *   test seam (F-141 D9)
+ * @param {Wake} [invocation.wake]  gives the next wake of a suspended process (`waitForWake`);
+ *   absent, `runFlow` returns at the first suspend
  * @returns {Promise<FlowResult | { held: FailingEntry[] } | { entries: string[] }>}
  * @throws {import('../config/check.js').ConfigurationFaults} before any commit, when `agents`
  *   names no profile, or a profile with a fault (`checkOverride`)
  */
 export async function runFlow(
   ctx,
-  { id, start, by, entry, resume = false, catalogue, repoContexts = itemRepoContexts, agents, tty },
+  { id, start, by, entry, resume = false, catalogue, repoContexts = itemRepoContexts, agents, tty, wake },
 ) {
   checkOverride(ctx, agents);
   const item = itemDir(ctx, id);
@@ -192,22 +208,56 @@ export async function runFlow(
   if (!('taken' in lock)) {
     throw new Error(`${item.id}: another process (pid ${lock.holder}) runs its flow and holds ${path}`);
   }
+  // Node ends a process on SIGUSR2 by default. `bl resume` sends it to the lock holder (D-22): it
+  // wakes a suspend (`wake`), and must not end a running step.
+  const nothing = () => {};
+  process.on('SIGUSR2', nothing);
   try {
-    return await invoke(ctx, item, flow, { start, by, entry, resume, catalogue, repoContexts, agents, tty });
+    const invocation = { by, catalogue, repoContexts, agents, tty };
+    let { result, suspend } = await invoke(ctx, item, flow, { ...invocation, start, entry, resume });
+    if (wake === undefined) return result;
+    let shown = '';
+    while (suspend !== undefined) {
+      const { run, failing } = suspend;
+      // The failing entries are printed again only when they changed (D3).
+      const report = `${item.id}: suspended at ${run}: ${texts(failing)}`;
+      if (report !== shown) info(report);
+      shown = report;
+      await wake(ctx, suspend);
+      const now = /** @type {import('./run-state.js').State} */ (readState(ctx, item)).run;
+      if (now !== run) {
+        // Another command (`bl force`) changed the run state that this process wrote.
+        info(`${item.id}: the run state changed to ${now}; this process ends`);
+        return result;
+      }
+      // A new invocation (Decision A1): it commits nothing while the item is still held.
+      ({ result, suspend } = await invoke(ctx, item, flow, { ...invocation, resume: true }));
+    }
+    return result;
   } finally {
+    process.off('SIGUSR2', nothing);
     release(lock.taken);
   }
 }
 
 /**
- * The invocation under the item lock (`runFlow`).
+ * @typedef {object} Suspend  why an invocation suspends
+ * @property {string} run  the stored run state it suspends at
+ * @property {FailingEntry[]} failing  the failing entries that hold it
+ * @property {string[]} [agents]  the `agents` list that a held box's step gate checked
+ */
+/** @typedef {(ctx: EngineContext, suspend: Suspend) => Promise<unknown>} Wake */
+
+/**
+ * The invocation under the item lock (`runFlow`): its result, and why it
+ * suspends when it ends at a gate or finds the item still held.
  * @param {EngineContext} ctx
  * @param {Item} item
  * @param {Flow} flow
  * @param {{ start?: string, by: string, entry?: string, resume: boolean, catalogue: Readonly<Record<string, Step>>,
  *   repoContexts: typeof itemRepoContexts, agents?: import('../steps/capacity.js').AgentsOverride,
  *   tty?: string }} invocation
- * @returns {Promise<FlowResult | { held: FailingEntry[] } | { entries: string[] }>}
+ * @returns {Promise<{ result: FlowResult | { held: FailingEntry[] } | { entries: string[] }, suspend?: Suspend }>}
  */
 async function invoke(
   ctx,
@@ -283,7 +333,13 @@ async function invoke(
       repos: repoContexts({ ...ctx, id }),
       agents: override,
     });
-    if (!('start' in way)) return way;
+    if ('held' in way) {
+      // Still held: the process suspends at the stored run state, with no commit (F-152 D3).
+      const { kind, arg } = parseRun(stored.run);
+      const agents = kind === 'gated before' ? agentList(flow.nodes[arg], override) : undefined;
+      return { result: way, suspend: { run: stored.run, failing: way.held, agents } };
+    }
+    if ('entries' in way) return { result: way };
     ({ start, outcome: given } = way);
   } else {
     start = /** @type {string} */ (entryStart);
@@ -400,9 +456,12 @@ async function invoke(
             setState(w, status, ended);
             w.log(id, flowEnd(ended, last, `the step gate of ${box} failed: ${texts(gated)}`));
           });
-          // The interim end of F-139 Decision P1 sends no ended alert (F-140 Decision A3).
+          // A gated end suspends, so it sends no ended alert (F-140 Decision A3).
           await alertOrReport(id, 'gated', async () => gatedAlert(step, gated, box));
-          return { ended, status, ...(last === undefined ? {} : { outcome: last }) };
+          return {
+            result: { ended, status, ...(last === undefined ? {} : { outcome: last }) },
+            suspend: { run: ended, failing: gated, agents },
+          };
         }
 
         // An agent step gets the list its gate checked.
@@ -418,7 +477,7 @@ async function invoke(
           info(`${box}: ${note}`);
           info(`run \`bl resume ${id}\` to continue`);
           await alertOrReport(id, 'ended.normal', async () => sendAlert(step, 'ended', ['normal'], { box }));
-          return { ended: STOP, status, ...(last === undefined ? {} : { outcome: last }) };
+          return { result: { ended: STOP, status, ...(last === undefined ? {} : { outcome: last }) } };
         }
         const result = await code.run(step, withArgs);
         // A step gives a bare outcome or { outcome, note } (F-140 Decision A2).
@@ -511,10 +570,14 @@ async function invoke(
       printNote();
       if (end !== null) {
         // A status gate has no box (D-97); a stop is the normal end (F-140 Decision A3).
-        const { gated } = end;
-        if (gated !== undefined) await alertOrReport(id, 'gated', async () => gatedAlert(step, gated));
-        else await alertOrReport(id, 'ended.normal', async () => sendAlert(step, 'ended', ['normal'], { box }));
-        return { ended: end.ended, status, outcome };
+        const { ended, gated } = end;
+        const result = { ended, status, outcome };
+        if (gated === undefined) {
+          await alertOrReport(id, 'ended.normal', async () => sendAlert(step, 'ended', ['normal'], { box }));
+          return { result };
+        }
+        await alertOrReport(id, 'gated', async () => gatedAlert(step, gated));
+        return { result, suspend: { run: ended, failing: gated } };
       }
       // The arrow out of a return node is its caller's arrow, so the flow
       // comes from the subflow box, outside the subflow: an arrow back to the

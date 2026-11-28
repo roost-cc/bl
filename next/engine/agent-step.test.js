@@ -19,6 +19,7 @@ import { noReplayPath, REPLAY_BIN, replayEnv } from '../test/helpers/replay.js';
 import { stderrOfAsync } from '../test/helpers/streams.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 import { runFlow } from './runner.js';
+import { waitForWake } from './wake.js';
 
 const CATALOGUE = { ...UTOP_STEPS, ...STEPS };
 
@@ -309,6 +310,22 @@ test("a step gate has_capacity() over a script whose capacity is available: fals
   assert.deepEqual(await run(ctx, id, none), { ended: 'gated before: first', status: 'draft' });
   assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%s'), `${id}: first gated before`);
   assert.deepEqual(usageAtHead(ctx, id), [], 'no session ran');
+});
+
+test("a process suspended at a failing has_capacity() step gate wakes at the box's earliest capacity reset (F-152 D3)", async () => {
+  const { ctx, id } = await listTask('replay, replay-b');
+  const resets = new Date(Date.now() + 400).toISOString();
+  const none = scriptOf([['Work', [SUCCESS]]], [`capacity: { available: false, resets_at: '${resets}' }`]);
+  /** @type {any[]} */
+  const wakes = [];
+  const wake = async (/** @type {any} */ c, /** @type {any} */ suspend) => {
+    wakes.push({ agents: suspend.agents, source: await waitForWake(c, suspend) });
+    throw new Error('one wake is enough');
+  };
+  const { value, chunks } = await stderrOfAsync(async () => run(ctx, id, none, { wake }));
+  assert.equal(/** @type {Error} */ (value).message, 'one wake is enough');
+  assert.deepEqual(wakes, [{ agents: ['replay', 'replay-b'], source: 'capacity' }]);
+  assert.deepEqual(chunks, [`${id}: suspended at gated before: first: has_capacity()\n`]);
 });
 
 test('a session with no result and an unchanged worktree makes the step run the next entry, whose outcome the box takes', async () => {
