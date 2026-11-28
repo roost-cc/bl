@@ -27,7 +27,7 @@ import { parse as parseShell } from 'shell-quote';
 import { attribute } from '../config/check.js';
 import { isMapping, pointerToken } from '../config/files.js';
 import { rawNames, render } from '../config/template.js';
-import { exitStatus, runChild } from '../lib/child.js';
+import { exitStatus, lastLine, runChild } from '../lib/child.js';
 import { nextScope, runScopedChild, scopedCommand, stopScope } from '../lib/process-scope.js';
 
 /** @typedef {import('../config/files.js').Fault} Fault */
@@ -114,13 +114,6 @@ export const pluginParts = (/** @type {Plugin} */ plugin) =>
   typeof plugin === 'string'
     ? { template: plugin, exitCodes: {} }
     : { template: plugin.command, exitCodes: plugin.exit_codes };
-
-/** The last non-empty line of `text`, or undefined. */
-const lastLine = (text) =>
-  String(text ?? '')
-    .split('\n')
-    .map((line) => line.trim())
-    .findLast(Boolean);
 
 /**
  * The outcome of a plugin's child `result`: `exitCodes[code]` when it names

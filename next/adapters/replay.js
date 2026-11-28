@@ -1,0 +1,129 @@
+/**
+ * replay.js — the `replay` adapter (agents.md, "The replay agent"; F-141 D4).
+ *
+ * It runs the `replay` program of F-147, a scripted agent that needs no
+ * account and uses no tokens, so flow tests run an `agent` box without an
+ * agent account. The program is found on the `PATH` (D-497).
+ *
+ * - Every call runs with the arguments and environment of `profileCommand`.
+ * - `capacity` gives `replay capacity`'s object. When the program is not on
+ *   the `PATH`, it gives no capacity, so the step goes on to the next entry
+ *   of its list (D-479). That holds for `replay` only.
+ * - `start` runs `replay --session-id <id> …` with the prompt on stdin, and
+ *   `resume` runs `replay --resume <id> …`. Each session is a long child in a
+ *   process scope where user systemd has scopes (D-486).
+ * - Headless, the child's stdout and stderr are kept, and stderr is written
+ *   to `bl`'s stderr. Interactive, they go to `/dev/tty`, never to `bl`'s
+ *   stdout (D-30).
+ * - The result is the JSON of the result file; the usage is zeros.
+ */
+
+import { randomUUID } from 'crypto';
+import { closeSync, openSync, readFileSync } from 'fs';
+import { describeExit, exitStatus, lastLine, runChild } from '../lib/child.js';
+import { runScopedChild } from '../lib/process-scope.js';
+import { profileCommand } from './profile.js';
+
+/** @typedef {import('./index.js').Adapter} Adapter */
+/** @typedef {import('./index.js').AgentRun} AgentRun */
+/** @typedef {import('./index.js').Ended} Ended */
+/** @typedef {import('./index.js').Profile} Profile */
+
+const PROGRAM = 'replay';
+
+/** `replay` uses no tokens. */
+const NO_USAGE = Object.freeze({ input: 0, output: 0, cache_creation: 0, cache_read: 0 });
+
+/**
+ * One fault for a `model`: `replay` takes none.
+ * @param {Profile} profile
+ * @returns {string[]}
+ */
+function faults(profile) {
+  return profile.model === undefined
+    ? []
+    : [`the replay adapter takes no model, and this profile gives '${profile.model}'`];
+}
+
+/**
+ * `replay capacity`'s object, or no capacity when the program is not on the
+ * `PATH`.
+ * @param {Profile} profile
+ * @returns {Promise<import('./index.js').Capacity>}
+ * @throws {Error} when `replay capacity` fails or prints no JSON
+ */
+async function capacity(profile) {
+  const { args, env } = profileCommand(['capacity'], profile);
+  const r = runChild(PROGRAM, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env });
+  if (/** @type {NodeJS.ErrnoException|undefined} */ (r.error)?.code === 'ENOENT') {
+    return { available: false, resets_at: null, message: 'replay is not on the PATH' };
+  }
+  if (r.error || r.status !== 0) throw new Error(`replay capacity failed: ${describeExit(r, 'replay capacity')}`);
+  return JSON.parse(String(r.stdout));
+}
+
+/**
+ * Run one session: `replay <sessionArgs> --schema … --result … [--interactive]`
+ * in `run.cwd`, with the prompt on stdin.
+ * @param {AgentRun} run
+ * @param {string[]} sessionArgs  `--session-id <id>` or `--resume <id>`
+ * @returns {Promise<Ended>}
+ * @throws {Error} when the session's process scope cannot be stopped
+ */
+async function session(run, sessionArgs) {
+  const interactive = run.mode === 'interactive';
+  const { args, env } = profileCommand(
+    [...sessionArgs, '--schema', run.schemaPath, '--result', run.resultPath, ...(interactive ? ['--interactive'] : [])],
+    run.profile,
+  );
+  const tty = interactive ? openSync('/dev/tty', 'w') : null;
+  let ran;
+  try {
+    const out = tty ?? 'pipe';
+    ran = await runScopedChild(
+      PROGRAM,
+      args,
+      { cwd: run.cwd, env, encoding: 'utf8', input: run.prompt, stdio: ['pipe', out, out] },
+      run.unit,
+    );
+  } finally {
+    if (tty !== null) closeSync(tty);
+  }
+  const { result: r, unit, stop } = ran;
+  if (r.stderr) process.stderr.write(r.stderr);
+  if (!stop.ok) throw new Error(`could not stop what replay left in ${unit}.scope: ${stop.output}`);
+  const code = exitStatus(r);
+  if (code !== 0) {
+    const line = r.error ? r.error.message : lastLine(r.stderr);
+    return { result: null, error: `replay exited ${code}${line === undefined ? '' : `: ${line}`}`, usage: NO_USAGE };
+  }
+  try {
+    return { result: JSON.parse(readFileSync(run.resultPath, 'utf8')), error: null, usage: NO_USAGE };
+  } catch (e) {
+    return { result: null, error: `could not read the result ${run.resultPath}: ${e.message}`, usage: NO_USAGE };
+  }
+}
+
+/**
+ * A new session: its id is made here and given to `run.onSession` before
+ * `replay` starts.
+ * @param {AgentRun} run
+ * @returns {Promise<Ended>}
+ */
+async function start(run) {
+  const id = randomUUID();
+  await run.onSession(id);
+  return session(run, ['--session-id', id]);
+}
+
+/**
+ * The session `run.session`, continued after its last finished turn.
+ * @param {AgentRun} run
+ * @returns {Promise<Ended>}
+ */
+async function resume(run) {
+  return session(run, ['--resume', /** @type {string} */ (run.session)]);
+}
+
+/** @type {Adapter} */
+export const replay = Object.freeze({ faults, capacity, start, resume });

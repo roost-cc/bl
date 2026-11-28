@@ -261,6 +261,18 @@ export function describeExit(r, what) {
 }
 
 /**
+ * The last non-empty line of a child's output `text`, trimmed, or undefined:
+ * the note of a plugin and the error line of an agent session.
+ * @param {unknown} text
+ * @returns {string|undefined}
+ */
+export const lastLine = (text) =>
+  String(text ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .findLast(Boolean);
+
+/**
  * The exit status a `spawnSync` result stands for, as a shell reports it
  * (F-70 D3): 127 when the child could not be launched (`error`), 128 + the
  * signal's number when a signal killed it (128 for a name this platform does
