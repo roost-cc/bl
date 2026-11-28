@@ -275,6 +275,47 @@ test('entryArgFaults_rejects_reserved_entry_arguments: the parser of the entry c
   }
 });
 
+test('entryArgFaults_rejects_colliding_entry_option_destinations: two options that argparse stores under one dest', () => {
+  const at = (/** @type {string} */ type, /** @type {string} */ name) =>
+    `config/flows/${type}.yaml: /flows/${type}/entries/fix/args/${name}: args: the parser of the entry command 'fix' refuses '${name}':`;
+  for (const [what, story, task, lines] of /** @type {const} */ ([
+    [
+      'an explicit dest',
+      { '--a': { dest: 'shared' }, '--b': { dest: 'shared' } },
+      {},
+      [`${at('story', '--b')} it stores its value under 'shared', as --a does`],
+    ],
+    [
+      'the default dests of two names',
+      { '--dry-run': {}, '--dry_run': {} },
+      {},
+      [`${at('story', '--dry_run')} it stores its value under 'dry_run', as --dry-run does`],
+    ],
+    [
+      'an explicit dest and a default dest',
+      { '--out': {}, '--to': { dest: 'out' } },
+      {},
+      [`${at('story', '--to')} it stores its value under 'out', as --out does`],
+    ],
+    [
+      'a positional and an option',
+      { target: {}, '--target': {} },
+      {},
+      [`${at('story', '--target')} it stores its value under 'target', as target does`],
+    ],
+    [
+      'options of two item types',
+      { '--a': { dest: 'shared' } },
+      { '--b': { dest: 'shared' } },
+      [`${at('task', '--b')} it stores its value under 'shared', as --a does`],
+    ],
+  ])) {
+    assert.deepEqual(entryArgLines(story, task), lines, what);
+  }
+  // Two dests, and one option that both item types declare alike.
+  assert.deepEqual(entryArgLines({ '--a': {}, '--b': {} }, { '--a': {} }), []);
+});
+
 test('startFaults names config/commands.yaml and /<name>/op for each op that the ops map does not hold', () => {
   const at = fixture(`${COMMANDS}\nshow:\n  op: item\n  help: show one item\n`);
   assert.equal(

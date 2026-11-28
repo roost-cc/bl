@@ -284,6 +284,31 @@ test('bl-next fails with the inner message when a {{#bl}} command fails', async 
   assert.equal(stdout, '');
 });
 
+test('bl-next exits 1 on two entry options with one dest, at the second, and runs no command', async () => {
+  const files = {
+    'backlog/backlog.yaml': BACKLOG,
+    'backlog/config/commands.yaml': FIXTURE_COMMANDS,
+    'backlog/config/flows/story.yaml': [
+      'flows:',
+      '  story:',
+      '    initial: draft',
+      '    statuses: { draft: {} }',
+      '    entries:',
+      "      fix: { from: [draft], start: work, args: { '--a': { dest: shared }, '--b': { dest: shared } } }",
+      '    steps:',
+      '      work: { success: stop, failure: stop }',
+      '',
+    ].join('\n'),
+  };
+  const { status, stdout, stderr } = await runBlNext(files, { bin: WITH_FIXTURE_OPS, argv: ['story', 'S-1'] });
+  assert.equal(
+    stderr,
+    `config/flows/story.yaml: /flows/story/entries/fix/args/--b: args: the parser of the entry command 'fix' refuses '--b': it stores its value under 'shared', as --a does\n${DOES_NOT_LOAD}`,
+  );
+  assert.equal(status, 1);
+  assert.equal(stdout, '');
+});
+
 test('bl-next exits 1 on a flow set with a missing arrow, with the fault on stderr, and runs no command', async () => {
   const files = {
     'backlog/backlog.yaml': BACKLOG,

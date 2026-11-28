@@ -227,9 +227,10 @@ const COMMAND_ARGS = Object.freeze({ '--json': { action: 'store_true', help: 'pr
  * the `id` of `entryArgs`, `COMMAND_ARGS`, then each option of the entries of
  * that name in every flow, one at a time. An option faults when argparse
  * refuses it (another argument has its option string), or when argparse
- * stores its value under the name (`dest`) of an argument that every entry
- * command has, so that one value would set both. Each fault is at the option
- * in each flow that declares it.
+ * stores its value under the name (`dest`) of an argument before it: one
+ * that every entry command has, or another entry option, of any item type's
+ * flow. One value would then set both. Each fault is at the option in each
+ * flow that declares it.
  * @param {Configuration} config
  * @param {FlowSet} flowSet
  * @returns {Fault[]}
@@ -252,6 +253,7 @@ export function entryArgFaults(config, flowSet) {
       try {
         const dest = addArgs(parser, { [option]: spec })[option];
         if (taken.has(dest)) problem = `it stores its value under '${dest}', as ${taken.get(dest)} does`;
+        else taken.set(dest, option);
       } catch (error) {
         problem = /** @type {Error} */ (error).message;
       }
