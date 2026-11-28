@@ -118,6 +118,34 @@ test('with replay not on the PATH, capacity gives no capacity', async () => {
   });
 });
 
+test('replay_capacity_rejects_malformed_record', async () => {
+  // A fake replay on the PATH prints FAKE_OUT and exits FAKE_CODE.
+  const bin = mkTempDir('bl-fake-replay-');
+  writeFileSync(join(bin, 'replay'), '#!/bin/sh\nprintf "%s" "$FAKE_OUT"\nexit "$FAKE_CODE"\n', { mode: 0o755 });
+  const capacityWith = (/** @type {string} */ out, code = '0') =>
+    withEnv({ PATH: bin, FAKE_OUT: out, FAKE_CODE: code }, () => replay.capacity({ adapter: 'replay' }));
+  const rows = [
+    ['{"available":"yes","resets_at":null,"message":null}', /^replay capacity printed no capacity record: /],
+    ['{"available":true}', /^replay capacity printed no capacity record: /],
+    ['{"available":false,"resets_at":5,"message":null}', /^replay capacity printed no capacity record: /],
+    ['{"available":false,"resets_at":null,"message":["quota"]}', /^replay capacity printed no capacity record: /],
+    ['null', /^replay capacity printed no capacity record: null$/],
+    ['[]', /^replay capacity printed no capacity record: \[\]$/],
+    ['true', /^replay capacity printed no capacity record: true$/],
+    ['"available"', /^replay capacity printed no capacity record: /],
+    ['', /^replay capacity printed no JSON: /],
+    ['not json', /^replay capacity printed no JSON: /],
+  ];
+  for (const [out, message] of rows) await assert.rejects(capacityWith(out), { message }, out);
+  await assert.rejects(capacityWith('{}', '2'), { message: /^replay capacity failed: / }, 'a nonzero exit');
+  // A well-formed record gives its three fields, and nothing else.
+  assert.deepEqual(await capacityWith('{"available":false,"resets_at":null,"message":"quota","extra":1}'), {
+    available: false,
+    resets_at: null,
+    message: 'quota',
+  });
+});
+
 test('start runs a scripted headless session: onSession gets the id first, then the result and zero usage', async () => {
   const s = setup();
   await withEnv(replayEnv(s.script), async () => {

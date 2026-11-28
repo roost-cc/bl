@@ -45,12 +45,16 @@ function faults(profile) {
     : [`the replay adapter takes no model, and this profile gives '${profile.model}'`];
 }
 
+/** Whether `value` is a string or `null`. */
+const stringOrNull = (/** @type {unknown} */ value) => value === null || typeof value === 'string';
+
 /**
  * `replay capacity`'s object, or no capacity when the program is not on the
  * `PATH`.
  * @param {Profile} profile
  * @returns {Promise<import('./index.js').Capacity>}
- * @throws {Error} when `replay capacity` fails or prints no JSON
+ * @throws {Error} when `replay capacity` fails, prints no JSON, or prints no
+ *   object with a boolean `available` and a string or `null` `resets_at` and `message`
  */
 async function capacity(profile) {
   const { args, env } = profileCommand(['capacity'], profile);
@@ -59,7 +63,22 @@ async function capacity(profile) {
     return { available: false, resets_at: null, message: 'replay is not on the PATH' };
   }
   if (r.error || r.status !== 0) throw new Error(`replay capacity failed: ${describeExit(r, 'replay capacity')}`);
-  return JSON.parse(String(r.stdout));
+  let record;
+  try {
+    record = JSON.parse(String(r.stdout));
+  } catch (e) {
+    throw new Error(`replay capacity printed no JSON: ${e.message}`);
+  }
+  if (
+    record === null ||
+    typeof record !== 'object' ||
+    typeof record.available !== 'boolean' ||
+    !stringOrNull(record.resets_at) ||
+    !stringOrNull(record.message)
+  ) {
+    throw new Error(`replay capacity printed no capacity record: ${String(r.stdout).trim()}`);
+  }
+  return { available: record.available, resets_at: record.resets_at, message: record.message };
 }
 
 /**
