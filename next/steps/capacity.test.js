@@ -79,7 +79,7 @@ test("agentList gives an agent box's list, or the override's where its steps nam
   assert.equal(agentList(nodes.in_unit, { profiles: ['replay-b'] }), undefined, 'a box that runs no agent');
 });
 
-test('checkOverride refuses each profile that config/agents.yaml does not define', () => {
+test('checkOverride refuses each profile that config/agents.yaml does not define, and no list or an empty one', () => {
   const { config, backlogDir } = engineBacklog();
   assert.doesNotThrow(() => checkOverride({ config, backlogDir }, undefined));
   assert.doesNotThrow(() => checkOverride({ config, backlogDir }, { profiles: ['replay', 'codex'] }));
@@ -88,4 +88,11 @@ test('checkOverride refuses each profile that config/agents.yaml does not define
     (/** @type {any} */ error) =>
       error instanceof ConfigurationFaults && error.faults.map(({ path }) => path).join(' ') === '/nobody /none',
   );
+  for (const profiles of [[], undefined, 'replay']) {
+    assert.throws(
+      () => checkOverride({ config, backlogDir }, /** @type {any} */ ({ profiles })),
+      (/** @type {any} */ error) => error.faults[0]?.message === 'the agents override: it names no profile',
+      JSON.stringify(profiles),
+    );
+  }
 });

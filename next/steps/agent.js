@@ -27,14 +27,14 @@
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { ADAPTERS, adapterOf } from '../adapters/index.js';
+import { adapterOf } from '../adapters/index.js';
 import { AGENT_OUTCOMES } from '../config/load.js';
 import { renderAsync } from '../config/template.js';
 import { STAGING_DIR } from '../lib/staging.js';
 import { readState } from '../store/item-json.js';
 import { itemDir } from '../store/items.js';
 import { now } from '../store/write.js';
-import { AGENT, firstWithCapacity, profileOf } from './capacity.js';
+import { AGENT, firstWithCapacity, profileFaults, profileOf } from './capacity.js';
 import { runStage } from './stage.js';
 import { changed } from './worktrees.js';
 
@@ -262,12 +262,7 @@ export function checkAgentBoxes(config, flowSet) {
       const add = (/** @type {string} */ message) =>
         faults.set(`${file}\0${path}\0${message}`, { file, path, rule: AGENT, message });
       const args = /** @type {AgentArgs} */ (node.with);
-      for (const name of args.agents) {
-        const profile = profileOf(config, name);
-        if (profile === undefined) add(`the profile '${name}' is not in config/agents.yaml`);
-        else
-          for (const fault of ADAPTERS[profile.adapter]?.faults(profile) ?? []) add(`the profile '${name}': ${fault}`);
-      }
+      for (const name of args.agents) for (const fault of profileFaults(config, name)) add(fault);
       for (const name of filesOf(args.prompt)) {
         if (config.prompt(name) === undefined) add(`the prompt file config/prompts/${name} does not exist`);
       }

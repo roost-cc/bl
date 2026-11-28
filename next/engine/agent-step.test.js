@@ -373,17 +373,31 @@ test('a failure result never runs the next entry', async () => {
   assert.ok(!existsSync(log), 'no second session ran');
 });
 
-test("runFlow's agents override: an unknown profile is a configuration error before the first commit", async () => {
-  const { ctx, id } = await listTask('replay');
+test('override_rejects_adapter_profile_faults_before_flow_commit', async () => {
+  const agentsYaml = `${PROFILES['config/agents.yaml']}replay-x: { adapter: replay, model: x }\n`;
+  const { ctx, id } = await listTask('replay', { files: { 'config/agents.yaml': agentsYaml } });
   const head = git(ctx.backlogDir, 'rev-parse', 'HEAD');
   const scriptPath = script('Work', '{ outcome: success, summary: done }');
-  const error = await run(ctx, id, scriptPath, { agents: { profiles: ['nobody'] } });
-  assert.ok(error instanceof ConfigurationFaults);
-  assert.equal(
-    error.message,
-    "config/agents.yaml: /nobody: agents: the agents override names the profile 'nobody', which config/agents.yaml does not define",
-  );
+  const at = 'config/agents.yaml';
+  /** Each row: the override's profiles, and the message of the configuration error. */
+  const rows = [
+    [['nobody'], `${at}: /nobody: agents: the agents override: the profile 'nobody' is not in config/agents.yaml`],
+    [
+      ['replay', 'replay-x'],
+      `${at}: /replay-x: agents: the agents override: the profile 'replay-x': the replay adapter takes no model, and this profile gives 'x'`,
+    ],
+    [[], `${at}: : agents: the agents override: it names no profile`],
+    [undefined, `${at}: : agents: the agents override: it names no profile`],
+    ['replay', `${at}: : agents: the agents override: it names no profile`],
+  ];
+  for (const [profiles, message] of rows) {
+    const error = await run(ctx, id, scriptPath, { agents: { profiles } });
+    assert.ok(error instanceof ConfigurationFaults, JSON.stringify(profiles));
+    assert.equal(error.message, message);
+  }
   assert.equal(git(ctx.backlogDir, 'rev-parse', 'HEAD'), head, 'no commit');
+  // A profile that the box check takes runs.
+  assert.equal((await run(ctx, id, scriptPath, { agents: { profiles: ['replay'] } })).outcome, 'success');
 });
 
 /**

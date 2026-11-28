@@ -163,7 +163,7 @@ const subflowBox = (/** @type {string} */ id) => id.slice(0, id.lastIndexOf('/')
  *   test seam (F-141 D9)
  * @returns {Promise<FlowResult>}
  * @throws {import('../config/check.js').ConfigurationFaults} before any commit, when `agents`
- *   names a profile that `config/agents.yaml` does not define
+ *   names no profile, or a profile with a fault (`checkOverride`)
  */
 export async function runFlow(
   ctx,

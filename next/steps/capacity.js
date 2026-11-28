@@ -7,8 +7,8 @@
  *     `with.agents`. The override has the shape of D-424's `sets: agents`
  *     with `steps`: `profiles` replaces the list in every `agent` box whose
  *     defined step `steps` names, or in every `agent` box with no `steps`.
- *   - `checkOverride(config, override)` refuses an override that names a
- *     profile `config/agents.yaml` does not define.
+ *   - `checkOverride(config, override)` refuses an override with no profile,
+ *     or with a profile that has a fault (`profileFaults`), as a box's list.
  *   - `capacityOf(ctx, name)` asks the profile's adapter for its capacity.
  *   - `firstWithCapacity(ctx, list, skip)` walks the list in order and stops at
  *     the first entry with capacity, so a later adapter is not called.
@@ -16,7 +16,7 @@
  */
 
 import { join } from 'path';
-import { adapterOf } from '../adapters/index.js';
+import { ADAPTERS, adapterOf } from '../adapters/index.js';
 import { ConfigurationFaults } from '../config/check.js';
 
 /** @typedef {import('../adapters/index.js').Profile} Profile */
@@ -57,22 +57,42 @@ export function agentList(node, override) {
 }
 
 /**
- * Refuse an override that names a profile `config/agents.yaml` does not
- * define (agents.md, "Agents and capacity").
+ * The faults of the profile `name` in an `agents` list: one when
+ * `config/agents.yaml` does not define it, else each fault that its adapter
+ * gives (`faults`). A profile whose adapter is not built yet has none: the
+ * step crashes on it (F-141 D3). `checkAgentBoxes` and `checkOverride` both
+ * use it, so a box's list and an override's list take the same faults.
+ * @param {Configuration} config
+ * @param {string} name
+ * @returns {string[]}
+ */
+export function profileFaults(config, name) {
+  const profile = profileOf(config, name);
+  if (profile === undefined) return [`the profile '${name}' is not in config/agents.yaml`];
+  return (ADAPTERS[profile.adapter]?.faults(profile) ?? []).map((fault) => `the profile '${name}': ${fault}`);
+}
+
+/**
+ * Refuse an override with no profile, or with a profile that has a fault
+ * (`profileFaults`; agents.md, "Agents and capacity").
  * @param {{ config: Configuration, backlogDir: string }} ctx
  * @param {AgentsOverride} [override]
- * @throws {ConfigurationFaults} one fault per unknown profile
+ * @throws {ConfigurationFaults} one fault per profile fault, or one for no profile
  */
 export function checkOverride(ctx, override) {
+  if (override === undefined) return;
   const file = join(ctx.backlogDir, 'config', 'agents.yaml');
-  const faults = (override?.profiles ?? [])
-    .filter((name) => profileOf(ctx.config, name) === undefined)
-    .map((name) => ({
-      file,
-      path: `/${name}`,
-      rule: AGENTS,
-      message: `the agents override names the profile '${name}', which config/agents.yaml does not define`,
-    }));
+  const { profiles } = override;
+  const fault = (/** @type {string} */ path, /** @type {string} */ message) => ({
+    file,
+    path,
+    rule: AGENTS,
+    message: `the agents override: ${message}`,
+  });
+  const faults =
+    !Array.isArray(profiles) || profiles.length === 0
+      ? [fault('', 'it names no profile')]
+      : profiles.flatMap((name) => profileFaults(ctx.config, name).map((message) => fault(`/${name}`, message)));
   if (faults.length > 0) throw new ConfigurationFaults(faults, ctx.backlogDir);
 }
 
