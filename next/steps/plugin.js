@@ -10,7 +10,8 @@
  *   command opened (`echo "bl: {{message}}"`), the plain form closes them, so
  *   the shell splits the value at spaces and expands `*` as a file pattern.
  *   The `+` form quotes the value inside and outside double quotes, in sh,
- *   dash and bash (S-1630). Inside single quotes, nothing expands.
+ *   dash and bash (S-1630). Inside single quotes, after a backslash and in a
+ *   comment nothing expands, so a value there is an error (`checkExpanded`).
  * - `runPlugin` runs it as `sh -c <command> sh <args…>`, a long child in a
  *   process scope where user systemd has scopes (D-486), and maps the exit
  *   status to an outcome or a crash (`exitOutcome`). `runPredicate` runs a
@@ -20,6 +21,7 @@
  *   the value into the command text (Decision A5).
  */
 
+import { parse as parseShell } from 'shell-quote';
 import { attribute } from '../config/check.js';
 import { isMapping, pointerToken } from '../config/files.js';
 import { rawNames, render } from '../config/template.js';
@@ -55,7 +57,40 @@ export function pluginCommand(template, view) {
     const n = args.length;
     return `\${${n}+"\${${n}}"}`;
   };
-  return { command: render(template, view, { escape }), args };
+  const command = render(template, view, { escape });
+  if (args.length > 0) checkExpanded(template, view, args.length);
+  return { command, args };
+}
+
+/** The variable that stands for the `n`th value when `checkExpanded` asks shell-quote where each value sits. */
+const probe = (n) => `BL_PLUGIN_VALUE_${n}`;
+
+/**
+ * Throw when one of the `count` values of `template` sits where the shell
+ * does not expand a reference: in single quotes, after a backslash or in a
+ * comment. The shell would then pass the reference text, not the value.
+ * shell-quote parses the command with a plain variable for each value, and
+ * names each variable that the shell expands. It does not parse command
+ * substitution, so a name in single quotes inside `"$(…)"` is not found.
+ * @param {string} template
+ * @param {Record<string, unknown>} view
+ * @param {number} count
+ * @throws {Error} naming the command
+ */
+function checkExpanded(template, view, count) {
+  let n = 0;
+  const expanded = new Set();
+  parseShell(render(template, view, { escape: () => `\${${probe(++n)}}` }), (name) => {
+    expanded.add(name);
+    return '';
+  });
+  for (let i = 1; i <= count; i++) {
+    if (!expanded.has(probe(i))) {
+      throw new Error(
+        `plugin \`${template}\` puts a value where the shell does not expand it (in single quotes, after a backslash or in a comment); write the name outside single quotes`,
+      );
+    }
+  }
 }
 
 /** A plugin's command template and the exit codes it overrides. */
