@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Mustache from 'mustache';
-import { rawNames, render, templateNames } from './template.js';
+import { rawNames, render, renderAsync, templateNames } from './template.js';
 
 test('a value is not HTML-escaped, and Mustache.escape is unchanged after the call', () => {
   const escape = Mustache.escape;
@@ -43,6 +43,21 @@ test('{{> p}} renders the partial with the view, and a partial may use bl and co
 test('{{> missing}} throws an error that names the partial', () => {
   assert.throws(() => render('{{> missing}}', {}, { partial: () => undefined }), /^Error: no partial: missing$/);
   assert.throws(() => render('{{> missing}}', {}), /no partial: missing/);
+});
+
+test('renderAsync runs each {{#bl}} line once, in order, in a partial too, and fills config', async () => {
+  const ran = [];
+  const bl = async (line) => (ran.push(line), `<${line}>`);
+  const partial = (name) => ({ p: '{{#bl}}p {{a}}{{/bl}}' })[name];
+  const text = await renderAsync(
+    '{{#bl}}one {{a}}{{/bl}} {{> p}} {{#bl}}two{{/bl}} {{config.k}}',
+    { a: 'A' },
+    { partial, bl, config: { k: 'v' } },
+  );
+  assert.equal(text, '<one A> <p A> <two> v');
+  assert.deepEqual(ran, ['one A', 'p A', 'two']);
+  // With no bl, it is one render.
+  assert.equal(await renderAsync('{{a}} {{config.k}}', { a: 'A' }, { config: { k: 'v' } }), 'A v');
 });
 
 test('escape gives the text of each filled value; a missing name is not passed to it and renders as nothing', () => {
