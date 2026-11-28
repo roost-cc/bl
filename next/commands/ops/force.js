@@ -6,12 +6,13 @@
  * `<path>` is a JSON Pointer (RFC 6901). `<value>` is read as one YAML 1.2
  * scalar with the `yaml` library, so `done` is a string, `6` a number and
  * `null` deletes. The op applies one JSON Patch operation (RFC 6902) with the
- * `fast-json-patch` library: `remove` for `null`, otherwise `add`. Under the
- * backlog lock, it checks the whole patched `state.json` against the state
- * schema (`checkState`) and the statuses of the item's type in the flow set,
- * and writes nothing when a check fails. Then it writes the state and `{ at,
- * event: 'force', path, from, to, status, by: 'operator', note }` in one store
- * write, and gives that entry as its record (D-462). `from` is absent when the
+ * `fast-json-patch` library: `remove` for `null`, otherwise `add`. All in one
+ * store write, so under the backlog lock and after each store write that this
+ * process queued before it: it reads `state.json`, checks the whole patched
+ * `state.json` against the state schema (`checkState`) and the statuses of
+ * the item's type in the flow set, and writes nothing when a check fails.
+ * Then it writes the state and `{ at, event: 'force', path, from, to, status,
+ * by: 'operator', note }`, and gives that entry as its record (D-462). `from` is absent when the
  * path did not exist. The log entry schema requires `note`: with no `<note>`,
  * it is empty.
  *
@@ -25,7 +26,7 @@
 import jsonPatch from 'fast-json-patch';
 import { parse } from 'yaml';
 import { parseRun } from '../../engine/run-state.js';
-import { itemHolder, withLock } from '../../lib/lock.js';
+import { itemHolder } from '../../lib/lock.js';
 import { checkState, readState, STATE, throwFaults } from '../../store/item-json.js';
 import { existingItem } from '../../store/items.js';
 import { now, storeWrite } from '../../store/write.js';
@@ -66,7 +67,8 @@ export const force = {
     const item = existingItem(ctx, /** @type {string} */ (id));
     const to = scalar(/** @type {string} */ (text));
     const pointer = /** @type {string} */ (path);
-    return withLock(ctx.backlogDir, async () => {
+    // The read, the checks and the write are one store write, so a write queued before it is read.
+    return await storeWrite(ctx, { message: `${item.id}: force ${pointer} (bl force)` }, (w) => {
       const state = /** @type {{ status: string, run: string }} */ (readState(ctx, item));
       const holder = itemHolder(ctx.backlogDir, item.id);
       const { kind, arg: box } = parseRun(state.run);
@@ -97,10 +99,8 @@ export const force = {
         by: 'operator',
         note: note ?? '',
       };
-      await storeWrite(ctx, { message: `${item.id}: force ${pointer} (bl force)` }, (w) => {
-        w.state(item.id, patched);
-        w.log(item.id, entry);
-      });
+      w.state(item.id, patched);
+      w.log(item.id, entry);
       return entry;
     });
   },

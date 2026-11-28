@@ -37,7 +37,8 @@ export const outcome = {
   schema: LOG_ENTRY_SCHEMA,
   run: async ({ id, outcome: name, note }, ctx) => {
     const item = existingItem(ctx, /** @type {string} */ (id));
-    return withLock(ctx.backlogDir, async () => {
+    /** The item's run state and its box; an error when the run state is at no box. */
+    const atBox = () => {
       const state = /** @type {import('../../engine/run-state.js').State} */ (readState(ctx, item));
       const run = readRunState(ctx, item.id, state);
       const { kind, arg: box } = parseRun(run);
@@ -46,6 +47,11 @@ export const outcome = {
           `${item.id}: the run state is ${run}; an outcome is for a box that is active, interrupted or waiting`,
         );
       }
+      return { run, box };
+    };
+    return withLock(ctx.backlogDir, async () => {
+      // The commit message and trailer name the box, so the box is read before the store write.
+      const { run, box } = atBox();
       const entry = {
         at: now(),
         event: 'outcome',
@@ -54,7 +60,12 @@ export const outcome = {
         ...(note == null ? {} : { note }),
         by: 'operator',
       };
-      await flowWrite(ctx, item.type, `${item.id}: ${box} ${name} (bl outcome)`, box, (w) => w.log(item.id, entry));
+      await flowWrite(ctx, item.type, `${item.id}: ${box} ${name} (bl outcome)`, box, (w) => {
+        // A store write that this process queued before this one may have changed the run state.
+        const again = atBox().run;
+        if (again !== run) throw new Error(`${item.id}: the run state changed to ${again}; no outcome is recorded`);
+        w.log(item.id, entry);
+      });
       return entry;
     });
   },

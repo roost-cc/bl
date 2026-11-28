@@ -7,6 +7,7 @@ import { STEPS } from '../../engine/flow-set.js';
 import { holderOf } from '../../lib/kernel-lock.js';
 import { itemLockPath } from '../../lib/lock.js';
 import { itemDir } from '../../store/items.js';
+import { storeWrite } from '../../store/write.js';
 import { createItems, engineBacklog } from '../../test/helpers/engine-backlog.js';
 import { UTOP_STEPS } from '../../test/helpers/flow-fixture.js';
 import { git } from '../../test/helpers/git.js';
@@ -120,6 +121,25 @@ for (const [run, state] of [
     assert.equal(head(ctx), base);
   });
 }
+
+test('bl-next outcome reads the run state again in its store write: a store write queued before it that ends the wait makes it refuse', async () => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'in_progress', run: 'waiting: wait_implement' });
+  // Queued first, and slow, so the outcome reads waiting before this write lands.
+  const before = storeWrite(ctx, { message: `${id}: force /run` }, async (w) => {
+    await new Promise((done) => setTimeout(done, 200));
+    w.state(id, { status: 'in_progress', run: 'idle' });
+  });
+  const recorded = OPS.outcome.run({ id, outcome: 'success' }, /** @type {any} */ ({ ...ctx, ops: OPS }));
+  await before;
+  await assert.rejects(recorded, {
+    message: `${id}: the run state is idle; an outcome is for a box that is active, interrupted or waiting`,
+  });
+  assert.deepEqual(
+    logOf(ctx, id).filter((entry) => entry.event === 'outcome'),
+    [],
+  );
+});
 
 test('bl-next outcome on an item that does not exist names it, with no commit', async () => {
   const ctx = backlog();

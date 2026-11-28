@@ -97,6 +97,43 @@ test('bl-next force of a path that exists gives its value before in from; with n
   });
 });
 
+test('force_concurrent_distinct_paths_preserve_both_changes', async () => {
+  const counter = { value: 1, threshold: 5 };
+  for (const [name, calls, state, froms] of /** @type {const} */ ([
+    [
+      'distinct paths',
+      [
+        ['/counters/peer_rounds/value', '2'],
+        ['/counters/peer_rounds/threshold', '6'],
+      ],
+      { value: 2, threshold: 6 },
+      [1, 5],
+    ],
+    [
+      'one path: the second from is the first to',
+      [
+        ['/counters/peer_rounds/value', '2'],
+        ['/counters/peer_rounds/value', '3'],
+      ],
+      { value: 3, threshold: 5 },
+      [1, 2],
+    ],
+  ])) {
+    const ctx = backlog();
+    const id = await story(ctx, { ...COUNTED, counters: { peer_rounds: counter } });
+    // Both calls start before either writes, in one process.
+    const entries = await Promise.all(calls.map(([path, value]) => force(ctx, id, path, value)));
+    assert.deepEqual(stateOf(ctx, id).counters.peer_rounds, state, name);
+    assert.deepEqual(
+      entries.map((entry) => entry.from),
+      froms,
+      `${name}: each from is the value its write replaced`,
+    );
+    const logged = logOf(ctx, id).filter((entry) => entry.event === 'force');
+    assert.deepEqual(logged, entries, `${name}: the log holds both entries`);
+  }
+});
+
 test('bl-next force <id> /status done sets the status, as a string', async () => {
   const ctx = backlog();
   const id = await story(ctx, { status: 'implemented', run: 'idle' });
