@@ -535,6 +535,50 @@ test('a backlog.yaml with a shape fault gives that fault and no cel fault for a 
   }
 });
 
+test('predicate_sparse_argument_index', () => {
+  const call = 'when: predicates.p("x")\n';
+  const at = 'backlog.yaml: /plugin_registry/predicates/p: args:';
+  // A sparse first index, a gap, a leading zero and a name that is no number, each in a plain and a sectioned name.
+  const rows = [
+    [
+      "'test -n {{args.1}}'",
+      `${at} 'args.1' is no argument: a command that reads 1 args. names reads args.0 to args.0`,
+    ],
+    [
+      "'test {{args.0}} = {{args.2}}'",
+      `${at} 'args.2' is no argument: a command that reads 2 args. names reads args.0 to args.1`,
+    ],
+    [
+      "'test -n {{args.01}}'",
+      `${at} 'args.01' is no argument: a command that reads 1 args. names reads args.0 to args.0`,
+    ],
+    [
+      "'test -n {{args.foo}}'",
+      `${at} 'args.foo' is no argument: a command that reads 1 args. names reads args.0 to args.0`,
+    ],
+    [
+      "'{{#args.1}}true{{/args.1}}'",
+      `${at} 'args.1' is no argument: a command that reads 1 args. names reads args.0 to args.0`,
+    ],
+  ];
+  for (const [predicate, line] of rows) {
+    const backlog = `color_scheme: mocha\nlanguage: en\nrepos: {}\nplugin_registry:\n  predicates:\n    p: ${predicate}\n`;
+    const dirs = fixture({ 'backlog/backlog.yaml': backlog, 'backlog/config/flow.yaml': call });
+    assert.deepEqual(faultLines(dirs, [...BACKLOG_KINDS, FLOW]), [line], predicate);
+  }
+  // Indexes 0 to n - 1, in any order and read more than once, give n arguments.
+  for (const [predicate, arity] of [
+    ["'true'", 0],
+    ["'test {{args.1}} = {{args.0}} -o {{args.1}}'", 2],
+    ["'{{#args.0}}{{args.0.x}}{{/args.0}}'", 1],
+  ]) {
+    const backlog = `color_scheme: mocha\nlanguage: en\nrepos: {}\nplugin_registry:\n  predicates:\n    p: ${predicate}\n`;
+    const flow = `when: predicates.p(${Array(arity).fill('"x"').join(', ')})\n`;
+    const dirs = fixture({ 'backlog/backlog.yaml': backlog, 'backlog/config/flow.yaml': flow });
+    assert.doesNotThrow(() => load(dirs, [...BACKLOG_KINDS, FLOW]), predicate);
+  }
+});
+
 test('the CEL strings of a kind with a shape fault are not compiled', () => {
   const dirs = fixture({ ...SHOP_ONLY, 'backlog/config/flow.yaml': 'when: title\nextra: 1\n' });
   assert.deepEqual(faultLines(dirs, [...BACKLOG_KINDS, FLOW]), [

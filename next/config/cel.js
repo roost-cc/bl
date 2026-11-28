@@ -206,9 +206,23 @@ const HANDLER_NAMES = [...FUNCTIONS.map((fn) => fn.name), 'predicate'];
 /**
  * The number of parameters of a shop predicate: the number of distinct
  * `{{args.<n>}}` names that its command template reads, in sections too.
+ * Those names must be `args.0` up to `args.<count - 1>`, each index written
+ * without leading zeros, so each call argument fills one name.
  * @param {string} template
+ * @returns {number}
+ * @throws {Error} naming the first `args.` name that is not such an index
  */
-const predicateArity = (template) => templateNames(template, 'args').filter((key) => /^\d+$/.test(key)).length;
+export function predicateArity(template) {
+  const keys = templateNames(template, 'args');
+  // The keys are distinct, so with each below their count they are 0 to count - 1.
+  const bad = keys.find((key) => !/^(0|[1-9]\d*)$/.test(key) || Number(key) >= keys.length);
+  if (bad !== undefined) {
+    throw new Error(
+      `'args.${bad}' is no argument: a command that reads ${keys.length} args. names reads args.0 to args.${keys.length - 1}`,
+    );
+  }
+  return keys.length;
+}
 
 /**
  * An environment with every declaration of D6, its handlers from

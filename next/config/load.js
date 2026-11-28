@@ -14,7 +14,7 @@
 import { readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import Mustache from 'mustache';
-import { celEnvironment, celSelfTest } from './cel.js';
+import { celEnvironment, celSelfTest, predicateArity } from './cel.js';
 import { ConfigurationFaults, attribute, compileCel, shapeChecker } from './check.js';
 import { pointerToken, readYaml } from './files.js';
 import { applyLayers, bothAxes, reposLayers, scopesOf, whoAxis, whoEntries } from './layers.js';
@@ -164,8 +164,9 @@ function readPartials(backlogDir, operatorDir, faults) {
 /**
  * The CEL inputs (F-140 D2, Decision A1): the shop predicates of the
  * top-level scope's `plugin_registry.predicates`, each the command string
- * (`command` for the object form). A command that Mustache does not parse is a
- * fault, because its number of arguments is not known. With no top-level
+ * (`command` for the object form). A command that Mustache does not parse, or
+ * whose `args.` names are not `args.0` to `args.<n - 1>` (`predicateArity`), is
+ * a fault, because its number of arguments is not known. With no top-level
  * result whose shape holds, or with such a fault, the inputs are `null`: the
  * CEL environment is not known.
  * @param {{ result: any, layers: readonly Layer[], cel: CelString[]|null }|undefined} top
@@ -177,15 +178,20 @@ function celInputsOf(top, faults) {
   const before = faults.length;
   const entries = Object.entries(top.result.plugin_registry?.predicates ?? {}).map(([name, plugin]) => {
     const command = typeof plugin === 'string' ? plugin : plugin.command;
+    const fault = (rule, message) => {
+      const path = `/plugin_registry/predicates/${pointerToken(name)}${typeof plugin === 'string' ? '' : '/command'}`;
+      faults.push({ ...attribute(path, /** @type {Layer[]} */ (top.layers)), rule, message });
+    };
     try {
       Mustache.parse(command);
     } catch (error) {
-      const path = `/plugin_registry/predicates/${pointerToken(name)}${typeof plugin === 'string' ? '' : '/command'}`;
-      faults.push({
-        ...attribute(path, /** @type {Layer[]} */ (top.layers)),
-        rule: 'mustache',
-        message: error.message,
-      });
+      fault('mustache', error.message);
+      return [name, command];
+    }
+    try {
+      predicateArity(command);
+    } catch (error) {
+      fault('args', error.message);
     }
     return [name, command];
   });
