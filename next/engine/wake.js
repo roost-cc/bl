@@ -11,9 +11,11 @@
  *      resolves `BURST_MS` after the last change;
  *   2. `signal`: SIGUSR2, which `bl resume` sends (D-22);
  *   3. `timer`: `gate_recheck_minutes` of the flow set (D-21);
- *   4. `capacity`: when a failing entry calls `has_capacity()`, the earliest
- *      `resets_at` in the future among the profiles of `agents` that have no
- *      capacity, when it comes before the timer. A profile with
+ *   4. `capacity`: when a failing entry calls `has_capacity()`, a profile of
+ *      `agents` that has capacity after `open` ran and had none before it
+ *      (with no `open`, the profiles are asked once, after the start);
+ *      else the earliest `resets_at` in the future among the profiles that
+ *      have no capacity, when it comes before the timer. A profile with
  *      `resets_at: null` adds none;
  *   5. `recheck`: `open`, the caller's check of the item, run once after the
  *      other sources start, gives true. So a change between the caller's
@@ -33,6 +35,7 @@ import { celNodes } from './derive.js';
 /**
  * @typedef {import('./conditions.js').EngineContext} EngineContext
  * @typedef {import('./gates.js').FailingEntry} FailingEntry
+ * @typedef {import('../adapters/index.js').Capacity} Capacity
  * @typedef {'reflog'|'signal'|'timer'|'capacity'|'recheck'} WakeSource
  */
 
@@ -54,28 +57,38 @@ function callsCapacity(env, { entry }) {
 }
 
 /**
- * The time of the earliest capacity reset (source 4), in ms since the epoch,
- * or `null` when there is none to wait for. The caller schedules it from the
- * time, so the capacity calls do not move it later.
+ * The capacity of each profile of `agents` (source 4), from its adapter; none
+ * when no failing entry calls `has_capacity()`.
  * @param {EngineContext} ctx
  * @param {readonly FailingEntry[]} failing
  * @param {readonly string[]|undefined} agents
- * @param {number} since  the start of the wait: a reset before it is in the past
- * @returns {Promise<number|null>}
+ * @returns {Promise<Map<string, Capacity>>}
  */
-async function capacityReset(ctx, failing, agents, since) {
-  if (agents === undefined) return null;
+async function capacities(ctx, failing, agents) {
+  /** @type {Map<string, Capacity>} */
+  const found = new Map();
+  if (agents === undefined) return found;
   const env = celEnvironment(ctx.config.celInputs);
-  if (!failing.some((entry) => callsCapacity(env, entry))) return null;
-  /** @type {number[]} */
-  const resets = [];
-  for (const name of new Set(agents)) {
-    const { available, resets_at } = await capacityOf(ctx, name);
+  if (!failing.some((entry) => callsCapacity(env, entry))) return found;
+  for (const name of new Set(agents)) found.set(name, await capacityOf(ctx, name));
+  return found;
+}
+
+/**
+ * The time of the earliest capacity reset among `found` (source 4), in ms
+ * since the epoch, or `null` when there is none to wait for. The caller
+ * schedules it from the time, so the capacity calls do not move it later.
+ * @param {Map<string, Capacity>} found
+ * @param {number} since  the start of the wait: a reset before it is in the past
+ * @returns {number|null}
+ */
+function earliestReset(found, since) {
+  const resets = [...found.values()].flatMap(({ available, resets_at }) => {
     // A reset in the past would wake the process at once, again and again: the timer covers it.
-    // One after the start of the wait, while `open` or these calls ran, still wakes it at once.
+    // One after the start of the wait, while `open` or the capacity calls ran, still wakes it at once.
     const at = resets_at === null ? NaN : Date.parse(resets_at);
-    if (!available && at > since) resets.push(at);
-  }
+    return !available && at > since ? [at] : [];
+  });
   return resets.length === 0 ? null : Math.min(...resets);
 }
 
@@ -109,10 +122,18 @@ export async function waitForWake(ctx, { failing, agents, open }) {
   const start = Date.now();
   timers.push(setTimeout(() => wake('timer'), recheck));
   try {
+    // A wake during the capacity calls is kept: `woken` resolves with it as soon as they return.
+    const before = open === undefined ? undefined : await capacities(ctx, failing, agents);
     // The other sources have started: a change after this check reaches one of them.
     if (open !== undefined && (await open())) return 'recheck';
-    // A wake during the capacity calls is kept: `woken` resolves with it as soon as they return.
-    const at = await capacityReset(ctx, failing, agents, start);
+    const after = await capacities(ctx, failing, agents);
+    // A profile that got capacity while `open` ran: `open` may have checked the gate before it.
+    // One that had capacity before `open` too does not wake: the gate saw it, and it holds the
+    // item for another reason.
+    if ([...after].some(([name, { available }]) => available && before?.get(name)?.available === false)) {
+      return 'capacity';
+    }
+    const at = earliestReset(after, start);
     if (at !== null && at < start + recheck) {
       timers.push(setTimeout(() => wake('capacity'), Math.max(0, at - Date.now())));
     }

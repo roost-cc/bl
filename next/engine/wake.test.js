@@ -26,9 +26,10 @@ const inMs = (/** @type {number} */ ms) => new Date(Date.now() + ms).toISOString
 /**
  * A backlog whose agent profiles `soon`, `later` and `never` are replay profiles with no
  * capacity: `soon` resets in 300 ms, `later` in 5 s, and `never` gives `resets_at: null`; and
- * `free`, which has capacity. With `minutes`, the flow set's gate_recheck_minutes.
+ * `free`, which has capacity. With `minutes`, the flow set's gate_recheck_minutes; with
+ * `more`, more lines of config/agents.yaml.
  */
-function backlog(minutes = 15) {
+function backlog(minutes = 15, more = []) {
   const profile = (/** @type {string} */ name, /** @type {string} */ capacity) =>
     `${name}: { adapter: replay, env: { REPLAY_SCRIPT: '${capacityScript(capacity)}' } }`;
   const agents = [
@@ -37,6 +38,7 @@ function backlog(minutes = 15) {
     profile('later', `{ available: false, resets_at: '${inMs(5000)}' }`),
     profile('never', '{ available: false, resets_at: null }'),
     profile('free', `{ available: true, resets_at: '${inMs(100)}' }`),
+    ...more,
     '',
   ].join('\n');
   const ctx = engineBacklog({}, 'repos: {}\n', undefined, { 'config/agents.yaml': agents });
@@ -114,6 +116,31 @@ test('a capacity reset that passes while open runs still wakes it at once', asyn
   );
   assert.equal(source, 'capacity');
   assert.ok(ms < 1500, `woke after ${ms} ms`);
+});
+
+test('wake_capacity_becomes_available_after_open: a profile that gets capacity while open runs wakes it at once', async () => {
+  const NONE = 'capacity: { available: false, resets_at: null }\nentries: []\n';
+  const script = capacityScript('{ available: false, resets_at: null }');
+  // The timer: 600 ms.
+  const ctx = backlog(0.01, [`switch: { adapter: replay, env: { REPLAY_SCRIPT: '${script}' } }`]);
+  for (const [what, names, gets, expected] of /** @type {const} */ ([
+    ['one profile', ['switch'], true, 'capacity'],
+    ['a mixed list with another profile that has no capacity', ['never', 'switch'], true, 'capacity'],
+    ['a profile that stays without capacity', ['switch'], false, 'timer'],
+    ['a profile that had capacity before open too', ['free'], false, 'timer'],
+  ])) {
+    writeFileSync(script, NONE);
+    // open checks the gate, then the profile gets capacity, before open returns.
+    const open = async () => {
+      if (gets) writeFileSync(script, NONE.replace('available: false', 'available: true'));
+      return false;
+    };
+    const { source, ms } = await withEnv(replayEnv(script), () =>
+      timed(waitForWake(ctx, { failing: CAPACITY, agents: names, open })),
+    );
+    assert.equal(source, expected, what);
+    if (expected === 'capacity') assert.ok(ms < 600, `${what}: woke after ${ms} ms`);
+  }
 });
 
 test('gate_recheck_minutes wakes it with no commit and no signal', async () => {
