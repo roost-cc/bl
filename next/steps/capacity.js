@@ -32,12 +32,16 @@ export const AGENT = 'agent';
 const AGENTS = 'agents';
 
 /**
- * The profile `name` of `config/agents.yaml`, or `undefined`.
+ * The profile `name` of `config/agents.yaml`, or `undefined`. Only an own key
+ * names a profile, so `constructor` or `__proto__` names none.
  * @param {Configuration} config
  * @param {string} name
  * @returns {Profile|undefined}
  */
-export const profileOf = (config, name) => /** @type {Record<string, Profile>} */ (config.file(AGENTS) ?? {})[name];
+export function profileOf(config, name) {
+  const profiles = /** @type {Record<string, Profile>} */ (config.file(AGENTS) ?? {});
+  return Object.hasOwn(profiles, name) ? profiles[name] : undefined;
+}
 
 /**
  * The `agents` list of `node`: the override's profiles when it applies to the

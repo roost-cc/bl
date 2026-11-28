@@ -7,9 +7,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { ConfigurationFaults } from '../config/check.js';
 import { engineBacklog } from '../test/helpers/engine-backlog.js';
 import { faultLines, UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 import { agent, checkAgentBoxes } from './agent.js';
+import { checkOverride } from './capacity.js';
 import { STEPS } from './index.js';
 
 /** A story flow whose one box runs the agent step with the `with:` text `args`. */
@@ -49,6 +51,33 @@ test('the with schema needs agents, prompt, schema and mode, and takes choices',
   assert.deepEqual(lines('{ agents: [replay], prompt: p.md, schema: s.json, mode: headless, extra: 1 }'), [
     `${at}/extra: additionalProperties: must NOT have additional properties`,
   ]);
+});
+
+test('inherited profile names are configuration faults for boxes and overrides', () => {
+  const inherited = ['constructor', 'toString', 'hasOwnProperty', 'valueOf', '__proto__'];
+  const { backlogDir, config, flowSet } = engineBacklog(
+    story(
+      `{ agents: [${inherited.map((name) => `'${name}'`).join(', ')}], prompt: work.md, schema: work.json, mode: headless }`,
+    ),
+    undefined,
+    { ...UTOP_STEPS, agent },
+  );
+  const box = checkAgentBoxes(config, flowSet).filter(({ path }) => path === '/flows/story/steps/work');
+  assert.deepEqual(
+    box.map(({ message }) => message).filter((message) => message.startsWith('the profile')),
+    inherited.map((name) => `the profile '${name}' is not in config/agents.yaml`),
+  );
+  // The override check throws before runFlow's first commit, so before any capacity call.
+  assert.throws(
+    () => checkOverride({ config, backlogDir }, { profiles: inherited }),
+    (/** @type {any} */ error) =>
+      error instanceof ConfigurationFaults &&
+      error.faults.map(({ path }) => path).join(' ') ===
+        inherited
+          .map((name) => `/${name}`)
+          .sort()
+          .join(' '),
+  );
 });
 
 test('checkAgentBoxes gives no fault for a profile whose adapter is not built yet: the step crashes on it', () => {
