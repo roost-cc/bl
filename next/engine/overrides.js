@@ -13,8 +13,9 @@
  *     property `sets`. The runner calls it once per node, before the step
  *     gate, so `has_capacity()` (`agentList`) and the step see one `with`.
  *   - `overrideFaults(config, flow, catalogue, overrides)` gives, for each box
- *     of the flow that an override changes, the faults of the changed `with`
- *     by the step's `with` schema (`checkValue`), and for an `agent` box each
+ *     of the flow that an override changes, the faults of its `with` after
+ *     all its overrides (`applyOverrides`) by the step's `with` schema
+ *     (`checkValue`), and for an `agent` box each
  *     profile of the new `agents` that `config/agents.yaml` does not define
  *     or that has a fault (`profileFaults`, F-141 D7). `runFlow` throws them
  *     before its first commit.
@@ -90,23 +91,23 @@ export function overrideFaults(config, flow, catalogue, overrides) {
   /** @type {Fault[]} */
   const faults = [];
   for (const node of Object.values(flow.nodes)) {
-    for (const override of overrides) {
-      if (!applies(node, override, catalogue)) continue;
-      const add = (/** @type {string} */ message) =>
-        faults.push({ ...node.source, rule: 'override', message: `the override of with.${override.sets}: ${message}` });
-      const step = /** @type {string} */ (node.step);
-      const schema = catalogue[step].with;
-      if (schema === null) {
-        add(`the step '${step}' takes no with`);
-        continue;
-      }
-      const args = { .../** @type {object|null} */ (node.with), [override.sets]: override.value };
-      const shape = checkValue(schema, args);
-      for (const f of shape) add(`with${f.path}: ${f.rule}: ${f.message}`);
-      if (shape.length > 0 || step !== AGENT || override.sets !== 'agents') continue;
-      for (const name of /** @type {string[]} */ (override.value))
-        for (const fault of profileFaults(config, name)) add(fault);
+    // The box's `with` after all its overrides is the value its step gate and its step see.
+    const keys = [...new Set(overrides.filter((o) => applies(node, o, catalogue)).map((o) => `with.${o.sets}`))];
+    if (keys.length === 0) continue;
+    const add = (/** @type {string} */ message) =>
+      faults.push({ ...node.source, rule: 'override', message: `the override of ${keys.join(', ')}: ${message}` });
+    const step = /** @type {string} */ (node.step);
+    const schema = catalogue[step].with;
+    if (schema === null) {
+      add(`the step '${step}' takes no with`);
+      continue;
     }
+    const args = /** @type {Record<string, unknown>} */ (applyOverrides(node, overrides, catalogue));
+    const shape = checkValue(schema, args);
+    for (const f of shape) add(`with${f.path}: ${f.rule}: ${f.message}`);
+    if (shape.length > 0 || step !== AGENT || !keys.includes('with.agents')) continue;
+    for (const name of /** @type {string[]} */ (args.agents))
+      for (const fault of profileFaults(config, name)) add(fault);
   }
   return faults;
 }

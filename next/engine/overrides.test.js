@@ -66,3 +66,56 @@ test('overrideFaults refuses a with that fails the step schema, and an undefined
   );
   assert.deepEqual(overrideFaults(config, flow, CATALOGUE, []), []);
 });
+
+test('overrideFaults checks the combined with of each box', () => {
+  const node = { kind: 'step', step: 'probe', defined: null, with: { a: 1, b: 1 }, source: { file: 'f', path: '/p' } };
+  const probe = (/** @type {object} */ schema) => ({
+    probe: /** @type {any} */ ({ with: { type: 'object', ...schema } }),
+  });
+  const number = { properties: { a: { type: 'number' }, b: {} } };
+  // a: 2 needs b: 2; and a: 2 with b: 2 is refused.
+  const pair = {
+    properties: { a: {}, b: {} },
+    if: { properties: { a: { const: 2 } } },
+    then: { properties: { b: { const: 2 } } },
+  };
+  const notBoth = { properties: { a: {}, b: {} }, not: { properties: { a: { const: 2 }, b: { const: 2 } } } };
+  const a = (/** @type {unknown} */ value) => ({ sets: 'a', value });
+  const b = (/** @type {unknown} */ value) => ({ sets: 'b', value });
+  for (const [name, schema, overrides, faults] of /** @type {const} */ ([
+    [
+      'two keys combine into an invalid with',
+      notBoth,
+      [a(2), b(2)],
+      ['/p: the override of with.a, with.b: with: not: must NOT be valid'],
+    ],
+    ['two keys repair each other', pair, [a(2), b(2)], []],
+    ['a later option replaces an earlier invalid value', number, [a('x'), a(2)], []],
+    [
+      'a later invalid value replaces an earlier valid one',
+      number,
+      [a(2), a('x')],
+      ['/p: the override of with.a: with/a: type: must be number'],
+    ],
+  ])) {
+    const got = overrideFaults(
+      /** @type {any} */ ({}),
+      /** @type {any} */ ({ nodes: { probe: node } }),
+      probe(schema),
+      overrides,
+    );
+    assert.deepEqual(
+      got.map((f) => `${f.path}: ${f.message}`),
+      faults,
+      name,
+    );
+  }
+  // The profiles checked are those of the final agents list (F-141 D7).
+  const { config, flow } = story();
+  const agents = (/** @type {string[]} */ value) => ({ sets: 'agents', value, steps: ['implement'] });
+  assert.deepEqual(overrideFaults(config, flow, CATALOGUE, [agents(['nobody']), agents(['replay'])]), []);
+  assert.deepEqual(
+    overrideFaults(config, flow, CATALOGUE, [agents(['replay']), agents(['nobody'])]).map((f) => f.message),
+    ["the override of with.agents: the profile 'nobody' is not in config/agents.yaml"],
+  );
+});
