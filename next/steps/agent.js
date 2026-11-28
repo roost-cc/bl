@@ -11,14 +11,18 @@
  *   unchanged, and is a crash when the worktree changed or no entry is left
  *   (D-120, F-141 D7). It stages one usage entry per session, so the entries
  *   go into the box's commit (history.md, "Usage log").
+ * - Each new session's id goes into `state.json` through `ctx.session` as
+ *   soon as the adapter knows it. A session that `state.json` keeps for the
+ *   box, with a profile that is still in the list, is resumed before the
+ *   list is tried (D-417, F-141 D8).
+ * - The step is interactive in `mode: interactive`, so the runner does not
+ *   start it without a terminal (D-29, F-141 D9).
  * - `runSession` runs one session through the profile's adapter, in a fresh
  *   directory under `<backlog>/.bl/tmp/` that it removes afterwards, and
  *   checks the result with the box's outcome schema. F-152's session at a
  *   `wait` box calls it too (Decision A2).
  * - `checkAgentBoxes` finds, at start, each name in an `agent` box that the
  *   configuration does not have.
- *
- * S-1644 records the session id and resumes a kept session (D8).
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
@@ -26,6 +30,8 @@ import { join } from 'path';
 import { ADAPTERS, adapterOf } from '../adapters/index.js';
 import { renderAsync } from '../config/template.js';
 import { STAGING_DIR } from '../lib/staging.js';
+import { readState } from '../store/item-json.js';
+import { itemDir } from '../store/items.js';
 import { now } from '../store/write.js';
 import { AGENT, firstWithCapacity, profileOf } from './capacity.js';
 import { runStage } from './stage.js';
@@ -73,7 +79,8 @@ function fileFor(value, type, what, box) {
 
 /**
  * Run one agent session and check its result (F-141 D5): `start` a new
- * session, or `resume` the session `session` when it is given. The prompt
+ * session, whose id the adapter gives to `ctx.session` (D8), or `resume` the
+ * session `session` when it is given. The prompt
  * and the schema go into a fresh directory under `<backlog>/.bl/tmp/`, with
  * the result path, and the directory is removed afterwards. The session
  * runs in the first repo's worktree, or in the backlog root when the item
@@ -106,8 +113,9 @@ export async function runSession(ctx, { profile, prompt, schema, mode, session =
       cwd: ctx.repos[0]?.worktree_path ?? ctx.backlogDir,
       session,
       unit: ctx.id,
-      // S-1644 records the id in state.json through ctx.session (D8).
-      onSession: async () => {},
+      onSession: async (/** @type {string} */ id) => {
+        await ctx.session({ profile, id });
+      },
     };
     const ended = await (session === null ? adapter.start(agentRun) : adapter.resume(agentRun));
     if (ended.result === null) return { outcome: null, error: ended.error, usage: ended.usage };
@@ -137,6 +145,21 @@ async function preAgent(ctx) {
   if (ran.outcome === 'failure') {
     throw new Error(`bl.pre-agent failed in ${ran.repo}${ran.note === undefined ? '' : `: ${ran.note}`}`);
   }
+}
+
+/**
+ * The agent session that `state.json` keeps for the step's box, when its
+ * profile is in `agents`; else `null`, and the step starts as for a new box
+ * (D-417, F-141 D8).
+ * @param {StepContext} ctx
+ * @param {readonly string[]} agents
+ * @returns {{ profile: string, id: string }|null}
+ */
+function keptSession(ctx, agents) {
+  const { session } = /** @type {{ session?: { box: string, profile: string, id: string } }} */ (
+    readState(ctx, /** @type {import('../store/items.js').Item} */ (itemDir(ctx, ctx.id)))
+  );
+  return session?.box === ctx.box && agents.includes(session.profile) ? session : null;
 }
 
 /** @type {Step} */
@@ -169,14 +192,14 @@ export const agent = Object.freeze({
     const tried = [];
     /** @type {Set<string>} */
     const skip = new Set();
-    for (;;) {
-      const { name: profile, passed } = await firstWithCapacity(ctx, agents, skip);
-      for (const { name, reason } of passed) {
-        tried.push(`${name}: ${reason}`);
-        skip.add(name);
-      }
-      if (profile === null) throw new Error(`no entry of agents gave a valid result: ${tried.join('; ')}`);
-      const ended = await runSession(ctx, { profile, prompt: text, schema: schemaFile, mode });
+    /**
+     * Run a session of `profile`, a new one or the session `session`, and give
+     * its outcome, or `null` when it gave no valid result.
+     * @param {string} profile
+     * @param {string|null} [session]
+     */
+    const attempt = async (profile, session = null) => {
+      const ended = await runSession(ctx, { profile, prompt: text, schema: schemaFile, mode, session });
       ctx.stage((/** @type {import('../store/write.js').Writer} */ w) =>
         w.usage(ctx.id, { at: now(), step: ctx.box, agent: profile, ...ended.usage }),
       );
@@ -188,8 +211,26 @@ export const agent = Object.freeze({
       if (changed(ctx.snapshot, ctx.repos)) {
         throw new Error(`the worktree changed after ${profile} gave no valid result: ${tried.join('; ')}`);
       }
+      return null;
+    };
+    // A session that the box kept continues first, while its profile is in the list (D-417, F-141 D8).
+    const kept = keptSession(ctx, agents);
+    if (kept !== null) {
+      const outcome = await attempt(kept.profile, kept.id);
+      if (outcome !== null) return outcome;
+    }
+    for (;;) {
+      const { name: profile, passed } = await firstWithCapacity(ctx, agents, skip);
+      for (const { name, reason } of passed) {
+        tried.push(`${name}: ${reason}`);
+        skip.add(name);
+      }
+      if (profile === null) throw new Error(`no entry of agents gave a valid result: ${tried.join('; ')}`);
+      const outcome = await attempt(profile);
+      if (outcome !== null) return outcome;
     }
   },
+  interactive: (/** @type {AgentArgs} */ { mode }) => mode === 'interactive',
 });
 
 /**

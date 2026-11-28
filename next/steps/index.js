@@ -41,6 +41,9 @@ import { rank } from './rank.js';
  * @property {(fn: (w: unknown) => void) => void} stage  adds a function that the
  *   runner calls inside the box's store write, so the step's own writes (a
  *   counter, for example) go into the box's commit
+ * @property {(session: { profile: string, id: string }) => Promise<void>} session  commits
+ *   at once the agent session id of the box, with the profile that runs it, in
+ *   `state.json`, so a resumed invocation at the box continues it (F-141 D8)
  * @property {(commit: { repo: string, sha: string }) => void} recordCommit  adds
  *   a repo commit to the invocation's `flow_end` `commits`
  * @property {(expr: string) => Promise<unknown>} evaluate  the CEL expression
@@ -55,6 +58,9 @@ import { rank } from './rank.js';
  * @property {Record<string, unknown>|null} with  the JSON Schema of the step's
  *   `with:` arguments, or `null` for a step that takes none; a string that it
  *   marks `cel` is compiled when the flow set loads
+ * @property {(withArgs: any) => boolean} [interactive]  true when the box's step needs
+ *   the operator's terminal; with no terminal, the runner does not start it
+ *   (D-29, F-141 D9). A step without it is never interactive.
  * @property {(ctx: StepContext, withArgs: any) => StepResult | Promise<StepResult>} run
  *   runs the step, and the runner awaits what it gives; a step that throws is
  *   a crash

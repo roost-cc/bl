@@ -1,10 +1,12 @@
-// The agent step with one session (F-141 D5), on a fixture task flow beside the uTop flow set,
+// The agent step (F-141 D5, D7, D8, D9), on a fixture task flow beside the uTop flow set,
 // run by F-139's runner with the real step catalogue and the replay dev dependency (Decision A3).
 // It is here, not in steps/, because only engine/ may import the runner (the layer rule, F-135 D3).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { hostname } from 'os';
 import { delimiter, join } from 'path';
+import pty from 'node-pty';
 import { ConfigurationFaults } from '../config/check.js';
 import { STEPS } from '../steps/index.js';
 import { itemDir } from '../store/items.js';
@@ -14,6 +16,7 @@ import { withEnv } from '../test/helpers/env.js';
 import { UTOP, UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 import { git, tempRepo } from '../test/helpers/git.js';
 import { noReplayPath, REPLAY_BIN, replayEnv } from '../test/helpers/replay.js';
+import { stderrOfAsync } from '../test/helpers/streams.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 import { runFlow } from './runner.js';
 
@@ -404,4 +407,161 @@ test("runFlow's agents override replaces the list of the boxes of the defined st
     // Each box has its own commit; usage.jsonl at HEAD holds both entries.
     assert.deepEqual(agentsAtHead(ctx, id), want, JSON.stringify(agents));
   }
+});
+
+// ---- sessions and resume (F-141 D8, D-417) ----
+
+/** The task's state.json at the commit `rev`. */
+const stateAt = (/** @type {any} */ ctx, /** @type {string} */ id, rev = 'HEAD') =>
+  JSON.parse(git(ctx.backlogDir, 'show', `${rev}:${itemDir(ctx, id).path}/state.json`));
+
+/** The subject of the commit `rev`. */
+const subjectAt = (/** @type {any} */ ctx, rev = 'HEAD') => git(ctx.backlogDir, 'log', '-1', '--format=%s', rev);
+
+/** `run` of a resumed invocation at `first`: no entry. */
+const RESUME = { resume: true, entry: undefined };
+
+/**
+ * Run the task once with `scriptPath`, whose first session ends at an `exit:` turn, so that the box
+ * crashes with no entry left; give the replay state that a later run must use too, and the session
+ * that state.json then holds.
+ */
+async function crashInSession(/** @type {any} */ ctx, /** @type {string} */ id, /** @type {string} */ scriptPath) {
+  const env = replayEnv(scriptPath);
+  const crash = await run(ctx, id, scriptPath, {}, env);
+  assert.equal(crash.name, 'FlowCrash');
+  assert.match(crash.message, /^first: no entry of agents gave a valid result: .*replay exited 3/);
+  const { session } = stateAt(ctx, id);
+  return { env, session };
+}
+
+test('a session that ends at an exit: turn leaves its box, profile and id in state.json, in a commit of its own', async () => {
+  const { ctx, id } = await listTask('replay');
+  const { session } = await crashInSession(ctx, id, scriptOf([['Work', ['exit: 3', SUCCESS]]]));
+  assert.deepEqual(stateAt(ctx, id), { status: 'draft', run: 'active: first', host: hostname(), session });
+  assert.deepEqual({ ...session, id: '' }, { box: 'first', profile: 'replay', id: '' });
+  assert.match(session.id, /^[0-9a-f-]{36}$/);
+  assert.equal(subjectAt(ctx), `${id}: first session ${session.id}`);
+  assert.deepEqual(git(ctx.backlogDir, 'log', '-1', '--format=%(trailers:only,unfold)').trim().split('\n'), [
+    'Bl-Flow: task',
+    'Bl-Step: first',
+    `Bl-Item: ${id}`,
+  ]);
+});
+
+test('a resumed invocation at the box keeps the session in its flow_start commit and continues it after the exit: turn', async () => {
+  const log = join(mkTempDir('bl-agent-log-'), 'log');
+  const { ctx, id } = await listTask('replay');
+  const scriptPath = scriptOf([['Work', [logTurn(log, 'before'), 'exit: 3', logTurn(log, 'after'), SUCCESS]]]);
+  const { env, session } = await crashInSession(ctx, id, scriptPath);
+  const result = await run(ctx, id, scriptPath, RESUME, env);
+  assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.equal(subjectAt(ctx, 'HEAD~1'), `${id}: resumed at first`);
+  assert.deepEqual(stateAt(ctx, id, 'HEAD~1'), { status: 'draft', run: 'active: first', host: hostname(), session });
+  // The turn before the exit: ran once, in the first invocation.
+  assert.deepEqual(readFileSync(log, 'utf8').split('\n'), ['before', 'after', '']);
+  // The box's commit holds no session.
+  assert.deepEqual(stateAt(ctx, id), { status: 'done', run: 'idle' });
+  assert.deepEqual(agentsAtHead(ctx, id), ['first: replay']);
+});
+
+test('a kept session whose profile is no longer in the list is not resumed: the step starts a new session', async () => {
+  const log = join(mkTempDir('bl-agent-log-'), 'log');
+  const { ctx, id } = await listTask('replay');
+  const scriptPath = scriptOf([
+    ['Work', ['exit: 3', logTurn(log, 'resumed'), SUCCESS]],
+    ['Work', [logTurn(log, 'new'), SUCCESS]],
+  ]);
+  const { env } = await crashInSession(ctx, id, scriptPath);
+  const result = await run(ctx, id, scriptPath, { ...RESUME, agents: { profiles: ['replay-b'] } }, env);
+  assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.deepEqual(readFileSync(log, 'utf8').split('\n'), ['new', '']);
+  assert.equal(stateAt(ctx, id, 'HEAD~1').session.profile, 'replay-b');
+  assert.deepEqual(stateAt(ctx, id), { status: 'done', run: 'idle' });
+  assert.deepEqual(agentsAtHead(ctx, id), ['first: replay-b']);
+});
+
+test('a resumed session with no valid result moves on to the other entries, the resumed profile skipped', async () => {
+  const { ctx, id } = await listTask('replay, replay-b');
+  const scriptPath = scriptOf([
+    ['Work', ['exit: 3']],
+    ['Work', ['exit: 3', 'exit: 4']],
+    ['Work', [SUCCESS]],
+  ]);
+  // replay and then replay-b end at an exit: turn; state.json keeps replay-b's session.
+  const { env, session } = await crashInSession(ctx, id, scriptPath);
+  assert.equal(session.profile, 'replay-b');
+  const result = await run(ctx, id, scriptPath, RESUME, env);
+  assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.deepEqual(agentsAtHead(ctx, id), ['first: replay-b', 'first: replay']);
+});
+
+// ---- an interactive step with no terminal (F-141 D9, D-29) ----
+
+const INTERACTIVE = '{ agents: [replay], prompt: work.md, schema: implement.json, mode: interactive }';
+
+test('an interactive agent box with no terminal ends the invocation idle with that box next, and prints how to resume', async () => {
+  const { ctx, id } = await task(INTERACTIVE);
+  const { value: result, chunks } = await stderrOfAsync(() =>
+    run(ctx, id, script('Work', '{ outcome: success, summary: done }'), { tty: '/nonexistent/tty' }),
+  );
+  assert.deepEqual(result, { ended: 'stop', status: 'draft' });
+  assert.deepEqual(stateAt(ctx, id), { status: 'draft', run: 'idle', next: 'first' });
+  assert.equal(subjectAt(ctx), `${id}: first no terminal`);
+  const log = git(ctx.backlogDir, 'show', `HEAD:${itemDir(ctx, id).path}/log.jsonl`)
+    .split('\n')
+    .filter(Boolean);
+  const { at, ...end } = JSON.parse(/** @type {string} */ (log.at(-1)));
+  assert.match(at, /^\d{4}-\d\d-\d\dT/);
+  assert.deepEqual(end, {
+    event: 'flow_end',
+    ended: 'stop',
+    status: 'draft',
+    commits: [],
+    note: 'no terminal for the interactive step first',
+  });
+  assert.deepEqual(chunks, [
+    'first: no terminal for the interactive step first\n',
+    `run \`bl resume ${id}\` to continue\n`,
+  ]);
+  assert.deepEqual(usageAtHead(ctx, id), [], 'no session ran');
+});
+
+// ---- an interactive session under a pseudo-terminal (F-141 D4, F-147 D7) ----
+
+const FLOW_CHILD = join(import.meta.dirname, '..', 'test', 'helpers', 'flow-child.js');
+
+test('under a pseudo-terminal, an interactive agent box on replay answers a scripted ask and takes the chosen branch', async () => {
+  const { ctx, id } = await task(INTERACTIVE);
+  const ask = [
+    "ask: { question: 'Ship {{id}}?', choices: { yes: [{ result: { outcome: success, summary: shipped } }],",
+    'no: [{ result: { outcome: failure, summary: held } }] } }',
+  ].join(' ');
+  const scriptPath = scriptOf([['Work (?<id>T-\\d+)', ["say: 'Looking at {{id}}.'", ask]]]);
+  const resultFile = join(mkTempDir('bl-agent-pty-'), 'result.json');
+  const term = pty.spawn(process.execPath, [FLOW_CHILD, ctx.backlogDir, id, 'first', resultFile], {
+    env: { ...process.env, ...replayEnv(scriptPath) },
+    cols: 200,
+  });
+  let output = '';
+  /** @type {() => void} */
+  let check = () => {};
+  term.onData((data) => {
+    output += data;
+    check();
+  });
+  const exited = new Promise((resolve) => term.onExit(({ exitCode }) => resolve(exitCode)));
+  await new Promise((resolve) => {
+    check = () => output.includes('Ship T-1? [yes/no]') && resolve(undefined);
+    check();
+  });
+  assert.match(output, /Looking at T-1\./);
+  term.write('no\r');
+  assert.equal(await exited, 0, output);
+  assert.deepEqual(JSON.parse(readFileSync(resultFile, 'utf8')), {
+    ended: 'stop',
+    status: 'superseded',
+    outcome: 'failure',
+  });
+  assert.deepEqual(agentsAtHead(ctx, id), ['first: replay']);
 });

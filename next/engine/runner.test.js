@@ -1140,6 +1140,109 @@ test('runFlow refuses a start that is no box of the flow, or a return node, with
   assert.deepEqual(stateOf(ctx, id), { status: 'implemented', run: 'idle' });
 });
 
+// ---- the agent session in state.json (F-141 D8) ----
+
+const SESSION = { box: 'implement', profile: 'replay', id: 's-1' };
+
+test("ctx.session commits state.json with the box's session at once, and the box's commit drops it", async () => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'refined', run: 'idle' });
+  const base = head(ctx);
+  /** @type {unknown} */
+  let seen;
+  const { catalogue } = fakeSteps({
+    implement: async (/** @type {any} */ step) => {
+      await step.session({ profile: 'replay', id: 's-1' });
+      seen = stateOf(ctx, id);
+      return 'success';
+    },
+  });
+  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue });
+  assert.deepEqual(seen, { status: 'in_progress', run: 'active: implement', host: hostname(), session: SESSION });
+  const commits = commitsSince(ctx, base);
+  const at = commits.findIndex(({ subject }) => subject === `${id}: implement session s-1`);
+  assert.deepEqual(commits[at].trailers, ['Bl-Flow: story', 'Bl-Step: implement', `Bl-Item: ${id}`]);
+  assert.equal(commits[at + 1].subject, `${id}: implement success`);
+  const path = itemDir(ctx, id).path;
+  assert.equal(JSON.parse(git(ctx.backlogDir, 'show', `${commits[at + 1].sha}:${path}/state.json`)).session, undefined);
+});
+
+test('a resumed invocation keeps the session in its flow_start commit only at the box of the session', async () => {
+  const cases = [
+    // [what, start, resume, the session the step sees]
+    ['resumed at the box', 'implement', true, SESSION],
+    ['resumed at another box', 'prepare', true, undefined],
+    ['started by an entry at the box', 'implement', false, undefined],
+  ];
+  for (const [what, start, resume, want] of cases) {
+    const ctx = backlog();
+    const state = { status: 'in_progress', run: 'active: implement', host: hostname(), session: SESSION };
+    const id = await story(ctx, state);
+    /** @type {unknown[]} */
+    const seen = [];
+    const look = (/** @type {any} */ step) => {
+      seen.push(stateOf(ctx, step.id).session);
+      return 'success';
+    };
+    const { catalogue } = fakeSteps({ [start]: look });
+    const how = resume ? { resume: true } : { entry: 'deliver' };
+    await runFlow(ctx, { id, start, by: 'operator', ...how, catalogue });
+    // The first run of the box; a later one comes after a box's commit, which holds no session.
+    assert.deepEqual(seen[0], want, what);
+  }
+});
+
+// ---- an interactive step with no terminal (F-141 D9, D-29) ----
+
+test('an interactive step with no terminal does not start: the invocation ends idle with that box next', async (t) => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'refined', run: 'idle' });
+  const { catalogue, ran } = fakeSteps();
+  const interactive = { ...catalogue, agent: { ...catalogue.agent, interactive: () => true } };
+  const printed = [];
+  t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(text));
+  const result = await runFlow(ctx, {
+    id,
+    start: 'prepare',
+    by: 'operator',
+    entry: 'run',
+    catalogue: interactive,
+    tty: '/nonexistent/tty',
+  });
+  t.mock.restoreAll();
+  assert.deepEqual(result, { ended: 'stop', status: 'in_progress', outcome: 'success' });
+  assert.deepEqual(ran, ['prepare']);
+  assert.deepEqual(stateOf(ctx, id), { status: 'in_progress', run: 'idle', next: 'implement' });
+  const { at, ...end } = logOf(ctx, id).at(-1);
+  assert.deepEqual(end, {
+    event: 'flow_end',
+    ended: 'stop',
+    outcome: 'success',
+    status: 'in_progress',
+    commits: [],
+    note: 'no terminal for the interactive step implement',
+  });
+  assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%s'), `${id}: implement no terminal`);
+  assert.deepEqual(printed, [
+    'implement: no terminal for the interactive step implement\n',
+    `run \`bl resume ${id}\` to continue\n`,
+  ]);
+
+  // With a terminal it opens, the step runs.
+  const other = await story(ctx, { status: 'refined', run: 'idle' });
+  const { catalogue: steps, ran: runs } = fakeSteps();
+  const withTerminal = { ...steps, agent: { ...steps.agent, interactive: () => true } };
+  await runFlow(ctx, {
+    id: other,
+    start: 'prepare',
+    by: 'operator',
+    entry: 'run',
+    catalogue: withTerminal,
+    tty: '/dev/null',
+  });
+  assert.ok(runs.includes('implement'));
+});
+
 test('a stored state that the flow no longer has is reset first, in its own commit with a reset entry', async (t) => {
   const ctx = backlog();
   const id = await story(ctx, { status: 'implemented', run: 'waiting: gone', counters: { rounds: { value: 2 } } });

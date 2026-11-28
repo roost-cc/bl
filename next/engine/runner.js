@@ -4,8 +4,9 @@
  *
  * `runFlow(ctx, { id, start, by, entry | resume, catalogue })` holds the item
  * lock for the whole invocation (D6) and applies the flow-change reset first
- * (D-46). Its first commit holds the `flow_start` and `active: <start>`. Then,
- * for each node:
+ * (D-46). Its first commit holds the `flow_start` and `active: <start>`; a
+ * resumed invocation keeps there the agent `session` of its start box (F-141
+ * D8). Then, for each node:
  *
  *   1. the visit limit (D-115, Decision A6);
  *   2. the step gate with the entry gates of the subflows the flow enters
@@ -13,22 +14,26 @@
  *      `gated before: <box>` (Decision P1). In an `agent` box,
  *      `has_capacity()` reads the box's `agents` list, which the invocation's
  *      `agents` override replaces where it applies (`agentList`, F-141 D7);
- *   3. the step from the catalogue (D2), an `agent` step with that same list,
- *      with `ctx.evaluate`, `ctx.from`, and
+ *   3. an interactive step with no terminal does not start: the invocation
+ *      ends `idle` with that box `next` (D-29, F-141 D9);
+ *   4. the step from the catalogue (D2), an `agent` step with that same list,
+ *      with `ctx.evaluate`, `ctx.from`,
  *      `ctx.repos` and `ctx.snapshot`, the item's repo contexts and their state
- *      before the step (F-141 D6); a note it
+ *      before the step (F-141 D6), and `ctx.session`, which commits the agent
+ *      session id at once (F-141 D8); a note it
  *      gives is printed as `<box>: <note>` and goes first in the box's notes,
  *      so a `flow_end` at this box holds it (F-140 Decision A2);
- *   4. after `success`, the post-conditions: a failing entry makes the outcome
+ *   5. after `success`, the post-conditions: a failing entry makes the outcome
  *      `failure` (D-35);
- *   5. the arrow of the outcome, through any return nodes (D-26, D-43): a
+ *   6. the arrow of the outcome, through any return nodes (D-26, D-43): a
  *      missing arrow commits an `outcome` entry and crashes; an arrow with a
  *      `status` makes the transition, unless the status is not in the arrow's
  *      derived `from` (the invocation stops) or the status gate fails (the
  *      invocation ends at `gated: <to>`, D-18, D-19);
- *   6. one commit for the box: the step's staged writes, the status and the
+ *   7. one commit for the box: the step's staged writes, the status and the
  *      run state that follows, `active: <next node>` with `host`, or at the end
- *      the end run state and a `flow_end`.
+ *      the end run state and a `flow_end`. It holds no `session`, so a session
+ *      id lasts only while its box runs.
  *
  * So the stored run state names each step before the step starts, and a crash
  * leaves `active: <box>` of a box that has not finished; the item then reads
@@ -56,7 +61,7 @@ import { readState } from '../store/item-json.js';
 import { itemDir } from '../store/items.js';
 import { record as readRecord } from '../store/record.js';
 import { now, storeWrite } from '../store/write.js';
-import { bindConditions, engineRecord } from './conditions.js';
+import { bindConditions, engineRecord, hasTerminal } from './conditions.js';
 import { STOP } from './flow-set.js';
 import { postConditions, statusGate, stepGate } from './gates.js';
 import { checkAgainstFlow } from './run-state.js';
@@ -154,13 +159,15 @@ const subflowBox = (/** @type {string} */ id) => id.slice(0, id.lastIndexOf('/')
  *   before each step; `steps/worktrees.js` by default, a test seam (F-141 D6)
  * @param {import('../steps/capacity.js').AgentsOverride} [invocation.agents]  replaces the
  *   `agents` list of the `agent` boxes that it applies to (`agentList`, F-141 D7)
+ * @param {string} [invocation.tty]  the terminal an interactive step needs (`hasTerminal`), a
+ *   test seam (F-141 D9)
  * @returns {Promise<FlowResult>}
  * @throws {import('../config/check.js').ConfigurationFaults} before any commit, when `agents`
  *   names a profile that `config/agents.yaml` does not define
  */
 export async function runFlow(
   ctx,
-  { id, start, by, entry, resume = false, catalogue, repoContexts = itemRepoContexts, agents },
+  { id, start, by, entry, resume = false, catalogue, repoContexts = itemRepoContexts, agents, tty },
 ) {
   checkOverride(ctx, agents);
   const item = itemDir(ctx, id);
@@ -174,7 +181,7 @@ export async function runFlow(
     throw new Error(`${item.id}: another process (pid ${lock.holder}) runs its flow and holds ${path}`);
   }
   try {
-    return await invoke(ctx, item, flow, { start, by, entry, resume, catalogue, repoContexts, agents });
+    return await invoke(ctx, item, flow, { start, by, entry, resume, catalogue, repoContexts, agents, tty });
   } finally {
     release(lock.taken);
   }
@@ -186,10 +193,11 @@ export async function runFlow(
  * @param {Item} item
  * @param {Flow} flow
  * @param {{ start: string, by: string, entry?: string, resume: boolean, catalogue: Readonly<Record<string, Step>>,
- *   repoContexts: typeof itemRepoContexts, agents?: import('../steps/capacity.js').AgentsOverride }} invocation
+ *   repoContexts: typeof itemRepoContexts, agents?: import('../steps/capacity.js').AgentsOverride,
+ *   tty?: string }} invocation
  * @returns {Promise<FlowResult>}
  */
-async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, repoContexts, agents: override }) {
+async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, repoContexts, agents: override, tty }) {
   const { id, type } = item;
   const host = hostname();
   /**
@@ -251,9 +259,12 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, re
   // A start that the flow does not have (a box that the reset just found gone,
   // or a return node, which runs no step) is refused before the flow_start.
   if (flow.nodes[start]?.kind !== 'step') throw new Error(`${id}: '${start}' is no box of the ${type} flow`);
-  let status = /** @type {{ status: string }} */ (readState(ctx, item)).status;
+  const stored = /** @type {import('./run-state.js').State} */ (readState(ctx, item));
+  let { status } = stored;
+  // A resumed invocation at the box of a kept session keeps it, so the step continues it (F-141 D8).
+  const kept = resume && stored.session?.box === start ? { session: stored.session } : {};
   await flowCommit(resume ? `${id}: resumed at ${start}` : `${id}: ${entry} started`, start, (w) => {
-    setState(w, status, `active: ${start}`, { host });
+    setState(w, status, `active: ${start}`, { host, ...kept });
     w.log(id, { at: now(), event: 'flow_start', ...(resume ? { resume: true } : { entry }), status, by });
   });
 
@@ -299,6 +310,11 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, re
       backlogDir: ctx.backlogDir,
       bl: ctx.bl,
       stage: (fn) => staged.push(/** @type {(w: Writer) => void} */ (fn)),
+      // Its own commit, so a crash after it leaves the id in the stored state (F-141 D8).
+      session: async ({ profile, id: session }) =>
+        flowCommit(`${id}: ${box} session ${session}`, box, (w) =>
+          setState(w, status, `active: ${box}`, { host, session: { box, profile, id: session } }),
+        ),
       recordCommit: ({ repo, sha }) => commits.push({ repo, sha }),
       // The call that the gates make (gates.js), so assert and the gates evaluate in one place.
       evaluate: async (expr) =>
@@ -336,7 +352,20 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, re
 
       // An agent step gets the list its gate checked.
       const withArgs = agents === undefined ? node.with : { .../** @type {object} */ (node.with), agents };
-      const result = await catalogue[/** @type {string} */ (node.step)].run(step, withArgs);
+      const code = catalogue[/** @type {string} */ (node.step)];
+      if (code.interactive?.(withArgs) && !hasTerminal(tty)) {
+        // The step needs the operator, so it does not start (D-29): a later `bl resume` runs it.
+        const note = `no terminal for the interactive step ${box}`;
+        await flowCommit(`${id}: ${box} no terminal`, box, (w) => {
+          setState(w, status, 'idle', { next: box });
+          w.log(id, flowEnd(STOP, last, note));
+        });
+        info(`${box}: ${note}`);
+        info(`run \`bl resume ${id}\` to continue`);
+        await alertOrReport(id, 'ended.normal', async () => sendAlert(step, 'ended', ['normal'], { box }));
+        return { ended: STOP, status, ...(last === undefined ? {} : { outcome: last }) };
+      }
+      const result = await code.run(step, withArgs);
       // A step gives a bare outcome or { outcome, note } (F-140 Decision A2).
       let outcome = typeof result === 'string' ? result : result.outcome;
       /** @type {string[]} */

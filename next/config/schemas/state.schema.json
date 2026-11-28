@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "state.schema.json",
   "title": "An item's state.json",
-  "description": "The item's status, run state and counters, and the run state's `host`, `next` and `held`, each allowed only with its run state (`dependentSchemas`) (graphs.md, \"Item data outside the document\", D-615; core.md, \"Run state\", D-3; steps.md, \"Counting\"). F-137 D8 owns it; the record schema refers to its properties. A later feature that stores another fact in state.json adds its property here, in its own story. Whether `status` names a status of the item's type is the flow set's check (F-139).",
+  "description": "The item's status, run state and counters, and the run state's `host`, `next`, `held` and `session`, each allowed only with its run state (`dependentSchemas`) (graphs.md, \"Item data outside the document\", D-615; core.md, \"Run state\", D-3; steps.md, \"Counting\"). F-137 D8 owns it; the record schema refers to its properties. A later feature that stores another fact in state.json adds its property here, in its own story. Whether `status` names a status of the item's type is the flow set's check (F-139).",
   "type": "object",
   "additionalProperties": false,
   "required": ["status", "run"],
@@ -45,12 +45,28 @@
         "outcome": { "type": "string", "minLength": 1, "description": "The outcome whose arrow holds the transition." }
       },
       "description": "With `gated: <to status>` only: the arrow that holds the transition, by reference to the flow (D-4, F-139 Decision A2)."
+    },
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["box", "profile", "id"],
+      "properties": {
+        "box": { "type": "string", "minLength": 1, "description": "The box whose agent step runs the session." },
+        "profile": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The profile of `config/agents.yaml` that runs it."
+        },
+        "id": { "type": "string", "minLength": 1, "description": "The agent session id." }
+      },
+      "description": "With `active: <box>` only: the agent session of the box that runs, so that a resumed invocation at that box continues it (D-417, F-141 D8)."
     }
   },
   "dependentSchemas": {
     "host": { "properties": { "run": { "type": "string", "pattern": "^active: " } } },
     "next": { "properties": { "run": { "const": "idle" } } },
-    "held": { "properties": { "run": { "type": "string", "pattern": "^gated: " } } }
+    "held": { "properties": { "run": { "type": "string", "pattern": "^gated: " } } },
+    "session": { "properties": { "run": { "type": "string", "pattern": "^active: " } } }
   },
   "$defs": {
     "Counter": {

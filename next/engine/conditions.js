@@ -89,12 +89,14 @@ export function itemRecord(ctx, other, current) {
 }
 
 /**
- * Whether the process can open `path` for reading.
- * @param {string} path
+ * Whether the process has a terminal: it can open `tty` for reading (D-30).
+ * `has_terminal()` and the runner's check of an interactive step call it
+ * (F-141 D9).
+ * @param {string} [tty]  the terminal, `/dev/tty`; a test seam
  */
-function canOpen(path) {
+export function hasTerminal(tty = '/dev/tty') {
   try {
-    closeSync(openSync(path, 'r'));
+    closeSync(openSync(tty, 'r'));
     return true;
   } catch {
     return false;
@@ -117,7 +119,7 @@ function canOpen(path) {
  *   `has_capacity()` reads (F-141 D7)
  * @returns {{ evaluate: (expr: string, record: ItemRecord) => Promise<unknown> }}
  */
-export function bindConditions(ctx, id, { tty = '/dev/tty', current, repos = [], snapshot, agents } = {}) {
+export function bindConditions(ctx, id, { tty, current, repos = [], snapshot, agents } = {}) {
   const bound = bindCel(ctx.config.celInputs, {
     ...UNBOUND,
     has_capacity: async () => {
@@ -134,7 +136,7 @@ export function bindConditions(ctx, id, { tty = '/dev/tty', current, repos = [],
       childrenOf(graphValues(ctx), id)
         .filter((child) => printedType(ctx, child) === type)
         .map((child) => itemRecord(ctx, child, current)),
-    has_terminal: () => canOpen(tty),
+    has_terminal: () => hasTerminal(tty),
     predicate: (name, args) => {
       const itemCtx = { ...ctx, id, record: itemRecord(ctx, id, current) };
       const plugin = ctx.config.scope(null).plugin_registry.predicates[name];
