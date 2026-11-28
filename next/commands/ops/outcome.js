@@ -7,7 +7,9 @@
  * The op then appends `{ at, event: 'outcome', box, outcome, note, by:
  * 'operator' }` to the item's log in one store write, with the `Bl-Flow` and
  * `Bl-Step` trailers of the box (`flowWrite`), and gives that entry as its
- * record (D-462). It writes nothing in `.bl/`.
+ * record (D-462). It writes nothing in `.bl/`. The store write reads the run
+ * state again: when a store write that this process queued before it changed
+ * the run state, the op refuses and writes nothing.
  *
  * The commit changes the `HEAD` reflog, so a process suspended at a `wait`
  * box wakes and follows the outcome's arrow (F-152 D5). A process whose step
