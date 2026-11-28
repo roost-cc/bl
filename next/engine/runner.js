@@ -311,10 +311,10 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
       let outcome = typeof result === 'string' ? result : result.outcome;
       /** @type {string[]} */
       const notes = [];
-      if (typeof result !== 'string' && result.note !== undefined) {
-        info(`${box}: ${result.note}`);
-        notes.push(result.note);
-      }
+      const stepNote = typeof result === 'string' ? undefined : result.note;
+      if (stepNote !== undefined) notes.push(stepNote);
+      // The note is printed once the box's writes are committed, so a failed write prints none.
+      const printNote = () => stepNote !== undefined && info(`${box}: ${stepNote}`);
       if (outcome === 'success') {
         const failed = postConditions(ctx, current(), node);
         if (failed.length > 0) {
@@ -338,6 +338,7 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
             setState(w, status, `active: ${box}`, { host }, staged);
             w.log(id, { at: now(), event: 'outcome', box, outcome, note: notes.join('; ') || undefined, by });
           });
+          printNote();
           const file = relative(ctx.backlogDir, flow.nodes[from].source.file);
           throw new FlowCrash(`${from}: no arrow for the outcome ${followed} in ${file}`);
         }
@@ -382,6 +383,7 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
           w.log(id, flowEnd(end.ended, outcome, note));
         }
       });
+      printNote();
       if (end !== null) {
         // A status gate has no box (D-97); a stop is the normal end (F-140 Decision A3).
         const { gated } = end;

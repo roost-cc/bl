@@ -268,6 +268,63 @@ test("rank on a story places the story's feature, and its note names the feature
   );
 });
 
+test('rank_note_matches_committed_graph_write', async (t) => {
+  // Another writer sets the chain after the rank step read it and before the box commits:
+  // [what, the box, the chain before, the other writer's chain, the chain at the end, the note or null for a crash]
+  const cases = [
+    ['placed, and the other writer placed it first', RANK_LAST, ['X'], ['F', 'X'], ['F', 'X'], null],
+    ['held, and the other writer moved it', RANK_LAST, ['F', 'X'], ['X', 'F'], ['X', 'F'], null],
+    ['placed, and the other writer added another unit', RANK_LAST, [], ['X'], ['X', 'F'], 'F placed last'],
+    ['held, and the other writer added after it', RANK_LAST, ['F'], ['F', 'X'], ['F', 'X'], 'F kept its place 1'],
+  ];
+  for (const [what, box, before, other, after, note] of cases) {
+    const { ctx, F, X } = await rankBacklog(box, before);
+    const ids = { F, X };
+    const rank = {
+      ...STEPS.rank,
+      run: async (/** @type {any} */ step, /** @type {any} */ args) => {
+        const result = await STEPS.rank.run(step, args);
+        await setGraph(
+          ctx,
+          'order',
+          other.map((key) => ids[key]),
+        );
+        return result;
+      },
+    };
+    const printed = [];
+    t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(text));
+    const result = await runFlow(ctx, {
+      id: F,
+      start: 'first',
+      by: 'operator',
+      entry: 'run',
+      catalogue: { ...CATALOGUE, rank },
+    }).catch((e) => e);
+    t.mock.restoreAll();
+    assert.deepEqual(
+      chainAtHead(ctx),
+      after.map((key) => ids[key]),
+      what,
+    );
+    const named = (text) => text.replace(/\bF\b/g, F);
+    if (note === null) {
+      assert.equal(result.name, 'FlowCrash', what);
+      assert.equal(
+        result.message,
+        `first: ${F}: another writer changed its place in the order graph while the rank step ran`,
+        what,
+      );
+      // The note is printed only after the box's writes commit, so a failed write prints none.
+      assert.ok(!printed.some((line) => line.startsWith('first: ')), what);
+    } else {
+      assert.equal(result.outcome, 'success', what);
+      assert.match(git(ctx.backlogDir, 'log', '-1', '--format=%B'), new RegExp(`\\n\\n${named(note)}\\n`), what);
+      assert.ok(printed.includes(`first: ${named(note)}\n`), what);
+    }
+  }
+});
+
 test('rank on an item with no work unit is a crash that names the item and its type', async () => {
   const { ctx, T } = await rankBacklog(RANK_LAST);
   const crash = await run(ctx, T);

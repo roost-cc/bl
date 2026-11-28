@@ -8,7 +8,8 @@
  * chain is the graph whose engine is `rank` (`graphOfEngine`), whatever
  * `backlog.yaml` names it. The step stages the change through `ctx.stage`, so
  * the store write commits the chain in the box's commit, under the backlog
- * lock. Its note names the unit and what the step did (Decision A2).
+ * lock. Its note names the unit and what the step did (Decision A2), and the
+ * write fails when the chain under the lock no longer gives that note.
  */
 
 import { placeInRank } from '../store/engines/rank.js';
@@ -38,12 +39,21 @@ export const rank = Object.freeze({
     const g = /** @type {import('../store/graphs.js').Graph} */ (graphOfEngine(ctx, RANK));
     /** @type {string[]} */
     const chain = readGraph(ctx, g.name);
-    if (!placeInRank(chain, unit, at).placed)
-      return { outcome: 'success', note: `${unit} kept its place ${chain.indexOf(unit) + 1}` };
+    const { placed } = placeInRank(chain, unit, at);
+    const place = chain.indexOf(unit);
+    // The note comes from the chain read now. The staged write reads the chain again under the
+    // backlog lock, and throws when another writer changed the unit's place since, so the box
+    // commits nothing that its note does not describe. A chain with the same text is not written.
     ctx.stage((/** @type {import('../store/write.js').Writer} */ w) =>
-      w.graph(g.name, (/** @type {string[]} */ value) => placeInRank(value, unit, at).chain),
+      w.graph(g.name, (/** @type {string[]} */ value) => {
+        const locked = placeInRank(value, unit, at);
+        if (locked.placed !== placed || (!placed && value.indexOf(unit) !== place)) {
+          throw new Error(`${unit}: another writer changed its place in the ${g.name} graph while the rank step ran`);
+        }
+        return locked.chain;
+      }),
     );
-    return { outcome: 'success', note: `${unit} placed ${at}` };
+    return { outcome: 'success', note: placed ? `${unit} placed ${at}` : `${unit} kept its place ${place + 1}` };
   },
 });
 
