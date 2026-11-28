@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Mustache from 'mustache';
-import { render } from './template.js';
+import { rawNames, render, templateNames } from './template.js';
 
 test('a value is not HTML-escaped, and Mustache.escape is unchanged after the call', () => {
   const escape = Mustache.escape;
@@ -43,4 +43,31 @@ test('{{> p}} renders the partial with the view, and a partial may use bl and co
 test('{{> missing}} throws an error that names the partial', () => {
   assert.throws(() => render('{{> missing}}', {}, { partial: () => undefined }), /^Error: no partial: missing$/);
   assert.throws(() => render('{{> missing}}', {}), /no partial: missing/);
+});
+
+test('escape gives the text of each filled value; a missing name is not passed to it and renders as nothing', () => {
+  const seen = [];
+  const escape = (value) => {
+    seen.push(value);
+    return `<${typeof value}>`;
+  };
+  assert.equal(
+    render('{{a}} {{n}} {{gone}} {{e}}', { a: 'x', n: 3, e: '' }, { escape }),
+    '<string> <number>  <string>',
+  );
+  assert.deepEqual(seen, ['x', 3, '']);
+  // With no escape, a value renders as String gives it.
+  assert.equal(render('{{a}} {{n}} {{gone}}', { a: 'x', n: 3 }), 'x 3 ');
+});
+
+test('templateNames gives the distinct keys under a prefix, in sections too, in first-use order', () => {
+  assert.deepEqual(templateNames('x {{with.a}} {{#with.b}}{{with.c}}{{/with.b}} {{args.0}}', 'with'), ['a', 'b', 'c']);
+  assert.deepEqual(templateNames('{{args.1}} {{^x}}{{args.0}}{{/x}} {{args.1}} {{{args.2}}}', 'args'), ['1', '0', '2']);
+  assert.deepEqual(templateNames('{{with.a.b}} {{without}} {{with}}', 'with'), ['a']);
+  assert.deepEqual(templateNames('no names', 'with'), []);
+});
+
+test('rawNames gives each name filled with {{{name}}} or {{& name}}, in sections too, and no other', () => {
+  assert.deepEqual(rawNames('{{{with.a}}} {{#s}}{{& message}}{{/s}} {{with.b}} {{#c}}{{/c}}'), ['with.a', 'message']);
+  assert.deepEqual(rawNames('{{with.a}}'), []);
 });

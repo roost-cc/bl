@@ -10,6 +10,7 @@ import { join } from 'path';
 import { ConfigurationFaults } from '../config/check.js';
 import { KINDS } from '../config/kinds.js';
 import { loadConfiguration } from '../config/load.js';
+import { ALERTS, TEMPLATES } from '../test/helpers/config-fixture.js';
 import { withEnv } from '../test/helpers/env.js';
 import { ESCAPE, recorder } from '../test/helpers/streams.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
@@ -50,12 +51,25 @@ const MOCHA = 'match: [bold, "#f9e2af"]\n';
  * commands.yaml, and with `views` and `operatorViews` as the shop's and the
  * operator's views.yaml when given. The backlog names the color scheme
  * `mocha`; `schemes` are the shop's color-scheme files, name → text, and
- * `operatorSchemes` the operator's.
+ * `operatorSchemes` the operator's. `registry` is added to backlog.yaml.
+ * `alerts` is config/alerts.yaml, and `templates` the shop's language files,
+ * name → text.
  */
-function fixture(commands = COMMANDS, { views, operatorViews, schemes = { mocha: MOCHA }, operatorSchemes = {} } = {}) {
+function fixture(
+  commands = COMMANDS,
+  {
+    views,
+    operatorViews,
+    schemes = { mocha: MOCHA },
+    operatorSchemes = {},
+    registry = '',
+    alerts = ALERTS,
+    templates = { 'en.yaml': TEMPLATES },
+  } = {},
+) {
   const backlogDir = mkTempDir('bl-dispatch-');
   const operatorDir = join(backlogDir, 'operator');
-  writeFileSync(join(backlogDir, 'backlog.yaml'), 'color_scheme: mocha\nrepos: {}\n');
+  writeFileSync(join(backlogDir, 'backlog.yaml'), `color_scheme: mocha\nlanguage: en\nrepos: {}\n${registry}`);
   mkdirSync(join(backlogDir, 'config', 'color-schemes'), { recursive: true });
   mkdirSync(join(operatorDir, 'color-schemes'), { recursive: true });
   for (const [name, text] of Object.entries(schemes)) {
@@ -65,6 +79,11 @@ function fixture(commands = COMMANDS, { views, operatorViews, schemes = { mocha:
     writeFileSync(join(operatorDir, 'color-schemes', `${name}.yaml`), text);
   }
   writeFileSync(join(backlogDir, 'config', 'commands.yaml'), commands);
+  writeFileSync(join(backlogDir, 'config', 'alerts.yaml'), alerts);
+  mkdirSync(join(backlogDir, 'config', 'templates'), { recursive: true });
+  for (const [name, text] of Object.entries(templates)) {
+    writeFileSync(join(backlogDir, 'config', 'templates', name), text);
+  }
   if (views !== undefined) writeFileSync(join(backlogDir, 'config', 'views.yaml'), views);
   if (operatorViews !== undefined) writeFileSync(join(operatorDir, 'views.yaml'), operatorViews);
   const config = loadConfiguration({ backlogDir, operatorDir, kinds: KINDS });
@@ -283,6 +302,55 @@ test('a format that util.styleText refuses is a fault in the scheme file that wr
   assert.equal(
     schemeFaults({ operatorSchemes: { mocha: 'done: [blod]\n' } }),
     "operator/color-schemes/mocha.yaml: /done/0: format: 'blod' is not a util.styleText format",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// the start check of the plugin commands (F-140 D3, Decision A5)
+// ---------------------------------------------------------------------------
+
+test('startFaults gives a raw-name fault for {{{with.a}}} in a shop step and {{& message}} in a channel, none for {{with.a}}', () => {
+  const registry = [
+    'plugin_registry:',
+    '  steps: { tag: "tag {{{with.a}}}", fine: "tag {{with.a}}" }',
+    '  stages: { bl.notify: { terminal: "echo {{& message}}" } }',
+    '',
+  ].join('\n');
+  const at = fixture(COMMANDS, { registry });
+  const raw = (name) => `'${name}' is filled raw, which puts its value into the command; write {{${name}}}`;
+  assert.equal(
+    new ConfigurationFaults(startFaults(at.config, OPS), at.backlogDir).message,
+    [
+      `backlog.yaml: /plugin_registry/stages/bl.notify/terminal: raw-name: ${raw('message')}`,
+      `backlog.yaml: /plugin_registry/steps/tag: raw-name: ${raw('with.a')}`,
+    ].join('\n'),
+  );
+  const fine = fixture(COMMANDS, { registry: 'plugin_registry: { steps: { fine: "tag {{with.a}}" } }\n' });
+  assert.deepEqual(startFaults(fine.config, OPS), []);
+});
+
+// ---------------------------------------------------------------------------
+// the start check of the notifications (F-140 D9)
+// ---------------------------------------------------------------------------
+
+test('startFaults gives one fault for a route to a channel that bl.notify does not define, at the route entry', () => {
+  const registry = 'plugin_registry: { stages: { bl.notify: { terminal: "echo {{message}}" } } }\n';
+  const alerts = 'gated: [terminal]\nended: []\nnotify: [terminal]\nnotify.escalation: [terminal, bel]\n';
+  const at = fixture(COMMANDS, { registry, alerts });
+  assert.equal(
+    new ConfigurationFaults(startFaults(at.config, OPS), at.backlogDir).message,
+    "config/alerts.yaml: /notify.escalation/1: channel: no bl.notify channel named 'bel'",
+  );
+  // With no bl.notify at all, each named channel is a fault.
+  assert.equal(startFaults(fixture(COMMANDS, { alerts }).config, OPS).length, 4);
+  assert.deepEqual(startFaults(fixture(COMMANDS, { registry }).config, OPS), []);
+});
+
+test('startFaults gives one fault for a language that has no template file, at /language', () => {
+  const at = fixture(COMMANDS, { templates: { 'de.yaml': TEMPLATES } });
+  assert.equal(
+    new ConfigurationFaults(startFaults(at.config, OPS), at.backlogDir).message,
+    "backlog.yaml: /language: language: the language 'en' has no template file templates/en.yaml",
   );
 });
 

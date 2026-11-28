@@ -4,17 +4,25 @@
   "description": "The layered result of one scope of `backlog.yaml` and `~/.config/bl/config.yaml` (core.md, \"Configuration\", D-87; F-136 D5). Each scope's result holds the keys of its layers and the merged `repos` map. `additionalProperties` is false, so each later feature adds its keys here and a typo is a fault. The loader adds no defaults (tenet 6).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["repos", "color_scheme"],
+  "required": ["repos", "color_scheme", "language"],
   "properties": {
     "color_scheme": {
       "type": "string",
       "description": "The name of the color scheme: `bl` uses `config/color-schemes/<color_scheme>.yaml` (views.md, D-473; F-138 D2)."
     },
+    "language": {
+      "type": "string",
+      "description": "The language of the notification texts: `bl` uses `config/templates/<language>.yaml` (views.md, D-473; F-140 D2)."
+    },
     "repos": {
       "type": "object",
-      "description": "Repo name to the repo's own entry, which the layers apply over the top level for work in that repo.",
-      "additionalProperties": { "type": "object" }
+      "description": "Repo name to the repo's own entry, which the layers apply over the top level for work in that repo. A repo entry's `plugin_registry` defines only stages, and no `bl.notify`: shop steps, shop predicates and channels come from the top-level layers (steps.md, \"Plugins\", D-82; F-140 Decision A1).",
+      "additionalProperties": {
+        "type": "object",
+        "properties": { "plugin_registry": { "$ref": "#/$defs/RepoPluginRegistry" } }
+      }
     },
+    "plugin_registry": { "$ref": "#/$defs/PluginRegistry" },
     "id_prefixes": {
       "type": "object",
       "description": "Id prefix to item type name, for example `S: story` (items.md, \"Ids\", D-601). The store reads an id's prefix and type from it (F-137 D3).",
@@ -46,6 +54,97 @@
             "type": "array",
             "description": "The item types that may be nodes of the graph.",
             "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "PluginRegistry": {
+      "type": "object",
+      "description": "The shop's plugins, in three sections and nothing else (steps.md, \"Plugins\", D-82).",
+      "additionalProperties": false,
+      "properties": {
+        "stages": { "$ref": "#/$defs/Stages" },
+        "steps": {
+          "$ref": "#/$defs/Plugins",
+          "description": "The shop's own steps: a box uses one as `use: steps.<name>`, and its `with:` fills the command's `{{with.<key>}}` names."
+        },
+        "predicates": {
+          "$ref": "#/$defs/Plugins",
+          "description": "The shop's own predicates: a condition calls one as `predicates.<name>(args…)`, with one argument for each `{{args.<n>}}` name of the command (D-481)."
+        }
+      }
+    },
+    "RepoPluginRegistry": {
+      "type": "object",
+      "description": "A repo entry's plugins: only stages (F-140 Decision A1).",
+      "additionalProperties": false,
+      "properties": { "stages": { "$ref": "#/$defs/RepoStages" } }
+    },
+    "Stages": {
+      "type": "object",
+      "description": "The stages that `bl` calls (steps.md, \"The stages `bl` calls\", D-80), and the shop's shared definitions: every key that does not start with `bl.`. A `bl.` name that `bl` does not call is a fault. `bl.format` and `bl.lint` come with their commands (F-153).",
+      "additionalProperties": false,
+      "properties": {
+        "bl.pre-checkout": { "$ref": "#/$defs/Stage" },
+        "bl.post-checkout": { "$ref": "#/$defs/Stage" },
+        "bl.pre-agent": { "$ref": "#/$defs/Stage" },
+        "bl.test": { "$ref": "#/$defs/Stage" },
+        "bl.regenerate": { "$ref": "#/$defs/Stage" },
+        "bl.cleanup": { "$ref": "#/$defs/Stage" },
+        "bl.change": {
+          "type": "object",
+          "description": "The `bl.change` group, defined as a whole (\"Stage names\", D-79).",
+          "additionalProperties": false,
+          "required": ["change.open", "change.find", "change.describe", "change.close"],
+          "properties": {
+            "change.open": { "type": "string" },
+            "change.find": { "type": "string" },
+            "change.describe": { "type": "string" },
+            "change.close": { "type": "string" }
+          }
+        },
+        "bl.notify": {
+          "type": "object",
+          "description": "The channels: a channel name to its command (alerts.md, \"Channels\", D-99).",
+          "additionalProperties": { "type": "string" }
+        }
+      },
+      "patternProperties": {
+        "^(?!bl\\.)": {
+          "type": "object",
+          "description": "A shared definition: the stage's command under the stage's key (`regenerate: …`), plus that stage's fields (`paths`)."
+        }
+      }
+    },
+    "RepoStages": {
+      "type": "object",
+      "$ref": "#/$defs/Stages",
+      "description": "A repo entry's stages: no `bl.notify`, because the channels come from the top-level layers (F-140 Decision A1).",
+      "properties": { "bl.notify": false }
+    },
+    "Stage": {
+      "type": ["string", "array", "object"],
+      "description": "`none`, a list of names of shared definitions run in order, or one inline definition: a command, or an object that holds the stage's command under the stage's key, plus that stage's fields.",
+      "items": { "type": "string" }
+    },
+    "Plugins": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/Plugin" }
+    },
+    "Plugin": {
+      "type": ["string", "object"],
+      "description": "A command (a Mustache template), or `{ command, exit_codes }`, where `exit_codes` maps a code from 1 to 125 to `success` or `failure` and overrides the shell's rule for that code only.",
+      "additionalProperties": false,
+      "required": ["command", "exit_codes"],
+      "properties": {
+        "command": { "type": "string" },
+        "exit_codes": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^(?:[1-9]|[1-9][0-9]|1[01][0-9]|12[0-5])$": { "enum": ["success", "failure"] }
           }
         }
       }

@@ -23,7 +23,7 @@ function configWith(views) {
   const kinds = [];
   return {
     kinds,
-    scope: () => ({ color_scheme: 'mocha', repos: {} }),
+    scope: () => ({ color_scheme: 'mocha', language: 'en', repos: {} }),
     file: (kind, name) => {
       kinds.push(kind);
       if (kind === 'color-schemes') return name === 'mocha.yaml' ? MOCHA : undefined;

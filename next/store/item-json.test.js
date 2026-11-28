@@ -21,7 +21,7 @@ const STORY = [
  */
 function backlog(files = {}) {
   const dirs = fixture({
-    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: {}\nid_prefixes:\n  S: story\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos: {}\nid_prefixes:\n  S: story\n',
     'backlog/config/items/story.yaml': STORY,
     'backlog/stories/S1-one/index.md': '# One\n',
     ...Object.fromEntries(Object.entries(files).map(([name, text]) => [`backlog/stories/S1-one/${name}`, text])),
@@ -171,7 +171,7 @@ const UNCOMPILED_SCHEMAS = [
 test('checkAttributes_with_unknown_format_gives_a_fault_or_config_load_refuses_it', () => {
   for (const [name, schema, message] of UNCOMPILED_SCHEMAS) {
     const dirs = fixture({
-      'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: {}\nid_prefixes:\n  S: story\n',
+      'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos: {}\nid_prefixes:\n  S: story\n',
       'backlog/config/items/story.yaml': `dir: stories\nattributes:\n  - name: due\n    schema: ${schema}\n`,
       'backlog/stories/S1-one/index.md': '# One\n',
       'backlog/stories/S1-one/attributes.json': '{ "due": "2026-01-01" }\n',

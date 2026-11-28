@@ -12,6 +12,7 @@ import {
   configureMergeDrivers,
   graph,
   graphFaults,
+  graphOfEngine,
   graphText,
   graphValues,
   graphs,
@@ -38,7 +39,7 @@ const GRAPHS = [
  */
 function context(graphsYaml = GRAPHS, files = {}) {
   const all = {
-    'backlog.yaml': `color_scheme: mocha\nrepos: {}\nid_prefixes:\n  S: story\n  F: feature\n${graphsYaml}\n`,
+    'backlog.yaml': `color_scheme: mocha\nlanguage: en\nrepos: {}\nid_prefixes:\n  S: story\n  F: feature\n${graphsYaml}\n`,
     'config/items/story.yaml': 'dir: stories\nparents:\n  - { name: unit, types: [feature], min: 0, max: 1 }\n',
     'config/items/feature.yaml': 'dir: features\n',
     ...files,
@@ -64,6 +65,16 @@ test('the configured graphs come in backlog.yaml order, each with its file and i
 
 test('a backlog.yaml with no graphs has none', () => {
   assert.deepEqual(graphs(context('')), []);
+});
+
+test('graphOfEngine gives the graph of an engine by any name, and null for an engine that no graph has', () => {
+  const ctx = context('graphs:\n  - { name: order, engine: rank, nodes: [feature, story] }');
+  const g = /** @type {any} */ (graphOfEngine(ctx, 'rank'));
+  assert.deepEqual(
+    { name: g.name, path: g.path, module: g.module },
+    { name: 'order', path: 'graphs/order.json', module: rank },
+  );
+  assert.equal(graphOfEngine(ctx, 'containment'), null);
 });
 
 test('two graphs of one engine are an error that names both graphs', () => {
@@ -232,6 +243,7 @@ const unitContext = (files = {}) =>
   context('', {
     'backlog.yaml': [
       'color_scheme: mocha',
+      'language: en',
       'repos: {}',
       'id_prefixes: { S: story, F: feature, B: batch, E: epic }',
       'work_types: [batch, feature, story]',

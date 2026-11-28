@@ -27,6 +27,7 @@ const jsonOf = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const FILES = {
   'backlog.yaml': [
     'color_scheme: mocha',
+    'language: en',
     'repos: {}',
     'id_prefixes:',
     '  S: story',

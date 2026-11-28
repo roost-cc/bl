@@ -1,7 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkValue } from '../../config/check.js';
-import { canonical, changed, check, empty, kind, merge, names, schema } from './rank.js';
+import { canonical, changed, check, empty, kind, merge, names, placeInRank, schema } from './rank.js';
+
+test('placeInRank puts a node that the chain does not hold first or last, and keeps one that it holds', () => {
+  assert.deepEqual(placeInRank(['A', 'B'], 'C', 'first'), { chain: ['C', 'A', 'B'], placed: true });
+  assert.deepEqual(placeInRank(['A', 'B'], 'C', 'last'), { chain: ['A', 'B', 'C'], placed: true });
+  assert.deepEqual(placeInRank(['A', 'B'], 'B', 'first'), { chain: ['A', 'B'], placed: false });
+  assert.deepEqual(placeInRank([], 'C', 'last'), { chain: ['C'], placed: true });
+});
 
 test('the schema takes a list of ids, and refuses other shapes', () => {
   assert.deepEqual(checkValue(schema, ['F-1', 'S-2']), []);

@@ -25,8 +25,8 @@
  */
 
 import { Environment } from '@marcbachmann/cel-js';
-import Mustache from 'mustache';
 import { tokensOf } from './check.js';
+import { templateNames } from './template.js';
 import RECORD_SCHEMA from './schemas/record.schema.json' with { type: 'json' };
 import STATE_SCHEMA from './schemas/state.schema.json' with { type: 'json' };
 
@@ -166,6 +166,22 @@ export function toCelValue(node, value) {
 }
 
 /**
+ * A CEL value as plain JSON, the inverse of `toCelValue` (F-140 Decision
+ * A6): an int becomes a JSON number with its exact digits (`JSON.rawJSON`),
+ * a timestamp its `toISOString()` text, a list or map value by value, and
+ * any other value stays as it is.
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+export function fromCelValue(value) {
+  if (typeof value === 'bigint') return JSON.rawJSON(String(value));
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(fromCelValue);
+  if (value !== null && typeof value === 'object') return mapValues(value, fromCelValue);
+  return value;
+}
+
+/**
  * The functions of core.md's table ("Records and CEL"). `returns` is a
  * schema node, because `bindCel` converts each result by it.
  */
@@ -187,24 +203,25 @@ const FUNCTIONS = [
 /** The handler names `bindCel` takes: one per function, and `predicate` for the shop predicates. */
 const HANDLER_NAMES = [...FUNCTIONS.map((fn) => fn.name), 'predicate'];
 
-/** The Mustache token types that read a name. */
-const NAME_TOKENS = new Set(['name', '&', '#', '^']);
-
 /**
  * The number of parameters of a shop predicate: the number of distinct
  * `{{args.<n>}}` names that its command template reads, in sections too.
+ * Those names must be `args.0` up to `args.<count - 1>`, each index written
+ * without leading zeros, so each call argument fills one name.
  * @param {string} template
+ * @returns {number}
+ * @throws {Error} naming the first `args.` name that is not such an index
  */
-function predicateArity(template) {
-  const names = new Set();
-  const walk = (tokens) => {
-    for (const [type, value, , , children] of tokens) {
-      if (NAME_TOKENS.has(type) && /^args\.\d+$/.test(value)) names.add(value);
-      if (Array.isArray(children)) walk(children);
-    }
-  };
-  walk(Mustache.parse(template));
-  return names.size;
+export function predicateArity(template) {
+  const keys = templateNames(template, 'args');
+  // The keys are distinct, so with each below their count they are 0 to count - 1.
+  const bad = keys.find((key) => !/^(0|[1-9]\d*)$/.test(key) || Number(key) >= keys.length);
+  if (bad !== undefined) {
+    throw new Error(
+      `'args.${bad}' is no argument: a command that reads ${keys.length} args. names reads args.0 to args.${keys.length - 1}`,
+    );
+  }
+  return keys.length;
 }
 
 /**

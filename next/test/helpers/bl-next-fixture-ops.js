@@ -6,6 +6,7 @@
  *
  *   - `story`: one record, `{ id, title }`.
  *   - `stories`: a record set from an async iterable, one record per id.
+ *   - `catalogue`: one record per step name of the op context's `catalogue`.
  *   - the step `work`: it can end with `success` or `failure`, and takes no `with:`.
  */
 
@@ -24,6 +25,13 @@ const ops = Object.freeze({
     schema: STORY_SCHEMA,
     run: async function* (args) {
       for (const id of args.ids) yield { id, title: `Story ${id}` };
+    },
+  },
+  catalogue: {
+    args: {},
+    schema: STORY_SCHEMA,
+    run: async function* (_args, ctx) {
+      for (const name of Object.keys(ctx.catalogue)) yield { id: name, title: name };
     },
   },
 });

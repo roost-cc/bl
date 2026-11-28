@@ -1,0 +1,18 @@
+# Notification texts in English (views.md, "Files for people"). The keys are the names
+# that the inline notify boxes in config/flows/ give as `template`. A text is a Mustache template
+# over the item's state.json plus item_id, type, title, box.name, box.path, unit and parents.unit ("Template
+# variables", bl refactor c60ba84be); bl renders it without HTML escaping and passes the result to
+# bl.notify as {{message}}.
+triage_waiting: '{{item_id}} has deferred work to triage: {{title}}'
+escalation_waiting: '{{item_id}}{{#parents.unit}} (in {{parents.unit}}){{/parents.unit}} needs you after {{box.name}}: {{title}}'
+tests_failing: '{{item_id}}: tests still fail after the fix rounds ({{box.name}})'
+conflict_unresolved: '{{item_id}}: a merge conflict needs you ({{box.name}})'
+children_stuck: '{{item_id}}: a child item needs you before the work unit can go on'
+task_item_failed: '{{item_id}}: a task list item failed; see its Task List'
+# Alert texts (views.md, "Files for people", 2026-11-20): <kind>.<reason> wins over <kind>.
+# gated: condition is the first failing entry's expression (cut at 120 characters), class its class.
+gated: '{{item_id}} is held{{#box}} before {{box.name}}{{/box}}: {{condition}}{{#class}} [{{class}}]{{/class}}'
+ended: '{{item_id}}: bl ended ({{reason}})'
+ended.crash: '{{item_id}} crashed at {{box.path}}: {{error}}'
+triage_resolution_failed: '{{item_id}}: Deferred bullets are still open after triage; run bl resume {{item_id}}'
+release_failed: '{{item_id}}: merged, but the release tags or manifest failed; see the log'

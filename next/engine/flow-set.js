@@ -6,7 +6,8 @@
  * flat graph per item type:
  *
  *   1. the names across the set (D-25, D-33, D-38, D-44) and the two settings;
- *   2. each defined step's code step and `with:` (D-33, D-34);
+ *   2. each defined step's code step and `with:` (D-33, D-34), the CEL that
+ *      a step's `with` schema marks compiled (F-140 D5);
  *   3. what each box runs: a code step, a defined step or a subflow, by name,
  *      inline or under another name (D-36), with its step gate (D-38);
  *   4. where each arrow goes: a box of the same flow or subflow, `stop` in a
@@ -27,17 +28,24 @@
 
 import { join } from 'path';
 import { celEnvironment } from '../config/cel.js';
-import { attribute, checkValue, ConfigurationFaults } from '../config/check.js';
+import { attribute, checkMarked, checkValue, compileCel, ConfigurationFaults } from '../config/check.js';
 import { pointerToken } from '../config/files.js';
 import { KINDS } from '../config/kinds.js';
 import { checkFlow, deriveStatuses } from './derive.js';
 
 /**
- * The step catalogue that `bl-next` passes to `buildFlowSet` (D2). The layer
- * rule lets `commands/` import `engine/` but not `steps/`, so the engine hands
- * the catalogue on.
+ * The step catalogue that `bl-next` passes to `buildFlowSet` (D2), with the
+ * shop's steps added (F-140 D6), the start checks of the plugin commands, of
+ * the stages and of the notifications that `startFaults` adds (F-140 D3, D9), and the start
+ * check of the rank graph that `main.js` runs on the flow set (F-140 D8). The layer rule lets `commands/`
+ * import `engine/` but not `steps/`, so the engine hands them on.
  */
 export { STEPS } from '../steps/index.js';
+export { checkNotifications } from '../steps/notify.js';
+export { pluginFaults } from '../steps/plugin.js';
+export { checkRankGraph } from '../steps/rank.js';
+export { shopSteps } from '../steps/shop.js';
+export { stageFaults } from '../steps/stage.js';
 
 /** @typedef {import('../config/files.js').Fault} Fault */
 /** @typedef {import('../config/load.js').Configuration} Configuration */
@@ -258,9 +266,12 @@ export function buildFlowSet(config, catalogue, backlogDir) {
   }
 
   // ---- 2. defined steps ----
+  const env = celEnvironment(config.celInputs);
   /**
-   * The faults of a `with:` at `path` by the schema of the code step `name`.
-   * An omitted `with:` is checked as `null`, the value the runner passes the step.
+   * The faults of a `with:` at `path` by the schema of the code step `name`,
+   * with each string that the schema marks `cel` compiled to its marked type
+   * (F-140 D5). An omitted `with:` is checked as `null`, the value the runner
+   * passes the step.
    */
   const checkWith = (file, path, name, value) => {
     if (!isCode(name)) return;
@@ -274,7 +285,10 @@ export function buildFlowSet(config, catalogue, backlogDir) {
         fault(file, path, f.rule, `the step '${name}' needs with: ${f.message}`);
       return;
     }
-    for (const f of checkValue(schema, value)) fault(file, `${path}/with${f.path}`, f.rule, f.message);
+    const checked = checkMarked(schema, value);
+    for (const f of checked.faults) fault(file, `${path}/with${f.path}`, f.rule, f.message);
+    const cel = checked.cel.map((c) => ({ ...c, ...attribute(`${path}/with${c.path}`, file.layers) }));
+    faults.push(...compileCel(cel, env));
   };
   const gateOf = (name) => stepGates.get(name)?.value ?? [];
   for (const [, def] of defined) {
@@ -524,7 +538,6 @@ export function buildFlowSet(config, catalogue, backlogDir) {
 
   /** @type {Record<string, Flow>} */
   const flatFlows = {};
-  const env = celEnvironment(config.celInputs);
   for (const [type, level] of flowLevels) {
     const def = /** @type {Definition} */ (flows.get(type));
     /** @type {Record<string, Node>} */

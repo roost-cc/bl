@@ -26,14 +26,15 @@ const BOTH = {
 
 test('scope(utop) has the four layers applied, scope(null) the two top levels, and the result is frozen', () => {
   const dirs = fixture({
-    'backlog/backlog.yaml': 'color_scheme: mocha\nwho: shop top\nrepos:\n  utop:\n    who: shop utop\n  web: {}\n',
+    'backlog/backlog.yaml':
+      'color_scheme: mocha\nlanguage: en\nwho: shop top\nrepos:\n  utop:\n    who: shop utop\n  web: {}\n',
     '.config/bl/config.yaml': 'who: operator top\nrepos:\n  utop:\n    who: operator utop\n',
   });
   const config = load(dirs, [BOTH]);
   const repos = { utop: { who: 'operator utop' }, web: {} };
-  assert.deepEqual(config.scope('utop'), { color_scheme: 'mocha', who: 'operator utop', repos });
-  assert.deepEqual(config.scope('web'), { color_scheme: 'mocha', who: 'operator top', repos });
-  assert.deepEqual(config.scope(null), { color_scheme: 'mocha', who: 'operator top', repos });
+  assert.deepEqual(config.scope('utop'), { color_scheme: 'mocha', language: 'en', who: 'operator utop', repos });
+  assert.deepEqual(config.scope('web'), { color_scheme: 'mocha', language: 'en', who: 'operator top', repos });
+  assert.deepEqual(config.scope(null), { color_scheme: 'mocha', language: 'en', who: 'operator top', repos });
   assert.equal(config.scope('nope'), undefined);
   assert.ok(Object.isFrozen(config));
   assert.ok(Object.isFrozen(config.scope('utop')));
@@ -57,15 +58,15 @@ test('scope(utop) has the four layers applied, scope(null) the two top levels, a
 
 test('each layer of scope(utop) shows when the layers above it are left out', () => {
   const rows = [
-    ['color_scheme: mocha\nwho: shop top\nrepos: { utop: {} }\n', null, 'shop top'],
-    ['color_scheme: mocha\nwho: shop top\nrepos: { utop: { who: shop utop } }\n', null, 'shop utop'],
+    ['color_scheme: mocha\nlanguage: en\nwho: shop top\nrepos: { utop: {} }\n', null, 'shop top'],
+    ['color_scheme: mocha\nlanguage: en\nwho: shop top\nrepos: { utop: { who: shop utop } }\n', null, 'shop utop'],
     [
-      'color_scheme: mocha\nwho: shop top\nrepos: { utop: { who: shop utop } }\n',
+      'color_scheme: mocha\nlanguage: en\nwho: shop top\nrepos: { utop: { who: shop utop } }\n',
       'who: operator top\n',
       'operator top',
     ],
     [
-      'color_scheme: mocha\nwho: shop top\nrepos: { utop: { who: shop utop } }\n',
+      'color_scheme: mocha\nlanguage: en\nwho: shop top\nrepos: { utop: { who: shop utop } }\n',
       'who: operator top\nrepos: { utop: { who: operator utop } }\n',
       'operator utop',
     ],
@@ -80,7 +81,7 @@ test('each layer of scope(utop) shows when the layers above it are left out', ()
 });
 
 test('an unknown top-level key in backlog.yaml is a fault that names backlog.yaml', () => {
-  const dirs = fixture({ 'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: {}\nsigning_kye: git\n' });
+  const dirs = fixture({ 'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos: {}\nsigning_kye: git\n' });
   assert.deepEqual(faultLines(dirs), [
     'backlog.yaml: /signing_kye: additionalProperties: must NOT have additional properties',
   ]);
@@ -89,6 +90,7 @@ test('an unknown top-level key in backlog.yaml is a fault that names backlog.yam
 test('work_types and graphs (F-148 D1) come through scope(null)', () => {
   const dirs = fixture({
     'backlog/backlog.yaml': `color_scheme: mocha
+language: en
 repos: {}
 work_types: [feature, batch, story, task]
 graphs:
@@ -113,6 +115,7 @@ graphs:
 test('a graph with an unknown engine, no nodes or an unknown key is a fault that names its path', () => {
   const dirs = fixture({
     'backlog/backlog.yaml': `color_scheme: mocha
+language: en
 repos: {}
 graphs:
   - { name: a, engine: tree, nodes: [story] }
@@ -132,7 +135,7 @@ graphs:
 
 test('two faults in two files are both reported, sorted by file and path, each once', () => {
   const dirs = fixture({
-    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos:\n  utop: {}\n  web: {}\nzz: 1\naa: 1\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos:\n  utop: {}\n  web: {}\nzz: 1\naa: 1\n',
     '.config/bl/config.yaml': 'repos:\n  utop:\n    signing_kye: x\n',
   });
   assert.deepEqual(faultLines(dirs), [
@@ -154,18 +157,18 @@ test('a YAML error is a fault with its line, and no shape fault follows from the
 
 test('a repo that the operator deletes with null has no scope, and its shop entry reaches no result', () => {
   const dirs = fixture({
-    'backlog/backlog.yaml': 'color_scheme: mocha\nwho: shop top\nrepos:\n  x: { who: shop x }\n  y: {}\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nwho: shop top\nrepos:\n  x: { who: shop x }\n  y: {}\n',
     '.config/bl/config.yaml': 'repos:\n  x: null\n',
   });
   const config = load(dirs, [BOTH]);
   assert.equal(config.scope('x'), undefined);
-  assert.deepEqual(config.scope('y'), { color_scheme: 'mocha', who: 'shop top', repos: { y: {} } });
-  assert.deepEqual(config.scope(null), { color_scheme: 'mocha', who: 'shop top', repos: { y: {} } });
+  assert.deepEqual(config.scope('y'), { color_scheme: 'mocha', language: 'en', who: 'shop top', repos: { y: {} } });
+  assert.deepEqual(config.scope(null), { color_scheme: 'mocha', language: 'en', who: 'shop top', repos: { y: {} } });
 });
 
 test('a missing operator file is no layer, not a fault', () => {
-  const config = load(fixture({ 'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: { utop: {} }\n' }));
-  assert.deepEqual(config.scope('utop'), { color_scheme: 'mocha', repos: { utop: {} } });
+  const config = load(fixture({ 'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos: { utop: {} }\n' }));
+  assert.deepEqual(config.scope('utop'), { color_scheme: 'mocha', language: 'en', repos: { utop: {} } });
 });
 
 /** A fixture `none` kind: one shop file, with a condition the schema marks `cel: bool`. */
@@ -196,7 +199,7 @@ const VIEWS = {
 /** A fixture `who` directory kind. */
 const TEMPLATES = { ...VIEWS, name: 'templates', shop: 'config/templates/', operator: 'templates/' };
 
-const SHOP_ONLY = { 'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: {}\n' };
+const SHOP_ONLY = { 'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos: {}\n' };
 
 /** Twelve levels of aliases, each used twice: 4096 copies, more than the YAML library expands. */
 const ALIAS_BOMB = [
@@ -253,12 +256,12 @@ test('every repo name keeps its entry and its scope, or is a fault that names it
   for (const key of ['toString', 'valueOf', 'isPrototypeOf', '__defineGetter__']) {
     const config = load(
       fixture({
-        'backlog/backlog.yaml': `color_scheme: mocha\nrepos:\n  ${key}: {}\n  later: {}\n`,
+        'backlog/backlog.yaml': `color_scheme: mocha\nlanguage: en\nrepos:\n  ${key}: {}\n  later: {}\n`,
         '.config/bl/config.yaml': 'repos:\n  later: null\n',
       }),
     );
     assert.deepEqual(Object.keys(config.scope(null).repos), [key]);
-    assert.deepEqual(config.scope(key), { color_scheme: 'mocha', repos: { [key]: {} } });
+    assert.deepEqual(config.scope(key), { color_scheme: 'mocha', language: 'en', repos: { [key]: {} } });
     assert.equal(config.scope('later'), undefined);
   }
 });
@@ -413,6 +416,167 @@ test('a none kind: a CEL string that does not compile, or types to string, is a 
   assert.deepEqual(load(ok, [...BACKLOG_KINDS, FLOW]).file('flow'), {
     when: 'status == "review" && size(findings) > 0',
   });
+});
+
+test('each refused plugin_registry or language is one fault with its file and path (F-140 D2)', () => {
+  const TOP = 'color_scheme: mocha\nlanguage: en\n';
+  const additional = (at) => `${at}: additionalProperties: must NOT have additional properties`;
+  const rows = [
+    // An unknown bl. stage, at the top level and in a repo entry.
+    [
+      `${TOP}repos: {}\nplugin_registry: { stages: { bl.precheckout: none } }\n`,
+      [additional('backlog.yaml: /plugin_registry/stages/bl.precheckout')],
+    ],
+    [
+      `${TOP}repos: { utop: { plugin_registry: { stages: { bl.tests: none } } } }\n`,
+      [additional('backlog.yaml: /repos/utop/plugin_registry/stages/bl.tests')],
+    ],
+    // A key of plugin_registry other than the three sections.
+    [
+      `${TOP}repos: {}\nplugin_registry: { stages: {}, hooks: {} }\n`,
+      [additional('backlog.yaml: /plugin_registry/hooks')],
+    ],
+    // A repo entry defines only stages, and no bl.notify (Decision A1).
+    [
+      `${TOP}repos: { utop: { plugin_registry: { steps: { tick: date } } } }\n`,
+      [additional('backlog.yaml: /repos/utop/plugin_registry/steps')],
+    ],
+    [
+      `${TOP}repos: { utop: { plugin_registry: { predicates: { frozen: 'true' } } } }\n`,
+      [additional('backlog.yaml: /repos/utop/plugin_registry/predicates')],
+    ],
+    [
+      `${TOP}repos: { utop: { plugin_registry: { stages: { bl.notify: { bell: x } } } } }\n`,
+      ['backlog.yaml: /repos/utop/plugin_registry/stages/bl.notify: false schema: boolean schema is false'],
+    ],
+    // exit_codes: a code from 1 to 125, to success or failure.
+    ...['0', '126', '01', 'x'].map((code) => [
+      `${TOP}repos: {}\nplugin_registry: { steps: { tag: { command: x, exit_codes: { '${code}': success } } } }\n`,
+      [additional(`backlog.yaml: /plugin_registry/steps/tag/exit_codes/${code}`)],
+    ]),
+    [
+      `${TOP}repos: {}\nplugin_registry: { predicates: { p: { command: x, exit_codes: { 1: true } } } }\n`,
+      ['backlog.yaml: /plugin_registry/predicates/p/exit_codes/1: enum: must be equal to one of the allowed values'],
+    ],
+    [
+      `${TOP}repos: {}\nplugin_registry: { steps: { tag: { command: x, exit_codes: {}, shell: bash } } }\n`,
+      [additional('backlog.yaml: /plugin_registry/steps/tag/shell')],
+    ],
+    // bl.change is defined as a whole.
+    [
+      `${TOP}repos: {}\nplugin_registry: { stages: { bl.change: { change.open: x, change.find: x, change.describe: x } } }\n`,
+      [
+        "backlog.yaml: /plugin_registry/stages/bl.change/change.close: required: must have required property 'change.close'",
+      ],
+    ],
+    // A missing language.
+    ['color_scheme: mocha\nrepos: {}\n', ["backlog.yaml: /language: required: must have required property 'language'"]],
+  ];
+  for (const [text, lines] of rows) {
+    assert.deepEqual(faultLines(fixture({ 'backlog/backlog.yaml': text })), lines, text);
+  }
+  // Each code from 1 to 125 maps to success or failure.
+  const codes = Array.from({ length: 125 }, (_, i) => `${i + 1}: ${i % 2 === 0 ? 'success' : 'failure'}`).join(', ');
+  const top = load(
+    fixture({
+      'backlog/backlog.yaml': `${TOP}repos: {}\nplugin_registry: { steps: { tag: { command: x, exit_codes: { ${codes} } } } }\n`,
+    }),
+  ).scope(null);
+  assert.equal(Object.keys(top.plugin_registry.steps.tag.exit_codes).length, 125);
+});
+
+/** A top-level backlog.yaml with the shop predicate `readme_mentions` of steps.md, "Plugins". */
+const WITH_PREDICATE = (predicate) =>
+  `color_scheme: mocha\nlanguage: en\nrepos: {}\nplugin_registry:\n  predicates:\n    readme_mentions: ${predicate}\n`;
+
+test('a condition that calls a shop predicate compiles with its definition, and is a cel fault without it or with two arguments', () => {
+  const call = 'when: predicates.readme_mentions("x")\n';
+  const withFlow = (backlog, flow) => fixture({ 'backlog/backlog.yaml': backlog, 'backlog/config/flow.yaml': flow });
+  for (const predicate of [
+    'grep -q {{args.0}} README.md',
+    '{ command: "grep -q {{args.0}} README.md", exit_codes: {} }',
+  ]) {
+    const config = load(withFlow(WITH_PREDICATE(predicate), call), [...BACKLOG_KINDS, FLOW]);
+    assert.deepEqual(config.celInputs, { predicates: { readme_mentions: 'grep -q {{args.0}} README.md' } });
+    assert.ok(Object.isFrozen(config.celInputs.predicates));
+  }
+  const lines = (backlog, flow) => faultLines(withFlow(backlog, flow), [...BACKLOG_KINDS, FLOW]);
+  const noOverload = (args) =>
+    `config/flow.yaml: /when: cel: found no matching overload for 'Predicates.readme_mentions(${args})'`;
+  assert.deepEqual(lines(SHOP_ONLY['backlog/backlog.yaml'], call), [noOverload('string')]);
+  assert.deepEqual(
+    lines(WITH_PREDICATE('grep -q {{args.0}} README.md'), 'when: predicates.readme_mentions("x", "y")\n'),
+    [noOverload('string, string')],
+  );
+  // The inputs are the top-level scope's: the shop's top level, the operator's patched over it.
+  const both = fixture({
+    'backlog/backlog.yaml': WITH_PREDICATE('grep -q {{args.0}} README.md'),
+    '.config/bl/config.yaml': 'plugin_registry:\n  predicates:\n    frozen: test -f FROZEN\n',
+  });
+  assert.deepEqual(Object.keys(load(both).celInputs.predicates), ['readme_mentions', 'frozen']);
+});
+
+test('a backlog.yaml with a shape fault gives that fault and no cel fault for a predicate call', () => {
+  const call = 'when: predicates.readme_mentions("x")\n';
+  const rows = [
+    [
+      `${WITH_PREDICATE('grep -q {{args.0}} README.md')}signing_kye: x\n`,
+      'backlog.yaml: /signing_kye: additionalProperties: must NOT have additional properties',
+    ],
+    [WITH_PREDICATE('5'), 'backlog.yaml: /plugin_registry/predicates/readme_mentions: type: must be string,object'],
+    [
+      WITH_PREDICATE("'grep {{#args.0}}'"),
+      'backlog.yaml: /plugin_registry/predicates/readme_mentions: mustache: Unclosed section "args.0" at 16',
+    ],
+  ];
+  for (const [backlog, line] of rows) {
+    const dirs = fixture({ 'backlog/backlog.yaml': backlog, 'backlog/config/flow.yaml': call });
+    assert.deepEqual(faultLines(dirs, [...BACKLOG_KINDS, FLOW]), [line], backlog);
+  }
+});
+
+test('predicate_sparse_argument_index', () => {
+  const call = 'when: predicates.p("x")\n';
+  const at = 'backlog.yaml: /plugin_registry/predicates/p: args:';
+  // A sparse first index, a gap, a leading zero and a name that is no number, each in a plain and a sectioned name.
+  const rows = [
+    [
+      "'test -n {{args.1}}'",
+      `${at} 'args.1' is no argument: a command that reads 1 args. names reads args.0 to args.0`,
+    ],
+    [
+      "'test {{args.0}} = {{args.2}}'",
+      `${at} 'args.2' is no argument: a command that reads 2 args. names reads args.0 to args.1`,
+    ],
+    [
+      "'test -n {{args.01}}'",
+      `${at} 'args.01' is no argument: a command that reads 1 args. names reads args.0 to args.0`,
+    ],
+    [
+      "'test -n {{args.foo}}'",
+      `${at} 'args.foo' is no argument: a command that reads 1 args. names reads args.0 to args.0`,
+    ],
+    [
+      "'{{#args.1}}true{{/args.1}}'",
+      `${at} 'args.1' is no argument: a command that reads 1 args. names reads args.0 to args.0`,
+    ],
+  ];
+  for (const [predicate, line] of rows) {
+    const backlog = `color_scheme: mocha\nlanguage: en\nrepos: {}\nplugin_registry:\n  predicates:\n    p: ${predicate}\n`;
+    const dirs = fixture({ 'backlog/backlog.yaml': backlog, 'backlog/config/flow.yaml': call });
+    assert.deepEqual(faultLines(dirs, [...BACKLOG_KINDS, FLOW]), [line], predicate);
+  }
+  // Indexes 0 to n - 1, in any order and read more than once, give n arguments.
+  for (const [predicate, arity] of [
+    ["'true'", 0],
+    ["'test {{args.1}} = {{args.0}} -o {{args.1}}'", 2],
+    ["'{{#args.0}}{{args.0.x}}{{/args.0}}'", 1],
+  ]) {
+    const backlog = `color_scheme: mocha\nlanguage: en\nrepos: {}\nplugin_registry:\n  predicates:\n    p: ${predicate}\n`;
+    const flow = `when: predicates.p(${Array(arity).fill('"x"').join(', ')})\n`;
+    const dirs = fixture({ 'backlog/backlog.yaml': backlog, 'backlog/config/flow.yaml': flow });
+    assert.doesNotThrow(() => load(dirs, [...BACKLOG_KINDS, FLOW]), predicate);
+  }
 });
 
 test('the CEL strings of a kind with a shape fault are not compiled', () => {

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "A file of config/templates/ and the operator's templates/",
+  "description": "The notification texts of one language, `config/templates/<language>.yaml` (views.md, \"Files for people\", D-471, D-472; F-140 D2): a template name to a Mustache template. The names are those that `notify` boxes give as `template`, and the alert kinds, as `<kind>` or `<kind>.<reason>`. The operator's file of the same name is patched over the shop's, and an operator file with a new name adds a language.",
+  "type": "object",
+  "additionalProperties": { "type": "string" }
+}

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 import { faultLines, fixture, load } from '../test/helpers/config-fixture.js';
 
 const FLOWS = fileURLToPath(new URL('../test/fixtures/flows/', import.meta.url));
-const BACKLOG = 'color_scheme: mocha\nrepos: {}\nid_prefixes:\n  S: story\n';
+const BACKLOG = 'color_scheme: mocha\nlanguage: en\nrepos: {}\nid_prefixes:\n  S: story\n';
 
 /** The uTop flow set: file name → text. */
 const UTOP = Object.fromEntries(

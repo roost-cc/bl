@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConfigurationFaults } from '../config/check.js';
+import { STEPS } from '../steps/index.js';
 import { build, faultLines, step, UTOP, UTOP_STEPS } from '../test/helpers/flow-fixture.js';
 
 /** A node's arrows without their sources: outcome → `{ status?, next }` or `null`. */
@@ -670,4 +671,52 @@ test('faults in two files are both reported, in one ConfigurationFaults', () => 
       return true;
     },
   );
+});
+
+test('buildFlowSet_accepts_utop_with_real_steps: the with schemas and CEL checks of the real steps accept every uTop box', () => {
+  assert.doesNotThrow(() => build(UTOP, { ...UTOP_STEPS, ...STEPS }));
+});
+
+test('buildFlowSet_rejects_assert_cel_at_load: an assert entry that does not compile, or is not bool, is a fault with the file and path', () => {
+  const steps = { work: step(), assert: STEPS.assert };
+  /** BASE with `work` going on to an `assert` box with `entries`, inline or through a defined step. */
+  const files = (/** @type {unknown[]} */ entries, defined = false) =>
+    withSteps(
+      () => ({
+        work: { success: 'check', failure: 'stop' },
+        check: {
+          use: defined ? 'gate_check' : 'assert',
+          ...(defined ? {} : { with: entries }),
+          success: { status: 'done', next: 'stop' },
+          failure: 'stop',
+        },
+      }),
+      defined ? { 'steps.yaml': { defined_steps: { gate_check: { use: 'assert', with: entries } } } } : {},
+    );
+  const cases = [
+    // [what, files, the start of the fault line]
+    [
+      'an inline entry that does not compile',
+      files(['status ==']),
+      'config/flows/story.yaml: /flows/story/steps/check/with/0: cel: ',
+    ],
+    [
+      'an inline entry that is not bool',
+      files(['true', 'title']),
+      'config/flows/story.yaml: /flows/story/steps/check/with/1: cel: the type is string, not bool',
+    ],
+    [
+      "a defined step's entry with an unknown name",
+      files(['nope == 1'], true),
+      'config/flows/steps.yaml: /defined_steps/gate_check/with/0: cel: ',
+    ],
+    ['an empty list', files([]), 'config/flows/story.yaml: /flows/story/steps/check/with: minItems: '],
+    ['an entry that is no string', files([1]), 'config/flows/story.yaml: /flows/story/steps/check/with/0: type: '],
+  ];
+  for (const [what, set, where] of cases) {
+    const lines = faultLines(/** @type {any} */ (set), steps);
+    assert.equal(lines.length, 1, `${what}:\n${lines.join('\n')}`);
+    assert.ok(lines[0].startsWith(/** @type {string} */ (where)), `${what}: ${lines[0]}`);
+  }
+  assert.doesNotThrow(() => build(files(['status == "draft"', 'has_terminal()']), steps));
 });

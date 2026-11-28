@@ -10,7 +10,7 @@ import { storeWrite } from '../../store/write.js';
 const FILES = {
   'backlog.yaml': [
     'color_scheme: mocha',
-    'repos: {}',
+    'language: en',
     'id_prefixes: { F: feature, S: story, T: task }',
     'work_types: [feature, story]',
     'graphs:',
@@ -27,13 +27,23 @@ const FILES = {
 /**
  * A committed backlog repo whose `config/flows/` holds the uTop flow set with
  * `flows` added or replaced, and its context: the store context and the flow
- * set built with the uTop test catalogue.
+ * set built with `catalogue`, by default the uTop test catalogue.
+ * `backlogYaml` ends `backlog.yaml`: its `repos`, and for example a
+ * `plugin_registry`.
  * @param {Record<string, string>} [flows]  flow file name → YAML text
+ * @param {string} [backlogYaml]
+ * @param {Readonly<Record<string, any>> | ((config: any) => Readonly<Record<string, any>>)} [catalogue]
+ *   the step catalogue, or a function of the loaded configuration that gives
+ *   it (for the shop's steps)
+ * @param {Record<string, string>} [files]  more files, path under the backlog → text
+ *   (for example `config/alerts.yaml`)
  * @returns {{ backlogDir: string, config: any, flowSet: import('../../engine/flow-set.js').FlowSet }}
  */
-export function engineBacklog(flows = {}) {
+export function engineBacklog(flows = {}, backlogYaml = 'repos: {}\n', catalogue = UTOP_STEPS, files = {}) {
   const all = {
     ...FILES,
+    ...files,
+    'backlog.yaml': FILES['backlog.yaml'] + backlogYaml,
     ...Object.fromEntries(Object.entries({ ...UTOP, ...flows }).map(([name, text]) => [`config/flows/${name}`, text])),
   };
   const dirs = fixture(Object.fromEntries(Object.entries(all).map(([path, text]) => [`backlog/${path}`, text])));
@@ -41,7 +51,8 @@ export function engineBacklog(flows = {}) {
   git(dirs.backlogDir, 'add', '.');
   git(dirs.backlogDir, 'commit', '-q', '-m', 'init');
   const config = load(dirs);
-  return { backlogDir: dirs.backlogDir, config, flowSet: buildFlowSet(config, UTOP_STEPS, dirs.backlogDir) };
+  const steps = typeof catalogue === 'function' ? catalogue(config) : catalogue;
+  return { backlogDir: dirs.backlogDir, config, flowSet: buildFlowSet(config, steps, dirs.backlogDir) };
 }
 
 /**

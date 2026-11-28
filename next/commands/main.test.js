@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, mkdirSync, writeFileSync } from 'fs';
 import { delimiter, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { ALERTS, ALERTS_PATH, TEMPLATES, TEMPLATES_PATH } from '../test/helpers/config-fixture.js';
 import { fakeTmux, renamedTitles } from '../test/helpers/fake-tmux.js';
 import { spawnToFiles } from '../test/helpers/spawn-files.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
@@ -33,8 +34,15 @@ const FLOW_SET = 'max_box_visits: 20\ngate_recheck_minutes: 15\n';
 async function runBlNext(files, { backlog = true, argv = [], env: extra = {}, bin = BL_NEXT } = {}) {
   const home = mkTempDir('bl-main-');
   // Every fixture backlog names the color scheme `mocha`, which the start check needs (D8), and
-  // has a flow set with its two settings, which the flow set needs (F-139 D4).
-  for (const [path, text] of Object.entries({ [MOCHA_FILE]: MOCHA, [FLOW_SET_FILE]: FLOW_SET, ...files })) {
+  // has a flow set with its two settings, which the flow set needs (F-139 D4), and the alert
+  // routing (F-140 D2), and a template file for its language (F-140 D9).
+  const defaults = {
+    [MOCHA_FILE]: MOCHA,
+    [FLOW_SET_FILE]: FLOW_SET,
+    [ALERTS_PATH]: ALERTS,
+    [TEMPLATES_PATH]: TEMPLATES,
+  };
+  for (const [path, text] of Object.entries({ ...defaults, ...files })) {
     mkdirSync(dirname(join(home, path)), { recursive: true });
     writeFileSync(join(home, path), text);
   }
@@ -75,11 +83,11 @@ async function runUnderFakeTmux(files, { env = {}, ...opts } = {}) {
 const ADDITIONAL = 'additionalProperties: must NOT have additional properties';
 /** The last line of a configuration fault report (D-423). */
 const DOES_NOT_LOAD = 'bl-next: the configuration does not load; bl-validate checks it\n';
-const BACKLOG = 'color_scheme: mocha\nrepos: {}\n';
+const BACKLOG = 'color_scheme: mocha\nlanguage: en\nrepos: {}\n';
 
 test('bl-next exits 1 on an unknown top-level key in backlog.yaml, with one line that names it', async () => {
   const { status, stdout, stderr, error } = await runBlNext({
-    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: {}\nsigning_kye: x\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos: {}\nsigning_kye: x\n',
   });
   assert.equal(error, null);
   assert.equal(stderr, `backlog.yaml: /signing_kye: ${ADDITIONAL}\n${DOES_NOT_LOAD}`);
@@ -89,7 +97,7 @@ test('bl-next exits 1 on an unknown top-level key in backlog.yaml, with one line
 
 test("bl-next exits 1 on a bad key under repos.utop of the operator's config.yaml, and names that file", async () => {
   const { status, stderr } = await runBlNext({
-    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos:\n  utop: {}\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos:\n  utop: {}\n',
     '.config/bl/config.yaml': 'repos:\n  utop:\n    signing_kye: x\n',
   });
   assert.equal(stderr, `~/.config/bl/config.yaml: /repos/utop/signing_kye: ${ADDITIONAL}\n${DOES_NOT_LOAD}`);
@@ -98,7 +106,7 @@ test("bl-next exits 1 on a bad key under repos.utop of the operator's config.yam
 
 test('bl-next exits 1 on a partial with an unclosed section, with one line that names the partial file', async () => {
   const { status, stdout, stderr } = await runBlNext({
-    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos: {}\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos: {}\n',
     'backlog/config/partials/head.mustache': '{{#items}}- {{title}}\n',
   });
   assert.equal(stderr, `config/partials/head.mustache: : mustache: Unclosed section "items" at 22\n${DOES_NOT_LOAD}`);
@@ -108,10 +116,13 @@ test('bl-next exits 1 on a partial with an unclosed section, with one line that 
 
 test('bl-next exits 1 on a null, false, 0 or empty repos, found by BL_BACKLOG_DIR or the walk, and names backlog.yaml and the rule', async () => {
   const rows = [
-    ['color_scheme: mocha\nrepos: null\n', "backlog.yaml: /repos: required: must have required property 'repos'\n"],
-    ['color_scheme: mocha\nrepos: false\n', 'backlog.yaml: /repos: type: must be object\n'],
-    ['color_scheme: mocha\nrepos: 0\n', 'backlog.yaml: /repos: type: must be object\n'],
-    ["color_scheme: mocha\nrepos: ''\n", 'backlog.yaml: /repos: type: must be object\n'],
+    [
+      'color_scheme: mocha\nlanguage: en\nrepos: null\n',
+      "backlog.yaml: /repos: required: must have required property 'repos'\n",
+    ],
+    ['color_scheme: mocha\nlanguage: en\nrepos: false\n', 'backlog.yaml: /repos: type: must be object\n'],
+    ['color_scheme: mocha\nlanguage: en\nrepos: 0\n', 'backlog.yaml: /repos: type: must be object\n'],
+    ["color_scheme: mocha\nlanguage: en\nrepos: ''\n", 'backlog.yaml: /repos: type: must be object\n'],
   ];
   for (const [yaml, line] of rows) {
     for (const backlog of [true, false]) {
@@ -124,7 +135,7 @@ test('bl-next exits 1 on a null, false, 0 or empty repos, found by BL_BACKLOG_DI
 
 test('bl-next with a valid backlog and no arguments exits 2: the command is required', async () => {
   const { status, stdout, stderr } = await runBlNext({
-    'backlog/backlog.yaml': 'color_scheme: mocha\nrepos:\n  utop: {}\n',
+    'backlog/backlog.yaml': 'color_scheme: mocha\nlanguage: en\nrepos:\n  utop: {}\n',
     '.config/bl/config.yaml': 'repos:\n  utop: {}\n',
   });
   assert.match(stderr, /\nbl-next: error: the following arguments are required: command\n$/);
@@ -138,6 +149,19 @@ test('bl-next exits 1 on an op that the registry does not hold, naming config/co
     'backlog/config/commands.yaml': 'list:\n  op: no-such-op\n  help: list the items\n',
   });
   assert.equal(stderr, `config/commands.yaml: /list/op: op: no op named 'no-such-op'\n${DOES_NOT_LOAD}`);
+  assert.equal(status, 1);
+  assert.equal(stdout, '');
+});
+
+test('bl-next exits 1 on a plugin command that fills a name raw, naming backlog.yaml and its path', async () => {
+  const { status, stdout, stderr } = await runBlNext({
+    'backlog/backlog.yaml': `${BACKLOG}plugin_registry: { steps: { tag: "tag {{{with.a}}}", fine: "tag {{with.a}}" } }\n`,
+  });
+  assert.equal(
+    stderr,
+    "backlog.yaml: /plugin_registry/steps/tag: raw-name: 'with.a' is filled raw, which puts its value into the command; write {{with.a}}\n" +
+      DOES_NOT_LOAD,
+  );
   assert.equal(status, 1);
   assert.equal(stdout, '');
 });
@@ -282,6 +306,106 @@ test('bl-next exits 1 on a flow set with a missing arrow, with the fault on stde
   assert.equal(fixed.stderr, '');
   assert.equal(fixed.status, 0);
   assert.equal(fixed.stdout, '{"id":"S-1","title":"Story S-1"}\n');
+});
+
+// ---------------------------------------------------------------------------
+// shop steps in the catalogue (F-140 D6)
+// ---------------------------------------------------------------------------
+
+const SHOP = `${BACKLOG}plugin_registry: { steps: { tag_release: { command: 'tag {{with.code}} {{with.code}}', exit_codes: { 1: success } }, plain: 'true' } }\n`;
+
+/** The shop backlog with a story flow whose one box is `box`. */
+const shopFiles = (/** @type {string} */ box) => ({
+  'backlog/backlog.yaml': SHOP,
+  'backlog/config/commands.yaml': `${FIXTURE_COMMANDS}catalogue:\n  op: catalogue\n  help: list the steps\n`,
+  'backlog/config/flows/story.yaml': [
+    'flows:',
+    '  story:',
+    '    initial: draft',
+    '    statuses: { draft: {} }',
+    '    steps:',
+    `      tag: ${box}`,
+    '',
+  ].join('\n'),
+});
+
+const ARROWS = 'success: stop, failure: stop';
+
+test("the op context's catalogue holds the code steps and each shop step as steps.<name>", async () => {
+  const { status, stdout, stderr } = await runBlNext(
+    shopFiles(`{ use: steps.tag_release, with: { code: 1 }, ${ARROWS} }`),
+    { bin: WITH_FIXTURE_OPS, argv: ['catalogue', '--json'] },
+  );
+  assert.equal(stderr, '');
+  assert.equal(status, 0);
+  assert.deepEqual(
+    stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line).id),
+    ['work', 'steps.tag_release', 'steps.plain'],
+  );
+});
+
+test('bl-next exits 1 on a shop step box whose with: lacks or adds a name, or that names no shop step', async () => {
+  const at = 'config/flows/story.yaml: /flows/story/steps/tag';
+  const rows = [
+    [
+      `{ use: steps.tag_release, with: {}, ${ARROWS} }`,
+      `${at}/with/code: required: must have required property 'code'`,
+    ],
+    [
+      `{ use: steps.tag_release, with: { code: 1, extra: 2 }, ${ARROWS} }`,
+      `${at}/with/extra: additionalProperties: must NOT have additional properties`,
+    ],
+    [`{ use: steps.tag_release, ${ARROWS} }`, `${at}: type: the step 'steps.tag_release' needs with: must be object`],
+    [`{ use: steps.plain, with: { code: 1 }, ${ARROWS} }`, `${at}/with: with: the step 'steps.plain' takes no with`],
+    [`{ use: steps.nope, ${ARROWS} }`, `${at}/use: box: 'steps.nope' names no code step, defined step or subflow`],
+  ];
+  for (const [box, line] of rows) {
+    const { status, stdout, stderr } = await runBlNext(shopFiles(box), {
+      bin: WITH_FIXTURE_OPS,
+      argv: ['story', 'S-1'],
+    });
+    assert.equal(stderr, `${line}\n${DOES_NOT_LOAD}`, box);
+    assert.equal(status, 1, box);
+    assert.equal(stdout, '', box);
+  }
+  // A shop step that reads no with. name loads without with:.
+  const plain = await runBlNext(shopFiles(`{ use: steps.plain, ${ARROWS} }`), {
+    bin: WITH_FIXTURE_OPS,
+    argv: ['story', 'S-1', '--json'],
+  });
+  assert.equal(plain.stderr, '');
+  assert.equal(plain.status, 0);
+});
+
+// ---------------------------------------------------------------------------
+// the rank graph check (F-140 D8, Decision A4)
+// ---------------------------------------------------------------------------
+
+test('bl-next exits 1 on a rank box when backlog.yaml has no graph of the engine rank, at the box', async () => {
+  // bl-next itself, so the catalogue is STEPS with the real rank step.
+  const files = {
+    'backlog/backlog.yaml': BACKLOG,
+    'backlog/config/commands.yaml': ENTRIES,
+    'backlog/config/flows/story.yaml': shopFiles('{ use: rank, with: { at: last }, success: stop }')[
+      'backlog/config/flows/story.yaml'
+    ],
+  };
+  const { status, stdout, stderr } = await runBlNext(files, { argv: ['--help'] });
+  assert.equal(
+    stderr,
+    "config/flows/story.yaml: /flows/story/steps/tag: rank: the step 'rank' needs the graph of the engine rank, and backlog.yaml gives none\n" +
+      DOES_NOT_LOAD,
+  );
+  assert.equal(status, 1);
+  assert.equal(stdout, '');
+  // With a graph of the engine rank, under any name, the same command runs.
+  const graphs = 'id_prefixes: { S: story }\ngraphs:\n  - { name: order, engine: rank, nodes: [story] }\n';
+  const ranked = await runBlNext({ ...files, 'backlog/backlog.yaml': `${BACKLOG}${graphs}` }, { argv: ['--help'] });
+  assert.equal(ranked.stderr, '');
+  assert.equal(ranked.status, 0);
 });
 
 test('bl-next with no backlog to find exits 1 with bl-next: and the error', async () => {

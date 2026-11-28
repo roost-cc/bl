@@ -21,6 +21,11 @@
       "additionalProperties": { "$ref": "#/$defs/Counter" },
       "description": "Counter name to its counter (steps.md, \"Counting\")."
     },
+    "changes": {
+      "type": "object",
+      "additionalProperties": { "type": "object" },
+      "description": "Repo name to its change on the forge, as `change.open` records it, for example `{ number, url }`; a stage's command reads its repo's entry as `{{change.*}}` (steps.md, \"Command variables\", D-84; F-140 D4)."
+    },
     "host": {
       "type": "string",
       "minLength": 1,
@@ -50,10 +55,10 @@
   "$defs": {
     "Counter": {
       "type": "object",
-      "description": "A counter of the `increment` step; a counter with no `value` reads 0.",
+      "description": "A counter of the `increment` step; a counter with no `value` reads 0. Each number is at most 2^53 - 1 (`Number.MAX_SAFE_INTEGER`), the largest integer that `bl` adds 1 to exactly.",
       "properties": {
-        "value": { "type": "integer", "minimum": 0 },
-        "threshold": { "type": "integer", "minimum": 0 }
+        "value": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "threshold": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
       },
       "additionalProperties": false
     }

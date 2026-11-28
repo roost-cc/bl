@@ -2,7 +2,7 @@
 // backlog with the uTop flow set.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { hostname } from 'os';
 import { join } from 'path';
 import { checkValue } from '../config/check.js';
@@ -115,7 +115,7 @@ test('has_terminal() is true when the process can open the terminal, and false w
   assert.equal(bindConditions(ctx, 'S-1', { tty: `${tty}-gone` }).evaluate('has_terminal()', story), false);
 });
 
-test('an absent key, an unbound function or predicate, and an unknown item throw an error that names the expression', async () => {
+test('an absent key, an unbound function, and an unknown item throw an error that names the expression', async () => {
   const ctx = await backlog();
   const story = engineRecord(ctx, ctx.flowSet, recordReader(ctx)('S-1'));
   const conditions = bindConditions(ctx, 'S-1');
@@ -131,11 +131,45 @@ test('an absent key, an unbound function or predicate, and an unknown item throw
   }
 });
 
-test('a shop predicate throws not bound with its name until a feature binds it', async () => {
-  const ctx = await backlog();
-  const story = engineRecord(ctx, ctx.flowSet, recordReader(ctx)('S-1'));
-  const withPredicate = { ...ctx, config: { ...ctx.config, celInputs: { predicates: { frozen: 'true' } } } };
-  assert.throws(() => bindConditions(withPredicate, 'S-1').evaluate('predicates.frozen()', story), {
-    message: 'predicates.frozen(): not bound: predicates.frozen',
-  });
+// ---- shop predicates (F-140 D7) ----
+
+const PREDICATES = [
+  'repos: {}',
+  'plugin_registry:',
+  '  predicates:',
+  `    readme_mentions: 'grep -q {{args.0}} README.md'`,
+  // Each argument goes to .bl/args, which git ignores, as one line <value>.
+  `    record: "mkdir -p .bl && printf '<%s>\\\\n' {{args.0}} >> .bl/args"`,
+  `    fails: 'exit 1'`,
+  `    passes_at_1: { command: 'exit 1', exit_codes: { 1: success } }`,
+  '',
+].join('\n');
+
+/** A backlog with the shop predicates, a README.md in its root that holds `widget`, and S-1 titled `story 1`. */
+async function predicateBacklog() {
+  const ctx = engineBacklog({}, PREDICATES);
+  writeFileSync(join(ctx.backlogDir, 'README.md'), 'a widget\n');
+  await createItems(ctx, [{ type: 'story', state: { status: 'draft', run: 'idle' } }]);
+  return { ctx, story: engineRecord(ctx, ctx.flowSet, recordReader(ctx)('S-1')) };
+}
+
+test('a shop predicate runs its command in the backlog root: true at exit 0, false at exit 1, and by its exit_codes', async () => {
+  const { ctx, story } = await predicateBacklog();
+  const conditions = bindConditions(ctx, 'S-1');
+  assert.equal(conditions.evaluate('predicates.readme_mentions("widget")', story), true);
+  assert.equal(conditions.evaluate('predicates.readme_mentions("gadget")', story), false);
+  assert.equal(conditions.evaluate('predicates.fails()', story), false);
+  assert.equal(conditions.evaluate('predicates.passes_at_1()', story), true);
+});
+
+test("each predicate argument reaches the command as one argument: an expression's value, an int and a timestamp as JSON text", async () => {
+  const { ctx, story } = await predicateBacklog();
+  const conditions = bindConditions(ctx, 'S-1');
+  for (const expr of ['item_id', 'title', '180', 'timestamp("2026-01-01T00:00:00Z")', '"$(echo no)"']) {
+    assert.equal(conditions.evaluate(`predicates.record(${expr})`, story), true, expr);
+  }
+  assert.equal(
+    readFileSync(join(ctx.backlogDir, '.bl/args'), 'utf8'),
+    '<S-1>\n<story 1>\n<180>\n<2026-01-01T00:00:00.000Z>\n<$(echo no)>\n',
+  );
 });

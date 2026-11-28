@@ -10,7 +10,7 @@ import { buildFlowSet } from '../../engine/flow-set.js';
 import { fixture, load } from './config-fixture.js';
 
 const FLOWS = fileURLToPath(new URL('../fixtures/flows/', import.meta.url));
-const BACKLOG = 'color_scheme: mocha\nrepos: {}\nid_prefixes:\n  S: story\n';
+const BACKLOG = 'color_scheme: mocha\nlanguage: en\nrepos: {}\nid_prefixes:\n  S: story\n';
 
 /** The uTop flow set: file name → text. */
 export const UTOP = Object.fromEntries(

@@ -121,6 +121,28 @@ test('a scoped shell command line runs in the scope, output and status intact', 
   }
 });
 
+// systemd-run expands `$NAME` and `${NAME}` in its command's arguments unless told not to
+// (systemd 254 and later), so a scoped command would get other arguments than its caller gave.
+test('a scoped command gets its arguments as given: systemd-run expands no $ in them', { skip }, async () => {
+  const unit = scopeUnitName(UNIT, 9);
+  try {
+    const r = await scopedSpawn(unit)(
+      'sh',
+      ['-c', 'echo "$$" >/dev/null; printf "%s|" "$@"', 'sh', '$HOME', '${HOME}'],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    assert.deepEqual(
+      { status: r.status, stdout: r.stdout, stderr: r.stderr },
+      { status: 0, stdout: '$HOME|${HOME}|', stderr: '' },
+    );
+  } finally {
+    stopScope(unit);
+  }
+});
+
 // F-128 A6: the real 10 s, so this row takes about 10 s.
 test('a scoped long child that ignores SIGTERM gets SIGKILL 10 s after the stop signal', { skip }, async () => {
   const unit = scopeUnitName(UNIT, 8);
