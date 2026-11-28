@@ -21,6 +21,9 @@
  *      other sources start, gives true. So a change between the caller's
  *      last check and the start of the watchers wakes the process too.
  *
+ * A wake of sources 1 to 3 while `open` or the capacity calls still run ends
+ * the wait at once, and an error of theirs after it does not replace it.
+ *
  * It watches the reflog's directory, not the file, so a rewrite of the file
  * (a `git reflog expire` renames a new file over it) still wakes it.
  */
@@ -99,7 +102,7 @@ function earliestReset(found, since) {
  *   open?: () => Promise<boolean> }} suspend  the failing entries that hold the item, the `agents`
  *   list that the box's step gate checked, and whether the item can go on now (source 5)
  * @returns {Promise<WakeSource>}
- * @throws {Error} when the capacity call of a profile fails
+ * @throws {Error} when the capacity call of a profile fails, or `open` throws, before any wake
  */
 export async function waitForWake(ctx, { failing, agents, open }) {
   const reflog = resolve(ctx.backlogDir, gitOut(ctx.backlogDir, ['rev-parse', '--git-path', 'logs/HEAD']));
@@ -121,24 +124,31 @@ export async function waitForWake(ctx, { failing, agents, open }) {
   process.on('SIGUSR2', onSignal);
   const start = Date.now();
   timers.push(setTimeout(() => wake('timer'), recheck));
-  try {
-    // A wake during the capacity calls is kept: `woken` resolves with it as soon as they return.
+  // Set when the wait ends, so a check that still runs then adds no timer.
+  let ended = false;
+  /** `open` and the capacity calls, which wake the process with sources 4 and 5. */
+  const checks = async () => {
     const before = open === undefined ? undefined : await capacities(ctx, failing, agents);
     // The other sources have started: a change after this check reaches one of them.
-    if (open !== undefined && (await open())) return 'recheck';
+    if (open !== undefined && (await open())) return wake('recheck');
     const after = await capacities(ctx, failing, agents);
     // A profile that got capacity while `open` ran: `open` may have checked the gate before it.
     // One that had capacity before `open` too does not wake: the gate saw it, and it holds the
     // item for another reason.
     if ([...after].some(([name, { available }]) => available && before?.get(name)?.available === false)) {
-      return 'capacity';
+      return wake('capacity');
     }
     const at = earliestReset(after, start);
-    if (at !== null && at < start + recheck) {
+    if (!ended && at !== null && at < start + recheck) {
       timers.push(setTimeout(() => wake('capacity'), Math.max(0, at - Date.now())));
     }
-    return await woken;
+  };
+  try {
+    // The first wake wins: a check that still runs does not hold it back, and a check that fails
+    // after it does not replace it. A check that fails before any wake fails the wait.
+    return await Promise.race([woken, checks().then(() => woken)]);
   } finally {
+    ended = true;
     watcher.close();
     clearTimeout(burst);
     timers.forEach(clearTimeout);

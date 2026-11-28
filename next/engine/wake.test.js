@@ -143,6 +143,61 @@ test('wake_capacity_becomes_available_after_open: a profile that gets capacity w
   }
 });
 
+test('waitForWake_first_source_wins_during_recheck: a wake while open or the capacity calls run ends the wait', async () => {
+  const sleep = (/** @type {number} */ ms) => new Promise((done) => setTimeout(done, ms));
+  const script = capacityScript('{ available: false, resets_at: null }');
+  const profile = `broken: { adapter: replay, env: { REPLAY_SCRIPT: '${script}' } }`;
+  /** @type {unknown[]} */
+  const unhandled = [];
+  const onUnhandled = (/** @type {unknown} */ reason) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    for (const [what, minutes, cause, open, failing, expected] of /** @type {const} */ ([
+      ['the timer while open runs', 0.001, () => {}, async () => (await sleep(350), false), PLAIN, 'timer'],
+      ['SIGUSR2 while open runs', 15, () => sendUsr2(), async () => (await sleep(350), false), PLAIN, 'signal'],
+      [
+        'the timer while open runs, then open throws',
+        0.001,
+        () => {},
+        async () => {
+          await sleep(350);
+          throw new Error('the recheck fails');
+        },
+        PLAIN,
+        'timer',
+      ],
+      [
+        'the timer while open runs, then the capacity call after it fails',
+        0.001,
+        () => {},
+        async () => (await sleep(350), writeFileSync(script, 'not: [a script'), false),
+        CAPACITY,
+        'timer',
+      ],
+    ])) {
+      writeFileSync(script, 'capacity: { available: false, resets_at: null }\nentries: []\n');
+      const ctx = backlog(minutes, [profile]);
+      const before = usr2();
+      const wait = withEnv(replayEnv(script), () => timed(waitForWake(ctx, { failing, agents: ['broken'], open })));
+      cause();
+      const { source, ms } = await wait;
+      assert.equal(source, expected, what);
+      assert.ok(ms < 300, `${what}: woke after ${ms} ms`);
+      assert.equal(usr2(), before, `${what}: the SIGUSR2 listener is removed`);
+      // The check that still ran ends; its error rejects nothing that nobody handles.
+      await sleep(600);
+      assert.deepEqual(unhandled, [], what);
+    }
+    // A check that fails before any wake fails the wait.
+    const open = async () => {
+      throw new Error('the recheck fails');
+    };
+    await assert.rejects(waitForWake(backlog(), { failing: PLAIN, open }), /the recheck fails/);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+});
+
 test('gate_recheck_minutes wakes it with no commit and no signal', async () => {
   const ctx = backlog(0.005); // 300 ms
   const { source, ms } = await timed(waitForWake(ctx, { failing: PLAIN }));
