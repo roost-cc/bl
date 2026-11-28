@@ -302,7 +302,7 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
           w.log(id, flowEnd(ended, last, `the step gate of ${box} failed: ${texts(gated)}`));
         });
         // The interim end of F-139 Decision P1 sends no ended alert (F-140 Decision A3).
-        await alertOrReport(id, 'gated', () => gatedAlert(step, gated, box));
+        await alertOrReport(id, 'gated', async () => gatedAlert(step, gated, box));
         return { ended, status, ...(last === undefined ? {} : { outcome: last }) };
       }
 
@@ -387,8 +387,8 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
       if (end !== null) {
         // A status gate has no box (D-97); a stop is the normal end (F-140 Decision A3).
         const { gated } = end;
-        if (gated !== undefined) await alertOrReport(id, 'gated', () => gatedAlert(step, gated));
-        else await alertOrReport(id, 'ended.normal', () => sendAlert(step, 'ended', ['normal'], { box }));
+        if (gated !== undefined) await alertOrReport(id, 'gated', async () => gatedAlert(step, gated));
+        else await alertOrReport(id, 'ended.normal', async () => sendAlert(step, 'ended', ['normal'], { box }));
         return { ended: end.ended, status, outcome };
       }
       // The arrow out of a return node is its caller's arrow, so the flow
@@ -404,7 +404,7 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
           ? error
           : new FlowCrash(`${box}: ${/** @type {Error} */ (error).message}`, { cause: error });
       // An alert that cannot be sent does not hide the crash it is about.
-      await alertOrReport(id, 'ended.crash', () =>
+      await alertOrReport(id, 'ended.crash', async () =>
         sendAlert(step ?? stepContext(box, current(), []), 'ended', ['crash'], { box, error: crash.message }),
       );
       throw crash;
