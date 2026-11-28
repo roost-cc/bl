@@ -10,6 +10,7 @@ import { holderOf, release, tryLockOnce } from './kernel-lock.js';
 import {
   acquireLock,
   ensureLockDir,
+  itemHolder,
   itemLockPath,
   LOCK_DIR,
   LOCK_FD_ENV,
@@ -275,6 +276,24 @@ test('the item lock is .bl/lock/item-<id>.lock, and a take with tryLockOnce is r
     }
   } finally {
     await child.kill();
+    cleanup();
+  }
+});
+
+test('itemHolder gives the pid of the process that holds the item lock, and null with none', async () => {
+  const { dir, cleanup } = mkBacklogRoot();
+  try {
+    assert.equal(itemHolder(dir, 'S-12'), null, 'no lock file');
+    ensureLockDir(dir);
+    const child = await holdLockInChild(itemLockPath(dir, 'S-12'));
+    try {
+      assert.equal(itemHolder(dir, 'S-12'), child.pid);
+      assert.equal(itemHolder(dir, 'S-13'), null, 'the lock of another item');
+    } finally {
+      await child.kill();
+    }
+    assert.equal(itemHolder(dir, 'S-12'), null, 'the lock file stays, and nobody holds it');
+  } finally {
     cleanup();
   }
 });

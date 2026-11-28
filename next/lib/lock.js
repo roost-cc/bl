@@ -32,7 +32,7 @@
 import { createHash } from 'crypto';
 import { mkdirSync, realpathSync } from 'fs';
 import { basename, dirname, join, resolve } from 'path';
-import { adopt, release, tryLock } from './kernel-lock.js';
+import { adopt, holderOf, release, tryLock } from './kernel-lock.js';
 import { awaitLock, LOCK_WAIT_MS, LockWaitTimeout } from './lock-wait.js';
 
 /** The directory of bl's lock files in a backlog, backlog-relative. */
@@ -88,6 +88,18 @@ export function dirLockPath(backlogRoot, kind, dir) {
  * @param {string} id
  */
 export const itemLockPath = (backlogRoot, id) => join(backlogRoot, LOCK_DIR, `item-${id}.lock`);
+
+/**
+ * The process that holds the item lock of `id` (F-152 D7): its PID, or
+ * 'unknown' for the instant before a new holder writes it to the file, or
+ * `null` when no process holds the lock (`holderOf`). The PID is read only
+ * while the lock is held (D-22). `bl force`, `bl resume` and `bl stop` use it.
+ *
+ * @param {string} backlogRoot
+ * @param {string} id
+ * @returns {number | 'unknown' | null}
+ */
+export const itemHolder = (backlogRoot, id) => holderOf(itemLockPath(backlogRoot, id));
 
 /**
  * Create `<backlogRoot>/.bl/lock/` when it is missing, before a take opens

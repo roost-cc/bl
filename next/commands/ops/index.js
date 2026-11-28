@@ -6,6 +6,7 @@
  * prints them. F-138 registers no op: each later feature adds one line here.
  */
 
+import { force } from './force.js';
 import { outcome } from './outcome.js';
 
 /**
@@ -30,4 +31,4 @@ import { outcome } from './outcome.js';
  */
 
 /** @type {Readonly<Record<string, Op>>} op name → op */
-export const OPS = Object.freeze({ outcome });
+export const OPS = Object.freeze({ force, outcome });
