@@ -28,6 +28,7 @@ import { basename, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { _hooks, STAGING_ATTEMPTS, STAGING_DIR, atomicWriteFile } from './atomic-write.js';
 import { spawnSyncFiles } from './child-stdio.js';
+import { stderrOf } from '../test/helpers/streams.js';
 import { LOCK_FILE } from './lock.js';
 import { git } from '../test/helpers/git.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
@@ -53,17 +54,8 @@ function straysOutsideStaging(root) {
 
 /** Run `fn` with `process.stderr.write` captured; returns its result as `err`. */
 function captureStderr(fn) {
-  const lines = [];
-  const orig = process.stderr.write;
-  process.stderr.write = (chunk) => {
-    lines.push(String(chunk));
-    return true;
-  };
-  try {
-    return { err: fn(), lines };
-  } finally {
-    process.stderr.write = orig;
-  }
+  const { value, chunks } = stderrOf(fn);
+  return { err: value, lines: chunks };
 }
 
 /** `fn()`'s thrown error, or null when it returns. */

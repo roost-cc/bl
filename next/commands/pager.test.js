@@ -10,7 +10,7 @@ import { writeFileSync } from 'fs';
 import { delimiter, join } from 'path';
 import { withEnv } from '../test/helpers/env.js';
 import { fakePager } from '../test/helpers/fake-pager.js';
-import { recorder } from '../test/helpers/streams.js';
+import { recorder, stderrOf } from '../test/helpers/streams.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 import { page } from './pager.js';
 
@@ -148,16 +148,7 @@ test('pager_does_not_repeat_partial_output_on_failure: a pager that ran and fail
 
 test('with PAGER unset and neither less nor more on PATH, the text goes to stdout with no message', () => {
   const empty = mkTempDir('bl-pager-none-');
-  const errors = [];
-  const write = process.stderr.write;
-  process.stderr.write = (chunk) => errors.push(String(chunk)) > 0;
-  try {
-    assert.equal(
-      withEnv({ PAGER: undefined, PATH: empty }, () => pageOn(TALL, 5)),
-      TALL,
-    );
-  } finally {
-    process.stderr.write = write;
-  }
-  assert.deepEqual(errors, []);
+  const { value, chunks } = stderrOf(() => withEnv({ PAGER: undefined, PATH: empty }, () => pageOn(TALL, 5)));
+  assert.equal(value, TALL);
+  assert.deepEqual(chunks, []);
 });
