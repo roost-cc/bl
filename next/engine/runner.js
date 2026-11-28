@@ -71,7 +71,8 @@
  * suspends: it prints `<id>: suspended at <run state>: <failing entries>`
  * (at a wait box, the `bl outcome` that ends the wait), waits for `wake`
  * (`waitForWake`), and runs a new invocation with `resume: true` and the
- * first `by`. That invocation goes on where `wayOn` says, or finds the item
+ * first `by`. The wake checks the item once after its watchers start
+ * (`open`), so a change before them wakes the process at once. That invocation goes on where `wayOn` says, or finds the item
  * still held, commits nothing, and suspends again; the line is printed again
  * only when it changed. When the stored run state is no longer the one the
  * process suspended at (a `bl force`), the process prints so and returns.
@@ -264,14 +265,16 @@ export async function runFlow(
   if (faults.length > 0) throw new ConfigurationFaults(faults, ctx.backlogDir);
   const path = itemLockPath(ctx.backlogDir, item.id);
   ensureLockDir(ctx.backlogDir);
-  const lock = tryLockOnce(path, `the flow of ${item.id}`);
-  if (!('taken' in lock)) {
-    throw new Error(`${item.id}: another process (pid ${lock.holder}) runs its flow and holds ${path}`);
-  }
   // Node ends a process on SIGUSR2 by default. `bl resume` sends it to the lock holder (D-22): it
-  // wakes a suspend (`wake`), and must not end a running step.
+  // wakes a suspend (`wake`), and must not end a running step. The listener comes before the
+  // lock, so a signal at the instant the lock is taken does not end the process either.
   const nothing = () => {};
   process.on('SIGUSR2', nothing);
+  const lock = tryLockOnce(path, `the flow of ${item.id}`);
+  if (!('taken' in lock)) {
+    process.off('SIGUSR2', nothing);
+    throw new Error(`${item.id}: another process (pid ${lock.holder}) runs its flow and holds ${path}`);
+  }
   try {
     const invocation = { by, catalogue, repoContexts, overrides, tty, emit };
     let { result, suspend } = await invoke(ctx, item, flow, { ...invocation, entry, resume });
@@ -284,7 +287,19 @@ export async function runFlow(
       const report = `${item.id}: suspended at ${run}: ${why}`;
       if (report !== shown) info(report);
       shown = report;
-      await wake(ctx, suspend);
+      // Whether the item can go on now. The wake checks it after its watchers start, so an
+      // outcome, a commit or a signal before them is not lost (D3).
+      const open = async () => {
+        const stored = /** @type {import('./run-state.js').State} */ (readState(ctx, item));
+        if (stored.run !== run) return true;
+        try {
+          return !('held' in (await wayNow(ctx, item, stored, invocation)));
+        } catch {
+          // The error shows again in the invocation that the wake starts.
+          return true;
+        }
+      };
+      await wake(ctx, { ...suspend, open });
       const now = /** @type {import('./run-state.js').State} */ (readState(ctx, item)).run;
       if (now !== run) {
         // Another command (`bl force`) changed the run state that this process wrote.
@@ -307,7 +322,26 @@ export async function runFlow(
  * @property {FailingEntry[]} failing  the failing entries that hold it
  * @property {string[]} [agents]  the `agents` list that a held box's step gate checked
  */
-/** @typedef {(ctx: EngineContext, suspend: Suspend) => Promise<unknown>} Wake */
+/**
+ * @typedef {(ctx: EngineContext, suspend: Suspend & { open: () => Promise<boolean> }) => Promise<unknown>} Wake
+ *   `open` gives whether the item can go on now: its run state changed, or `wayOn` no longer
+ *   finds it held
+ */
+
+/**
+ * `wayOn` of the item from its state `stored` and its last log entry (F-152 D2).
+ * @param {EngineContext} ctx
+ * @param {Item} item
+ * @param {import('./run-state.js').State} stored
+ * @param {{ repoContexts: typeof itemRepoContexts, overrides: readonly import('./overrides.js').Override[],
+ *   catalogue: Readonly<Record<string, Step>> }} invocation
+ */
+const wayNow = async (ctx, item, stored, { repoContexts, overrides, catalogue }) =>
+  await wayOn(ctx, item, stored, readJsonl(ctx, item, LOG).at(-1), {
+    repos: repoContexts({ ...ctx, id: item.id }),
+    overrides,
+    catalogue,
+  });
 /** @typedef {(record: Record<string, unknown>) => void} Emit */
 
 /**
@@ -430,11 +464,7 @@ async function invoke(ctx, item, flow, { by, entry, resume, catalogue, repoConte
   /** @type {string} */
   let start;
   if (resume) {
-    const way = await wayOn(ctx, item, stored, readJsonl(ctx, item, LOG).at(-1), {
-      repos: repoContexts({ ...ctx, id }),
-      overrides,
-      catalogue,
-    });
+    const way = await wayNow(ctx, item, stored, { repoContexts, overrides, catalogue });
     if ('held' in way) {
       // Still held: the process suspends at the stored run state, with no commit (F-152 D3).
       const { kind, arg } = parseRun(stored.run);

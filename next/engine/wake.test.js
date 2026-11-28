@@ -91,6 +91,31 @@ test('SIGUSR2 wakes it, and its listener is removed', async () => {
   assert.equal(usr2(), before);
 });
 
+test('open, checked after the watchers start, wakes it at once when it gives true', async () => {
+  const ctx = backlog();
+  const before = usr2();
+  /** @type {number[]} the SIGUSR2 listeners when open runs */
+  const seen = [];
+  const open = async () => (seen.push(usr2()), true);
+  const { source, ms } = await timed(waitForWake(ctx, { failing: PLAIN, open }));
+  assert.equal(source, 'recheck');
+  assert.ok(ms < BURST_MS, `woke after ${ms} ms`);
+  assert.deepEqual(seen, [before + 1], 'the signal listener is on before open runs');
+  assert.equal(usr2(), before);
+});
+
+test('a capacity reset that passes while open runs still wakes it at once', async () => {
+  const ctx = backlog(0.05); // the timer: 3 s
+  // soon resets 300 ms after backlog(); open takes longer than that.
+  const open = async () => (await new Promise((done) => setTimeout(done, 600)), false);
+  const env = replayEnv(capacityScript('{ available: true }'));
+  const { source, ms } = await withEnv(env, () =>
+    timed(waitForWake(ctx, { failing: CAPACITY, agents: ['soon'], open })),
+  );
+  assert.equal(source, 'capacity');
+  assert.ok(ms < 1500, `woke after ${ms} ms`);
+});
+
 test('gate_recheck_minutes wakes it with no commit and no signal', async () => {
   const ctx = backlog(0.005); // 300 ms
   const { source, ms } = await timed(waitForWake(ctx, { failing: PLAIN }));

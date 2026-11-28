@@ -1590,6 +1590,79 @@ test('a bl force of /run while suspended makes the process print that the run st
   assert.deepEqual(eventsOf(ctx, id), ['flow_start', 'flow_end', 'force']);
 });
 
+test('runFlow_observes_change_before_watcher_start', async (t) => {
+  /** Commit the working tree at once, before the wake's watchers start. */
+  const commitNow = (/** @type {any} */ ctx) => {
+    git(ctx.backlogDir, 'add', '-A');
+    git(ctx.backlogDir, 'commit', '-q', '-m', 'a change before the watchers');
+  };
+  const gatedBefore = { 'gates.yaml': 'step_gates:\n  close: [\'item("T-1").closed\']\n' };
+  const stop = { ended: 'stop', status: 'done', outcome: 'success' };
+  for (const [name, flows, ended, change, expected] of /** @type {const} */ ([
+    [
+      'an outcome at waiting',
+      {},
+      'waiting: wait_implement',
+      (/** @type {any} */ ctx, /** @type {string} */ id) => {
+        const entry = { at: AT, ...outcomeEntry('wait_implement', 'failure') };
+        writeFileSync(join(itemPath(ctx, id), 'log.jsonl'), `${JSON.stringify(entry)}\n`, { flag: 'a' });
+        commitNow(ctx);
+      },
+      { ended: 'stop', status: 'in_progress', outcome: 'failure' },
+    ],
+    [
+      'a commit that opens gated',
+      {},
+      'gated: done',
+      (/** @type {any} */ ctx, /** @type {string} */ _id, /** @type {string} */ task) => {
+        closeTaskUncommitted(ctx, task);
+        commitNow(ctx);
+      },
+      stop,
+    ],
+    [
+      'a commit that opens gated before',
+      gatedBefore,
+      'gated before: close',
+      (/** @type {any} */ ctx, /** @type {string} */ _id, /** @type {string} */ task) => {
+        closeTaskUncommitted(ctx, task);
+        commitNow(ctx);
+      },
+      stop,
+    ],
+    [
+      'SIGUSR2 between invocations',
+      {},
+      'gated: done',
+      (/** @type {any} */ ctx, /** @type {string} */ _id, /** @type {string} */ task) => {
+        closeTaskUncommitted(ctx, task);
+        sendUsr2();
+      },
+      stop,
+    ],
+  ])) {
+    const ctx = backlog(flows);
+    const { id, task } =
+      ended === 'waiting: wait_implement'
+        ? { id: await story(ctx, { status: 'in_progress', run: 'idle', next: 'wait_implement' }), task: '' }
+        : await storyWithTask(ctx);
+    const { catalogue } = waitingSteps();
+    let changed = false;
+    const emit = (/** @type {any} */ record) => {
+      if (changed || record.event !== 'flow_end' || record.ended !== ended) return;
+      changed = true;
+      change(ctx, id, task);
+    };
+    // gate_recheck_minutes is 15, so only the change can wake the process within the time below.
+    const run = suspending(t, ctx, { id, resume: true, catalogue, emit });
+    const timeout = new Promise((done) => setTimeout(() => done('still suspended'), 3000).unref());
+    const result = await Promise.race([run.pending, timeout]);
+    t.mock.restoreAll();
+    assert.ok(changed, `${name}: the change was made`);
+    assert.deepEqual(result, expected, name);
+  }
+});
+
 test('SIGTERM to a suspended process ends it; the item keeps gated: <to>, and the log ends with that flow_end', async (t) => {
   const ctx = backlog();
   const { id } = await storyWithTask(ctx);

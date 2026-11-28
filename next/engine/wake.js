@@ -14,7 +14,10 @@
  *   4. `capacity`: when a failing entry calls `has_capacity()`, the earliest
  *      `resets_at` in the future among the profiles of `agents` that have no
  *      capacity, when it comes before the timer. A profile with
- *      `resets_at: null` adds none.
+ *      `resets_at: null` adds none;
+ *   5. `recheck`: `open`, the caller's check of the item, run once after the
+ *      other sources start, gives true. So a change between the caller's
+ *      last check and the start of the watchers wakes the process too.
  *
  * It watches the reflog's directory, not the file, so a rewrite of the file
  * (a `git reflog expire` renames a new file over it) still wakes it.
@@ -30,7 +33,7 @@ import { celNodes } from './derive.js';
 /**
  * @typedef {import('./conditions.js').EngineContext} EngineContext
  * @typedef {import('./gates.js').FailingEntry} FailingEntry
- * @typedef {'reflog'|'signal'|'timer'|'capacity'} WakeSource
+ * @typedef {'reflog'|'signal'|'timer'|'capacity'|'recheck'} WakeSource
  */
 
 /** How long the reflog stays unchanged before its burst of changes wakes the process, in ms. */
@@ -56,21 +59,22 @@ function callsCapacity(env, { entry }) {
  * time, so the capacity calls do not move it later.
  * @param {EngineContext} ctx
  * @param {readonly FailingEntry[]} failing
- * @param {readonly string[]} [agents]
+ * @param {readonly string[]|undefined} agents
+ * @param {number} since  the start of the wait: a reset before it is in the past
  * @returns {Promise<number|null>}
  */
-async function capacityReset(ctx, failing, agents) {
+async function capacityReset(ctx, failing, agents, since) {
   if (agents === undefined) return null;
   const env = celEnvironment(ctx.config.celInputs);
   if (!failing.some((entry) => callsCapacity(env, entry))) return null;
-  const now = Date.now();
   /** @type {number[]} */
   const resets = [];
   for (const name of new Set(agents)) {
     const { available, resets_at } = await capacityOf(ctx, name);
     // A reset in the past would wake the process at once, again and again: the timer covers it.
+    // One after the start of the wait, while `open` or these calls ran, still wakes it at once.
     const at = resets_at === null ? NaN : Date.parse(resets_at);
-    if (!available && at > now) resets.push(at);
+    if (!available && at > since) resets.push(at);
   }
   return resets.length === 0 ? null : Math.min(...resets);
 }
@@ -78,12 +82,13 @@ async function capacityReset(ctx, failing, agents) {
 /**
  * Resolve at the next wake of a suspended process, with its source.
  * @param {EngineContext} ctx
- * @param {{ failing: readonly FailingEntry[], agents?: readonly string[] }} suspend  the failing
- *   entries that hold the item, and the `agents` list that the box's step gate checked
+ * @param {{ failing: readonly FailingEntry[], agents?: readonly string[],
+ *   open?: () => Promise<boolean> }} suspend  the failing entries that hold the item, the `agents`
+ *   list that the box's step gate checked, and whether the item can go on now (source 5)
  * @returns {Promise<WakeSource>}
  * @throws {Error} when the capacity call of a profile fails
  */
-export async function waitForWake(ctx, { failing, agents }) {
+export async function waitForWake(ctx, { failing, agents, open }) {
   const reflog = resolve(ctx.backlogDir, gitOut(ctx.backlogDir, ['rev-parse', '--git-path', 'logs/HEAD']));
   const recheck = ctx.flowSet.gateRecheckMinutes * 60_000;
   /** @type {NodeJS.Timeout[]} */
@@ -104,8 +109,10 @@ export async function waitForWake(ctx, { failing, agents }) {
   const start = Date.now();
   timers.push(setTimeout(() => wake('timer'), recheck));
   try {
+    // The other sources have started: a change after this check reaches one of them.
+    if (open !== undefined && (await open())) return 'recheck';
     // A wake during the capacity calls is kept: `woken` resolves with it as soon as they return.
-    const at = await capacityReset(ctx, failing, agents);
+    const at = await capacityReset(ctx, failing, agents, start);
     if (at !== null && at < start + recheck) {
       timers.push(setTimeout(() => wake('capacity'), Math.max(0, at - Date.now())));
     }
