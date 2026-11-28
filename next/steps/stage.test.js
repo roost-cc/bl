@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { ConfigurationFaults } from '../config/check.js';
+import BACKLOG_SCHEMA from '../config/schemas/backlog.schema.json' with { type: 'json' };
 import { record } from '../store/record.js';
 import { fixture, load } from '../test/helpers/config-fixture.js';
 import { createItems, engineBacklog } from '../test/helpers/engine-backlog.js';
@@ -132,6 +133,26 @@ test('stage_definitions_reject_missing_or_non_string_commands_at_load', () => {
     stageFaultLines('repos: {}\nplugin_registry: { stages: { bl.test: { test: { unit: npm test, int: none } } } }\n'),
     [],
   );
+});
+
+test('special_stage_kinds_come_from_the_schema', () => {
+  // Each bl. stage that the schema defines as a Stage is checked; bl.change and bl.notify are not.
+  const stages = Object.entries(BACKLOG_SCHEMA.$defs.Stages.properties);
+  const single = stages.filter(([, schema]) => schema.$ref === '#/$defs/Stage').map(([stage]) => stage);
+  assert.deepEqual(
+    stages.map(([stage]) => stage).filter((stage) => !single.includes(stage)),
+    ['bl.change', 'bl.notify'],
+  );
+  for (const stage of single) {
+    assert.equal(stageFaultLines(`repos: {}\nplugin_registry: { stages: { ${stage}: {} } }\n`).length, 1, stage);
+  }
+  const special = [
+    'bl.change: { change.open: a, change.find: b, change.describe: c, change.close: d }',
+    'bl.notify: { terminal: echo }',
+  ];
+  for (const definition of special) {
+    assert.deepEqual(stageFaultLines(`repos: {}\nplugin_registry: { stages: { ${definition} } }\n`), [], definition);
+  }
 });
 
 /**

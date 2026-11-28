@@ -9,6 +9,7 @@
 
 import { attribute } from '../config/check.js';
 import { isMapping, pointerToken } from '../config/files.js';
+import BACKLOG_SCHEMA from '../config/schemas/backlog.schema.json' with { type: 'json' };
 import { runPlugin } from './plugin.js';
 import { commandView } from './view.js';
 
@@ -87,12 +88,20 @@ function resolveStage(stages, stage) {
   return { definitions: named.map(({ definition }) => /** @type {Definition} */ (definition)) };
 }
 
-/** The stages that hold a group or a map of channels, which their own steps read (D4). */
-const NOT_SINGLE = new Set(['bl.change', 'bl.notify']);
+/**
+ * The single-command stages: each `bl.` stage that the schema defines as a
+ * `Stage`. The others hold a group or a map of channels, which their own
+ * steps read (D4).
+ */
+const SINGLE = new Set(
+  Object.entries(BACKLOG_SCHEMA.$defs.Stages.properties)
+    .filter(([, schema]) => schema.$ref === '#/$defs/Stage')
+    .map(([stage]) => stage),
+);
 
 /**
  * The start faults of the stages of the top-level scope and of each repo
- * scope: one `stage` fault for each defined `bl.` stage whose list names no
+ * scope: one `stage` fault for each defined `SINGLE` stage whose list names no
  * shared definition, or whose definition holds no command under the stage's
  * key. Each is at the file and path that write it, once, though every repo
  * scope holds the top-level stages too.
@@ -107,7 +116,7 @@ export function stageFaults(config) {
     const stages = config.scope(repo)?.plugin_registry?.stages ?? {};
     const layers = /** @type {import('../config/layers.js').Layer[]} */ (config.layers('backlog', repo));
     for (const stage of Object.keys(stages)) {
-      if (!stage.startsWith('bl.') || NOT_SINGLE.has(stage)) continue;
+      if (!SINGLE.has(stage)) continue;
       const resolved = resolveStage(stages, stage);
       if (!('problem' in resolved)) continue;
       const at = attribute(`/plugin_registry/stages/${resolved.at.map(pointerToken).join('/')}`, layers);
