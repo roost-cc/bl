@@ -43,9 +43,9 @@ import { rank } from './rank.js';
  *   counter, for example) go into the box's commit
  * @property {(commit: { repo: string, sha: string }) => void} recordCommit  adds
  *   a repo commit to the invocation's `flow_end` `commits`
- * @property {(expr: string) => unknown} evaluate  the CEL expression over
- *   `record`, as the gates evaluate it (F-140 D5); it throws an error that
- *   names the expression when the evaluation throws
+ * @property {(expr: string) => Promise<unknown>} evaluate  the CEL expression
+ *   over `record`, as the gates evaluate it (F-140 D5); it rejects with an
+ *   error that names the expression when the evaluation throws
  */
 
 /**

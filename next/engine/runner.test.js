@@ -682,9 +682,9 @@ test("runFlow_gives_step_evaluate: ctx.evaluate evaluates over the box's record 
   /** @type {unknown[]} */
   const seen = [];
   const { catalogue } = fakeSteps({
-    prepare: (/** @type {any} */ step) => {
-      seen.push(step.evaluate('status == "refined" && counters.r.value < counters.r.threshold'));
-      seen.push(step.evaluate(`item("${id}").status`));
+    prepare: async (/** @type {any} */ step) => {
+      seen.push(await step.evaluate('status == "refined" && counters.r.value < counters.r.threshold'));
+      seen.push(await step.evaluate(`item("${id}").status`));
       return 'success';
     },
     implement: (/** @type {any} */ step) => step.evaluate('conflict_free()'),

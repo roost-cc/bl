@@ -16,6 +16,8 @@
  *     change, and `worktree_unchanged()` when no repo changed since the
  *     snapshot before the step (`steps/worktrees.js`, F-141 D6); with no
  *     snapshot, as in a gate, `worktree_unchanged()` throws.
+ *     `has_capacity()` is true when an entry of the box's `agents` has
+ *     capacity (`firstWithCapacity`, F-141 D7); outside an agent box it throws.
  *     A shop predicate runs its top-level plugin with `runPredicate`, in the
  *     backlog root, with the item's command view plus `args`: `0`, `1`, … to
  *     the call's arguments as plain JSON (`fromCelValue`; F-140 D7, Decision
@@ -24,10 +26,13 @@
  *
  * An evaluation that throws is an error whose message names the expression
  * (D-496): an absent key or an unbound function never counts as false.
+ * `evaluate` gives a promise, because an adapter's capacity call is
+ * asynchronous (F-141 D7).
  */
 
 import { closeSync, openSync } from 'fs';
 import { bindCel, fromCelValue, UNBOUND } from '../config/cel.js';
+import { firstWithCapacity } from '../steps/capacity.js';
 import { runPredicate } from '../steps/plugin.js';
 import { commandView } from '../steps/view.js';
 import { changed, clean } from '../steps/worktrees.js';
@@ -102,17 +107,23 @@ function canOpen(path) {
  * records it needs anew.
  * @param {EngineContext} ctx
  * @param {string} id  the item's id in its printed form
- * @param {{ tty?: string, current?: ItemRecord, repos?: readonly RepoContext[], snapshot?: readonly RepoSnapshot[] }} [options]
+ * @param {{ tty?: string, current?: ItemRecord, repos?: readonly RepoContext[], snapshot?: readonly RepoSnapshot[],
+ *   agents?: readonly string[] }} [options]
  *   `tty`: the file `has_terminal()` opens, a test seam; `current`: the record of the item
  *   whose flow runs, which `item()` and `children()` give for that item (`itemRecord`);
  *   `repos`: the repo contexts that `worktree_clean()` reads; `snapshot`: the snapshot of
  *   `repos` before the step, which `worktree_unchanged()` compares with, given only to
- *   post-conditions (F-141 D6)
- * @returns {{ evaluate: (expr: string, record: ItemRecord) => unknown }}
+ *   post-conditions (F-141 D6); `agents`: the `agents` list of the box, which
+ *   `has_capacity()` reads (F-141 D7)
+ * @returns {{ evaluate: (expr: string, record: ItemRecord) => Promise<unknown> }}
  */
-export function bindConditions(ctx, id, { tty = '/dev/tty', current, repos = [], snapshot } = {}) {
+export function bindConditions(ctx, id, { tty = '/dev/tty', current, repos = [], snapshot, agents } = {}) {
   const bound = bindCel(ctx.config.celInputs, {
     ...UNBOUND,
+    has_capacity: async () => {
+      if (agents === undefined) throw new Error('has_capacity() needs an agent box');
+      return (await firstWithCapacity(ctx, agents)).name !== null;
+    },
     worktree_clean: () => clean(repos),
     worktree_unchanged: () => {
       if (snapshot === undefined) throw new Error('worktree_unchanged() is a post-condition');
@@ -131,9 +142,9 @@ export function bindConditions(ctx, id, { tty = '/dev/tty', current, repos = [],
     },
   });
   return {
-    evaluate(expr, record) {
+    async evaluate(expr, record) {
       try {
-        return bound.evaluate(expr, record);
+        return await bound.evaluate(expr, record);
       } catch (error) {
         throw new Error(`${expr}: ${String(/** @type {Error} */ (error).message).split('\n')[0]}`, { cause: error });
       }

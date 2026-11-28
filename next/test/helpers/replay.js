@@ -8,6 +8,7 @@
  * then tests against the same `replay`.
  */
 
+import { existsSync } from 'fs';
 import { delimiter, join } from 'path';
 import { mkTempDir } from './tempdir.js';
 
@@ -28,4 +29,15 @@ export function replayEnv(script) {
     REPLAY_STATE: mkTempDir('bl-replay-state-'),
     REPLAY_SCRIPT: script,
   };
+}
+
+/**
+ * `PATH` without each directory that holds a `replay`, so the adapter finds
+ * no program (D-479). `npm run` puts `node_modules/.bin` on the `PATH` of the
+ * tests, so the test's own `PATH` may hold one.
+ * @returns {{ PATH: string }}
+ */
+export function noReplayPath() {
+  const dirs = (process.env.PATH ?? '').split(delimiter).filter((dir) => !existsSync(join(dir, 'replay')));
+  return { PATH: dirs.join(delimiter) };
 }

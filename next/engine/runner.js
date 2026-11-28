@@ -10,8 +10,11 @@
  *   1. the visit limit (D-115, Decision A6);
  *   2. the step gate with the entry gates of the subflows the flow enters
  *      (D-11, Decision A4); a failing entry ends the invocation at
- *      `gated before: <box>` (Decision P1);
- *   3. the step from the catalogue (D2), with `ctx.evaluate`, `ctx.from`, and
+ *      `gated before: <box>` (Decision P1). In an `agent` box,
+ *      `has_capacity()` reads the box's `agents` list, which the invocation's
+ *      `agents` override replaces where it applies (`agentList`, F-141 D7);
+ *   3. the step from the catalogue (D2), an `agent` step with that same list,
+ *      with `ctx.evaluate`, `ctx.from`, and
  *      `ctx.repos` and `ctx.snapshot`, the item's repo contexts and their state
  *      before the step (F-141 D6); a note it
  *      gives is printed as `<box>: <note>` and goes first in the box's notes,
@@ -46,6 +49,7 @@ import { hostname } from 'os';
 import { release, tryLockOnce } from '../lib/kernel-lock.js';
 import { ensureLockDir, itemLockPath } from '../lib/lock.js';
 import { info } from '../lib/stderr.js';
+import { agentList, checkOverride } from '../steps/capacity.js';
 import { sendAlert } from '../steps/notify.js';
 import { repoContexts as itemRepoContexts, snapshot as takeSnapshot } from '../steps/worktrees.js';
 import { readState } from '../store/item-json.js';
@@ -148,12 +152,17 @@ const subflowBox = (/** @type {string} */ id) => id.slice(0, id.lastIndexOf('/')
  * @param {Readonly<Record<string, Step>>} invocation.catalogue  the step catalogue (D2)
  * @param {typeof itemRepoContexts} [invocation.repoContexts]  gives the item's repo contexts
  *   before each step; `steps/worktrees.js` by default, a test seam (F-141 D6)
+ * @param {import('../steps/capacity.js').AgentsOverride} [invocation.agents]  replaces the
+ *   `agents` list of the `agent` boxes that it applies to (`agentList`, F-141 D7)
  * @returns {Promise<FlowResult>}
+ * @throws {import('../config/check.js').ConfigurationFaults} before any commit, when `agents`
+ *   names a profile that `config/agents.yaml` does not define
  */
 export async function runFlow(
   ctx,
-  { id, start, by, entry, resume = false, catalogue, repoContexts = itemRepoContexts },
+  { id, start, by, entry, resume = false, catalogue, repoContexts = itemRepoContexts, agents },
 ) {
+  checkOverride(ctx, agents);
   const item = itemDir(ctx, id);
   if (item === null) throw new Error(`there is no item ${id} in the backlog`);
   const flow = ctx.flowSet.flows[item.type];
@@ -165,7 +174,7 @@ export async function runFlow(
     throw new Error(`${item.id}: another process (pid ${lock.holder}) runs its flow and holds ${path}`);
   }
   try {
-    return await invoke(ctx, item, flow, { start, by, entry, resume, catalogue, repoContexts });
+    return await invoke(ctx, item, flow, { start, by, entry, resume, catalogue, repoContexts, agents });
   } finally {
     release(lock.taken);
   }
@@ -177,10 +186,10 @@ export async function runFlow(
  * @param {Item} item
  * @param {Flow} flow
  * @param {{ start: string, by: string, entry?: string, resume: boolean, catalogue: Readonly<Record<string, Step>>,
- *   repoContexts: typeof itemRepoContexts }} invocation
+ *   repoContexts: typeof itemRepoContexts, agents?: import('../steps/capacity.js').AgentsOverride }} invocation
  * @returns {Promise<FlowResult>}
  */
-async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, repoContexts }) {
+async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, repoContexts, agents: override }) {
   const { id, type } = item;
   const host = hostname();
   /**
@@ -292,7 +301,8 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, re
       stage: (fn) => staged.push(/** @type {(w: Writer) => void} */ (fn)),
       recordCommit: ({ repo, sha }) => commits.push({ repo, sha }),
       // The call that the gates make (gates.js), so assert and the gates evaluate in one place.
-      evaluate: (expr) => (conditions ??= bindConditions(ctx, id, { current: record, repos })).evaluate(expr, record),
+      evaluate: async (expr) =>
+        (conditions ??= bindConditions(ctx, id, { current: record, repos })).evaluate(expr, record),
     };
   };
 
@@ -311,7 +321,8 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, re
       visits.set(box, visit);
       if (visit > ctx.flowSet.maxBoxVisits) throw new FlowCrash(`${box} started ${visit} times (max_box_visits)`);
 
-      const gated = stepGate(ctx, record, node, previous, { repos });
+      const agents = agentList(node, override);
+      const gated = await stepGate(ctx, record, node, previous, { repos, agents });
       if (gated.length > 0) {
         const ended = `gated before: ${box}`;
         await flowCommit(`${id}: ${box} gated before`, box, (w) => {
@@ -323,7 +334,9 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, re
         return { ended, status, ...(last === undefined ? {} : { outcome: last }) };
       }
 
-      const result = await catalogue[/** @type {string} */ (node.step)].run(step, node.with);
+      // An agent step gets the list its gate checked.
+      const withArgs = agents === undefined ? node.with : { .../** @type {object} */ (node.with), agents };
+      const result = await catalogue[/** @type {string} */ (node.step)].run(step, withArgs);
       // A step gives a bare outcome or { outcome, note } (F-140 Decision A2).
       let outcome = typeof result === 'string' ? result : result.outcome;
       /** @type {string[]} */
@@ -333,7 +346,7 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, re
       // The note is printed once the box's writes are committed, so a failed write prints none.
       const printNote = () => stepNote !== undefined && info(`${box}: ${stepNote}`);
       if (outcome === 'success') {
-        const failed = postConditions(ctx, current(), node, { repos, snapshot: before });
+        const failed = await postConditions(ctx, current(), node, { repos, snapshot: before });
         if (failed.length > 0) {
           outcome = 'failure';
           notes.push(`the post-conditions of ${box} failed: ${texts(failed)}`);
@@ -365,7 +378,7 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, re
             end = { ended: STOP };
             break;
           }
-          const failing = statusGate(ctx, current(), arrow.status);
+          const failing = await statusGate(ctx, current(), arrow.status);
           if (failing.length > 0) {
             notes.push(`the status gate of ${arrow.status} failed: ${texts(failing)}`);
             end = { ended: `gated: ${arrow.status}`, held: { box: from, outcome: followed }, gated: failing };

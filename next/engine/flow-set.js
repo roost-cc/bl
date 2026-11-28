@@ -92,6 +92,8 @@ const SETTINGS = Object.freeze(['max_box_visits', 'gate_recheck_minutes']);
  * @property {'step'|'return'} kind  a node that runs a code step, or a return
  *   node that does no work and ends with its one outcome (D-43)
  * @property {string|null} step  the code step's name; `null` for a return node
+ * @property {string|null} defined  the defined step the node runs, which an
+ *   option's `steps` names (D-424); `null` for a code step or a return node
  * @property {unknown} with  the step's `with:` arguments, or `null`
  * @property {readonly string[]} after  the post-conditions (D-35)
  * @property {readonly GateEntry[]} gate  the step gate: the defined step's
@@ -142,7 +144,8 @@ const SETTINGS = Object.freeze(['max_box_visits', 'gate_recheck_minutes']);
  */
 
 /**
- * @typedef {{ kind: 'step', step: string, with: unknown, after: readonly string[], gate: readonly GateEntry[] }
+ * @typedef {{ kind: 'step', step: string, defined?: string, with: unknown, after: readonly string[],
+ *   gate: readonly GateEntry[] }
  *   | { kind: 'subflow', subflow: string } | { kind: 'none' }} Run  what a box runs;
  *   `none` for a box that resolves to nothing (a fault)
  */
@@ -308,7 +311,7 @@ export function buildFlowSet(config, catalogue, backlogDir) {
     const def = defined.get(name);
     if (def !== undefined) {
       const { use, with: args = null, after = [] } = def.value;
-      return { kind: 'step', step: use, with: args, after, gate: [...gateOf(name), ...gateOf(use)] };
+      return { kind: 'step', step: use, defined: name, with: args, after, gate: [...gateOf(name), ...gateOf(use)] };
     }
     if (subflows.has(name)) return { kind: 'subflow', subflow: name };
     return undefined;
@@ -496,6 +499,7 @@ export function buildFlowSet(config, catalogue, backlogDir) {
       nodes[id] ??= {
         kind: 'return',
         step: null,
+        defined: null,
         with: null,
         after: [],
         gate: [],
@@ -526,6 +530,7 @@ export function buildFlowSet(config, catalogue, backlogDir) {
       nodes[id] = {
         kind: 'step',
         step: run.step,
+        defined: 'defined' in run ? (run.defined ?? null) : null,
         with: run.with,
         after: run.after,
         gate: run.gate,

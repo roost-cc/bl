@@ -4,10 +4,13 @@
  *
  * - The step picks the prompt and the schema file for the item's type
  *   (D-73), renders the prompt over the record with `{{#bl}}`, the partials
- *   and the configuration as `config` (D-494), runs `bl.pre-agent` once for
- *   the item's repos, and runs one session with the first entry of `agents`.
- *   It stages one usage entry for the session, so the entry goes into the
- *   box's commit (history.md, "Usage log").
+ *   and the configuration as `config` (D-494), and runs `bl.pre-agent` once
+ *   for the item's repos. Then it runs a session with the first entry of
+ *   `agents` that has capacity (`firstWithCapacity`). A session with no valid
+ *   result moves on to the next entry with capacity while the worktree is
+ *   unchanged, and is a crash when the worktree changed or no entry is left
+ *   (D-120, F-141 D7). It stages one usage entry per session, so the entries
+ *   go into the box's commit (history.md, "Usage log").
  * - `runSession` runs one session through the profile's adapter, in a fresh
  *   directory under `<backlog>/.bl/tmp/` that it removes afterwards, and
  *   checks the result with the box's outcome schema. F-152's session at a
@@ -15,9 +18,7 @@
  * - `checkAgentBoxes` finds, at start, each name in an `agent` box that the
  *   configuration does not have.
  *
- * In this story a session with no valid result is a crash. S-1643 adds the
- * next entry by capacity (D-120), and S-1644 records the session id and
- * resumes a kept session (D8).
+ * S-1644 records the session id and resumes a kept session (D8).
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
@@ -26,7 +27,9 @@ import { ADAPTERS, adapterOf } from '../adapters/index.js';
 import { renderAsync } from '../config/template.js';
 import { STAGING_DIR } from '../lib/staging.js';
 import { now } from '../store/write.js';
+import { AGENT, firstWithCapacity, profileOf } from './capacity.js';
 import { runStage } from './stage.js';
+import { changed } from './worktrees.js';
 
 /** @typedef {import('./index.js').Step} Step */
 /** @typedef {import('./index.js').StepContext} StepContext */
@@ -34,10 +37,6 @@ import { runStage } from './stage.js';
 /** @typedef {import('../adapters/index.js').Usage} Usage */
 /** @typedef {import('../config/files.js').Fault} Fault */
 /** @typedef {import('../config/load.js').Configuration} Configuration */
-
-/** The name of the step, and of the configuration kind of its profiles. */
-const AGENT = 'agent';
-const AGENTS = 'agents';
 
 /** A file name, or a map from an item type to a file name (D-73). */
 const FILE = {
@@ -71,10 +70,6 @@ function fileFor(value, type, what, box) {
   }
   return value[type];
 }
-
-/** The profile `name` of `config/agents.yaml`, or `undefined`. */
-const profileOf = (/** @type {Configuration} */ config, /** @type {string} */ name) =>
-  /** @type {Record<string, Profile>} */ (config.file(AGENTS) ?? {})[name];
 
 /**
  * Run one agent session and check its result (F-141 D5): `start` a new
@@ -168,15 +163,32 @@ export const agent = Object.freeze({
       { partial: ctx.config.partial, bl: ctx.bl, config: ctx.config.scope(null) },
     );
     await preAgent(ctx);
-    const [profile] = agents;
-    const ended = await runSession(ctx, { profile, prompt: text, schema: schemaFile, mode });
-    ctx.stage((/** @type {import('../store/write.js').Writer} */ w) =>
-      w.usage(ctx.id, { at: now(), step: ctx.box, agent: profile, ...ended.usage }),
-    );
-    if (ended.outcome === null) {
-      throw new Error(`no entry of agents gave a valid result: ${profile}: ${ended.error}`);
+    // The rule of D-120 (F-141 D7): each entry tried adds `<profile>: <error>`
+    // to `tried`, and is not tried again. The rule never reads an error.
+    /** @type {string[]} */
+    const tried = [];
+    /** @type {Set<string>} */
+    const skip = new Set();
+    for (;;) {
+      const { name: profile, passed } = await firstWithCapacity(ctx, agents, skip);
+      for (const { name, reason } of passed) {
+        tried.push(`${name}: ${reason}`);
+        skip.add(name);
+      }
+      if (profile === null) throw new Error(`no entry of agents gave a valid result: ${tried.join('; ')}`);
+      const ended = await runSession(ctx, { profile, prompt: text, schema: schemaFile, mode });
+      ctx.stage((/** @type {import('../store/write.js').Writer} */ w) =>
+        w.usage(ctx.id, { at: now(), step: ctx.box, agent: profile, ...ended.usage }),
+      );
+      // A `failure` is a result too: it ends the step and never moves on.
+      if (ended.outcome !== null) return ended.outcome;
+      tried.push(`${profile}: ${ended.error}`);
+      skip.add(profile);
+      // A second agent never starts on the partial work of the first: `bl resume` reruns the box.
+      if (changed(ctx.snapshot, ctx.repos)) {
+        throw new Error(`the worktree changed after ${profile} gave no valid result: ${tried.join('; ')}`);
+      }
     }
-    return ended.outcome;
   },
 });
 
