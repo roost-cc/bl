@@ -36,6 +36,8 @@ const EXCEPTIONS = new Map([
     'commands/entry.js run',
     "flowRecords' run: the flow runs while the reader reads its records, and its then callbacks end the stream or give it the error",
   ],
+  // A suspended process wakes at the first source, while its checks may still run (F-152 D3).
+  ['engine/wake.js checks', "waitForWake's checks: Promise.race awaits them with the wake, so the first wake wins"],
 ]);
 
 const isFunction = (n) => /Function/.test(n.type);
