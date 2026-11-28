@@ -92,21 +92,61 @@ async function capacity(profile) {
 }
 
 /**
+ * @typedef {{ program: string, tty: number|null }} Launch  what a session needs to launch:
+ *   the `replay` file, and the terminal it writes to when interactive
+ */
+
+/** An `Ended` for a session that could not start, and why. */
+const notStarted = (/** @type {string} */ why) => ({
+  result: null,
+  error: `replay could not start: ${why}`,
+  usage: NO_USAGE,
+});
+
+/**
+ * What a session of `run` needs to launch, or why it cannot: `replay` is not
+ * on the `PATH`, `run.cwd` is not a directory, or an interactive session
+ * cannot open `/dev/tty`. `start` asks before it gives out an id, so each
+ * failure that can be found before the launch keeps no id.
+ * @param {AgentRun} run
+ * @returns {Launch|{ why: string }}
+ */
+function launchOf(run) {
+  const program = programOf(run.profile);
+  if (program === undefined) return { why: NOT_ON_PATH };
+  if (!statSync(run.cwd, { throwIfNoEntry: false })?.isDirectory()) {
+    return { why: `the working directory ${run.cwd} does not exist` };
+  }
+  if (run.mode !== 'interactive') return { program, tty: null };
+  try {
+    return { program, tty: openSync('/dev/tty', 'w') };
+  } catch (e) {
+    return { why: `cannot open /dev/tty: ${e.message}` };
+  }
+}
+
+/**
  * Run one session: `replay <sessionArgs> --schema … --result … [--interactive]`
- * in `run.cwd`, with the prompt on stdin.
+ * in `run.cwd`, with the prompt on stdin. It closes `launch.tty`.
  * @param {AgentRun} run
  * @param {string[]} sessionArgs  `--session-id <id>` or `--resume <id>`
- * @param {string} program  the file `programOf` found for `replay`
- * @returns {Promise<Ended>}
+ * @param {Launch} launch
+ * @returns {Promise<{ launched: boolean, ended: Ended }>}  `launched` is false when the
+ *   child (`replay`, or the `systemd-run` of its process scope) could not be spawned
  * @throws {Error} when the session's process scope cannot be stopped
  */
-async function session(run, sessionArgs, program) {
-  const interactive = run.mode === 'interactive';
+async function session(run, sessionArgs, { program, tty }) {
   const { args, env } = profileCommand(
-    [...sessionArgs, '--schema', run.schemaPath, '--result', run.resultPath, ...(interactive ? ['--interactive'] : [])],
+    [
+      ...sessionArgs,
+      '--schema',
+      run.schemaPath,
+      '--result',
+      run.resultPath,
+      ...(tty === null ? [] : ['--interactive']),
+    ],
     run.profile,
   );
-  const tty = interactive ? openSync('/dev/tty', 'w') : null;
   let ran;
   try {
     const out = tty ?? 'pipe';
@@ -120,6 +160,21 @@ async function session(run, sessionArgs, program) {
     if (tty !== null) closeSync(tty);
   }
   const { result: r, unit, stop } = ran;
+  // No pid: the spawn failed, so nothing ran, and no scope was made to stop.
+  if (!r.pid) return { launched: false, ended: notStarted(r.error?.message ?? 'the spawn failed') };
+  return { launched: true, ended: endedOf(run, r, unit, stop) };
+}
+
+/**
+ * The `Ended` of a session that launched.
+ * @param {AgentRun} run
+ * @param {Awaited<ReturnType<typeof runScopedChild>>['result']} r
+ * @param {string|null} unit
+ * @param {{ ok: boolean, output?: string }} stop
+ * @returns {Ended}
+ * @throws {Error} when the session's process scope cannot be stopped
+ */
+function endedOf(run, r, unit, stop) {
   if (r.stderr) process.stderr.write(r.stderr);
   if (!stop.ok) throw new Error(`could not stop what replay left in ${unit}.scope: ${stop.output}`);
   const code = exitStatus(r);
@@ -136,35 +191,38 @@ async function session(run, sessionArgs, program) {
 
 /**
  * A new session: its id is made here and given to `run.onSession` before
- * `replay` starts. A session that cannot launch, because `replay` is not on
- * the `PATH` or `run.cwd` is not a directory, gives no id, so no later
- * invocation resumes a session that never started.
+ * `replay` starts. A session that cannot launch (`launchOf`) gives no id. A
+ * spawn that fails after the id was given drops it again with
+ * `run.onSession(null)`. So no later invocation resumes a session that never
+ * started.
  * @param {AgentRun} run
  * @returns {Promise<Ended>}
  */
 async function start(run) {
-  const program = programOf(run.profile);
-  /** @type {string|null} */
-  let why = null;
-  if (program === undefined) why = NOT_ON_PATH;
-  else if (!statSync(run.cwd, { throwIfNoEntry: false })?.isDirectory()) {
-    why = `the working directory ${run.cwd} does not exist`;
-  }
-  if (why !== null) return { result: null, error: `replay could not start: ${why}`, usage: NO_USAGE };
+  const launch = launchOf(run);
+  if ('why' in launch) return notStarted(launch.why);
   const id = randomUUID();
-  await run.onSession(id);
-  return session(run, ['--session-id', id], /** @type {string} */ (program));
+  try {
+    await run.onSession(id);
+  } catch (e) {
+    if (launch.tty !== null) closeSync(launch.tty);
+    throw e;
+  }
+  const { launched, ended } = await session(run, ['--session-id', id], launch);
+  if (!launched) await run.onSession(null);
+  return ended;
 }
 
 /**
- * The session `run.session`, continued after its last finished turn.
+ * The session `run.session`, continued after its last finished turn. Its id
+ * stays kept when it cannot launch: the session started before.
  * @param {AgentRun} run
  * @returns {Promise<Ended>}
  */
 async function resume(run) {
-  const program = programOf(run.profile);
-  if (program === undefined) return { result: null, error: `replay could not start: ${NOT_ON_PATH}`, usage: NO_USAGE };
-  return session(run, ['--resume', /** @type {string} */ (run.session)], program);
+  const launch = launchOf(run);
+  if ('why' in launch) return notStarted(launch.why);
+  return (await session(run, ['--resume', /** @type {string} */ (run.session)], launch)).ended;
 }
 
 /** @type {Adapter} */

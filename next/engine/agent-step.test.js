@@ -501,6 +501,29 @@ test('a resumed invocation at the box keeps the session in its flow_start commit
   assert.deepEqual(agentsAtHead(ctx, id), ['first: replay']);
 });
 
+test('a session id dropped with ctx.session({ id: null }) is not in state.json after a crash, nor in a resumed flow_start', async () => {
+  // An agent step whose adapter gave an id and then dropped it, as replay does for a failed launch.
+  const ghost = {
+    ...STEPS.agent,
+    run: async (/** @type {any} */ ctx) => {
+      await ctx.session({ profile: 'replay', id: 'ghost' });
+      await ctx.session({ profile: 'replay', id: null });
+      throw new Error('the launch failed');
+    },
+  };
+  const { ctx, id } = await listTask('replay');
+  const crash = await run(ctx, id, scriptOf([['Work', [SUCCESS]]]), { catalogue: { ...CATALOGUE, agent: ghost } });
+  assert.equal(crash.name, 'FlowCrash');
+  assert.equal(stateAt(ctx, id, 'HEAD~1').session.id, 'ghost');
+  assert.equal(subjectAt(ctx), `${id}: first session of replay did not launch`);
+  assert.deepEqual(stateAt(ctx, id), { status: 'draft', run: 'active: first', host: hostname() });
+  const result = await run(ctx, id, scriptOf([['Work', [SUCCESS]]]), RESUME);
+  assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
+  // HEAD~1 is the new session's commit, HEAD~2 the resumed flow_start.
+  assert.equal(subjectAt(ctx, 'HEAD~2'), `${id}: resumed at first`);
+  assert.equal(stateAt(ctx, id, 'HEAD~2').session, undefined, 'the resumed flow_start keeps no session');
+});
+
 test('a kept session whose profile is no longer in the list is not resumed: the step starts a new session', async () => {
   const log = join(mkTempDir('bl-agent-log-'), 'log');
   const { ctx, id } = await listTask('replay');

@@ -114,7 +114,7 @@ export async function runSession(ctx, { profile, prompt, schema, mode, session =
       cwd: ctx.repos[0]?.worktree_path ?? ctx.backlogDir,
       session,
       unit: ctx.id,
-      onSession: async (/** @type {string} */ id) => {
+      onSession: async (/** @type {string|null} */ id) => {
         await ctx.session({ profile, id });
       },
     };

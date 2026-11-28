@@ -29,7 +29,8 @@ import { replay } from './replay.js';
  * @property {string} cwd
  * @property {string|null} session  the session that `resume` continues
  * @property {string} unit  the work unit's id, for the name of the session's process scope
- * @property {(id: string) => Promise<void>} onSession
+ * @property {(id: string|null) => Promise<void>} onSession  records the session id;
+ *   `null` drops the id it recorded, for a session that did not launch
  */
 /**
  * @typedef {object} Ended
@@ -45,7 +46,8 @@ import { replay } from './replay.js';
  * @property {(profile: Profile) => Promise<Capacity>} capacity
  * @property {(run: AgentRun) => Promise<Ended>} start  a new session; it calls
  *   `run.onSession(id)` as soon as it knows the id, before the agent can change anything,
- *   and never for a session that it knows cannot launch
+ *   and never for a session that it knows cannot launch. When the launch fails after that,
+ *   it calls `run.onSession(null)`, so no id of a session that never started is kept
  * @property {(run: AgentRun) => Promise<Ended>} resume  the session `run.session`
  */
 

@@ -311,9 +311,13 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, re
       bl: ctx.bl,
       stage: (fn) => staged.push(/** @type {(w: Writer) => void} */ (fn)),
       // Its own commit, so a crash after it leaves the id in the stored state (F-141 D8).
+      // `null`: the session did not launch, so no id stays to resume.
       session: async ({ profile, id: session }) =>
-        flowCommit(`${id}: ${box} session ${session}`, box, (w) =>
-          setState(w, status, `active: ${box}`, { host, session: { box, profile, id: session } }),
+        flowCommit(`${id}: ${box} session ${session ?? `of ${profile} did not launch`}`, box, (w) =>
+          setState(w, status, `active: ${box}`, {
+            host,
+            ...(session === null ? {} : { session: { box, profile, id: session } }),
+          }),
         ),
       recordCommit: ({ repo, sha }) => commits.push({ repo, sha }),
       // The call that the gates make (gates.js), so assert and the gates evaluate in one place.

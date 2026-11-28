@@ -41,9 +41,10 @@ import { rank } from './rank.js';
  * @property {(fn: (w: unknown) => void) => void} stage  adds a function that the
  *   runner calls inside the box's store write, so the step's own writes (a
  *   counter, for example) go into the box's commit
- * @property {(session: { profile: string, id: string }) => Promise<void>} session  commits
+ * @property {(session: { profile: string, id: string|null }) => Promise<void>} session  commits
  *   at once the agent session id of the box, with the profile that runs it, in
- *   `state.json`, so a resumed invocation at the box continues it (F-141 D8)
+ *   `state.json`, so a resumed invocation at the box continues it (F-141 D8); an
+ *   `id` of `null` commits `state.json` with no session
  * @property {(commit: { repo: string, sha: string }) => void} recordCommit  adds
  *   a repo commit to the invocation's `flow_end` `commits`
  * @property {(expr: string) => Promise<unknown>} evaluate  the CEL expression

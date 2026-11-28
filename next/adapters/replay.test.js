@@ -5,8 +5,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { delimiter, join } from 'path';
+import { pathToFileURL } from 'url';
+import { runChild } from '../lib/child.js';
+import { scopeAvailable } from '../lib/process-scope.js';
 import { withEnv } from '../test/helpers/env.js';
 import { git, initRepo } from '../test/helpers/git.js';
 import { noReplayPath, replayEnv } from '../test/helpers/replay.js';
@@ -186,6 +189,87 @@ test('failed_replay_launch_does_not_keep_a_resumable_session', async () => {
   const ids = [];
   await withEnv(replayEnv(s.script), () => replay.start(agentRun(s, 'crash S-8', ids)));
   assert.equal(ids.length, 1);
+});
+
+test('failed_replay_launch_never_keeps_a_session', async () => {
+  const s = setup();
+  // A fake replay that writes a success result; `onSession` can remove it before the spawn.
+  const bin = mkTempDir('bl-fake-replay-');
+  const fake = join(bin, 'replay');
+  const FAKE =
+    '#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ "$1" = --result ]; then printf \'{"outcome":"success"}\' > "$2"; fi; shift; done\n';
+  // Its PATH holds no systemd-run, so a session in a process scope cannot spawn its launcher.
+  const profile = { adapter: /** @type {const} */ ('replay'), env: { PATH: bin } };
+  const rows = [
+    {
+      name: 'the program removed after onSession',
+      onSession: () => rmSync(fake, { force: true }),
+    },
+    {
+      name: 'the process scope launcher not on the PATH',
+      onSession: () => {},
+      only: scopeAvailable().ok,
+    },
+  ];
+  for (const { name, onSession, only = true } of rows) {
+    if (!only) continue;
+    writeFileSync(fake, FAKE, { mode: 0o755 });
+    /** @type {(string|null)[]} */
+    const ids = [];
+    const ended = await replay.start(
+      agentRun(s, 'p', [], {
+        profile,
+        onSession: async (/** @type {string|null} */ id) => {
+          ids.push(id);
+          if (id !== null) onSession();
+        },
+      }),
+    );
+    assert.equal(ended.result, null, name);
+    assert.match(String(ended.error), /^replay could not start: /, name);
+    assert.equal(ids.length, 2, `${name}: an id, then null`);
+    assert.match(String(ids[0]), /^[0-9a-f-]{36}$/, name);
+    assert.equal(ids[1], null, `${name}: the id is dropped`);
+  }
+
+  // Interactive, with no terminal to open: no id is given. A child in a new session has none.
+  writeFileSync(fake, FAKE, { mode: 0o755 });
+  const dir = mkTempDir('bl-replay-tty-');
+  const probe = join(dir, 'probe.mjs');
+  const run = { ...agentRun(s, 'p', []), profile, mode: 'interactive', onSession: undefined };
+  writeFileSync(
+    probe,
+    [
+      `import { replay } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, 'replay.js')).href)};`,
+      'const ids = [];',
+      `const run = { ...${JSON.stringify(run)}, onSession: async (id) => { ids.push(id); } };`,
+      'const ended = await replay.start(run);',
+      'process.stdout.write(JSON.stringify({ ids, error: ended.error }));',
+    ].join('\n'),
+  );
+  const r = runChild('setsid', ['-w', process.execPath, probe], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.equal(r.status, 0, String(r.stderr));
+  const out = JSON.parse(String(r.stdout));
+  assert.deepEqual(out.ids, [], 'no id for a session that cannot open /dev/tty');
+  assert.match(out.error, /^replay could not start: cannot open \/dev\/tty: /);
+
+  // A kept session that cannot launch keeps its id: `resume` gives no id and drops none.
+  /** @type {(string|null)[]} */
+  const resumed = [];
+  const ended = await replay.resume(
+    agentRun(s, 'p', [], {
+      profile: { adapter: 'replay', env: { PATH: mkTempDir('bl-empty-path-') } },
+      session: 'kept',
+      onSession: async (/** @type {string|null} */ id) => {
+        resumed.push(id);
+      },
+    }),
+  );
+  assert.equal(ended.error, 'replay could not start: replay is not on the PATH');
+  assert.deepEqual(resumed, []);
 });
 
 test('replay_capacity_and_start_agree_on_path_entries', async () => {
