@@ -18,13 +18,12 @@
  * `bl resume` and each wake so decide in one place.
  */
 
-import { hostname } from 'os';
 import { agentList } from '../steps/capacity.js';
 import { record as readRecord } from '../store/record.js';
 import { engineRecord } from './conditions.js';
 import { statusGate, stepGate } from './gates.js';
 import { applyOverrides } from './overrides.js';
-import { parseRun, readRunState } from './run-state.js';
+import { lockedRunState, parseRun } from './run-state.js';
 
 /**
  * @typedef {import('./conditions.js').EngineContext} EngineContext
@@ -43,7 +42,7 @@ import { parseRun, readRunState } from './run-state.js';
  * Where the item `item` goes on from its stored state `state` and its last
  * log entry `last` (F-152 D2). The caller holds the item lock, so a stored
  * `active` of this host is a box that no process runs: it reads as
- * `interrupted` (D-50). A last `outcome` entry for the box of `interrupted`
+ * `interrupted` (`lockedRunState`, D-50). A last `outcome` entry for the box of `interrupted`
  * or `waiting` is that box's outcome (D-51); a `force` entry after it makes
  * it no longer last, so it is not used (D-613). Gates are evaluated, never
  * written: the status gate of a `gated` item's `to`, and the step gate of a
@@ -63,8 +62,8 @@ import { parseRun, readRunState } from './run-state.js';
  */
 export async function wayOn(ctx, item, state, last, { repos, overrides = [], catalogue = {} } = {}) {
   const flow = ctx.flowSet.flows[item.type];
-  const { kind, arg } = parseRun(readRunState(ctx, item.id, state));
-  if (kind === 'active' && state.host !== undefined && state.host !== hostname()) {
+  const { kind, arg } = parseRun(lockedRunState(state));
+  if (kind === 'active') {
     throw new Error(
       `${item.id}: active at ${arg} on the host ${state.host}; only bl on that host can resume it, ` +
         'and if that host is gone for good, move the item with bl force',
@@ -74,7 +73,6 @@ export async function wayOn(ctx, item, state, last, { repos, overrides = [], cat
   const given = outcomeFor(last, arg);
   const logged = given === undefined ? {} : { outcome: given };
   switch (kind) {
-    case 'active': // of this host, under the caller's lock: interrupted
     case 'interrupted':
       return { start: arg, ...logged };
     case 'waiting':

@@ -2,12 +2,22 @@
  * runner.js — one flow invocation (F-139 D8): an item from a node of its flat
  * flow to `stop` or to a failing gate.
  *
- * `runFlow(ctx, { id, start, by, entry | resume, catalogue })` holds the item
+ * `runFlow(ctx, { id, by, entry | resume, catalogue })` holds the item
  * lock for the whole invocation (D6) and applies the flow-change reset first
- * (D-46). An entry starts at `start`. A resumed invocation takes no `start`:
+ * (D-46). An entry starts at its `start` box, after the checks of D-48
+ * (F-152 D6): the run state as `bl` reads it is `idle` or one of the entry's
+ * `run_states`, never `active`; the status is in the entry's `from`; the
+ * start box's step gate with its entry gates passes; and the status gate of
+ * the status that the start box's `success` arrow sets passes. A check that
+ * fails is a refusal that says why, with no commit but the reset's. An entry
+ * on a `waiting`, `gated` or `interrupted` item drops its run state, `held`
+ * and `next`, and its `flow_start` names the stored run state in `replaced`.
+ * A resumed invocation takes no entry:
  * `wayOn` gives where it goes on from the stored run state and the last log
  * entry (F-152 D2), or that the item is still held, or the entries of an item
  * with nothing to continue; then `runFlow` gives that and commits nothing.
+ * After each commit, `runFlow` gives `emit` each log entry and each usage
+ * entry of the item that the commit wrote, with `item_id` (D-462).
  * Its first commit holds the `flow_start` and `active: <start>`; a
  * resumed invocation keeps there the agent `session` of its start box (F-141
  * D8). A resumed start with an outcome (a logged outcome, or a held
@@ -97,7 +107,7 @@ import { outcomeFor, wayOn } from './continuation.js';
 import { STOP } from './flow-set.js';
 import { postConditions, statusGate, stepGate } from './gates.js';
 import { applyOverrides, overrideFaults } from './overrides.js';
-import { checkAgainstFlow, parseRun } from './run-state.js';
+import { checkAgainstFlow, lockedRunState, parseRun } from './run-state.js';
 
 /**
  * @typedef {import('./conditions.js').EngineContext} EngineContext
@@ -197,22 +207,21 @@ export async function flowWrite(ctx, type, message, box, fn) {
 const subflowBox = (/** @type {string} */ id) => id.slice(0, id.lastIndexOf('/'));
 
 /**
- * Run one flow invocation of the item `id` (D8): from the node `start` for an
- * entry, or from where `wayOn` says for a resume (F-152 D2); with `wake`, the
- * invocations after each suspend too (F-152 D3). Give how the last one
+ * Run one flow invocation of the item `id` (D8): from the start box of the
+ * entry `entry`, or from where `wayOn` says for a resume (F-152 D2); with
+ * `wake`, the invocations after each suspend too (F-152 D3). Give how the last one
  * ended, or, for a resume with nothing to run, the failing entries that still
  * hold the item (`held`) or the entries its status allows (`entries`), with no
  * commit but the reset's. Throws `FlowCrash` on a crash, and an error without a
- * commit when another process holds the item lock or when the item is `active`
- * on another host, or with no commit but the reset's when `start` is no box of
- * the item's flow.
+ * commit when another process holds the item lock, when the item's flow has
+ * no entry `entry`, or when the item is `active` on another host, or with no
+ * commit but the reset's when a check of D-48 refuses the entry (F-152 D6).
  * @param {EngineContext} ctx  a store context with the flow set (the op context is one)
  * @param {object} invocation
  * @param {string} invocation.id  the item's id
- * @param {string} [invocation.start]  with `entry`: the node id where the invocation starts
  * @param {string} invocation.by  who started it: `operator`, or the parent item (`flow_start`'s `by`)
- * @param {string} [invocation.entry]  the entry that started it
- * @param {boolean} [invocation.resume]  `bl resume` started it; then `entry` and `start` are absent
+ * @param {string} [invocation.entry]  the entry that starts it, an entry of the item's flow
+ * @param {boolean} [invocation.resume]  `bl resume` started it; then `entry` is absent
  * @param {Readonly<Record<string, Step>>} invocation.catalogue  the step catalogue (D2)
  * @param {typeof itemRepoContexts} [invocation.repoContexts]  gives the item's repo contexts
  *   before each step; `steps/worktrees.js` by default, a test seam (F-141 D6)
@@ -223,6 +232,8 @@ const subflowBox = (/** @type {string} */ id) => id.slice(0, id.lastIndexOf('/')
  *   test seam (F-141 D9)
  * @param {Wake} [invocation.wake]  gives the next wake of a suspended process (`waitForWake`);
  *   absent, `runFlow` returns at the first suspend
+ * @param {Emit} [invocation.emit]  takes each log entry and usage entry of the item that a
+ *   commit wrote, with `item_id`, after the commit (D-462)
  * @returns {Promise<FlowResult | { held: FailingEntry[] } | { entries: string[] }>}
  * @throws {ConfigurationFaults} before any commit, when an override makes a box's `with` fail
  *   its step's `with` schema, or names a profile that is not defined or has a fault
@@ -230,12 +241,26 @@ const subflowBox = (/** @type {string} */ id) => id.slice(0, id.lastIndexOf('/')
  */
 export async function runFlow(
   ctx,
-  { id, start, by, entry, resume = false, catalogue, repoContexts = itemRepoContexts, overrides = [], tty, wake },
+  {
+    id,
+    by,
+    entry,
+    resume = false,
+    catalogue,
+    repoContexts = itemRepoContexts,
+    overrides = [],
+    tty,
+    wake,
+    emit = () => {},
+  },
 ) {
   const item = itemDir(ctx, id);
   if (item === null) throw new Error(`there is no item ${id} in the backlog`);
   const flow = ctx.flowSet.flows[item.type];
   if (flow === undefined) throw new Error(`${item.id}: the item type ${item.type} has no flow`);
+  if (!resume && !Object.hasOwn(flow.entries, /** @type {string} */ (entry))) {
+    throw new Error(`${item.id}: the ${item.type} flow has no entry '${entry}'`);
+  }
   const faults = overrideFaults(ctx.config, flow, catalogue, overrides);
   if (faults.length > 0) throw new ConfigurationFaults(faults, ctx.backlogDir);
   const path = itemLockPath(ctx.backlogDir, item.id);
@@ -249,8 +274,8 @@ export async function runFlow(
   const nothing = () => {};
   process.on('SIGUSR2', nothing);
   try {
-    const invocation = { by, catalogue, repoContexts, overrides, tty };
-    let { result, suspend } = await invoke(ctx, item, flow, { ...invocation, start, entry, resume });
+    const invocation = { by, catalogue, repoContexts, overrides, tty, emit };
+    let { result, suspend } = await invoke(ctx, item, flow, { ...invocation, entry, resume });
     if (wake === undefined) return result;
     let shown = '';
     while (suspend !== undefined) {
@@ -284,6 +309,44 @@ export async function runFlow(
  * @property {string[]} [agents]  the `agents` list that a held box's step gate checked
  */
 /** @typedef {(ctx: EngineContext, suspend: Suspend) => Promise<unknown>} Wake */
+/** @typedef {(record: Record<string, unknown>) => void} Emit */
+
+/**
+ * Why the entry `name` must not start on the item (D-48, F-152 D6), or
+ * undefined when it may. The caller holds the item lock, so the run state is
+ * read as `lockedRunState` gives it; `gated before` counts as `gated`. Gates
+ * are evaluated, never written: the start box's step gate with its entry
+ * gates, as at an invocation's first node (`previous` is `null`, F-139
+ * Decision A4), and the status gate of the status that the start box's
+ * `success` arrow sets.
+ * @param {EngineContext} ctx
+ * @param {Item} item
+ * @param {Flow} flow
+ * @param {string} name  an entry of `flow`
+ * @param {import('./run-state.js').State} stored  the item's state, after the flow-change reset
+ * @param {{ repos: import('./gates.js').Worktrees['repos'], agents?: readonly string[] }} options  the
+ *   item's repo contexts, and the `agents` list that the start box's step runs (`agentList`)
+ * @returns {Promise<string|undefined>}
+ */
+async function entryRefusal(ctx, item, flow, name, stored, options) {
+  const { from, start, run_states: runStates = [] } = flow.entries[name];
+  const run = lockedRunState(stored);
+  const { kind } = parseRun(run);
+  // `idle` is always accepted, and `run_states` may name it too (flows.schema.json).
+  const accepted = [...new Set(['idle', ...runStates])];
+  if (!accepted.includes(kind === 'gated before' ? 'gated' : kind)) {
+    return `the run state is ${run}; it starts only from ${accepted.join(', ')}`;
+  }
+  if (!from.includes(stored.status)) return `the status is ${stored.status}; it starts only from ${from.join(', ')}`;
+  const record = engineRecord(ctx, ctx.flowSet, readRecord(ctx, item.id));
+  const node = flow.nodes[start];
+  const gated = await stepGate(ctx, record, node, null, options);
+  if (gated.length > 0) return `the step gate of ${start} fails: ${texts(gated)}`;
+  const to = node.arrows.success?.status;
+  const failing = to === undefined ? [] : await statusGate(ctx, record, to);
+  if (failing.length === 0) return undefined;
+  return `the status gate of ${to}, which the success arrow of ${start} sets, fails: ${texts(failing)}`;
+}
 
 /**
  * The invocation under the item lock (`runFlow`): its result, and why it
@@ -291,29 +354,35 @@ export async function runFlow(
  * @param {EngineContext} ctx
  * @param {Item} item
  * @param {Flow} flow
- * @param {{ start?: string, by: string, entry?: string, resume: boolean, catalogue: Readonly<Record<string, Step>>,
+ * @param {{ by: string, entry?: string, resume: boolean, catalogue: Readonly<Record<string, Step>>,
  *   repoContexts: typeof itemRepoContexts, overrides: readonly import('./overrides.js').Override[],
- *   tty?: string }} invocation
+ *   tty?: string, emit: Emit }} invocation
  * @returns {Promise<{ result: FlowResult | { held: FailingEntry[] } | { entries: string[] }, suspend?: Suspend }>}
  */
-async function invoke(
-  ctx,
-  item,
-  flow,
-  { start: entryStart, by, entry, resume, catalogue, repoContexts, overrides, tty },
-) {
+async function invoke(ctx, item, flow, { by, entry, resume, catalogue, repoContexts, overrides, tty, emit }) {
   const { id, type } = item;
   const host = hostname();
   /** The `with` of `node` that its step gate and its step see (F-152 D4). */
   const argsOf = (/** @type {import('./flow-set.js').Node} */ node) => applyOverrides(node, overrides, catalogue);
   /**
-   * `flowWrite` of this item's flow.
+   * `flowWrite` of this item's flow; then each log entry and usage entry of
+   * the item that it wrote, as the file holds it, goes to `emit` with
+   * `item_id` (D-462).
    * @param {string} message
    * @param {string|null} box
    * @param {(w: Writer) => void} fn
    */
   const flowCommit = async (message, box, fn) => {
-    await flowWrite(ctx, type, message, box, fn);
+    /** @type {Record<string, unknown>[]} */
+    const written = [];
+    /** @param {'log'|'usage'} file */
+    const kept = (w, file) => (/** @type {string} */ other, /** @type {Record<string, unknown>} */ entry) => {
+      if (other === id) written.push(entry);
+      w[file](other, entry);
+    };
+    await flowWrite(ctx, type, message, box, (w) => fn({ ...w, log: kept(w, 'log'), usage: kept(w, 'usage') }));
+    // The JSON round trip drops the fields that are undefined, as the file does.
+    for (const entry of written) emit({ item_id: id, ...JSON.parse(JSON.stringify(entry)) });
   };
   /**
    * Stage the step's writes `staged`, then `state.json` with `status`, `run`
@@ -377,13 +446,27 @@ async function invoke(
     if ('entries' in way) return { result: way };
     ({ start, outcome: given } = way);
   } else {
-    start = /** @type {string} */ (entryStart);
-    // A start that the flow does not have (a box that the reset just found gone,
-    // or a return node, which runs no step) is refused before the flow_start.
-    if (flow.nodes[start]?.kind !== 'step') throw new Error(`${id}: '${start}' is no box of the ${type} flow`);
+    const name = /** @type {string} */ (entry);
+    // The load checks that an entry's start names a box of its flow (`derive.js`).
+    start = flow.entries[name].start;
+    const node = flow.nodes[start];
+    const why = await entryRefusal(ctx, item, flow, name, stored, {
+      repos: repoContexts({ ...ctx, id }),
+      agents: agentList(node, argsOf(node)),
+    });
+    if (why !== undefined) throw new Error(`${id}: the entry ${name} is refused: ${why}`);
   }
   let { status } = stored;
-  const flowStart = { at: now(), event: 'flow_start', ...(resume ? { resume: true } : { entry }), status, by };
+  // An entry on a waiting, gated or interrupted item drops that run state (D-48, history.md D-617).
+  const replaced = resume || stored.run === 'idle' ? {} : { replaced: stored.run };
+  const flowStart = {
+    at: now(),
+    event: 'flow_start',
+    ...(resume ? { resume: true } : { entry }),
+    status,
+    ...replaced,
+    by,
+  };
   /**
    * Log the `flow_start` in the commit of the start's outcome: a start with an
    * outcome runs no step, so it has no commit of its own (`given`).

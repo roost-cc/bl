@@ -41,7 +41,7 @@ async function task(/** @type {string} */ box, /** @type {Record<string, unknown
 
 /** Run the `run` entry of the task once, and give its result or its crash. */
 const run = (/** @type {any} */ ctx, /** @type {string} */ id) =>
-  runFlow(ctx, { id, start: 'first', by: 'operator', entry: 'run', catalogue: CATALOGUE }).catch((e) => e);
+  runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue: CATALOGUE }).catch((e) => e);
 
 /** One task of the task flow of `box` with `state`, run once. */
 const runTask = async (/** @type {string} */ box, /** @type {Record<string, unknown>} */ state = {}) => {
@@ -180,7 +180,7 @@ async function runShopTask(box, overrides = []) {
   const ctx = engineBacklog({ 'task.yaml': taskFlow(box) }, SHOP, (config) => ({ ...CATALOGUE, ...shopSteps(config) }));
   const [id] = await createItems(ctx, [{ type: 'task', state: { status: 'draft', run: 'idle' } }]);
   const catalogue = { ...CATALOGUE, ...shopSteps(ctx.config) };
-  const invocation = { id, start: 'first', by: 'operator', entry: 'run', catalogue, overrides };
+  const invocation = { id, by: 'operator', entry: 'run', catalogue, overrides };
   const result = await runFlow(ctx, invocation).catch((e) => e);
   return { ctx, id, result };
 }
@@ -311,7 +311,6 @@ test('rank_note_matches_committed_graph_write', async (t) => {
     t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(text));
     const result = await runFlow(ctx, {
       id: F,
-      start: 'first',
       by: 'operator',
       entry: 'run',
       catalogue: { ...CATALOGUE, rank },
@@ -407,9 +406,8 @@ async function runNotifyTask(
   const ctx = notifyBacklog({ flows: { 'task.yaml': notifyFlow(box) }, channels, alerts, catalogue: CATALOGUE });
   const counters = { self_rounds: { value: 3, threshold: 3 } };
   const [id] = await createItems(ctx, [{ type: 'task', state: { status: 'draft', run: 'idle', counters } }]);
-  const start = 'self_round_cap';
   const { value: result, chunks } = await stderrOfAsync(() =>
-    runFlow(ctx, { id, start, by: 'operator', entry: 'run', catalogue: CATALOGUE }).catch((e) => e),
+    runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue: CATALOGUE }).catch((e) => e),
   );
   return { ctx, id, result, stderr: chunks.join('') };
 }

@@ -61,9 +61,22 @@ export function parseRun(run) {
  * @returns {string}
  */
 export function readRunState(ctx, id, state) {
+  if (parseRun(state.run).kind !== 'active' || holderOf(itemLockPath(ctx.backlogDir, id)) !== null) return state.run;
+  return lockedRunState(state);
+}
+
+/**
+ * The run state of an item whose item lock the caller holds, as `bl` reads
+ * it: no other process runs a stored `active: <box>` of this host, so it
+ * reads `interrupted: <box>` (D-50). An `active` of another host reads as
+ * stored (D-4). The runner reads it for an entry's checks (F-152 D6), and
+ * `wayOn` for a resume (F-152 D2).
+ * @param {State} state  the item's stored state
+ * @returns {string}
+ */
+export function lockedRunState(state) {
   const { kind, arg } = parseRun(state.run);
-  if (kind !== 'active' || (state.host ?? hostname()) !== hostname()) return state.run;
-  return holderOf(itemLockPath(ctx.backlogDir, id)) === null ? `interrupted: ${arg}` : state.run;
+  return kind === 'active' && (state.host ?? hostname()) === hostname() ? `interrupted: ${arg}` : state.run;
 }
 
 /**

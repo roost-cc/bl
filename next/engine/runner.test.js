@@ -124,7 +124,7 @@ test("runFlow takes a story from the run entry's start box to stop: one commit f
   const start = ctx.flowSet.flows.story.entries.run.start;
   assert.equal(start, 'prepare');
 
-  const result = await runFlow(ctx, { id, start, by: 'operator', entry: 'run', catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue });
   assert.deepEqual(result, { ended: 'stop', status: 'implemented', outcome: 'success' });
   assert.deepEqual(ran, RUN_BOXES);
 
@@ -168,7 +168,7 @@ test('the stored run state names each step before it runs: active at its box, on
     return 'success';
   };
   const { catalogue } = fakeSteps({ prepare: look, implement: look, 'deliver_child/join_child/join': look });
-  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue });
+  await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue });
   assert.deepEqual(seen, {
     prepare: { status: 'refined', run: 'active: prepare', host: hostname() },
     implement: { status: 'in_progress', run: 'active: implement', host: hostname() },
@@ -191,7 +191,7 @@ test('ctx.from is the path of the previous node, and absent at the first node (F
   };
   const boxes = ['prepare', 'implement', 'in_unit', 'deliver_child/self_check/test_unit'];
   const { catalogue } = fakeSteps(Object.fromEntries(boxes.map((box) => [box, look])));
-  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue });
+  await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue });
   assert.deepEqual(from, {
     prepare: '(absent)',
     implement: 'prepare',
@@ -212,7 +212,7 @@ test("a step's staged write lands in its box's commit, and its recorded commit i
       return 'success';
     },
   });
-  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue });
+  await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue });
 
   const path = itemDir(ctx, id).path;
   const implement = commitsSince(ctx, base).find(({ subject }) => subject === `${id}: implement success`);
@@ -342,7 +342,7 @@ test('runFlow_commits_staged_counter_with_box', async () => {
   const id = await story(ctx, { status: 'refined', run: 'idle' });
   const base = head(ctx);
   const { catalogue } = fakeSteps({ prepare: stageState });
-  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue });
+  await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue });
   const path = itemDir(ctx, id).path;
   const prepare = commitsSince(ctx, base).find(({ subject }) => subject === `${id}: prepare success`);
   assert.deepEqual(JSON.parse(git(ctx.backlogDir, 'show', `${prepare.sha}:${path}/state.json`)), {
@@ -358,14 +358,14 @@ test('runFlow_commits_staged_counter_with_box', async () => {
 test('a failing status gate keeps the status and ends at gated: <to> with held; the failing entries are only in the note', async () => {
   const ctx = backlog();
   const [id] = await createItems(ctx, [
-    { type: 'story', state: { status: 'implemented', run: 'idle' } },
+    { type: 'story', state: { status: 'implemented', run: 'idle', next: 'close' } },
     { type: 'task', state: { status: 'draft', run: 'idle' } },
   ]);
   await setGraph(ctx, 'containment', { 'T-1': { parent: id } });
   const base = head(ctx);
   const { catalogue, ran } = fakeSteps();
 
-  const result = await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', resume: true, catalogue });
   assert.deepEqual(result, { ended: 'gated: done', status: 'implemented', outcome: 'success' });
   assert.deepEqual(ran, ['close']);
   assert.deepEqual(stateOf(ctx, id), {
@@ -384,17 +384,17 @@ test('a failing status gate keeps the status and ends at gated: <to> with held; 
   });
   assert.deepEqual(
     commitsSince(ctx, base).map(({ subject }) => subject),
-    [`${id}: close started`, `${id}: close success`],
+    [`${id}: resumed at close`, `${id}: close success`],
   );
 });
 
 test('a failing step gate ends at gated before: <box> without running the step; the failing entries are only in the note', async () => {
   const ctx = backlog({ 'gates.yaml': 'step_gates:\n  close: [\'status == "merged"\']\n' });
-  const id = await story(ctx, { status: 'implemented', run: 'idle' });
+  const id = await story(ctx, { status: 'implemented', run: 'idle', next: 'close' });
   const base = head(ctx);
   const { catalogue, ran } = fakeSteps();
 
-  const result = await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', resume: true, catalogue });
   assert.deepEqual(result, { ended: 'gated before: close', status: 'implemented' });
   assert.deepEqual(ran, []);
   assert.deepEqual(stateOf(ctx, id), { status: 'implemented', run: 'gated before: close' });
@@ -409,7 +409,7 @@ test('a failing step gate ends at gated before: <box> without running the step; 
   assert.deepEqual(
     commitsSince(ctx, base).map(({ subject, trailers }) => [subject, trailers[1]]),
     [
-      [`${id}: close started`, 'Bl-Step: close'],
+      [`${id}: resumed at close`, 'Bl-Step: close'],
       [`${id}: close gated before`, 'Bl-Step: close'],
     ],
   );
@@ -451,7 +451,7 @@ test("a subflow's gate is checked when deliver's fix arrow enters self_check fro
     'deliver/peer_review/findings_closed': 'failure',
     'deliver/fix': addTask,
   });
-  const result = await runFlow(ctx, { id, start: 'in_unit', by: 'operator', entry: 'deliver', catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', entry: 'deliver', catalogue });
   assert.deepEqual(result, {
     ended: 'gated before: deliver/self_check/test_unit',
     status: 'in_review',
@@ -469,7 +469,7 @@ test("a loop inside self_check back to test_unit does not check self_check's gat
     'deliver/self_check/test_unit': ['failure', 'success'],
     'deliver/self_check/count_test_fix': addTask, // the gate is false from here on
   });
-  const result = await runFlow(ctx, { id, start: 'in_unit', by: 'operator', entry: 'deliver', catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', entry: 'deliver', catalogue });
   assert.deepEqual(result, { ended: 'stop', status: 'ready_for_merge', outcome: 'success' });
   assert.deepEqual(ran.slice(0, 6), [
     'in_unit',
@@ -490,7 +490,7 @@ test('a failing post-condition turns success into failure, and the commit messag
   const id = await story(ctx, { status: 'refined', run: 'idle' });
   const base = head(ctx);
   const { catalogue, ran } = fakeSteps({ wait_implement: 'failure' });
-  const result = await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue });
   assert.deepEqual(result, { ended: 'stop', status: 'in_progress', outcome: 'failure' });
   assert.deepEqual(ran, ['prepare', 'implement', 'notify_implement', 'wait_implement']);
   const implement = commitsSince(ctx, base)[2];
@@ -545,7 +545,7 @@ async function implementWith(after, implement) {
     },
     wait_implement: 'failure',
   });
-  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue, repoContexts });
+  await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue, repoContexts });
   return implementOutcome(ctx, base);
 }
 
@@ -570,7 +570,7 @@ test("each step gets the repo contexts as ctx.repos, and each repo's HEAD and st
     },
     wait_implement: 'failure',
   });
-  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue, repoContexts });
+  await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue, repoContexts });
   const [a, b] = repos.map((repo) => git(repo.worktree_path, 'rev-parse', 'HEAD'));
   assert.deepEqual(seen.slice(0, 2), [
     {
@@ -603,9 +603,9 @@ test('worktree_clean() as a post-condition is false while one repo has an uncomm
 
 test('worktree_unchanged() in a step gate is a FlowCrash: it is a post-condition', async () => {
   const ctx = backlog({ 'gates.yaml': "step_gates:\n  close: ['worktree_unchanged()']\n" });
-  const id = await story(ctx, { status: 'implemented', run: 'idle' });
+  const id = await story(ctx, { status: 'implemented', run: 'idle', next: 'close' });
   const { catalogue, ran } = fakeSteps();
-  const crash = await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue }).catch((e) => e);
+  const crash = await runFlow(ctx, { id, by: 'operator', resume: true, catalogue }).catch((e) => e);
   assert.ok(crash instanceof FlowCrash);
   assert.equal(crash.message, 'close: worktree_unchanged(): worktree_unchanged() is a post-condition');
   assert.deepEqual(ran, []);
@@ -620,7 +620,7 @@ test("each step gets the op context's {{#bl}} runner as ctx.bl", async () => {
   const { catalogue } = fakeSteps({
     close: async (/** @type {any} */ step) => (texts.push(await step.bl(`show ${step.id}`)), 'success'),
   });
-  await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  await runFlow(ctx, { id, by: 'operator', entry: 'close', catalogue });
   assert.deepEqual(lines, [`show ${id}`]);
   assert.deepEqual(texts, [`ran show ${id}`]);
 });
@@ -638,7 +638,7 @@ test('with the default repoContexts, ctx.repos is empty, and worktree_clean() an
     },
     wait_implement: 'failure',
   });
-  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue });
+  await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue });
   assert.deepEqual(seen, [[], []]);
   assert.equal(implementOutcome(ctx, base), 'success');
 });
@@ -678,7 +678,7 @@ test('runFlow_step_note_comes_before_post_condition_notes, and a note of a box t
     implement: () => ({ outcome: 'success', note: 'one' }),
     wait_implement: () => ({ outcome: 'failure', note: 'gave up' }),
   });
-  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue });
+  await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue });
   t.mock.restoreAll();
   assert.deepEqual(printed, ['prepare: prepared\n', 'implement: one\n', 'wait_implement: gave up\n']);
   // implement's note is in its own commit message, beside its post-condition note.
@@ -700,7 +700,7 @@ test("runFlow_gives_step_evaluate: ctx.evaluate evaluates over the box's record 
     },
     implement: (/** @type {any} */ step) => step.evaluate('conflict_free()'),
   });
-  const crash = await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue }).catch((e) => e);
+  const crash = await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue }).catch((e) => e);
   // item() of the running item reads the status the invocation reached, as a gate's does.
   assert.deepEqual(seen, [true, 'refined']);
   assert.ok(crash instanceof FlowCrash);
@@ -721,9 +721,9 @@ test('a shop predicate in a status gate passes or fails the gate by its exit sta
     const flows = { 'story.yaml': storyFlow((flow) => (flow.statuses.done = { gate: [gate] })) };
     const ctx = engineBacklog({ 'defined-steps.yaml': definedSteps(), ...flows }, shop);
     writeFileSync(join(ctx.backlogDir, 'README.md'), 'a widget\n');
-    const id = await story(ctx, { status: 'implemented', run: 'idle' });
+    const id = await story(ctx, { status: 'implemented', run: 'idle', next: 'close' });
     const { catalogue } = fakeSteps();
-    return runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue }).catch((e) => e);
+    return runFlow(ctx, { id, by: 'operator', resume: true, catalogue }).catch((e) => e);
   };
   assert.deepEqual(await close('predicates.readme_mentions("widget")'), {
     ended: 'stop',
@@ -749,7 +749,7 @@ test('an outcome with no arrow commits an outcome entry and throws FlowCrash; th
   });
   const id = await story(ctx, { status: 'implemented', run: 'idle' });
   const { catalogue } = fakeSteps();
-  await assert.rejects(runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue }), {
+  await assert.rejects(runFlow(ctx, { id, by: 'operator', entry: 'close', catalogue }), {
     name: 'FlowCrash',
     message: 'close: no arrow for the outcome failure in config/flows/story.yaml',
   });
@@ -774,7 +774,7 @@ test('a step that throws is a FlowCrash with no flow_end, and the item then read
       throw new Error('the agent crashed');
     },
   });
-  const crash = await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue }).catch((e) => e);
+  const crash = await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue }).catch((e) => e);
   assert.ok(crash instanceof FlowCrash);
   assert.equal(crash.message, 'implement: the agent crashed');
   assert.deepEqual(
@@ -821,9 +821,9 @@ function alerting(flows = {}, alerts = undefined, codes = { terminal: 0, bell: 0
 test('a failing step gate sends one gated alert to the channels of its classes and of gated, joined, and no ended alert', async () => {
   const gate = `step_gates:\n  close: [{ condition: 'false', class: needs_operator_action }, 'status == "merged"']\n`;
   const ctx = alerting({ 'gates.yaml': gate }, ROUTES);
-  const id = await story(ctx, { status: 'implemented', run: 'idle' });
+  const id = await story(ctx, { status: 'implemented', run: 'idle', next: 'close' });
   const { catalogue } = fakeSteps();
-  const result = await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', resume: true, catalogue });
   assert.deepEqual(result, { ended: 'gated before: close', status: 'implemented' });
   const text = `${id} is held before close: false [needs_operator_action]\n`;
   assert.equal(delivered(ctx, 'bell'), text);
@@ -833,12 +833,12 @@ test('a failing step gate sends one gated alert to the channels of its classes a
 test('a failing status gate sends one gated alert with no box, and a dependency entry routes by gated with its item first', async () => {
   const ctx = alerting({}, ROUTES);
   const [id] = await createItems(ctx, [
-    { type: 'story', state: { status: 'implemented', run: 'idle' } },
+    { type: 'story', state: { status: 'implemented', run: 'idle', next: 'close' } },
     { type: 'task', state: { status: 'draft', run: 'idle' } },
   ]);
   await setGraph(ctx, 'containment', { 'T-1': { parent: id } });
   const { catalogue } = fakeSteps();
-  const result = await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', resume: true, catalogue });
   assert.deepEqual(result, { ended: 'gated: done', status: 'implemented', outcome: 'success' });
   // uTop's gate of done gives this entry the class expected, which ROUTES sends by gated.
   assert.equal(delivered(ctx, 'terminal'), `${id} is held: children("task").all(c, c.closed) [expected]\n`);
@@ -846,11 +846,11 @@ test('a failing status gate sends one gated alert with no box, and a dependency 
 
   const other = alerting({}, ROUTES);
   const [s1, s2] = await createItems(other, [
-    { type: 'story', state: { status: 'implemented', run: 'idle' } },
+    { type: 'story', state: { status: 'implemented', run: 'idle', next: 'close' } },
     { type: 'story', state: { status: 'refined', run: 'idle' } },
   ]);
   await setGraph(other, 'dependency', { [s1]: { done: [{ [s2]: 'status == "done"' }] } });
-  await runFlow(other, { id: s1, start: 'close', by: 'operator', entry: 'close', catalogue });
+  await runFlow(other, { id: s1, by: 'operator', resume: true, catalogue });
   assert.equal(delivered(other, 'terminal'), `${s1} is held: ${s2}: status == "done"\n`);
   assert.equal(delivered(other, 'bell'), null);
 });
@@ -858,9 +858,9 @@ test('a failing status gate sends one gated alert with no box, and a dependency 
 test("a gated alert's condition longer than 120 characters is cut at 120 with …", async () => {
   const condition = `status == "${'x'.repeat(130)}"`;
   const ctx = alerting({ 'gates.yaml': `step_gates:\n  close: ['${condition}']\n` }, ROUTES);
-  const id = await story(ctx, { status: 'implemented', run: 'idle' });
+  const id = await story(ctx, { status: 'implemented', run: 'idle', next: 'close' });
   const { catalogue } = fakeSteps();
-  await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  await runFlow(ctx, { id, by: 'operator', resume: true, catalogue });
   assert.equal(delivered(ctx, 'terminal'), `${id} is held before close: ${condition.slice(0, 120)}…\n`);
 });
 
@@ -868,14 +868,14 @@ test('a flow_end at stop sends one ended.normal alert, which uTop routes to [], 
   const utop = alerting();
   const id = await story(utop, { status: 'implemented', run: 'idle' });
   const { catalogue } = fakeSteps();
-  const result = await runFlow(utop, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  const result = await runFlow(utop, { id, by: 'operator', entry: 'close', catalogue });
   assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
   assert.equal(delivered(utop, 'terminal'), null);
   assert.equal(delivered(utop, 'bell'), null);
 
   const routed = alerting({}, ROUTES);
   const other = await story(routed, { status: 'implemented', run: 'idle' });
-  await runFlow(routed, { id: other, start: 'close', by: 'operator', entry: 'close', catalogue });
+  await runFlow(routed, { id: other, by: 'operator', entry: 'close', catalogue });
   assert.equal(delivered(routed, 'terminal'), `${other}: bl ended (normal)\n`);
 });
 
@@ -887,7 +887,7 @@ test("a step that throws sends one ended.crash alert with the box's path and the
       throw new Error('the agent crashed');
     },
   });
-  const crash = await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue }).catch((e) => e);
+  const crash = await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue }).catch((e) => e);
   assert.ok(crash instanceof FlowCrash);
   assert.equal(crash.message, 'implement: the agent crashed');
   const text = `${id} crashed at implement: implement: the agent crashed\n`;
@@ -907,7 +907,7 @@ test('an ended.crash alert that throws prints one line, and runFlow throws the F
   });
   const printed = [];
   t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(text));
-  const crash = await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue }).catch((e) => e);
+  const crash = await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue }).catch((e) => e);
   t.mock.restoreAll();
   assert.ok(crash instanceof FlowCrash);
   assert.equal(crash.message, 'implement: the agent crashed');
@@ -955,7 +955,8 @@ test('runFlow_alert_failure_keeps_committed_result', async (t) => {
       alerts,
       texts,
     });
-    const [id] = await createItems(ctx, [{ type: 'story', state: { status: 'implemented', run: 'idle' } }]);
+    const state = { status: 'implemented', run: 'idle', next: 'close' };
+    const [id] = await createItems(ctx, [{ type: 'story', state }]);
     // The status gate of done needs the story's task closed.
     if (what === 'status gate') {
       await createItems(ctx, [{ type: 'task', state: { status: 'draft', run: 'idle' } }]);
@@ -964,9 +965,7 @@ test('runFlow_alert_failure_keeps_committed_result', async (t) => {
     const { catalogue } = fakeSteps();
     const printed = [];
     t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(text));
-    const result = await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue }).catch(
-      (e) => e,
-    );
+    const result = await runFlow(ctx, { id, by: 'operator', resume: true, catalogue }).catch((e) => e);
     t.mock.restoreAll();
     assert.deepEqual(result, want, what);
     assert.equal(stateOf(ctx, id).run, run, what);
@@ -994,11 +993,11 @@ test('an alert whose channels all fail prints one line that names it, after the 
   const gate = `step_gates:\n  close: [{ condition: 'false', class: needs_operator_action }]\n`;
   // bell exits 127, a crash code of a plugin, which send prints as a line of its own (D-101).
   const ctx = alerting({ 'gates.yaml': gate }, undefined, { terminal: 1, bell: 127 });
-  const id = await story(ctx, { status: 'implemented', run: 'idle' });
+  const id = await story(ctx, { status: 'implemented', run: 'idle', next: 'close' });
   const { catalogue } = fakeSteps();
   const printed = [];
   t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(text));
-  const result = await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', resume: true, catalogue });
   t.mock.restoreAll();
   assert.deepEqual(result, { ended: 'gated before: close', status: 'implemented' });
   assert.deepEqual(stateOf(ctx, id), { status: 'implemented', run: 'gated before: close' });
@@ -1019,7 +1018,7 @@ test('a return node is never active, and a status on the arrow into it and one o
   const id = await story(ctx, { status: 'in_progress', run: 'idle' });
   const base = head(ctx);
   const { catalogue } = fakeSteps({ in_unit: 'failure' });
-  const result = await runFlow(ctx, { id, start: 'in_unit', by: 'operator', entry: 'deliver', catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', entry: 'deliver', catalogue });
   // merged is set only from ready_for_merge, which the arrow into deliver/_return_success sets.
   assert.deepEqual(result, { ended: 'stop', status: 'merged', outcome: 'success' });
   const runs = storedRuns(ctx, base, itemDir(ctx, id).path);
@@ -1035,7 +1034,7 @@ test("a failing gate on the caller's arrow out of a return node holds the transi
   const id = await story(ctx, { status: 'in_progress', run: 'idle' });
   await setGraph(ctx, 'dependency', { [id]: { merged: [{ [id]: 'false' }] } });
   const { catalogue } = fakeSteps({ in_unit: 'failure' });
-  const result = await runFlow(ctx, { id, start: 'in_unit', by: 'operator', entry: 'deliver', catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', entry: 'deliver', catalogue });
   assert.deepEqual(result, { ended: 'gated: merged', status: 'ready_for_merge', outcome: 'success' });
   assert.deepEqual(stateOf(ctx, id), {
     status: 'ready_for_merge',
@@ -1071,7 +1070,7 @@ test('runFlow_second_return_transition_gate_sees_first_transition', async () => 
     const ctx = gated(gates);
     const id = await story(ctx, { status: 'in_progress', run: 'idle' });
     const { catalogue } = fakeSteps({ in_unit: 'failure' });
-    const result = await runFlow(ctx, { id, start: 'in_unit', by: 'operator', entry: 'deliver', catalogue });
+    const result = await runFlow(ctx, { id, by: 'operator', entry: 'deliver', catalogue });
     assert.deepEqual(result, expected, JSON.stringify(gates));
   }
 });
@@ -1104,7 +1103,7 @@ test('runFlow_second_return_transition_gate_sees_self_item_status', async () => 
       await setGraph(ctx, 'dependency', { [id]: { merged: entries } });
     }
     const { catalogue } = fakeSteps({ in_unit: 'failure' });
-    const result = await runFlow(ctx, { id, start: 'in_unit', by: 'operator', entry: 'deliver', catalogue });
+    const result = await runFlow(ctx, { id, by: 'operator', entry: 'deliver', catalogue });
     assert.deepEqual(result, { ended: 'stop', status: 'merged', outcome: 'success' }, what);
   }
 });
@@ -1126,7 +1125,7 @@ test('runFlow is refused, with no commit, while another process holds the item l
   const child = await holdLockInChild(itemLockPath(ctx.backlogDir, id));
   try {
     const { catalogue, ran } = fakeSteps();
-    await assert.rejects(runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue }), {
+    await assert.rejects(runFlow(ctx, { id, by: 'operator', entry: 'close', catalogue }), {
       message: new RegExp(`^${id}: another process \\(pid ${child.pid}\\) runs its flow`),
     });
     assert.deepEqual(ran, []);
@@ -1134,21 +1133,6 @@ test('runFlow is refused, with no commit, while another process holds the item l
   } finally {
     await child.kill();
   }
-});
-
-test('runFlow refuses a start that is no box of the flow, or a return node, with no commit and no step run', async () => {
-  const ctx = backlog();
-  const id = await story(ctx, { status: 'implemented', run: 'idle' });
-  const base = head(ctx);
-  const { catalogue, ran } = fakeSteps();
-  for (const start of ['gone', 'deliver/_return_success']) {
-    await assert.rejects(runFlow(ctx, { id, start, by: 'operator', entry: 'close', catalogue }), {
-      message: `${id}: '${start}' is no box of the story flow`,
-    });
-  }
-  assert.deepEqual(ran, []);
-  assert.equal(head(ctx), base);
-  assert.deepEqual(stateOf(ctx, id), { status: 'implemented', run: 'idle' });
 });
 
 // ---- the agent session in state.json (F-141 D8) ----
@@ -1168,7 +1152,7 @@ test("ctx.session commits state.json with the box's session at once, and the box
       return 'success';
     },
   });
-  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue });
+  await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue });
   assert.deepEqual(seen, { status: 'in_progress', run: 'active: implement', host: hostname(), session: SESSION });
   const commits = commitsSince(ctx, base);
   const at = commits.findIndex(({ subject }) => subject === `${id}: implement session s-1`);
@@ -1186,7 +1170,9 @@ test('a resumed invocation keeps the session in its flow_start commit, and an en
     ['started by an entry at the box', 'implement', false, undefined],
   ];
   for (const [what, start, resume, want] of cases) {
-    const ctx = backlog();
+    // An entry `again` that starts at the box on an interrupted item.
+    const again = { from: ['in_progress'], run_states: ['interrupted'], start };
+    const ctx = backlog({ 'story.yaml': storyFlow((flow) => (flow.entries.again = again)) });
     const state = { status: 'in_progress', run: 'active: implement', host: hostname(), session: SESSION };
     const id = await story(ctx, state);
     /** @type {unknown[]} */
@@ -1196,7 +1182,7 @@ test('a resumed invocation keeps the session in its flow_start commit, and an en
       return 'success';
     };
     const { catalogue } = fakeSteps({ [start]: look });
-    const how = resume ? { resume: true } : { start, entry: 'deliver' };
+    const how = resume ? { resume: true } : { entry: 'again' };
     await runFlow(ctx, { id, by: 'operator', ...how, catalogue });
     // The first run of the box; a later one comes after a box's commit, which holds no session.
     assert.deepEqual(seen[0], want, what);
@@ -1214,7 +1200,6 @@ test('an interactive step with no terminal does not start: the invocation ends i
   t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(text));
   const result = await runFlow(ctx, {
     id,
-    start: 'prepare',
     by: 'operator',
     entry: 'run',
     catalogue: interactive,
@@ -1245,7 +1230,6 @@ test('an interactive step with no terminal does not start: the invocation ends i
   const withTerminal = { ...steps, agent: { ...steps.agent, interactive: () => true } };
   await runFlow(ctx, {
     id: other,
-    start: 'prepare',
     by: 'operator',
     entry: 'run',
     catalogue: withTerminal,
@@ -1261,7 +1245,7 @@ test('a stored state that the flow no longer has is reset first, in its own comm
   const printed = [];
   t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(text));
   const { catalogue } = fakeSteps();
-  const result = await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', entry: 'close', catalogue });
   t.mock.restoreAll();
   assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
 
@@ -1472,10 +1456,13 @@ const closeTask = (/** @type {any} */ ctx, /** @type {string} */ task) =>
 const closeTaskUncommitted = (/** @type {any} */ ctx, /** @type {string} */ task) =>
   writeFileSync(join(itemPath(ctx, task), 'state.json'), `${JSON.stringify({ status: 'done', run: 'idle' })}\n`);
 
-/** A story at implemented with one draft task child, so the status gate of done fails. */
+/**
+ * A story at implemented with close next and one draft task child, so the status gate of done
+ * fails: a resume runs close, where an entry is refused (D-48).
+ */
 async function storyWithTask(/** @type {any} */ ctx) {
   const [id, task] = await createItems(ctx, [
-    { type: 'story', state: { status: 'implemented', run: 'idle' } },
+    { type: 'story', state: { status: 'implemented', run: 'idle', next: 'close' } },
     { type: 'task', state: { status: 'draft', run: 'idle' } },
   ]);
   await setGraph(ctx, 'containment', { [task]: { parent: id } });
@@ -1488,7 +1475,7 @@ test('with waitForWake, a failing status gate commits gated: <to> and a flow_end
   const ctx = backlog();
   const { id, task } = await storyWithTask(ctx);
   const { catalogue, ran } = fakeSteps();
-  const run = suspending(t, ctx, { id, start: 'close', entry: 'close', by: 'F-1', catalogue });
+  const run = suspending(t, ctx, { id, resume: true, by: 'F-1', catalogue });
   await until('the suspend', () => run.lines().includes(`${id}: suspended at gated: done: ${DONE_GATE}`));
   assert.deepEqual(stateOf(ctx, id), {
     status: 'implemented',
@@ -1518,7 +1505,7 @@ test('with waitForWake, a failing status gate commits gated: <to> and a flow_end
 test('a failing step gate suspends at gated before: <box>; a burst of commits gives one gate check, and a wake that still fails prints the failing entries again only when they changed', async (t) => {
   const ctx = backlog({ 'gates.yaml': 'step_gates:\n  close: [\'item("T-1").closed\', \'item("T-2").closed\']\n' });
   const [id] = await createItems(ctx, [
-    { type: 'story', state: { status: 'implemented', run: 'idle' } },
+    { type: 'story', state: { status: 'implemented', run: 'idle', next: 'close' } },
     { type: 'task', state: { status: 'draft', run: 'idle' } },
     { type: 'task', state: { status: 'draft', run: 'idle' } },
   ]);
@@ -1529,7 +1516,7 @@ test('a failing step gate suspends at gated before: <box>; a burst of commits gi
     waits.push(suspend.failing.map((/** @type {any} */ { text }) => text));
     return waitForWake(c, suspend);
   };
-  const run = suspending(t, ctx, { id, start: 'close', entry: 'close', catalogue, wake });
+  const run = suspending(t, ctx, { id, resume: true, catalogue, wake });
   await until('the first wait', () => waits.length === 1);
   assert.deepEqual(stateOf(ctx, id), { status: 'implemented', run: 'gated before: close' });
 
@@ -1570,7 +1557,7 @@ test('SIGUSR2 to a process whose step is running does not end it', async () => {
       return 'success';
     },
   });
-  const result = await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', entry: 'close', catalogue });
   assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
   assert.equal(process.listenerCount('SIGUSR2'), 0, 'the listener goes with the lock');
 });
@@ -1584,7 +1571,7 @@ test('SIGUSR2 wakes a suspended process, and so does gate_recheck_minutes, with 
     const ctx = { ...base, flowSet: { ...base.flowSet, gateRecheckMinutes: minutes } };
     const { id, task } = await storyWithTask(ctx);
     const { catalogue } = fakeSteps();
-    const run = suspending(t, ctx, { id, start: 'close', entry: 'close', catalogue });
+    const run = suspending(t, ctx, { id, resume: true, catalogue });
     await until('the suspend', () => run.lines().some((line) => line.startsWith(`${id}: suspended`)));
     closeTaskUncommitted(ctx, task);
     const at = Date.now();
@@ -1601,10 +1588,10 @@ test('a bl force of /run while suspended makes the process print that the run st
   const ctx = backlog();
   const { id } = await storyWithTask(ctx);
   const { catalogue } = fakeSteps();
-  const run = suspending(t, ctx, { id, start: 'close', entry: 'close', catalogue });
+  const run = suspending(t, ctx, { id, resume: true, catalogue });
   await until('the suspend', () => run.lines().some((line) => line.startsWith(`${id}: suspended`)));
   await storeWrite(ctx, { message: `${id}: force /run` }, (w) => {
-    w.state(id, { status: 'implemented', run: 'idle' });
+    w.state(id, { status: 'implemented', run: 'idle', next: 'close' });
     const force = { event: 'force', path: '/run', from: 'gated: done', to: 'idle', status: 'implemented' };
     w.log(id, { at: AT, ...force, by: 'operator', note: 'by hand' });
   });
@@ -1624,11 +1611,9 @@ test('SIGTERM to a suspended process ends it; the item keeps gated: <to>, and th
   const dir = mkTempDir('bl-flow-child-');
   const stderrFile = join(dir, 'stderr');
   const stderr = openSync(stderrFile, 'w');
-  const child = spawn(
-    process.execPath,
-    [FLOW_CHILD, ctx.backlogDir, id, 'close', join(dir, 'result.json'), 'close', 'wake'],
-    { stdio: ['ignore', 'ignore', stderr] },
-  );
+  const child = spawn(process.execPath, [FLOW_CHILD, ctx.backlogDir, id, 'resume', join(dir, 'result.json'), 'wake'], {
+    stdio: ['ignore', 'ignore', stderr],
+  });
   closeSync(stderr);
   t.after(() => child.kill('SIGKILL')); // a failed assertion leaves no suspended child behind
   const exited = new Promise((done) => child.on('exit', (code, signal) => done({ code, signal })));
@@ -1672,7 +1657,7 @@ test("a flow that reaches self_check's wait_fix commits waiting: <box> and its f
     'deliver/self_check/fix': 'failure',
   });
   const { runs, wake } = recordingWake();
-  const run = suspending(t, ctx, { id, start: 'in_unit', entry: 'deliver', catalogue, wake });
+  const run = suspending(t, ctx, { id, entry: 'deliver', catalogue, wake });
   const suspended = `${id}: suspended at waiting: ${WAIT_FIX}: waiting for bl outcome ${id} success|failure`;
   await until('the wait', () => runs.length === 1);
   assert.deepEqual(stateOf(ctx, id), { status: 'in_progress', run: `waiting: ${WAIT_FIX}` });
@@ -1724,12 +1709,12 @@ test("a flow that reaches self_check's wait_fix commits waiting: <box> and its f
 test('the step gate of a wait box is checked before the box: a failing one ends at gated before: <box>, and once it passes the box waits', async (t) => {
   const ctx = backlog({ 'gates.yaml': 'step_gates:\n  wait: [\'item("T-1").closed\']\n' });
   const [id] = await createItems(ctx, [
-    { type: 'story', state: { status: 'in_progress', run: 'idle' } },
+    { type: 'story', state: { status: 'in_progress', run: 'idle', next: 'wait_implement' } },
     { type: 'task', state: { status: 'draft', run: 'idle' } },
   ]);
   const { catalogue, ran } = waitingSteps();
   const { runs, wake } = recordingWake();
-  const run = suspending(t, ctx, { id, start: 'wait_implement', entry: 'implement', catalogue, wake });
+  const run = suspending(t, ctx, { id, resume: true, catalogue, wake });
   await until('the gated wait', () => runs.length === 1);
   assert.deepEqual(runs, ['gated before: wait_implement']);
   assert.deepEqual(stateOf(ctx, id), { status: 'in_progress', run: 'gated before: wait_implement' });
@@ -1757,9 +1742,9 @@ test('the step gate of a wait box is checked before the box: a failing one ends 
 
 test('without wake, an invocation that reaches a wait box returns at waiting: <box>', async () => {
   const ctx = backlog();
-  const id = await story(ctx, { status: 'in_progress', run: 'idle' });
+  const id = await story(ctx, { status: 'in_progress', run: 'idle', next: 'wait_implement' });
   const { catalogue } = waitingSteps();
-  const result = await runFlow(ctx, { id, start: 'wait_implement', by: 'operator', entry: 'implement', catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', resume: true, catalogue });
   assert.deepEqual(result, { ended: 'waiting: wait_implement', status: 'in_progress' });
   assert.equal(holderOf(itemLockPath(ctx.backlogDir, id)), null);
 });
@@ -1777,7 +1762,7 @@ test("an outcome entry for the box that another writer commits while the step ru
       return 'failure';
     },
   });
-  const result = await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue });
+  const result = await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue });
   assert.deepEqual(result, { ended: 'stop', status: 'implemented', outcome: 'success' });
   assert.deepEqual(ran, RUN_BOXES, 'the success arrow of implement is followed');
   assert.deepEqual(eventsOf(ctx, id), ['flow_start', 'outcome', 'flow_start', 'flow_end']);
@@ -1791,4 +1776,136 @@ test("an outcome entry for the box that another writer commits while the step ru
     `${path}/state.json`,
   ]);
   assert.deepEqual(stateOf(ctx, id), { status: 'implemented', run: 'idle' });
+});
+
+// ---- the checks of an entry (F-152 D6, D-48) ----
+
+test('runFlow refuses an entry, with the reason and no commit, when the flow has no such entry, the run state or the status does not allow it, or a start gate fails', async () => {
+  // [what, flows, the story's state, the entry, a task child, the reason]
+  const cases = [
+    ['no such entry', {}, { status: 'refined', run: 'idle' }, 'nope', false, "the story flow has no entry 'nope'"],
+    [
+      'a run state not in run_states',
+      {},
+      { status: 'refined', run: 'gated before: implement' },
+      'run',
+      false,
+      'the entry run is refused: the run state is gated before: implement; it starts only from idle',
+    ],
+    [
+      'active on another host',
+      {},
+      { status: 'refined', run: 'active: prepare', host: `not-${hostname()}` },
+      'supersede',
+      false,
+      'the entry supersede is refused: the run state is active: prepare; it starts only from idle, waiting, gated, interrupted',
+    ],
+    [
+      'a status not in from',
+      {},
+      { status: 'draft', run: 'idle' },
+      'run',
+      false,
+      'the entry run is refused: the status is draft; it starts only from refined',
+    ],
+    [
+      'a failing start step gate',
+      { 'gates.yaml': 'step_gates:\n  close: [\'status == "merged"\']\n' },
+      { status: 'implemented', run: 'idle' },
+      'close',
+      false,
+      'the entry close is refused: the step gate of close fails: status == "merged"',
+    ],
+    [
+      "a failing gate of the status that the start box's success arrow sets",
+      {},
+      { status: 'implemented', run: 'idle' },
+      'close',
+      true,
+      `the entry close is refused: the status gate of done, which the success arrow of close sets, fails: ${DONE_GATE}`,
+    ],
+  ];
+  for (const [what, flows, state, entry, withTask, reason] of cases) {
+    const ctx = backlog(flows);
+    const [id, task] = await createItems(ctx, [
+      { type: 'story', state },
+      ...(withTask ? [{ type: 'task', state: { status: 'draft', run: 'idle' } }] : []),
+    ]);
+    if (withTask) await setGraph(ctx, 'containment', { [task]: { parent: id } });
+    const base = head(ctx);
+    const { catalogue, ran } = fakeSteps();
+    await assert.rejects(runFlow(ctx, { id, by: 'operator', entry, catalogue }), { message: `${id}: ${reason}` }, what);
+    assert.deepEqual(ran, [], what);
+    assert.equal(head(ctx), base, `${what}: no commit`);
+    assert.deepEqual(stateOf(ctx, id), state, what);
+  }
+});
+
+test('an entry with run_states [idle, waiting] starts on a waiting item, and its flow_start has replaced: waiting: <box>', async () => {
+  const ctx = backlog();
+  const [id] = await createItems(ctx, [{ type: 'task', state: { status: 'draft', run: 'waiting: wait_run_task' } }]);
+  const { catalogue, ran } = fakeSteps();
+  const result = await runFlow(ctx, { id, by: 'operator', entry: 'close', catalogue });
+  assert.deepEqual(result, { ended: 'stop', status: 'done', outcome: 'success' });
+  assert.deepEqual(ran, ['close']);
+  const { at, ...flowStart } = logOf(ctx, id).at(-2);
+  assert.deepEqual(flowStart, {
+    event: 'flow_start',
+    entry: 'close',
+    status: 'draft',
+    replaced: 'waiting: wait_run_task',
+    by: 'operator',
+  });
+  assert.deepEqual(stateOf(ctx, id), { status: 'done', run: 'idle' });
+});
+
+test('an entry on a gated item drops the held transition, and one on an interrupted item names the stored active in replaced', async () => {
+  for (const [what, state, replaced] of [
+    ['gated', { status: 'draft', run: 'gated: done', held: { box: 'run_task', outcome: 'success' } }, 'gated: done'],
+    ['interrupted', { status: 'draft', run: 'active: run_task', host: hostname() }, 'active: run_task'],
+  ]) {
+    const ctx = backlog();
+    const [id] = await createItems(ctx, [{ type: 'task', state }]);
+    const base = head(ctx);
+    const { catalogue } = fakeSteps();
+    await runFlow(ctx, { id, by: 'operator', entry: 'supersede', catalogue });
+    assert.equal(logOf(ctx, id).at(-2).replaced, replaced, what);
+    const first = commitsSince(ctx, base)[0];
+    assert.deepEqual(
+      JSON.parse(git(ctx.backlogDir, 'show', `${first.sha}:${itemDir(ctx, id).path}/state.json`)),
+      { status: 'draft', run: 'active: supersede', host: hostname() },
+      `${what}: the start drops held`,
+    );
+  }
+});
+
+test('emit gets each log entry and each usage entry of the item that a commit wrote, with item_id, after the commit', async () => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'refined', run: 'idle' });
+  const usage = { at: AT, step: 'implement', agent: 'replay', input: 1, output: 2, cache_creation: 0, cache_read: 0 };
+  const { catalogue } = fakeSteps({
+    implement: (/** @type {any} */ step) => {
+      step.stage((/** @type {any} */ w) => w.usage(step.id, usage));
+      return 'success';
+    },
+  });
+  /** @type {Array<{ record: Record<string, unknown>, head: string }>} each record, and HEAD when it came */
+  const emitted = [];
+  const emit = (/** @type {Record<string, unknown>} */ record) => emitted.push({ record, head: head(ctx) });
+  await runFlow(ctx, { id, by: 'operator', entry: 'run', catalogue, emit });
+  assert.ok(emitted.every(({ record }) => record.item_id === id));
+  const entries = emitted.map(({ record: { item_id, ...entry } }) => entry);
+  assert.deepEqual(
+    entries.filter((entry) => 'event' in entry),
+    logOf(ctx, id).slice(1),
+    'every log entry after created, as the file holds it',
+  );
+  assert.deepEqual(
+    entries.filter((entry) => !('event' in entry)),
+    [usage],
+  );
+  // Each record comes after its commit: the flow_start's commit is not the one of the usage entry.
+  const [start, used] = emitted;
+  assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%s', start.head), `${id}: run started`);
+  assert.equal(git(ctx.backlogDir, 'log', '-1', '--format=%s', used.head), `${id}: implement success`);
 });
