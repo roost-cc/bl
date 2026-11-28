@@ -64,7 +64,7 @@
  */
 
 import { accessSync, constants, statSync } from 'fs';
-import { delimiter, resolve } from 'path';
+import { delimiter, isAbsolute, join } from 'path';
 import { fileURLToPath } from 'url';
 import { spawnFiles, spawnSyncFiles } from './child-stdio.js';
 import { EXIT_CODES, INTERRUPT_SIGNALS, interruptOf, raiseSignal, signalExitCode } from './signal-exit.js';
@@ -126,19 +126,20 @@ export async function runLongChild(command, args = [], opts = {}) {
 
 /**
  * The executable file that `command` names on the `PATH` `path`, as an
- * absolute path, or `undefined` when no entry holds one. A relative entry is
- * read from `cwd`, as the child that runs in `cwd` reads it. A caller that
- * must know a child can launch before it starts the child, such as an agent
- * adapter that records a session id first (F-141 D3), resolves it here.
+ * absolute path, or `undefined` when no entry holds one. Only an absolute
+ * entry counts: a relative or empty entry names a directory relative to a
+ * working directory, and the calls of one program can run in different ones.
+ * A caller that must know a child can launch before it starts the child, such
+ * as an agent adapter that records a session id first (F-141 D3), resolves it
+ * here, and then runs the file it gives.
  * @param {string} command
  * @param {string|undefined} path
- * @param {string} cwd
  * @returns {string|undefined}
  */
-export function findOnPath(command, path, cwd) {
+export function findOnPath(command, path) {
   for (const dir of String(path ?? '').split(delimiter)) {
-    if (dir === '') continue;
-    const file = resolve(cwd, dir, command);
+    if (!isAbsolute(dir)) continue;
+    const file = join(dir, command);
     try {
       accessSync(file, constants.X_OK);
       if (statSync(file).isFile()) return file;

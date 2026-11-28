@@ -48,6 +48,17 @@ function faults(profile) {
 /** Whether `value` is a string or `null`. */
 const stringOrNull = (/** @type {unknown} */ value) => value === null || typeof value === 'string';
 
+/** Why `capacity`, `start` and `resume` give up when `programOf` finds no `replay`. */
+const NOT_ON_PATH = 'replay is not on the PATH';
+
+/**
+ * The `replay` file on the profile's `PATH` (`findOnPath`), or `undefined`.
+ * `capacity`, `start` and `resume` each run the file it gives, so all three
+ * agree on which `PATH` entries can launch `replay`.
+ * @param {Profile} profile
+ */
+const programOf = (profile) => findOnPath(PROGRAM, profileCommand([], profile).env.PATH);
+
 /**
  * `replay capacity`'s object, or no capacity when the program is not on the
  * `PATH`.
@@ -57,11 +68,10 @@ const stringOrNull = (/** @type {unknown} */ value) => value === null || typeof 
  *   object with a boolean `available` and a string or `null` `resets_at` and `message`
  */
 async function capacity(profile) {
+  const program = programOf(profile);
+  if (program === undefined) return { available: false, resets_at: null, message: NOT_ON_PATH };
   const { args, env } = profileCommand(['capacity'], profile);
-  const r = runChild(PROGRAM, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env });
-  if (/** @type {NodeJS.ErrnoException|undefined} */ (r.error)?.code === 'ENOENT') {
-    return { available: false, resets_at: null, message: 'replay is not on the PATH' };
-  }
+  const r = runChild(program, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env });
   if (r.error || r.status !== 0) throw new Error(`replay capacity failed: ${describeExit(r, 'replay capacity')}`);
   let record;
   try {
@@ -86,7 +96,7 @@ async function capacity(profile) {
  * in `run.cwd`, with the prompt on stdin.
  * @param {AgentRun} run
  * @param {string[]} sessionArgs  `--session-id <id>` or `--resume <id>`
- * @param {string} program  `replay`, or the file `start` found for it
+ * @param {string} program  the file `programOf` found for `replay`
  * @returns {Promise<Ended>}
  * @throws {Error} when the session's process scope cannot be stopped
  */
@@ -133,10 +143,10 @@ async function session(run, sessionArgs, program) {
  * @returns {Promise<Ended>}
  */
 async function start(run) {
-  const program = findOnPath(PROGRAM, profileCommand([], run.profile).env.PATH, run.cwd);
+  const program = programOf(run.profile);
   /** @type {string|null} */
   let why = null;
-  if (program === undefined) why = 'replay is not on the PATH';
+  if (program === undefined) why = NOT_ON_PATH;
   else if (!statSync(run.cwd, { throwIfNoEntry: false })?.isDirectory()) {
     why = `the working directory ${run.cwd} does not exist`;
   }
@@ -152,7 +162,9 @@ async function start(run) {
  * @returns {Promise<Ended>}
  */
 async function resume(run) {
-  return session(run, ['--resume', /** @type {string} */ (run.session)], PROGRAM);
+  const program = programOf(run.profile);
+  if (program === undefined) return { result: null, error: `replay could not start: ${NOT_ON_PATH}`, usage: NO_USAGE };
+  return session(run, ['--resume', /** @type {string} */ (run.session)], program);
 }
 
 /** @type {Adapter} */

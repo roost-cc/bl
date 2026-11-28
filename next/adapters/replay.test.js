@@ -5,11 +5,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { delimiter, join } from 'path';
 import { withEnv } from '../test/helpers/env.js';
 import { git, initRepo } from '../test/helpers/git.js';
-import { replayEnv } from '../test/helpers/replay.js';
+import { noReplayPath, replayEnv } from '../test/helpers/replay.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
 import { ADAPTERS, adapterOf } from './index.js';
 import { replay } from './replay.js';
@@ -186,6 +186,62 @@ test('failed_replay_launch_does_not_keep_a_resumable_session', async () => {
   const ids = [];
   await withEnv(replayEnv(s.script), () => replay.start(agentRun(s, 'crash S-8', ids)));
   assert.equal(ids.length, 1);
+});
+
+test('replay_capacity_and_start_agree_on_path_entries', async () => {
+  // A fake replay: `capacity` has capacity, and a session writes a success result.
+  const FAKE =
+    '#!/bin/sh\n' +
+    'if [ "$1" = capacity ]; then printf \'{"available":true,"resets_at":null,"message":null}\'; exit 0; fi\n' +
+    'while [ $# -gt 0 ]; do if [ "$1" = --result ]; then printf \'{"outcome":"success"}\' > "$2"; fi; shift; done\n';
+  // bl runs in `root`, which holds `bin/replay` and `replay`, so a relative or an empty entry
+  // would find one there; the session runs in `work`, which holds none.
+  const root = mkTempDir('bl-replay-path-');
+  const bin = join(root, 'bin');
+  const work = join(root, 'work');
+  mkdirSync(bin);
+  mkdirSync(work);
+  writeFileSync(join(bin, 'replay'), FAKE, { mode: 0o755 });
+  writeFileSync(join(root, 'replay'), FAKE, { mode: 0o755 });
+  // The tools on the PATH (systemd-run for a process scope), and no replay.
+  const tools = noReplayPath().PATH;
+  const rows = [
+    { entries: bin, launches: true },
+    { entries: `${delimiter}${bin}`, launches: true },
+    { entries: join(root, 'missing'), launches: false },
+    { entries: 'bin', launches: false },
+    { entries: '', launches: false },
+    { entries: '.', launches: false },
+    { entries: './bin', launches: false },
+  ];
+  const cwd = process.cwd();
+  process.chdir(root);
+  try {
+    for (const { entries, launches } of rows) {
+      const profile = { adapter: /** @type {const} */ ('replay'), env: { PATH: `${entries}${delimiter}${tools}` } };
+      const run = {
+        profile,
+        prompt: 'p',
+        mode: /** @type {const} */ ('headless'),
+        schemaPath: join(root, 'schema.json'),
+        resultPath: join(mkTempDir('bl-replay-result-', root), 'result.json'),
+        cwd: work,
+        session: null,
+        unit: 'T-replay',
+        onSession: async () => {},
+      };
+      const name = `PATH entries '${entries}'`;
+      assert.equal((await replay.capacity(profile)).available, launches, `${name}: capacity`);
+      const results = [await replay.start(run), await replay.resume({ ...run, session: 'kept' })];
+      for (const [i, ended] of results.entries()) {
+        const what = `${name}: ${i === 0 ? 'start' : 'resume'}`;
+        if (launches) assert.deepEqual(ended, { result: { outcome: 'success' }, error: null, usage: ZERO }, what);
+        else assert.equal(ended.error, 'replay could not start: replay is not on the PATH', what);
+      }
+    }
+  } finally {
+    process.chdir(cwd);
+  }
 });
 
 test('resume after an exit turn gives the result of the rest of the session', async () => {
