@@ -97,6 +97,30 @@ test('state.schema.json rejects host, next, held and session with any other run 
   ]);
 });
 
+test('state_rejects_session_for_a_different_active_box', () => {
+  /** Each row: the run state, the session, and the rules of its faults. */
+  const rows = [
+    ['active: implement', SESSION, []],
+    ['active: deliver/open_pr', { ...SESSION, box: 'deliver/open_pr' }, []],
+    ['active: first', { ...SESSION, box: 'second' }, ['session /session/box']],
+    ['active: implement', { ...SESSION, box: 'implement/x' }, ['session /session/box']],
+    ['active: deliver/open_pr', SESSION, ['session /session/box']],
+    ['active: implement', { profile: 'replay', id: 'a1b2' }, ['required /session/box']],
+    ['active: implement', { box: 'implement', id: 'a1b2' }, ['required /session/profile']],
+    ['active: implement', { box: 'implement', profile: 'replay' }, ['required /session/id']],
+    ['active: implement', { ...SESSION, box: '' }, ['minLength /session/box']],
+    ['active: implement', { ...SESSION, profile: '' }, ['minLength /session/profile']],
+    ['active: implement', { ...SESSION, extra: 1 }, ['additionalProperties /session/extra']],
+    ['idle', SESSION, ['pattern /run']],
+    ['waiting: implement', SESSION, ['pattern /run']],
+    ['gated before: implement', SESSION, ['pattern /run']],
+  ];
+  for (const [run, session, expected] of rows) {
+    const label = `${run} ${JSON.stringify(session)}`;
+    assert.deepEqual(rules(checkState({ status: 'in_progress', run, session })), expected, label);
+  }
+});
+
 test('attributes.json: an undeclared key, a value that fails its schema and a missing required attribute are one finding each', () => {
   const ctx = backlog();
   const definition = itemDefinition(ctx, 'story');

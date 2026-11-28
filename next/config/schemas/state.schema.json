@@ -59,7 +59,7 @@
         },
         "id": { "type": "string", "minLength": 1, "description": "The agent session id." }
       },
-      "description": "With `active: <box>` only: the agent session of the box that runs, so that a resumed invocation at that box continues it (D-417, F-141 D8)."
+      "description": "With `active: <box>` only: the agent session of the box that runs, so that a resumed invocation at that box continues it (D-417, F-141 D8). Its `box` is the box of `active: <box>`, which `checkState` checks, because a schema cannot compare two fields."
     }
   },
   "dependentSchemas": {
