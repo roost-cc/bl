@@ -145,6 +145,9 @@ for (const [what, argv, message] of [
   ['a remove of a path that does not exist', ['/counters/peer_rounds/threshold', 'null'], /cannot remove/],
   ['an add under a path that does not exist', ['/counters/rounds/threshold', '3'], /cannot add/],
   ['a value that is not one YAML scalar', ['/status', '{ a: 1 }'], /is not one YAML scalar/],
+  ['a remove of the whole state', ['', 'null'], /state\.json/],
+  ['an add of a scalar over the whole state', ['', 'done'], /state\.json/],
+  ['a path that is no JSON Pointer', ['status', 'done'], /cannot add status/],
 ]) {
   test(`bl-next force refuses ${what}, writes nothing and names the fault`, async () => {
     const ctx = backlog();
