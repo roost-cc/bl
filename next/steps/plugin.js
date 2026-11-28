@@ -12,6 +12,8 @@
  *   The `+` form quotes the value inside and outside double quotes, in sh,
  *   dash and bash (S-1630). Inside single quotes, after a backslash and in a
  *   comment nothing expands, so a value there is an error (`checkExpanded`).
+ *   A command that fills a value and uses command substitution, arithmetic
+ *   expansion, a `${…}` operator or a here-document is an error too.
  * - `runPlugin` runs it as `sh -c <command> sh <args…>`, a long child in a
  *   process scope where user systemd has scopes (D-486), and maps the exit
  *   status to an outcome or a crash (`exitOutcome`). `runPredicate` runs a
@@ -62,30 +64,47 @@ export function pluginCommand(template, view) {
   return { command, args };
 }
 
-/** The variable that stands for the `n`th value when `checkExpanded` asks shell-quote where each value sits. */
-const probe = (n) => `BL_PLUGIN_VALUE_${n}`;
+/**
+ * The shell forms that shell-quote does not parse: command substitution
+ * (`$(…)`, backticks), arithmetic expansion (`$((…))`), a `${…}` with an
+ * operator, and a here-document (`<<`). In them a value can be passed as
+ * reference text, or read as an arithmetic expression that sets a variable.
+ * A plain `${NAME}` is no such form.
+ */
+const UNPARSED = /`|\$\(|\$\{(?![A-Za-z_]\w*\})|<</;
 
 /**
- * Throw when one of the `count` values of `template` sits where the shell
- * does not expand a reference: in single quotes, after a backslash or in a
- * comment. The shell would then pass the reference text, not the value.
- * shell-quote parses the command with a plain variable for each value, and
- * names each variable that the shell expands. It does not parse command
- * substitution, so a name in single quotes inside `"$(…)"` is not found.
+ * Throw when one of the `count` values of `template` is not passed to the
+ * shell as data. That is so when the command uses a form in `UNPARSED`,
+ * anywhere, because shell-quote cannot say where the value sits then. It is
+ * so too when a value sits where the shell does not expand a reference: in
+ * single quotes, after a backslash or in a comment. The shell would then
+ * pass the reference text, not the value. shell-quote parses the command
+ * with a plain variable for each value, and names each variable that the
+ * shell expands. The variables' prefix is one that the template does not
+ * hold, so a variable that the template writes is never taken for a value.
  * @param {string} template
  * @param {Record<string, unknown>} view
  * @param {number} count
  * @throws {Error} naming the command
  */
 function checkExpanded(template, view, count) {
+  let prefix = 'BL_PLUGIN_VALUE_';
+  while (template.includes(prefix)) prefix += 'X';
   let n = 0;
+  const probed = render(template, view, { escape: () => `\${${prefix}${++n}}` });
+  if (UNPARSED.test(probed.replaceAll(new RegExp(`\\$\\{${prefix}\\d+\\}`, 'g'), ''))) {
+    throw new Error(
+      `plugin \`${template}\` fills a value and uses command substitution, arithmetic expansion, a \${…} operator or a here-document, where bl cannot check that the shell passes the value as data; move that part into a script`,
+    );
+  }
   const expanded = new Set();
-  parseShell(render(template, view, { escape: () => `\${${probe(++n)}}` }), (name) => {
+  parseShell(probed, (name) => {
     expanded.add(name);
     return '';
   });
   for (let i = 1; i <= count; i++) {
-    if (!expanded.has(probe(i))) {
+    if (!expanded.has(`${prefix}${i}`)) {
       throw new Error(
         `plugin \`${template}\` puts a value where the shell does not expand it (in single quotes, after a backslash or in a comment); write the name outside single quotes`,
       );

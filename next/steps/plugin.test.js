@@ -83,6 +83,52 @@ test('plugin_command_preserves_values_in_each_quote_context', async () => {
   assert.deepEqual(pluginCommand("echo '{{gone}}'", {}), { command: "echo ''", args: [] });
 });
 
+test('plugin_command_rejects_non_argument_contexts', async () => {
+  const view = { v: 'x=7' };
+  const quoted = (template) =>
+    `plugin \`${template}\` puts a value where the shell does not expand it (in single quotes, after a backslash or in a comment); write the name outside single quotes`;
+  const unparsed = (template) =>
+    `plugin \`${template}\` fills a value and uses command substitution, arithmetic expansion, a \${…} operator or a here-document, where bl cannot check that the shell passes the value as data; move that part into a script`;
+  const rejected = [
+    // Command substitution, quoted or not, with the value in single quotes, double quotes or none.
+    ["printf '%s' \"$(echo '{{v}}')\"", unparsed],
+    ["printf '%s' \"`echo '{{v}}'`\"", unparsed],
+    ["printf '%s' $(echo '{{v}}')", unparsed],
+    ["printf '%s' `echo '{{v}}'`", unparsed],
+    ['printf \'%s\' $(printf "{{v}}")', unparsed],
+    ["printf '%s' $(echo {{v}})", unparsed],
+    // Command substitution elsewhere in the command.
+    ['printf \'%s\' {{v}} "$(date)"', unparsed],
+    // Arithmetic expansion, which would set x.
+    ["printf '%s' $(({{v}}))", unparsed],
+    ['printf \'%s\' "$((1 + {{v}}))"', unparsed],
+    // A ${…} operator and a here-document.
+    ["printf '%s' ${x:-{{v}}}", unparsed],
+    ["printf '%s' \"${NOTSET:-'{{v}}'}\"", unparsed],
+    ["cat <<'E'\n{{v}}\nE", unparsed],
+    // Single quotes, a backslash and a comment, also when the command writes the probe variables' name.
+    ["printf '%s' '{{v}}' ${BL_PLUGIN_VALUE_1}", quoted],
+    ["printf '%s' \\{{v}} ${BL_PLUGIN_VALUE_1}", quoted],
+    ["printf '%s' x # {{v}} ${BL_PLUGIN_VALUE_1}", quoted],
+    ["printf '%s' ${BL_PLUGIN_VALUE_1}; printf '%s' x # {{v}}", quoted],
+    ["printf '%s' ${BL_PLUGIN_VALUE_X1} '{{v}}' ${BL_PLUGIN_VALUE_1}", quoted],
+  ];
+  for (const [template, messageOf] of rejected) {
+    const message = messageOf(template);
+    assert.throws(() => pluginCommand(template, view), { message }, template);
+    // A stage, a shop step and a channel run through runPlugin, a predicate through runPredicate.
+    await assert.rejects(runPlugin(CTX, template, view, mkTempDir('bl-plugin-')), { message }, template);
+    assert.throws(() => runPredicate({ ...CTX, backlogDir: mkTempDir('bl-plugin-') }, template, view), { message });
+  }
+  // A plain ${NAME}, and a command with no filled value, keep every shell form.
+  const accepted = [
+    ['printf \'%s|\' {{v}} "${BL_PLUGIN_VALUE_1}"', 'x=7||'],
+    ['X=a; printf \'%s|\' "${X}" {{v}}', 'a|x=7|'],
+    ["printf '%s' $((1 + 2)) '{{gone}}'", '3'],
+  ];
+  for (const [template, want] of accepted) assert.equal(shell(template, view).stdout, want, template);
+});
+
 test('a number and an object reach the command as their JSON text; a missing name renders as nothing', () => {
   const view = { n: 3, o: { a: [1, 'x'] }, e: '' };
   assert.deepEqual(pluginCommand('x {{n}} {{o}} {{gone}} {{e}}', view).args, ['3', '{"a":[1,"x"]}', '']);
