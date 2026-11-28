@@ -17,7 +17,7 @@
  */
 
 import { createHash } from 'crypto';
-import { lstatSync, readFileSync, readlinkSync } from 'fs';
+import { existsSync, lstatSync, readFileSync, readlinkSync } from 'fs';
 import { join } from 'path';
 import { describeExit, git, gitOut } from '../lib/child.js';
 
@@ -34,29 +34,59 @@ import { describeExit, git, gitOut } from '../lib/child.js';
  */
 export const repoContexts = (_ctx) => [];
 
-/** The `git status --porcelain` of the worktree of `repo`. */
-const statusOf = (/** @type {RepoContext} */ repo) => gitOut(repo.worktree_path, ['status', '--porcelain']);
+/** The `git status --porcelain` of the worktree `cwd`. */
+const statusIn = (/** @type {string} */ cwd) => gitOut(cwd, ['status', '--porcelain']);
 
-/**
- * A hash of the uncommitted content of the worktree of `repo`: the diff of the
- * tracked files against `HEAD`, and the name and content of each untracked
- * file that git does not ignore. A second edit of a file that is already
- * modified or untracked leaves `git status` as it was, and changes this hash.
- * @param {RepoContext} repo
- * @returns {string}
- */
-function contentOf(repo) {
-  const cwd = repo.worktree_path;
-  const hash = createHash('sha256').update(gitOut(cwd, ['diff', 'HEAD', '--binary']));
-  const args = ['ls-files', '-z', '--others', '--exclude-standard'];
+/** The `git status --porcelain` of the worktree of `repo`. */
+const statusOf = (/** @type {RepoContext} */ repo) => statusIn(repo.worktree_path);
+
+/** The NUL-separated names that `git <args>` prints in `cwd`. */
+function namesOf(/** @type {string} */ cwd, /** @type {string[]} */ args) {
   const r = git(cwd, args);
   if (r.error || r.status !== 0) throw new Error(describeExit(r, `git ${args.join(' ')}`));
-  for (const name of String(r.stdout).split('\0').filter(Boolean)) {
+  return String(r.stdout).split('\0').filter(Boolean);
+}
+
+/**
+ * A hash of the uncommitted content of the worktree `cwd`: the staged and the
+ * unstaged diff, the name and content of each untracked file that git does not
+ * ignore, and the state of each nested repository. A second edit of a file
+ * that is already modified or untracked leaves `git status` as it was, and
+ * changes this hash.
+ *
+ * A nested repository is an untracked directory with its own `.git`, which
+ * git lists by its name only, or a gitlink (a submodule entry) whose directory
+ * is checked out. Its outer status and diff stay the same while files inside
+ * it change, so its `HEAD`, status and content go into the hash too, at every
+ * depth.
+ * @param {string} cwd
+ * @returns {string}
+ */
+function contentOf(cwd) {
+  const hash = createHash('sha256')
+    .update(gitOut(cwd, ['diff', '--cached', '--binary']))
+    .update('\0')
+    .update(gitOut(cwd, ['diff', '--binary']));
+  /** @type {string[]} */
+  const nested = [];
+  for (const name of namesOf(cwd, ['ls-files', '-z', '--others', '--exclude-standard'])) {
     const path = join(cwd, name);
     const stat = lstatSync(path);
-    // A nested repository is listed as a directory, by its name only.
-    const data = stat.isSymbolicLink() ? readlinkSync(path) : stat.isFile() ? readFileSync(path) : '';
-    hash.update(`${name}\0${data.length}\0`).update(data);
+    if (stat.isDirectory()) nested.push(name);
+    else {
+      const data = stat.isSymbolicLink() ? readlinkSync(path) : readFileSync(path);
+      hash.update(`${name}\0${data.length}\0`).update(data);
+    }
+  }
+  for (const line of namesOf(cwd, ['ls-files', '-z', '--stage'])) {
+    // `<mode> <object> <stage>\t<name>`; mode 160000 is a gitlink.
+    if (line.startsWith('160000 ')) nested.push(line.slice(line.indexOf('\t') + 1));
+  }
+  for (const name of nested) {
+    const path = join(cwd, name);
+    if (!existsSync(join(path, '.git'))) continue;
+    const head = git(path, ['rev-parse', '--verify', '-q', 'HEAD']);
+    hash.update(`${name}\0${String(head.stdout).trim()}\0${statusIn(path)}\0${contentOf(path)}\0`);
   }
   return hash.digest('hex');
 }
@@ -71,7 +101,7 @@ export const snapshot = (repos) =>
     repo: repo.repo,
     head: gitOut(repo.worktree_path, ['rev-parse', 'HEAD']),
     status: statusOf(repo),
-    content: contentOf(repo),
+    content: contentOf(repo.worktree_path),
   }));
 
 /**
