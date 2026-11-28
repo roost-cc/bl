@@ -59,7 +59,7 @@ export function pluginCommand(template, view) {
 }
 
 /** A plugin's command template and the exit codes it overrides. */
-const partsOf = (/** @type {Plugin} */ plugin) =>
+export const pluginParts = (/** @type {Plugin} */ plugin) =>
   typeof plugin === 'string'
     ? { template: plugin, exitCodes: {} }
     : { template: plugin.command, exitCodes: plugin.exit_codes };
@@ -116,7 +116,7 @@ const passStderr = (stderr) => {
  * @throws {Error} on a crash (`exitOutcome`), or when the scope's leftovers cannot be stopped
  */
 export async function runPlugin(ctx, plugin, view, cwd) {
-  const { template, exitCodes } = partsOf(plugin);
+  const { template, exitCodes } = pluginParts(plugin);
   const { command, args } = pluginCommand(template, view);
   const argv = ['-c', command, 'sh', ...args];
   const unit = scopeAvailable().ok ? scopeUnitName(ctx.id, ++scopes) : null;
@@ -145,7 +145,7 @@ export async function runPlugin(ctx, plugin, view, cwd) {
  * @throws {Error} on a crash
  */
 export function runPredicate(ctx, plugin, view) {
-  const { template, exitCodes } = partsOf(plugin);
+  const { template, exitCodes } = pluginParts(plugin);
   const { command, args } = pluginCommand(template, view);
   const result = runChild('sh', ['-c', command, 'sh', ...args], {
     cwd: ctx.backlogDir,

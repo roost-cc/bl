@@ -11,7 +11,7 @@
  */
 
 import { templateNames } from '../config/template.js';
-import { runPlugin } from './plugin.js';
+import { pluginParts, runPlugin } from './plugin.js';
 import { commandView } from './view.js';
 
 /** @typedef {import('./index.js').Step} Step */
@@ -48,7 +48,7 @@ export function shopSteps(config) {
         /** @type {Step} */
         const step = Object.freeze({
           outcomes: Object.freeze(/** @type {const} */ (['success', 'failure'])),
-          with: withSchema(typeof plugin === 'string' ? plugin : plugin.command),
+          with: withSchema(pluginParts(plugin).template),
           run: async (ctx, withArgs) => {
             const view = commandView(ctx, { box: ctx.box, with: withArgs });
             const { outcome, note } = await runPlugin(ctx, plugin, view, ctx.backlogDir);

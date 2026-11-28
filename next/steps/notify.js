@@ -50,6 +50,21 @@ export function routeChannels(alerts, kind, reasons = []) {
 }
 
 /**
+ * The template file of the top-level `language` (D-473): its name, its texts
+ * (undefined when there is no such file), and the message for a missing file.
+ * @param {Configuration} config
+ */
+function languageFile(config) {
+  const language = /** @type {string} */ (config.scope(null)?.language);
+  const file = `${language}.yaml`;
+  return {
+    file,
+    texts: /** @type {Record<string, string>|undefined} */ (config.file('templates', file)),
+    missing: `the language '${language}' has no template file templates/${file}`,
+  };
+}
+
+/**
  * The text of `<kind>.<reason>` if the language file has it, else of
  * `<kind>`, from `config/templates/<language>.yaml` with the operator's file
  * patched over it; `language` is that of the top-level scope.
@@ -60,10 +75,8 @@ export function routeChannels(alerts, kind, reasons = []) {
  * @throws {Error} when the language has no file, or the file has neither name
  */
 export function templateText(config, kind, reason) {
-  const language = /** @type {string} */ (config.scope(null)?.language);
-  const file = `${language}.yaml`;
-  const texts = /** @type {Record<string, string>|undefined} */ (config.file('templates', file));
-  if (texts === undefined) throw new Error(`the language '${language}' has no template file templates/${file}`);
+  const { file, texts, missing } = languageFile(config);
+  if (texts === undefined) throw new Error(missing);
   const names = reason === undefined ? [kind] : [`${kind}.${reason}`, kind];
   const name = names.find((n) => Object.hasOwn(texts, n));
   if (name === undefined) throw new Error(`templates/${file} has no template named '${names.join("' or '")}'`);
@@ -181,14 +194,14 @@ export function checkNotifications(config) {
             ],
       ),
   );
-  const language = config.scope(null)?.language;
+  const { texts, missing } = languageFile(config);
   const languageFaults =
-    config.file('templates', `${language}.yaml`) === undefined
+    texts === undefined
       ? [
           {
             ...attribute('/language', /** @type {any} */ (config.layers('backlog'))),
             rule: 'language',
-            message: `the language '${language}' has no template file templates/${language}.yaml`,
+            message: missing,
           },
         ]
       : [];
