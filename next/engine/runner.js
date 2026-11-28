@@ -11,7 +11,9 @@
  *   2. the step gate with the entry gates of the subflows the flow enters
  *      (D-11, Decision A4); a failing entry ends the invocation at
  *      `gated before: <box>` (Decision P1);
- *   3. the step from the catalogue (D2), with `ctx.evaluate` and `ctx.from`; a note it
+ *   3. the step from the catalogue (D2), with `ctx.evaluate`, `ctx.from`, and
+ *      `ctx.repos` and `ctx.snapshot`, the item's repo contexts and their state
+ *      before the step (F-141 D6); a note it
  *      gives is printed as `<box>: <note>` and goes first in the box's notes,
  *      so a `flow_end` at this box holds it (F-140 Decision A2);
  *   4. after `success`, the post-conditions: a failing entry makes the outcome
@@ -45,6 +47,7 @@ import { release, tryLockOnce } from '../lib/kernel-lock.js';
 import { ensureLockDir, itemLockPath } from '../lib/lock.js';
 import { info } from '../lib/stderr.js';
 import { sendAlert } from '../steps/notify.js';
+import { repoContexts as itemRepoContexts, snapshot as takeSnapshot } from '../steps/worktrees.js';
 import { readState } from '../store/item-json.js';
 import { itemDir } from '../store/items.js';
 import { record as readRecord } from '../store/record.js';
@@ -143,9 +146,14 @@ const subflowBox = (/** @type {string} */ id) => id.slice(0, id.lastIndexOf('/')
  * @param {string} [invocation.entry]  the entry that started it
  * @param {boolean} [invocation.resume]  `bl resume` started it; then `entry` is absent
  * @param {Readonly<Record<string, Step>>} invocation.catalogue  the step catalogue (D2)
+ * @param {typeof itemRepoContexts} [invocation.repoContexts]  gives the item's repo contexts
+ *   before each step; `steps/worktrees.js` by default, a test seam (F-141 D6)
  * @returns {Promise<FlowResult>}
  */
-export async function runFlow(ctx, { id, start, by, entry, resume = false, catalogue }) {
+export async function runFlow(
+  ctx,
+  { id, start, by, entry, resume = false, catalogue, repoContexts = itemRepoContexts },
+) {
   const item = itemDir(ctx, id);
   if (item === null) throw new Error(`there is no item ${id} in the backlog`);
   const flow = ctx.flowSet.flows[item.type];
@@ -157,7 +165,7 @@ export async function runFlow(ctx, { id, start, by, entry, resume = false, catal
     throw new Error(`${item.id}: another process (pid ${lock.holder}) runs its flow and holds ${path}`);
   }
   try {
-    return await invoke(ctx, item, flow, { start, by, entry, resume, catalogue });
+    return await invoke(ctx, item, flow, { start, by, entry, resume, catalogue, repoContexts });
   } finally {
     release(lock.taken);
   }
@@ -168,10 +176,11 @@ export async function runFlow(ctx, { id, start, by, entry, resume = false, catal
  * @param {EngineContext} ctx
  * @param {Item} item
  * @param {Flow} flow
- * @param {{ start: string, by: string, entry?: string, resume: boolean, catalogue: Readonly<Record<string, Step>> }} invocation
+ * @param {{ start: string, by: string, entry?: string, resume: boolean, catalogue: Readonly<Record<string, Step>>,
+ *   repoContexts: typeof itemRepoContexts }} invocation
  * @returns {Promise<FlowResult>}
  */
-async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) {
+async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue, repoContexts }) {
   const { id, type } = item;
   const host = hostname();
   /**
@@ -256,13 +265,16 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
   const flowEnd = (ended, outcome, note) => ({ at: now(), event: 'flow_end', ended, outcome, status, commits, note });
 
   /**
-   * The step context of `box` over `record`, with its staged writes in `staged`.
+   * The step context of `box` over `record`, with its staged writes in `staged`,
+   * and the item's repo contexts `repos` and their `snapshot` before the step.
    * @param {string} box
    * @param {import('./conditions.js').ItemRecord} record
    * @param {Array<(w: Writer) => void>} staged
+   * @param {StepContext['repos']} repos
+   * @param {StepContext['snapshot']} snapshot
    * @returns {StepContext}
    */
-  const stepContext = (box, record, staged) => {
+  const stepContext = (box, record, staged, repos, snapshot) => {
     /** @type {ReturnType<typeof bindConditions>|undefined} */
     let conditions;
     return {
@@ -272,12 +284,14 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
       // The box the flow came from, which a notify text names (F-140 D9).
       ...(previous === null ? {} : { from: previous }),
       record,
+      repos,
+      snapshot,
       config: ctx.config,
       backlogDir: ctx.backlogDir,
       stage: (fn) => staged.push(/** @type {(w: Writer) => void} */ (fn)),
       recordCommit: ({ repo, sha }) => commits.push({ repo, sha }),
       // The call that the gates make (gates.js), so assert and the gates evaluate in one place.
-      evaluate: (expr) => (conditions ??= bindConditions(ctx, id, { current: record })).evaluate(expr, record),
+      evaluate: (expr) => (conditions ??= bindConditions(ctx, id, { current: record, repos })).evaluate(expr, record),
     };
   };
 
@@ -289,12 +303,14 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
       /** @type {Array<(w: Writer) => void>} */
       const staged = [];
       const record = current();
-      step = stepContext(box, record, staged);
+      const repos = repoContexts({ ...ctx, id });
+      const before = takeSnapshot(repos);
+      step = stepContext(box, record, staged, repos, before);
       const visit = (visits.get(box) ?? 0) + 1;
       visits.set(box, visit);
       if (visit > ctx.flowSet.maxBoxVisits) throw new FlowCrash(`${box} started ${visit} times (max_box_visits)`);
 
-      const gated = stepGate(ctx, record, node, previous);
+      const gated = stepGate(ctx, record, node, previous, { repos });
       if (gated.length > 0) {
         const ended = `gated before: ${box}`;
         await flowCommit(`${id}: ${box} gated before`, box, (w) => {
@@ -316,7 +332,7 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
       // The note is printed once the box's writes are committed, so a failed write prints none.
       const printNote = () => stepNote !== undefined && info(`${box}: ${stepNote}`);
       if (outcome === 'success') {
-        const failed = postConditions(ctx, current(), node);
+        const failed = postConditions(ctx, current(), node, { repos, snapshot: before });
         if (failed.length > 0) {
           outcome = 'failure';
           notes.push(`the post-conditions of ${box} failed: ${texts(failed)}`);
@@ -405,7 +421,7 @@ async function invoke(ctx, item, flow, { start, by, entry, resume, catalogue }) 
           : new FlowCrash(`${box}: ${/** @type {Error} */ (error).message}`, { cause: error });
       // An alert that cannot be sent does not hide the crash it is about.
       await alertOrReport(id, 'ended.crash', async () =>
-        sendAlert(step ?? stepContext(box, current(), []), 'ended', ['crash'], { box, error: crash.message }),
+        sendAlert(step ?? stepContext(box, current(), [], [], []), 'ended', ['crash'], { box, error: crash.message }),
       );
       throw crash;
     }

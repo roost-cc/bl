@@ -10,8 +10,10 @@ import RECORD_SCHEMA from '../config/schemas/record.schema.json' with { type: 'j
 import { itemLockPath } from '../lib/lock.js';
 import { recordReader } from '../store/record.js';
 import { createItems, engineBacklog, setGraph } from '../test/helpers/engine-backlog.js';
+import { git, tempRepo } from '../test/helpers/git.js';
 import { holdLock } from '../test/helpers/hold-lock.js';
 import { mkTempDir } from '../test/helpers/tempdir.js';
+import { snapshot } from '../steps/worktrees.js';
 import { bindConditions, engineRecord } from './conditions.js';
 
 const BOX = 'deliver/self_check/test_unit';
@@ -115,6 +117,25 @@ test('has_terminal() is true when the process can open the terminal, and false w
   assert.equal(bindConditions(ctx, 'S-1', { tty: `${tty}-gone` }).evaluate('has_terminal()', story), false);
 });
 
+test('worktree_clean() and worktree_unchanged() read the repo contexts and the snapshot (F-141 D6)', async () => {
+  const ctx = await backlog();
+  const story = engineRecord(ctx, ctx.flowSet, recordReader(ctx)('S-1'));
+  const repos = [tempRepo('a'), tempRepo('b')];
+  const before = snapshot(repos);
+  const conditions = bindConditions(ctx, 'S-1', { repos, snapshot: before });
+  const both = '[worktree_clean(), worktree_unchanged()]';
+  assert.deepEqual(conditions.evaluate(both, story), [true, true], 'no change');
+  writeFileSync(join(repos[1].worktree_path, 'new'), '');
+  assert.deepEqual(conditions.evaluate(both, story), [false, false], 'an uncommitted file');
+  git(repos[1].worktree_path, 'add', 'new');
+  git(repos[1].worktree_path, 'commit', '-q', '-m', 'new');
+  assert.deepEqual(conditions.evaluate(both, story), [true, false], 'a commit');
+  assert.deepEqual(bindConditions(ctx, 'S-1', { snapshot: [] }).evaluate(both, story), [true, true], 'no repos');
+  assert.throws(() => bindConditions(ctx, 'S-1', { repos }).evaluate('worktree_unchanged()', story), {
+    message: 'worktree_unchanged(): worktree_unchanged() is a post-condition',
+  });
+});
+
 test('an absent key, an unbound function, and an unknown item throw an error that names the expression', async () => {
   const ctx = await backlog();
   const story = engineRecord(ctx, ctx.flowSet, recordReader(ctx)('S-1'));
@@ -123,7 +144,7 @@ test('an absent key, an unbound function, and an unknown item throw an error tha
     ['attributes.owner == "bl"', 'No such key: owner'],
     ['!attributes.owner.startsWith("x")', 'No such key: owner'],
     ['has_capacity()', 'not bound: has_capacity'],
-    ['!worktree_clean()', 'not bound: worktree_clean'],
+    ['!conflict_free()', 'not bound: conflict_free'],
     ['signed("Design", "operator")', 'not bound: signed'],
     ['item("S-9").closed', 'there is no item S-9 in the backlog'],
   ]) {

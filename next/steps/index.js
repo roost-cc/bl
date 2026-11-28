@@ -29,6 +29,10 @@ import { rank } from './rank.js';
  * @property {string} [from]  the path of the previous node of the invocation,
  *   the box the flow came from; absent at its first node (F-140 D9)
  * @property {Record<string, unknown>} record  the item's record when the step starts
+ * @property {import('./worktrees.js').RepoContext[]} repos  the item's repo contexts
+ *   (`repoContexts`, F-141 D6); `[]` until F-143's `prepare` records worktrees
+ * @property {import('./worktrees.js').RepoSnapshot[]} snapshot  each repo's `HEAD`
+ *   and status when the step starts (`snapshot`)
  * @property {import('../config/load.js').Configuration} config  the frozen configuration
  * @property {string} backlogDir  the backlog's root
  * @property {(fn: (w: unknown) => void) => void} stage  adds a function that the

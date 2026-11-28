@@ -12,6 +12,10 @@
  *     and `children(type)` give records through `engineRecord`, the item
  *     whose flow runs as its current record (`itemRecord`), and
  *     `has_terminal()` is true when the process can open `/dev/tty` (D-30).
+ *     `worktree_clean()` is true when no repo context has an uncommitted
+ *     change, and `worktree_unchanged()` when no repo changed since the
+ *     snapshot before the step (`steps/worktrees.js`, F-141 D6); with no
+ *     snapshot, as in a gate, `worktree_unchanged()` throws.
  *     A shop predicate runs its top-level plugin with `runPredicate`, in the
  *     backlog root, with the item's command view plus `args`: `0`, `1`, … to
  *     the call's arguments as plain JSON (`fromCelValue`; F-140 D7, Decision
@@ -26,6 +30,7 @@ import { closeSync, openSync } from 'fs';
 import { bindCel, fromCelValue, UNBOUND } from '../config/cel.js';
 import { runPredicate } from '../steps/plugin.js';
 import { commandView } from '../steps/view.js';
+import { changed, clean } from '../steps/worktrees.js';
 import { childrenOf, graphValues } from '../store/graphs.js';
 import { readState } from '../store/item-json.js';
 import { itemDir, printedType } from '../store/items.js';
@@ -35,6 +40,8 @@ import { readRunState } from './run-state.js';
 /**
  * @typedef {import('../store/record.js').ItemRecord} ItemRecord
  * @typedef {import('./flow-set.js').FlowSet} FlowSet
+ * @typedef {import('../steps/worktrees.js').RepoContext} RepoContext
+ * @typedef {import('../steps/worktrees.js').RepoSnapshot} RepoSnapshot
  * @typedef {import('../store/items.js').StoreContext & { flowSet: FlowSet }} EngineContext
  *   a store context with the flow set (the op context, `OpContext`, is one)
  */
@@ -94,14 +101,22 @@ function canOpen(path) {
  * records it needs anew.
  * @param {EngineContext} ctx
  * @param {string} id  the item's id in its printed form
- * @param {{ tty?: string, current?: ItemRecord }} [options]  `tty`: the file `has_terminal()`
- *   opens, a test seam; `current`: the record of the item whose flow runs, which `item()`
- *   and `children()` give for that item (`itemRecord`)
+ * @param {{ tty?: string, current?: ItemRecord, repos?: readonly RepoContext[], snapshot?: readonly RepoSnapshot[] }} [options]
+ *   `tty`: the file `has_terminal()` opens, a test seam; `current`: the record of the item
+ *   whose flow runs, which `item()` and `children()` give for that item (`itemRecord`);
+ *   `repos`: the repo contexts that `worktree_clean()` reads; `snapshot`: the snapshot of
+ *   `repos` before the step, which `worktree_unchanged()` compares with, given only to
+ *   post-conditions (F-141 D6)
  * @returns {{ evaluate: (expr: string, record: ItemRecord) => unknown }}
  */
-export function bindConditions(ctx, id, { tty = '/dev/tty', current } = {}) {
+export function bindConditions(ctx, id, { tty = '/dev/tty', current, repos = [], snapshot } = {}) {
   const bound = bindCel(ctx.config.celInputs, {
     ...UNBOUND,
+    worktree_clean: () => clean(repos),
+    worktree_unchanged: () => {
+      if (snapshot === undefined) throw new Error('worktree_unchanged() is a post-condition');
+      return !changed(snapshot, repos);
+    },
     item: (other) => itemRecord(ctx, other, current),
     children: (type) =>
       childrenOf(graphValues(ctx), id)

@@ -10,7 +10,7 @@ import { itemLockPath } from '../lib/lock.js';
 import { itemDir } from '../store/items.js';
 import { createItems, engineBacklog, setGraph } from '../test/helpers/engine-backlog.js';
 import { UTOP, UTOP_STEPS } from '../test/helpers/flow-fixture.js';
-import { git } from '../test/helpers/git.js';
+import { git, tempRepo } from '../test/helpers/git.js';
 import { holdLockInChild } from '../test/helpers/hold-lock.js';
 import { channel, delivered, notifyBacklog } from '../test/helpers/notify-backlog.js';
 import { readRunState } from './run-state.js';
@@ -489,6 +489,135 @@ test('a failing post-condition turns success into failure, and the commit messag
   assert.match(implement.message, /the post-conditions of implement failed: status == "implemented"\n/);
 });
 
+// ---- repo contexts and the worktree snapshot (F-141 D6) ----
+
+/** Two repo contexts of fresh repos, and a `repoContexts` that gives them. */
+function twoRepos() {
+  const repos = [tempRepo('a'), tempRepo('b')];
+  return { repos, repoContexts: () => repos };
+}
+
+/** A backlog whose implement box has the post-conditions `after`. */
+const withAfter = (/** @type {string[]} */ after) =>
+  engineBacklog({
+    'defined-steps.yaml': definedSteps((steps) => {
+      steps.implement.after = after;
+    }),
+  });
+
+/** The outcome of the implement box of a run from prepare, from its commit's subject. */
+const implementOutcome = (ctx, base) => commitsSince(ctx, base)[2].subject.split(' ').at(-1);
+
+/** Write the file `new` in `dir`. */
+const addFile = (/** @type {string} */ dir) => writeFileSync(join(dir, 'new'), '');
+
+/** Write the file `new` in `dir` and commit it. */
+function commitFile(/** @type {string} */ dir) {
+  addFile(dir);
+  git(dir, 'add', 'new');
+  git(dir, 'commit', '-q', '-m', 'new');
+}
+
+/**
+ * Run a story from prepare to wait_implement, with `implement` as the implement step and the repo
+ * contexts of `twoRepos`, and give the implement box's outcome.
+ * @param {string[]} after  the post-conditions of implement
+ * @param {(dir: string) => void} implement  changes the worktree of the second repo
+ */
+async function implementWith(after, implement) {
+  const ctx = withAfter(after);
+  const id = await story(ctx, { status: 'refined', run: 'idle' });
+  const base = head(ctx);
+  const { repos, repoContexts } = twoRepos();
+  const { catalogue } = fakeSteps({
+    implement: () => {
+      implement(repos[1].worktree_path);
+      return 'success';
+    },
+    wait_implement: 'failure',
+  });
+  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue, repoContexts });
+  return implementOutcome(ctx, base);
+}
+
+test("each step gets the repo contexts as ctx.repos, and each repo's HEAD and status before the step as ctx.snapshot", async () => {
+  const ctx = backlog();
+  const id = await story(ctx, { status: 'refined', run: 'idle' });
+  const { repos, repoContexts } = twoRepos();
+  /** @type {unknown[]} */
+  const seen = [];
+  const record = (/** @type {any} */ step) => seen.push({ repos: step.repos, snapshot: step.snapshot });
+  const { catalogue } = fakeSteps({
+    prepare: (/** @type {any} */ step) => {
+      record(step);
+      addFile(repos[1].worktree_path);
+      return 'success';
+    },
+    implement: (/** @type {any} */ step) => {
+      record(step);
+      return 'success';
+    },
+    wait_implement: 'failure',
+  });
+  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue, repoContexts });
+  const [a, b] = repos.map((repo) => git(repo.worktree_path, 'rev-parse', 'HEAD'));
+  assert.deepEqual(seen.slice(0, 2), [
+    {
+      repos,
+      snapshot: [
+        { repo: 'a', head: a, status: '' },
+        { repo: 'b', head: b, status: '' },
+      ],
+    },
+    {
+      repos,
+      snapshot: [
+        { repo: 'a', head: a, status: '' },
+        { repo: 'b', head: b, status: '?? new' },
+      ],
+    },
+  ]);
+});
+
+test('worktree_unchanged() as a post-condition is false after a step commits in one repo or leaves an uncommitted file, and true after a step that changes nothing', async () => {
+  assert.equal(await implementWith(['worktree_unchanged()'], commitFile), 'failure', 'a commit');
+  assert.equal(await implementWith(['worktree_unchanged()'], addFile), 'failure', 'an uncommitted file');
+  assert.equal(await implementWith(['worktree_unchanged()'], () => {}), 'success', 'no change');
+});
+
+test('worktree_clean() as a post-condition is false while one repo has an uncommitted change, and true after the change is committed', async () => {
+  assert.equal(await implementWith(['worktree_clean()'], addFile), 'failure', 'an uncommitted change');
+  assert.equal(await implementWith(['worktree_clean()'], commitFile), 'success', 'the change committed');
+});
+
+test('worktree_unchanged() in a step gate is a FlowCrash: it is a post-condition', async () => {
+  const ctx = backlog({ 'gates.yaml': "step_gates:\n  close: ['worktree_unchanged()']\n" });
+  const id = await story(ctx, { status: 'implemented', run: 'idle' });
+  const { catalogue, ran } = fakeSteps();
+  const crash = await runFlow(ctx, { id, start: 'close', by: 'operator', entry: 'close', catalogue }).catch((e) => e);
+  assert.ok(crash instanceof FlowCrash);
+  assert.equal(crash.message, 'close: worktree_unchanged(): worktree_unchanged() is a post-condition');
+  assert.deepEqual(ran, []);
+});
+
+test('with the default repoContexts, ctx.repos is empty, and worktree_clean() and worktree_unchanged() are true', async () => {
+  const ctx = withAfter(['worktree_clean()', 'worktree_unchanged()']);
+  const id = await story(ctx, { status: 'refined', run: 'idle' });
+  const base = head(ctx);
+  /** @type {unknown[]} */
+  const seen = [];
+  const { catalogue } = fakeSteps({
+    implement: (/** @type {any} */ step) => {
+      seen.push(step.repos, step.snapshot);
+      return 'success';
+    },
+    wait_implement: 'failure',
+  });
+  await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue });
+  assert.deepEqual(seen, [[], []]);
+  assert.equal(implementOutcome(ctx, base), 'success');
+});
+
 test("runFlow_prints_and_logs_step_note: a step's note is printed with its box path, and is the flow_end note when its arrow is stop", async (t) => {
   const printed = [];
   t.mock.method(process.stderr, 'write', (/** @type {string} */ text) => printed.push(text));
@@ -544,13 +673,13 @@ test("runFlow_gives_step_evaluate: ctx.evaluate evaluates over the box's record 
       seen.push(step.evaluate(`item("${id}").status`));
       return 'success';
     },
-    implement: (/** @type {any} */ step) => step.evaluate('worktree_clean()'),
+    implement: (/** @type {any} */ step) => step.evaluate('conflict_free()'),
   });
   const crash = await runFlow(ctx, { id, start: 'prepare', by: 'operator', entry: 'run', catalogue }).catch((e) => e);
   // item() of the running item reads the status the invocation reached, as a gate's does.
   assert.deepEqual(seen, [true, 'refined']);
   assert.ok(crash instanceof FlowCrash);
-  assert.equal(crash.message, 'implement: worktree_clean(): not bound: worktree_clean');
+  assert.equal(crash.message, 'implement: conflict_free(): not bound: conflict_free');
 });
 
 test('a shop predicate in a status gate passes or fails the gate by its exit status, and exit 127 is a FlowCrash that names the expression', async () => {
