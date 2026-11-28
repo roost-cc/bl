@@ -4,7 +4,9 @@
  *
  * An op's mock is `next/test/mocks/<op>.js`, whose default export is
  * `{ argv, ctx }`: the arguments as typed, which the op's `args` parse, and
- * the context of the run. A registered op with no mock file fails.
+ * the context of the run. A registered op with no mock file fails. A record
+ * is checked by `checkValue`, the shape checker of the store's files, so an op
+ * whose record is a log entry gives the log entry schema as it is.
  */
 
 import { test } from 'node:test';
@@ -12,17 +14,15 @@ import assert from 'node:assert/strict';
 import { existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-import Ajv2020 from 'ajv/dist/2020.js';
 import { addArgs } from '../commands/args.js';
 import { Parser } from '../commands/dispatch.js';
 import { OPS } from '../commands/ops/index.js';
 import { recordsOf } from '../commands/output.js';
+import { checkValue } from '../config/check.js';
+import { faultText } from '../store/item-json.js';
 import { mkTempDir } from './helpers/tempdir.js';
 
 const MOCKS = fileURLToPath(new URL('mocks', import.meta.url));
-
-/** One ajv instance for the whole test (F-136 D5). */
-const ajv = new Ajv2020({ strict: true, allErrors: true });
 
 /**
  * The faults of each op in `ops` on its mock in `mocksDir`: one line per
@@ -49,10 +49,9 @@ async function opFaults(ops, mocksDir) {
       faults.push(`${name}: the mock's argv does not parse: ${error.exit?.stderr ?? error.message}`);
       continue;
     }
-    const validate = ajv.compile(op.schema);
     let index = 0;
     for await (const record of recordsOf(await op.run(args, ctx))) {
-      if (!validate(record)) faults.push(`${name}: record ${index}: ${ajv.errorsText(validate.errors)}`);
+      faults.push(...checkValue(op.schema, record).map((fault) => `${name}: record ${index}${faultText(fault)}`));
       index += 1;
     }
   }
@@ -88,7 +87,7 @@ test('the check fails on an op whose record breaks its schema and on an op with 
   writeFileSync(join(mocks, 'good.js'), "export default { argv: ['S-1', 'S-2'], ctx: {} };\n");
   writeFileSync(join(mocks, 'broken.js'), 'export default { argv: [], ctx: {} };\n');
   assert.deepEqual(await opFaults(ops, mocks), [
-    'broken: record 1: data/points must be integer',
+    'broken: record 1: type at /points: must be integer',
     'unmocked: no mock file unmocked.js',
   ]);
 });
